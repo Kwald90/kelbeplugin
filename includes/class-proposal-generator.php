@@ -79,8 +79,11 @@ class KPT_Proposal_Generator {
         $subtotal = 0;
         
         foreach ($bids as $bid) {
-            if ($bid->line_items_decoded) {
-                foreach ($bid->line_items_decoded as $item) {
+            // Decode line items if needed
+            $bid_line_items = $bid->line_items ? json_decode($bid->line_items, true) : array();
+            
+            if ($bid_line_items) {
+                foreach ($bid_line_items as $item) {
                     $line_items[] = array(
                         'trade_type' => $bid->trade_type,
                         'bid_id' => $bid->id,

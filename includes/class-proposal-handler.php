@@ -372,6 +372,9 @@ class KPT_Proposal_Handler {
      * @return string Access token
      */
     private function generate_access_token() {
+        // Generate a cryptographically secure token
+        // Note: Token expiration should be implemented based on business requirements
+        // Consider adding expiration timestamp in the token or separate expiration field
         return bin2hex(random_bytes(32));
     }
     

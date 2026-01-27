@@ -3,6 +3,10 @@
  * Database Handler
  *
  * Creates and manages custom database tables
+ * 
+ * Note: Foreign key constraints are not used to maintain compatibility with MyISAM
+ * and to allow WordPress's post deletion hooks to handle cascading deletes.
+ * Data integrity is maintained through application logic in handler classes.
  *
  * @package Kelbe_Project_Tracker
  */

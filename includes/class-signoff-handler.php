@@ -463,18 +463,28 @@ class KPT_Signoff_Handler {
     
     /**
      * AJAX: Sign signoff with token (no auth)
+     * 
+     * Note: This method requires implementation of token storage and validation.
+     * Current implementation is a placeholder for future development.
      */
     public function ajax_sign_signoff_token() {
-        $token = isset($_POST['token']) ? sanitize_text_field($_POST['token']) : '';
-        
-        if (!$token) {
-            wp_send_json_error(__('Invalid token.', 'kelbe-project-tracker'));
+        // Verify nonce even for public endpoints
+        if (!isset($_POST['_wpnonce']) || !wp_verify_nonce($_POST['_wpnonce'], 'kpt_signoff_token')) {
+            wp_send_json_error(__('Security verification failed.', 'kelbe-project-tracker'));
         }
         
-        // This is a placeholder - in production, implement proper token validation
-        // and retrieve the associated signoff
+        $token = isset($_POST['token']) ? sanitize_text_field($_POST['token']) : '';
+        $signature_data = isset($_POST['signature']) ? $_POST['signature'] : '';
         
-        wp_send_json_error(__('Token-based signoff not yet implemented.', 'kelbe-project-tracker'));
+        if (!$token || !$signature_data) {
+            wp_send_json_error(__('Invalid request.', 'kelbe-project-tracker'));
+        }
+        
+        // TODO: Implement token-to-signoff mapping
+        // This requires adding a token field to the signoffs table or separate token table
+        // with proper expiration handling and one-time use tokens
+        
+        wp_send_json_error(__('Token-based signoff requires additional database schema. Please contact an administrator.', 'kelbe-project-tracker'));
     }
     
     /**
