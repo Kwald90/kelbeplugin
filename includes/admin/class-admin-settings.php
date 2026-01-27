@@ -962,6 +962,3 @@ class KPT_Admin_Settings {
         return get_posts($args);
     }
 }
-
-// Initialize
-KPT_Admin_Settings::get_instance();

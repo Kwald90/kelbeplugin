@@ -259,6 +259,3 @@ class KPT_Shortcodes {
 	 */
 	private function __wakeup() {}
 }
-
-// Initialize the class.
-KPT_Shortcodes::instance();

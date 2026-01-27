@@ -440,6 +440,3 @@ class KPT_Admin_Dashboard {
         return isset($labels[$status]) ? $labels[$status] : ucfirst($status);
     }
 }
-
-// Initialize
-KPT_Admin_Dashboard::get_instance();

@@ -208,6 +208,3 @@ class KPT_Frontend_Redirect {
 	 */
 	private function __wakeup() {}
 }
-
-// Initialize the class.
-KPT_Frontend_Redirect::instance();

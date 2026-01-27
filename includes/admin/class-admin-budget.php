@@ -652,6 +652,3 @@ class KPT_Admin_Budget {
         return '<a href="' . esc_url($url) . '">' . esc_html($label) . $arrow . '</a>';
     }
 }
-
-// Initialize
-KPT_Admin_Budget::get_instance();

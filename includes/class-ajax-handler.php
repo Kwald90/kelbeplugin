@@ -655,6 +655,3 @@ class KPT_Ajax_Handler {
 	 */
 	private function __wakeup() {}
 }
-
-// Initialize the class.
-KPT_Ajax_Handler::instance();

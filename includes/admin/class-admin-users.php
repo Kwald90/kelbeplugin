@@ -599,6 +599,3 @@ class KPT_Admin_Users {
         return isset($trade_types[$trade_type_id]['name']) ? $trade_types[$trade_type_id]['name'] : '-';
     }
 }
-
-// Initialize
-KPT_Admin_Users::get_instance();
