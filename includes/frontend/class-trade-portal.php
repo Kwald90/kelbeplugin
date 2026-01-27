@@ -265,7 +265,7 @@ class KPT_Trade_Portal {
                 update_post_meta($project_id, '_kpt_project_stage', absint($_POST['project_stage']));
             }
             
-            wp_redirect(add_query_arg(array('view' => 'job', 'id' => $project_id), get_permalink()));
+            wp_safe_redirect(add_query_arg(array('view' => 'job', 'id' => $project_id), get_permalink()));
             exit;
         }
     }
@@ -310,7 +310,8 @@ class KPT_Trade_Portal {
             update_post_meta($project_id, '_kpt_project_stage', absint($_POST['project_stage']));
         }
         
-        wp_redirect(add_query_arg(array('view' => 'job', 'id' => $project_id), get_permalink()));
+        $redirect_url = add_query_arg(array('view' => 'job', 'id' => $project_id), get_permalink());
+        wp_safe_redirect($redirect_url);
         exit;
     }
     
@@ -1230,7 +1231,7 @@ class KPT_Trade_Portal {
                             </div>
                             <div class="kpt-bid-item__body">
                                 <div class="kpt-bid-item__amount">
-                                    <?php echo '$' . number_format($bid->total, 2); ?>
+                                    <?php echo '$' . esc_html(number_format($bid->total, 2)); ?>
                                 </div>
                                 <?php if ($bid->submitted_at): ?>
                                     <div class="kpt-bid-item__date">
@@ -1281,7 +1282,7 @@ class KPT_Trade_Portal {
                                     <p><?php echo esc_html($co->description); ?></p>
                                 <?php endif; ?>
                                 <div class="kpt-change-order-item__amount">
-                                    <?php echo '$' . number_format($co->amount, 2); ?>
+                                    <?php echo esc_html('$' . number_format($co->amount, 2)); ?>
                                 </div>
                                 <div class="kpt-change-order-item__date">
                                     <?php echo esc_html(date_i18n(get_option('date_format'), strtotime($co->created_at))); ?>
