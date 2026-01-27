@@ -1,0 +1,70 @@
+<?php
+/**
+ * Trade Portal Frontend Class
+ *
+ * Handles all frontend portal views for team members, trades, and project managers
+ *
+ * @package Kelbe_Project_Tracker
+ */
+
+// Exit if accessed directly
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * Trade Portal class
+ */
+class KPT_Trade_Portal {
+    
+    /**
+     * Single instance
+     *
+     * @var KPT_Trade_Portal
+     */
+    private static $instance = null;
+    
+    /**
+     * Current user ID
+     *
+     * @var int
+     */
+    private $current_user_id;
+    
+    /**
+     * Current view
+     *
+     * @var string
+     */
+    private $current_view;
+    
+    /**
+     * User role in system
+     *
+     * @var string
+     */
+    private $user_role;
+    
+    /**
+     * Get instance
+     *
+     * @return KPT_Trade_Portal
+     */
+    public static function get_instance() {
+        if (null === self::$instance) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+    
+    /**
+     * Constructor
+     */
+    private function __construct() {
+        $this->current_user_id = get_current_user_id();
+        $this->current_view = $this->get_current_view();
+        $this->user_role = $this->get_user_role();
+        
+        add_action('init', array($this, 'handle_form_submissions'));
+        add_shortcode('kpt_trade_portal', array($this, 'render_portal'));
+    }
