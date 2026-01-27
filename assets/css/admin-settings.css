@@ -1,0 +1,111 @@
+/**
+ * Admin Settings Styles
+ *
+ * @package Kelbe_Project_Tracker
+ */
+
+.kpt-settings-wrap .nav-tab-wrapper {
+    margin-bottom: 20px;
+}
+
+/* Trade Types Section */
+.kpt-trade-types-section {
+    max-width: 800px;
+}
+
+.kpt-sortable-list {
+    list-style: none;
+    padding: 0;
+}
+
+.trade-type-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+
+.trade-type-item .handle {
+    cursor: move;
+    color: #8c8f94;
+}
+
+.trade-type-item input[type="text"] {
+    flex: 1;
+}
+
+.trade-type-item .small-text {
+    width: 150px;
+}
+
+/* Permissions Section */
+.kpt-permissions-section table th,
+.kpt-permissions-section table td {
+    text-align: center;
+}
+
+.kpt-permissions-section table th:first-child,
+.kpt-permissions-section table td:first-child {
+    text-align: left;
+}
+
+/* Bid Items Section */
+.kpt-bid-items-section {
+    max-width: 900px;
+}
+
+.trade-type-bid-items {
+    margin-bottom: 30px;
+    padding: 20px;
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.trade-type-bid-items h3 {
+    margin-top: 0;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 10px;
+}
+
+.bid-items-list {
+    margin-bottom: 15px;
+}
+
+.bid-item {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.bid-item input[type="text"] {
+    flex: 1;
+}
+
+/* Logo Upload */
+#logo-preview {
+    margin-bottom: 10px;
+}
+
+#logo-preview img {
+    display: block;
+    border: 1px solid #ddd;
+    padding: 5px;
+    background: #fff;
+}
+
+/* General Styles */
+.kpt-widget-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.notice {
+    margin: 15px 0;
+}

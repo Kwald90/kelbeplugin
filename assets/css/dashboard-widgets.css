@@ -1,0 +1,182 @@
+/**
+ * Dashboard Widgets Styles
+ *
+ * @package Kelbe_Project_Tracker
+ */
+
+/* Widget Lists */
+.kpt-widget-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.kpt-widget-list li {
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.kpt-widget-list li:last-child {
+    border-bottom: none;
+}
+
+.kpt-widget-meta {
+    display: block;
+    font-size: 12px;
+    color: #666;
+    margin-top: 4px;
+}
+
+.kpt-widget-footer {
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px solid #eee;
+    text-align: right;
+}
+
+/* Status Badges */
+.kpt-status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.kpt-status-lead { background: #e5f5fa; color: #0071a1; }
+.kpt-status-proposal { background: #f0e5ff; color: #6c2eb9; }
+.kpt-status-active { background: #ecf7ed; color: #1e8e3e; }
+.kpt-status-on_hold { background: #fff4e5; color: #b55d00; }
+.kpt-status-completed { background: #e8eaeb; color: #2c3338; }
+.kpt-status-cancelled { background: #f8d7da; color: #8a1f11; }
+
+/* Budget Overview Widget */
+.kpt-budget-overview {
+    padding: 10px 0;
+}
+
+.kpt-budget-stat {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.kpt-budget-label {
+    font-weight: 600;
+    color: #2c3338;
+}
+
+.kpt-budget-value {
+    color: #1e8e3e;
+    font-weight: 600;
+}
+
+.kpt-budget-remaining {
+    color: #0071a1;
+}
+
+.kpt-budget-progress {
+    margin: 15px 0;
+}
+
+.kpt-progress-bar {
+    height: 20px;
+    background: #f0f0f1;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 5px;
+}
+
+.kpt-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #1e8e3e 0%, #00a32a 100%);
+    transition: width 0.3s ease;
+}
+
+.kpt-progress-label {
+    font-size: 12px;
+    color: #666;
+}
+
+/* Lead Statistics Widget */
+.kpt-lead-stats {
+    padding: 10px 0;
+}
+
+.kpt-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.kpt-stat-item {
+    text-align: center;
+    padding: 15px;
+    background: #f9f9f9;
+    border-radius: 4px;
+}
+
+.kpt-stat-number {
+    display: block;
+    font-size: 28px;
+    font-weight: 700;
+    color: #2c3338;
+    line-height: 1;
+    margin-bottom: 5px;
+}
+
+.kpt-stat-label {
+    display: block;
+    font-size: 12px;
+    color: #666;
+    text-transform: uppercase;
+}
+
+.kpt-stat-highlight {
+    background: #e5f5fa;
+}
+
+.kpt-stat-highlight .kpt-stat-number {
+    color: #0071a1;
+}
+
+.kpt-conversion-rate {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: #ecf7ed;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+
+.kpt-conversion-label {
+    font-weight: 600;
+    color: #2c3338;
+}
+
+.kpt-conversion-value {
+    font-size: 20px;
+    font-weight: 700;
+    color: #1e8e3e;
+}
+
+/* Tasks Widget */
+.kpt-tasks-list li {
+    padding: 10px 0;
+}
+
+.kpt-task-date {
+    display: inline-block;
+    padding: 2px 6px;
+    background: #f0f0f1;
+    border-radius: 3px;
+    font-size: 11px;
+    margin-left: 8px;
+}
+
+.kpt-task-overdue .kpt-task-date {
+    background: #f8d7da;
+    color: #8a1f11;
+}
