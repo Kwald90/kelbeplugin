@@ -1169,9 +1169,11 @@ class KPT_Trade_Portal {
                 <div class="kpt-files-list">
                     <?php foreach ($files as $file): ?>
                         <div class="kpt-file-item">
-                            <div class="kpt-file-item__icon">📄</div>
+                            <div class="kpt-file-item__icon">
+                                <span class="dashicons dashicons-media-default"></span>
+                            </div>
                             <div class="kpt-file-item__info">
-                                <a href="<?php echo esc_url($file->file_url); ?>" target="_blank" class="kpt-file-item__name">
+                                <a href="<?php echo esc_url($file->file_url); ?>" target="_blank" rel="noopener noreferrer" class="kpt-file-item__name">
                                     <?php echo esc_html($file->file_name); ?>
                                 </a>
                                 <div class="kpt-file-item__meta">
