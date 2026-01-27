@@ -114,7 +114,7 @@ class KPT_Trade_Portal {
         }
         
         $allowed_roles = array('administrator', 'project_manager', 'contractor', 'construction_manager');
-        return in_array($this->user_role, $allowed_roles);
+        return in_array($this->user_role, $allowed_roles, true);
     }
     
     /**
@@ -123,7 +123,7 @@ class KPT_Trade_Portal {
      * @return bool
      */
     private function is_pm() {
-        return in_array($this->user_role, array('administrator', 'project_manager'));
+        return in_array($this->user_role, array('administrator', 'project_manager', true));
     }
     
     /**
@@ -500,7 +500,7 @@ class KPT_Trade_Portal {
             $status = get_post_meta($project->ID, '_kpt_project_status', true);
             if ($status === 'completed') {
                 $completed_projects++;
-            } elseif (in_array($status, array('in_progress', 'on_hold'))) {
+            } elseif (in_array($status, array('in_progress', 'on_hold'), true)) {
                 $active_projects++;
             }
         }
