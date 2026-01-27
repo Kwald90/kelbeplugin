@@ -1,0 +1,231 @@
+/**
+ * Admin Budget Styles
+ *
+ * @package Kelbe_Project_Tracker
+ */
+
+.kpt-budget-wrap .subsubsub {
+    margin-bottom: 20px;
+}
+
+/* Budget Overview */
+.kpt-budget-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.kpt-stat-card {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+}
+
+.kpt-stat-card h3 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    color: #666;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.kpt-stat-value {
+    font-size: 32px;
+    font-weight: 700;
+    color: #2c3338;
+    line-height: 1;
+    margin: 15px 0;
+}
+
+.kpt-stat-remaining {
+    color: #0071a1;
+}
+
+.kpt-stat-meta {
+    font-size: 12px;
+    color: #666;
+    margin: 0;
+}
+
+.kpt-progress-bar-large {
+    height: 30px;
+    background: #f0f0f1;
+    border-radius: 15px;
+    overflow: hidden;
+    margin: 15px 0;
+}
+
+.kpt-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #1e8e3e 0%, #00a32a 100%);
+    transition: width 0.3s ease;
+}
+
+.kpt-progress-fill.kpt-warning {
+    background: linear-gradient(90deg, #f0b849 0%, #ff922b 100%);
+}
+
+/* Budget Breakdown */
+.kpt-budget-breakdown {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.kpt-budget-breakdown h2 {
+    margin-top: 0;
+}
+
+/* Projects View */
+.kpt-budget-search {
+    margin-bottom: 20px;
+}
+
+.kpt-budget-search input[type="search"] {
+    width: 300px;
+    margin-right: 10px;
+}
+
+.kpt-progress-bar-small {
+    width: 100px;
+    height: 20px;
+    background: #f0f0f1;
+    border-radius: 10px;
+    overflow: hidden;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+.kpt-progress-text {
+    font-size: 12px;
+    color: #666;
+}
+
+.kpt-over-budget {
+    color: #d63638;
+    font-weight: 600;
+}
+
+.kpt-profit-margin {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-weight: 600;
+    background: #ecf7ed;
+    color: #1e8e3e;
+}
+
+.kpt-low-margin {
+    background: #fff4e5;
+    color: #b55d00;
+}
+
+.kpt-status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.kpt-status-active {
+    background: #ecf7ed;
+    color: #1e8e3e;
+}
+
+.kpt-status-completed {
+    background: #e8eaeb;
+    color: #2c3338;
+}
+
+.kpt-status-pending {
+    background: #fff4e5;
+    color: #b55d00;
+}
+
+/* Profit Analysis */
+.kpt-analysis-section {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.kpt-analysis-section h2 {
+    margin-top: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+.kpt-alert-section {
+    border-color: #f0b849;
+    background: #fffbf5;
+}
+
+.kpt-negative-profit {
+    color: #d63638;
+    font-weight: 600;
+}
+
+.kpt-positive-profit {
+    color: #1e8e3e;
+    font-weight: 600;
+}
+
+.kpt-profit-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-weight: 600;
+}
+
+.kpt-high-profit {
+    background: #ecf7ed;
+    color: #1e8e3e;
+}
+
+.kpt-warning-row {
+    background: #fffbf5;
+}
+
+.kpt-warning-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-weight: 600;
+    background: #fff4e5;
+    color: #b55d00;
+}
+
+/* Actions */
+.kpt-budget-actions {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #ddd;
+}
+
+/* User Management */
+.kpt-user-actions {
+    margin: 20px 0;
+}
+
+.kpt-user-actions .button {
+    margin-right: 10px;
+}
+
+/* Bulk Assign Form */
+.kpt-bulk-assign-form,
+.kpt-capabilities-form {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin-top: 20px;
+}
