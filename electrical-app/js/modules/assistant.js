@@ -289,12 +289,12 @@ export function draftCard(ui, d, { nav, onDecided } = {}) {
   const draw = (state, recordId) => {
     ui.clear(statusEl);
     if (state === 'proposed') {
-      statusEl.append(
+      h(statusEl, null,
         ui.button('Discard', { variant: 'ghost', size: 'sm', onClick: () => decide('discard') }),
         h('span', { class: 'grow' }),
         ui.button(acceptLabel, { variant: 'primary', size: 'sm', icon: 'check', onClick: () => decide('accept') }));
     } else {
-      statusEl.append(ui.statusBadge(state === 'accepted' ? 'accepted' : 'declined'), h('span', { class: 'muted' }, state === 'accepted' ? ' Saved as a draft document.' : ' Discarded.'), h('span', { class: 'grow' }),
+      h(statusEl, null, ui.statusBadge(state === 'accepted' ? 'accepted' : 'declined'), h('span', { class: 'muted' }, state === 'accepted' ? ' Saved as a draft document.' : ' Discarded.'), h('span', { class: 'grow' }),
         state === 'accepted' && recordId ? ui.button(`Open ${kind.toLowerCase()}`, { size: 'sm', icon: d.kind === 'invoice' ? 'receipt' : 'file-text', onClick: () => openRecord(ui, nav, d.kind === 'invoice' ? 'invoices' : 'estimates', recordId) }) : null);
     }
   };
@@ -310,7 +310,7 @@ export function draftCard(ui, d, { nav, onDecided } = {}) {
     }
   }
   draw(d.status, d.resultId);
-  card.append(
+  h(card, null,
     h('div', { class: 'row' }, ui.icon(d.kind === 'invoice' ? 'receipt' : 'file-text', 18), h('strong', null, `${kind} draft`), h('span', { class: 'grow' }), p.tax?.description ? h('span', { class: 'muted ai-tax' }, `${p.tax.description}${p.tax.provinceName ? `, ${p.tax.provinceName}` : ''}`) : null),
     h('p', { class: 'ai-summary' }, d.summary),
     (p.warnings || []).length ? h('ul', { class: 'ai-warnings' }, p.warnings.map((w) => h('li', null, w))) : null,

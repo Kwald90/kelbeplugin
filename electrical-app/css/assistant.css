@@ -6,6 +6,7 @@
 .ai-problem p { margin: var(--s2) 0; }
 
 /* ---------- chat ---------- */
+.ai-chat [hidden] { display: none !important; }
 .ai-chat { display: flex; flex-direction: column; gap: var(--s3); min-height: 0; }
 .ai-chat-head { font-size: var(--fs-sm); }
 .ai-mode { max-width: 60ch; }
@@ -34,6 +35,8 @@
 .ai-note.danger { color: var(--danger); }
 
 .ai-composer { display: flex; flex-direction: column; gap: var(--s2); }
+/* keep Send clear of the quick-actions button in the corner */
+.main .ai-composer { padding-right: 76px; }
 .ai-compose-row { flex-wrap: nowrap; align-items: flex-end; }
 .ai-input { flex: 1; min-width: 0; resize: vertical; min-height: 48px; max-height: 40vh; padding: var(--s2) var(--s3); font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-input); border-radius: var(--r-md); }
 .ai-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
