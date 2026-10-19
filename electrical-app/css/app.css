@@ -223,6 +223,25 @@ table.table { width: 100%; border-collapse: collapse; }
 .progress { height: 8px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
 .progress > i { display: block; height: 100%; background: var(--accent-fill); border-radius: 8px; }
 
+/* ---------- safe areas ----------
+   Notch, Dynamic Island, status bar and home indicator. env() is 0 everywhere except where the page
+   runs edge to edge (viewport-fit=cover): the Fishtape iOS app and the home-screen PWA on iPhone and iPad.
+   The mobile overrides repeat the media query above because these rules come later. */
+.app { top: env(safe-area-inset-top); left: env(safe-area-inset-left); right: env(safe-area-inset-right); }
+.rail { top: calc(var(--s3) + env(safe-area-inset-top)); left: calc(var(--s3) + env(safe-area-inset-left)); bottom: calc(var(--s3) + env(safe-area-inset-bottom)); }
+.sheet { top: calc(var(--s3) + env(safe-area-inset-top)); right: calc(var(--s3) + env(safe-area-inset-right)); bottom: calc(var(--s3) + env(safe-area-inset-bottom)); }
+.toasts { bottom: calc(var(--s5) + env(safe-area-inset-bottom)); }
+.wheel-fab { right: calc(var(--s5) + env(safe-area-inset-right)); bottom: calc(var(--s5) + env(safe-area-inset-bottom)); }
+.wheel { right: calc(var(--s5) + 32px - 150px + env(safe-area-inset-right)); bottom: calc(var(--s5) + 32px - 150px + env(safe-area-inset-bottom)); }
+@media (max-width: 760px) {
+  .rail { top: auto; right: calc(var(--s3) + env(safe-area-inset-right)); }
+  .main { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .main.full-bleed { padding-bottom: 0; }
+  .sheet { top: auto; right: 0; bottom: 0; padding-bottom: env(safe-area-inset-bottom); }
+  .wheel-fab { right: calc(var(--s4) + env(safe-area-inset-right)); bottom: calc(88px + env(safe-area-inset-bottom)); }
+  .wheel { right: calc(var(--s4) + 28px - 150px + env(safe-area-inset-right)); bottom: calc(88px + 28px - 150px + env(safe-area-inset-bottom)); }
+}
+
 /* print: documents only */
 .print-only { display: none; }
 @media print {
