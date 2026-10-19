@@ -1,13 +1,40 @@
-// Shared document maths. Everything is integer cents; tax is rounded once per document.
+// Shared document maths. Everything is integer cents; each tax is rounded once per document.
 //
 // A line is { description, qty, unitCents, labourHours, kind: material|labour|other }.
 // - line amount = qty * unitCents (price-book prices are sell prices, labour included)
 // - markupPct (estimates only, default 0) is an extra uplift on material lines
 // - labourHours is crew time per unit, used for scheduling and job costing,
 //   not added to the price (add a 'labour' line to charge hours separately)
+//
+// Tax: a document carries `taxes`, a snapshot of its tax components
+// ([{ id, label, pct, applies: { material, labour, other } }], see tax.js), so a
+// later rate or settings change never rewrites an old invoice. Records from
+// before Canadian tax support only have `taxPct`: that becomes one component
+// called "Tax" on every line, exactly as the old maths did.
+
+export const KINDS = ['material', 'labour', 'other'];
 
 export function lineCents(l) {
   return Math.round((Number(l.qty) || 0) * (Number(l.unitCents) || 0));
+}
+
+/** pct% of cents, rounded half up to the cent. pct is taken to 1/1000 % (QST is 9.975%). */
+export function pctOfCents(cents, pct) {
+  const milli = Math.round((Number(pct) || 0) * 1000);
+  const v = (Number(cents) || 0) * milli; // integer, exact
+  return Math.sign(v) * Math.round(Math.abs(v) / 100000);
+}
+
+/** The tax components of a document, old or new. */
+export function docTaxes(doc) {
+  if (Array.isArray(doc.taxes)) return doc.taxes;
+  const pct = Number(doc.taxPct) || 0;
+  return pct ? [{ id: 'tax', label: 'Tax', pct, applies: { material: true, labour: true, other: true } }] : [];
+}
+
+/** Sum of the component rates, kept on documents as `taxPct` for older readers. */
+export function combinedPct(taxes) {
+  return Math.round((taxes || []).reduce((s, t) => s + (Number(t.pct) || 0), 0) * 1000) / 1000;
 }
 
 export function docTotals(doc) {
@@ -22,8 +49,34 @@ export function docTotals(doc) {
   }
   const markupCents = Math.round(materialCents * (Number(doc.markupPct) || 0) / 100);
   const subtotalCents = materialCents + labourCents + otherCents + markupCents;
-  const taxCents = Math.round(subtotalCents * (Number(doc.taxPct) || 0) / 100);
-  return { materialCents, labourCents, otherCents, markupCents, subtotalCents, taxCents, totalCents: subtotalCents + taxCents, hours };
+  // Markup is part of the material price, so it is taxed like materials.
+  const base = { material: materialCents + markupCents, labour: labourCents, other: otherCents };
+  const taxes = docTaxes(doc).map((t) => {
+    const applies = t.applies || { material: true, labour: true, other: true };
+    const baseCents = KINDS.reduce((s, k) => s + (applies[k] ? base[k] : 0), 0);
+    return { id: t.id, label: t.label, pct: Number(t.pct) || 0, baseCents, cents: pctOfCents(baseCents, t.pct), note: t.note || '' };
+  });
+  const taxCents = taxes.reduce((s, t) => s + t.cents, 0);
+  return { materialCents, labourCents, otherCents, markupCents, subtotalCents, taxes, taxCents, totalCents: subtotalCents + taxCents, hours };
+}
+
+/**
+ * Money for display, Canadian English by default: 1234.5 CAD -> "$1,234.50",
+ * USD in en-CA -> "US$1,234.50". Pure, so documents print the same everywhere.
+ */
+export function formatMoney(cents, { currency = 'CAD', locale = 'en-CA', whole = false } = {}) {
+  const v = (Number(cents) || 0) / 100;
+  try {
+    return v.toLocaleString(locale, { style: 'currency', currency, maximumFractionDigits: whole ? 0 : 2, minimumFractionDigits: whole ? 0 : 2 });
+  } catch {
+    return `${currency} ${v.toFixed(whole ? 0 : 2)}`;
+  }
+}
+
+/** A formatter bound to the company's currency: const money = moneyFormatter(store.settings()). */
+export function moneyFormatter(settings) {
+  const currency = settings?.currency || 'CAD';
+  return (cents, opts = {}) => formatMoney(cents, { currency, ...opts });
 }
 
 export function invoicePaidCents(store, invoiceId) {

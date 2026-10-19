@@ -53,6 +53,9 @@
 .panel-warn svg { color: var(--warning); flex: none; margin-top: 2px; }
 .panel-warn .row { flex-wrap: nowrap; align-items: flex-start; }
 .panel-ok { flex-direction: row; align-items: center; gap: var(--s2); color: var(--success); }
+.panel-service { grid-column: 1 / -1; }
+.panel-service .calc-lines tr { color: var(--text); }
+.panel-service .calc-note { margin-top: var(--s2); }
 
 .slot-phase { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; font-size: var(--fs-xs); font-weight: 700; flex: none; background: var(--surface-2); border: 1px solid var(--border); }
 .ph-A { color: var(--text); } .ph-B { color: var(--danger); } .ph-C { color: var(--info); }

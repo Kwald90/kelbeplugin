@@ -1,13 +1,16 @@
 // Panel schedules (S26): a panel directory laid out like the real thing (odd
 // slots left, even right), phases assigned from slot position, live phase
-// balance and load against the main.
-import * as E from '../lib/electrical.js';
+// balance and load against the main, with a service/feeder summary for the
+// company's code book (CEC by default).
+import * as E from '../lib/nec.js';
+import * as S from '../lib/cec/systems.js';
+import * as CEC from '../lib/cec/index.js';
 
-const SYSTEMS = Object.keys(E.PANEL_SYSTEMS);
-const BREAKERS = E.STANDARD_OCPD.filter((a) => a <= 400);
-const SLOT_COUNTS = [12, 16, 20, 24, 30, 32, 40, 42, 54, 60, 66, 72, 84];
+const BREAKERS = CEC.STANDARD_RATINGS.filter((a) => a <= 400);
+const SLOT_COUNTS = [12, 16, 18, 24, 30, 32, 40, 42, 54, 60, 66, 72, 84];
 
 let ui, h, store;
+const bookOf = () => (store.settings().codeBook === 'NEC-2023' ? 'NEC-2023' : 'CEC-2024');
 
 /** Number of slots: stored value, else the smallest standard count that fits the circuits. */
 function slotCount(panel) {
@@ -16,15 +19,8 @@ function slotCount(panel) {
   return SLOT_COUNTS.find((s) => s >= Math.max(used, 24)) || 84;
 }
 
-/** Current a circuit draws: 1-pole on L-N, 2-pole on L-L, 3-pole as three-phase. */
-function circuitAmps(c, system) {
-  const sys = E.PANEL_SYSTEMS[system] || E.PANEL_SYSTEMS['120/240 1ph'];
-  const va = Number(c.loadVA) || 0;
-  const poles = Number(c.poles) || 1;
-  if (poles === 1) return va / sys.lnVolts;
-  if (poles === 2) return va / sys.llVolts;
-  return va / (Math.sqrt(3) * sys.llVolts);
-}
+const circuitAmps = S.circuitAmps;
+const sysLabel = (key) => S.PANEL_SYSTEMS[key]?.label || key;
 
 /** Map slot -> { circuit, start } for every slot a circuit occupies. */
 function occupancy(circuits) {
@@ -36,12 +32,12 @@ function occupancy(circuits) {
 }
 
 function withPhases(circuits, system) {
-  return circuits.map((c) => ({ ...c, phase: E.circuitPhases(c.slot, c.poles, system) }));
+  return circuits.map((c) => ({ ...c, phase: S.circuitPhases(c.slot, c.poles, system) }));
 }
 
 function summary(panel) {
-  const sys = E.PANEL_SYSTEMS[panel.voltage] || E.PANEL_SYSTEMS['120/240 1ph'];
-  const b = E.phaseBalance(panel.circuits || [], panel.voltage);
+  const sys = S.systemOf(panel.voltage);
+  const b = S.phaseBalance(panel.circuits || [], panel.voltage);
   const main = Number(panel.mainAmps) || 0;
   const loadPct = main ? (b.maxAmps / main) * 100 : 0;
   return { sys, b, main, loadPct };
@@ -75,7 +71,7 @@ function listView(root, ctx) {
       columns: [
         { key: 'name', label: 'Panel', sort: (p) => p.name, render: (p) => h('strong', null, p.name) },
         { key: 'job', label: 'Job', sort: (p) => jobName(p.jobId), render: (p) => jobName(p.jobId) },
-        { key: 'voltage', label: 'System', render: (p) => p.voltage },
+        { key: 'voltage', label: 'System', render: (p) => sysLabel(p.voltage) },
         { key: 'main', label: 'Main', align: 'right', sort: (p) => Number(p.mainAmps) || 0, render: (p) => `${p.mainAmps || '—'} A` },
         { key: 'circuits', label: 'Circuits', align: 'right', render: (p) => String((p.circuits || []).length) },
         { key: 'va', label: 'Load', align: 'right', sort: (p) => summary(p).b.totalVA, render: (p) => `${ui.fmtNum(summary(p).b.totalVA)} VA` },
@@ -122,7 +118,7 @@ function editorView(root, ctx, id) {
   const head = h('form', { class: 'card panel-head no-print', onSubmit: (e) => e.preventDefault() }, ui.formGrid([
     { label: 'Panel name', name: 'name', value: panel.name, required: true },
     { label: 'Job', name: 'jobId', type: 'select', value: panel.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`) },
-    { label: 'System', name: 'voltage', type: 'select', value: panel.voltage, options: SYSTEMS },
+    { label: 'System', name: 'voltage', type: 'select', value: panel.voltage, options: S.systemsFor(bookOf(), panel.voltage) },
     { label: 'Main (A)', name: 'mainAmps', type: 'number', value: panel.mainAmps, min: 0, step: 1 },
     { label: 'Bus (A)', name: 'busAmps', type: 'number', value: panel.busAmps, min: 0, step: 1 },
     { label: 'Spaces', name: 'slots', type: 'select', value: String(slotCount(panel)), options: SLOT_COUNTS.map(String) },
@@ -134,6 +130,15 @@ function editorView(root, ctx, id) {
     if (tooFar) {
       ui.toast('Some breakers sit past that space count. Move them first.', 'error');
       head.querySelector('[name=slots]').value = String(slotCount(panel));
+      return;
+    }
+    const single = (panel.circuits || []).filter((c) => (Number(c.poles) || 1) < S.minPoles(v.voltage));
+    const threePole = (panel.circuits || []).filter((c) => Number(c.poles) === 3);
+    if (single.length || (threePole.length && !S.systemOf(v.voltage).three)) {
+      ui.toast(single.length
+        ? `${S.systemOf(v.voltage).label} has no neutral, so 1-pole breakers can't be used. Change breaker${single.length > 1 ? 's' : ''} ${single.map((c) => c.slot).join(', ')} first.`
+        : '3-pole breakers need a three-phase system. Change them first.', 'error', 4200);
+      head.querySelector('[name=voltage]').value = panel.voltage;
       return;
     }
     panel = store.update('panels', panel.id, {
@@ -149,7 +154,13 @@ function editorView(root, ctx, id) {
 
   function addCircuit(slot) {
     const circuits = panel.circuits || [];
-    circuits.push({ slot, description: '', amps: 20, poles: 1, loadVA: 0, phase: '' });
+    const poles = S.minPoles(panel.voltage);
+    const occ = occupancy(circuits);
+    if (poles > 1 && (occ.has(slot + 2) || slot + 2 > slotCount(panel))) {
+      ui.toast('This system has no neutral: breakers need 2 or 3 poles, and the space below is taken.', 'error', 3600);
+      return;
+    }
+    circuits.push({ slot, description: '', amps: 20, poles, loadVA: 0, phase: '' });
     setCircuits(circuits);
     setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"] input[name=description]`)?.focus(), 0);
   }
@@ -170,8 +181,13 @@ function editorView(root, ctx, id) {
           return;
         }
       }
-      if (poles === 3 && !E.PANEL_SYSTEMS[panel.voltage]?.three) {
+      if (poles === 3 && !S.systemOf(panel.voltage).three) {
         ui.toast('3-pole breakers need a three-phase panel.', 'error');
+        redraw();
+        return;
+      }
+      if (poles < S.minPoles(panel.voltage)) {
+        ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: use a 2- or 3-pole breaker.`, 'error');
         redraw();
         return;
       }
@@ -190,7 +206,7 @@ function editorView(root, ctx, id) {
   }
 
   function slotCell(slot, occ, side) {
-    const phase = E.slotPhase(slot, panel.voltage);
+    const phase = S.slotPhase(slot, panel.voltage);
     const o = occ.get(slot);
     const num = h('span', { class: 'slot-num num' }, slot);
     const ph = h('span', { class: ['slot-phase', 'ph-' + phase] }, phase);
@@ -213,11 +229,11 @@ function editorView(root, ctx, id) {
           h('select', { class: 'input', name: 'amps', 'aria-label': `Space ${slot} breaker amps`, onChange: onChange('amps') },
             BREAKERS.map((a) => h('option', { value: a, selected: Number(c.amps) === a }, `${a} A`))),
           h('select', { class: 'input', name: 'poles', 'aria-label': `Space ${slot} poles`, onChange: onChange('poles') },
-            [1, 2, 3].map((p) => h('option', { value: p, selected: Number(c.poles) === p }, `${p}P`))),
+            [1, 2, 3].filter((p) => p >= S.minPoles(panel.voltage) && (p < 3 || S.systemOf(panel.voltage).three)).map((p) => h('option', { value: p, selected: Number(c.poles) === p }, `${p}P`))),
           h('label', { class: 'slot-va' }, h('input', { class: 'input', name: 'loadVA', type: 'number', min: 0, step: 'any', inputmode: 'decimal', value: c.loadVA || '', placeholder: '0', 'aria-label': `Space ${slot} load VA`, onChange: onChange('loadVA') }), h('span', null, 'VA')),
           ui.button('', { variant: 'ghost', size: 'sm', icon: 'trash', title: `Remove breaker ${slot}`, onClick: () => removeCircuit(c) })),
         h('div', { class: ['slot-meta', over ? 'warn' : null] },
-          `${c.phase || E.circuitPhases(c.slot, c.poles, panel.voltage)} · ${ui.fmtNum(amps, 1)} A`, over ? ` · over 80% of ${c.amps} A` : '')));
+          `${c.phase || S.circuitPhases(c.slot, c.poles, panel.voltage)} · ${ui.fmtNum(amps, 1)} A`, over ? ` · over 80% of ${c.amps} A` : '')));
   }
 
   function drawGrid() {
@@ -233,34 +249,65 @@ function editorView(root, ctx, id) {
   function drawSummary() {
     ui.clear(summaryEl);
     const { sys, b, main, loadPct } = summary(panel);
+    const cec = bookOf() === 'CEC-2024';
     const maxPhase = Math.max(1, ...Object.values(b.perPhase));
-    const totalAmps = sys.three ? b.totalVA / (Math.sqrt(3) * sys.llVolts) : b.totalVA / sys.llVolts;
+    const totalAmps = S.totalAmps(b.totalVA, panel.voltage);
+    const contRef = cec ? 'Rule 8-104(6)' : 'NEC 210.20(A), 215.3';
     const warnings = [];
-    if (main && b.maxAmps > 0.8 * main) warnings.push(`Heaviest phase is ${ui.fmtNum(loadPct, 0)}% of the ${main} A main: over 80% for continuous loads.`);
+    if (main && b.maxAmps > 0.8 * main) warnings.push(`Heaviest phase is ${ui.fmtNum(loadPct, 0)}% of the ${main} A main: over 80% for continuous loads (${contRef}).`);
     if (b.imbalancePct > 10) warnings.push(`Phases are ${ui.fmtNum(b.imbalancePct, 1)}% out of balance. Move loads to the lightest phase.`);
     if (main && Number(panel.busAmps) && main > Number(panel.busAmps)) warnings.push(`Main ${main} A is larger than the ${panel.busAmps} A bus rating.`);
     const hot = (panel.circuits || []).filter((c) => c.amps && circuitAmps(c, panel.voltage) > 0.8 * c.amps);
-    if (hot.length) warnings.push(`${hot.length} breaker${hot.length > 1 ? 's are' : ' is'} loaded over 80%: ${hot.map((c) => c.slot).join(', ')}.`);
+    if (hot.length) warnings.push(`${hot.length} breaker${hot.length > 1 ? 's are' : ' is'} loaded over 80% (${contRef}): ${hot.map((c) => c.slot).join(', ')}.`);
+    if (!sys.neutral && (panel.circuits || []).some((c) => (Number(c.poles) || 1) < 2)) warnings.push('1-pole breakers on a system with no neutral: change them to 2- or 3-pole.');
 
     summaryEl.append(
       h('div', { class: 'card panel-phases' },
-        h('div', { class: 'calc-label' }, 'Phase loads'),
+        h('div', { class: 'calc-label' }, `Phase loads · ${sys.label}`),
         Object.entries(b.perPhase).map(([p, va]) => h('div', { class: 'phase-row' },
           h('span', { class: ['slot-phase', 'ph-' + p] }, p),
           h('div', { class: 'progress grow' }, h('i', { class: 'ph-fill-' + p, style: { width: `${(va / maxPhase) * 100}%` } })),
-          h('span', { class: 'num phase-val' }, `${ui.fmtNum(va)} VA · ${ui.fmtNum(b.amps[p], 1)} A`)))),
+          h('span', { class: 'num phase-val' }, `${ui.fmtNum(va)} VA · ${ui.fmtNum(b.amps[p], 1)} A`))),
+        sys.neutral ? null : h('div', { class: 'calc-note muted' }, `No neutral: per-phase amps use ${ui.fmtNum(S.phaseVolts(panel.voltage), 0)} V (${sys.llVolts} V ÷ √3).`)),
       h('div', { class: 'panel-stats' },
-        ui.stat({ label: 'Connected load', value: `${ui.fmtNum(b.totalVA / 1000, 1)} kVA`, hint: `${ui.fmtNum(totalAmps, 1)} A ${sys.three ? '3φ' : 'at ' + sys.llVolts + ' V'}` }),
+        ui.stat({ label: 'Connected load', value: `${ui.fmtNum(b.totalVA / 1000, 1)} kVA`, hint: `${ui.fmtNum(totalAmps, 1)} A ${sys.three ? '3φ at ' + sys.llVolts + ' V' : 'at ' + sys.llVolts + ' V'}` }),
         ui.stat({ label: 'Imbalance', value: `${ui.fmtNum(b.imbalancePct, 1)}%`, tone: b.imbalancePct > 10 ? 'danger' : 'success', hint: 'Max deviation from average' }),
         h('div', { class: 'card stat' },
           h('span', { class: 'label' }, 'Load vs main'),
           h('span', { class: 'value' }, main ? `${ui.fmtNum(loadPct, 0)}%` : '—'),
           h('div', { class: 'progress' }, h('i', { style: { width: `${Math.min(100, loadPct)}%`, background: loadPct > 80 ? 'var(--danger)' : '' } })),
           h('span', { class: 'hint' }, main ? `${ui.fmtNum(b.maxAmps, 1)} A of ${main} A, heaviest phase` : 'Set the main size'))),
+      main ? serviceCard({ sys, b, main, totalAmps, cec }) : null,
       warnings.length
         ? h('div', { class: 'card panel-warn', role: 'status' }, warnings.map((w) => h('div', { class: 'row' }, ui.icon('alert', 16), h('span', null, w))))
         : h('div', { class: 'card panel-ok' }, ui.icon('check', 16), ' No load or balance warnings.'),
     );
+  }
+
+  /** Service / feeder card: loading against the main, and conductors and bonding sized for it. */
+  function serviceCard({ sys, b, main, totalAmps, cec }) {
+    const rows = [];
+    const add = (label, value, ref) => rows.push(h('tr', null, h('td', null, label, ref ? h('span', { class: 'muted' }, ` · ${ref}`) : null), h('td', { class: 'right num' }, value)));
+    add('Connected load current', `${ui.fmtNum(totalAmps, 1)} A`, sys.three ? 'I = VA ÷ (√3 × V)' : 'I = VA ÷ V');
+    add('Continuous-load limit (80% rated main)', `${ui.fmtNum(0.8 * main, 0)} A`, cec ? 'Rule 8-104(6)' : 'NEC 215.3');
+    if (cec) {
+      const term = CEC.terminationTemp({ amps: main });
+      const cu = CEC.minConductorForAmps(main, 'cu', term);
+      const al = CEC.minConductorForAmps(main, 'al', term);
+      add(`Conductors for ${main} A at ${term} °C`, `${cu ? CEC.sizeLabel(cu) + ' Cu' : '—'} / ${al ? CEC.sizeLabel(al) + ' Al' : '—'}`, `Tables 2, 4; Rule 4-006`);
+      const bond = CEC.bondingConductor(main);
+      if (bond) add('Bonding conductor', `${CEC.sizeLabel(bond.cu)} Cu / ${CEC.sizeLabel(bond.al)} Al`, 'Table 16');
+    } else {
+      const temp = main <= 100 ? 60 : 75;
+      const cu = E.SIZES.find((sz) => (E.ampacity(sz, 'cu', temp) || 0) >= main);
+      const al = E.SIZES.find((sz) => (E.ampacity(sz, 'al', temp) || 0) >= main);
+      add(`Conductors for ${main} A at ${temp} °C`, `${cu ? E.sizeLabel(cu) + ' Cu' : '—'} / ${al ? E.sizeLabel(al) + ' Al' : '—'}`, 'NEC Table 310.16, 110.14(C)');
+    }
+    return h('div', { class: 'card panel-service' },
+      h('div', { class: 'calc-label' }, `Service / feeder · ${cec ? 'CEC 2024' : 'NEC 2023'}`),
+      h('table', { class: 'calc-lines' }, h('tbody', null, rows)),
+      h('p', { class: 'calc-note muted' }, 'Connected load, not a demand calculation. Conductors sized to the main rating in raceway or cable, 30 °C, three or fewer current-carrying conductors. ',
+        cec ? h('a', { href: '#/calcs/load' }, 'Dwelling service (Rule 8-200)') : h('a', { href: '#/calcs/load' }, 'Dwelling load calc')));
   }
 
   function drawPrint() {
@@ -279,7 +326,7 @@ function editorView(root, ctx, id) {
     for (let r = 1; r <= total / 2; r++) rows.push(h('tr', null, cell(2 * r - 1), cell(2 * r)));
     printEl.append(
       h('h1', null, panel.name),
-      h('p', null, `${panel.voltage} · Main ${panel.mainAmps} A · Bus ${panel.busAmps} A${job ? ` · ${job.number} ${job.title}` : ''}`),
+      h('p', null, `${sysLabel(panel.voltage)} · Main ${panel.mainAmps} A · Bus ${panel.busAmps} A${job ? ` · ${job.number} ${job.title}` : ''}`),
       h('table', { class: 'panel-print-table' }, h('tbody', null, rows)),
       h('p', { class: 'small' }, `${s.company?.name || ''}${s.company?.licenceNo ? ' · Lic. ' + s.company.licenceNo : ''} · ${ui.fmtDate(new Date())}`),
     );

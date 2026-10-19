@@ -1,5 +1,6 @@
 // S11 Dashboard: today at a glance, plus every alert the other modules raise.
-import { invoiceBalanceCents, invoiceStatus, entryHours } from '../lib/money.js';
+import { invoiceBalanceCents, invoiceStatus, entryHours, moneyFormatter } from '../lib/money.js';
+import { provinceName } from '../lib/tax.js';
 
 export default {
   id: 'dashboard',
@@ -18,6 +19,8 @@ export default {
     const draw = () => {
       ui.clear(root);
       const me = auth.current();
+      const settings = store.settings();
+      const money = moneyFormatter(settings);
       const day = ui.today();
       const hour = new Date().getHours();
       const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -36,9 +39,9 @@ export default {
       const myOpen = onClock.find((e) => e.employeeId === me.id);
 
       const stats = h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' } },
-        auth.can('leads') ? ui.stat({ label: 'Open pipeline', value: ui.fmtMoney(pipeline, { whole: true }), hint: `${openLeads.length} open leads` }) : null,
+        auth.can('leads') ? ui.stat({ label: 'Open pipeline', value: money(pipeline, { whole: true }), hint: `${openLeads.length} open leads` }) : null,
         ui.stat({ label: 'Jobs in progress', value: String(active.length), hint: `${jobs.filter((j) => j.status === 'scheduled').length} scheduled` }),
-        auth.can('invoices') ? ui.stat({ label: 'Owed to you', value: ui.fmtMoney(outstanding, { whole: true }), hint: overdue.length ? `${overdue.length} overdue` : 'nothing overdue', tone: overdue.length ? 'danger' : null }) : null,
+        auth.can('invoices') ? ui.stat({ label: 'Owed to you', value: money(outstanding, { whole: true }), hint: overdue.length ? `${overdue.length} overdue` : 'nothing overdue', tone: overdue.length ? 'danger' : null }) : null,
         ui.stat({ label: 'On the clock', value: String(onClock.length), hint: onClock.map((e) => empById.get(e.employeeId)?.name.split(' ')[0]).filter(Boolean).join(', ') || 'nobody yet', tone: onClock.length ? 'success' : null }),
       );
 
@@ -67,7 +70,7 @@ export default {
       // ---- alerts ----
       const alerts = [];
       const add = (tone, iconName, text, href) => alerts.push({ tone, iconName, text, href });
-      for (const i of overdue) add('danger', 'receipt', `${i.number} is overdue: ${ui.fmtMoney(invoiceBalanceCents(store, i))}`, `#/invoices/${i.id}`);
+      for (const i of overdue) add('danger', 'receipt', `${i.number} is overdue: ${money(invoiceBalanceCents(store, i))}`, `#/invoices/${i.id}`);
       for (const e of store.list('employees', (x) => x.active !== false && x.licenceExpiry)) {
         const d = ui.daysUntil(e.licenceExpiry);
         if (d < 0) add('danger', 'id-card', `${e.name}'s licence expired ${-d} days ago`, `#/employees/${e.id}`);
@@ -89,6 +92,12 @@ export default {
       for (const it of store.list('items', (x) => x.reorderPoint > 0)) {
         const total = Object.values(it.stock || {}).reduce((s, q) => s + (Number(q) || 0), 0);
         if (total < it.reorderPoint) add('warning', 'box', `Low stock: ${it.name} (${total} ${it.unit})`, '#/inventory');
+      }
+      // Company set-up that invoices and the code book depend on.
+      if (auth.can('settings')) {
+        const co = settings.company || {};
+        if (!co.province) add('warning', 'settings', 'Set your province: it picks the code amendments, permit authority and sales tax', '#/settings');
+        else if (!co.gstHstNo && store.count('invoices') > 0) add('info', 'settings', 'Add your GST/HST number in Settings so it prints on invoices', '#/settings');
       }
       const queued = store.count('outbox', (o) => o.status === 'queued');
       if (queued) add('info', 'send', `${queued} follow-up message${queued > 1 ? 's' : ''} waiting in the outbox`, '#/sequences');
@@ -118,7 +127,8 @@ export default {
 
       root.append(ui.page({
         title: `${hello}, ${me.name.split(' ')[0]}`,
-        subtitle: `${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} · ${store.settings().company?.name || ''}`,
+        subtitle: [new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }), settings.company?.name,
+          settings.company?.province ? `${provinceName(settings.company.province)} · ${settings.codeBook === 'NEC-2023' ? 'NEC 2023' : 'CEC 2024'}` : null].filter(Boolean).join(' · '),
         actions: [
           auth.can('leads') ? ui.button('New lead', { icon: 'funnel', href: '#/leads?new=1' }) : null,
           auth.can('estimates') ? ui.button('New quote', { icon: 'file-text', variant: 'primary', href: '#/estimates/new' }) : null,
