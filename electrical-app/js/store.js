@@ -293,12 +293,21 @@ export const store = {
   /** Register the one tracker (sync.js) that hears every local write. Pass null to stop. */
   track(fn) { tracker = fn; },
 
-  /** All records in a collection, newest first, optionally filtered. Returns copies. */
-  list(coll, pred) {
+  /**
+   * All records in a collection, newest first, optionally filtered. Returns copies.
+   * `opts.omit` leaves heavy fields out of the copies (a plan set's underlays are megabytes each).
+   */
+  list(coll, pred, opts) {
     let rows = [...bucket(coll).values()];
     if (pred) rows = rows.filter(pred);
     rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-    return rows.map(clone);
+    const omit = opts?.omit?.length ? new Set(opts.omit) : null;
+    if (!omit) return rows.map(clone);
+    return rows.map((r) => {
+      const out = {};
+      for (const k of Object.keys(r)) if (!omit.has(k)) out[k] = clone(r[k]);
+      return out;
+    });
   },
 
   get(coll, id) {

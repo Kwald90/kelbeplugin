@@ -109,7 +109,7 @@ export default {
           h('span', { class: 'grow' }, a.text), ui.icon('chevron-right', 16))) : h('div', { class: 'list-row muted' }, 'All clear. Nothing needs you right now.'));
 
       // ---- recent drawings ----
-      const drawings = store.list('drawings').sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 4);
+      const drawings = store.list('drawings', null, { omit: ['underlay', 'strokes', 'texts', 'rooms'] }).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 4);
       const drawingCards = auth.can('drawings') ? h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' } },
         drawings.map((d) => h('a', { class: 'card click', href: `#/drawings/${d.id}`, style: { padding: '8px', color: 'inherit', textDecoration: 'none' } },
           h('div', { class: 'dash-thumb', style: { aspectRatio: '4 / 3', borderRadius: '12px', background: 'var(--paper)', border: '1px solid var(--border)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundImage: d.thumb ? `url(${d.thumb})` : 'none', display: 'grid', placeItems: 'center', color: 'var(--text-muted)' } }, d.thumb ? null : ui.icon('pen', 28)),

@@ -9,6 +9,10 @@ import {
 import { SYMBOLS, SYMBOL_ORDER, symbolPreview } from './symbols.js';
 import { createRooms, swallowNextClick, ROOM_ICON, CHECK_ICON, WAND_ICON } from './rooms.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
+import {
+  makePlanSet, sheetRecord, sheetName, sheetLabel, isDefaultDrawingName, sortSheets, neighbours, scaleTargets, hasOwnScale,
+} from '../lib/plansets.js';
+import { isPdf, openPdf, renderSheet, renderImage, pickPages, importPages, chooseDialog, release } from './plansets-ui.js';
 
 const RAW = {
   wire: '<path d="M3 18c3 0 3-12 9-12s6 12 9 12"/><circle cx="3" cy="18" r="1.6"/><circle cx="21" cy="18" r="1.6"/>',
@@ -80,33 +84,10 @@ export function normalizeDrawing(d) {
   return d;
 }
 
-// pdf.js is vendored (vendor/pdfjs-4.10.38/README.md) so it works offline and under a 'self'-only CSP.
-const PDFJS = new URL('../../vendor/pdfjs-4.10.38/', import.meta.url);
-let pdfjsPromise = null;
-function loadPdfJs() {
-  pdfjsPromise ||= import(new URL('pdf.min.mjs', PDFJS).href).then((lib) => {
-    lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.mjs', PDFJS).href;
-    return lib;
-  }).catch(() => {
-    pdfjsPromise = null;
-    throw new Error('Could not load the PDF reader. Reload the app, or import the plan as an image.');
-  });
-  return pdfjsPromise;
-}
+// PDF and image import (pdf.js loading, page picker, per-page render) lives in ./plansets-ui.js.
 
-const readAsDataURL = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(file); });
-const loadImage = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Could not read that image')); i.src = src; });
-
-/** Downscale anything to <= 4096 px on the long side, flattened on white. */
-function flatten(source, w, h) {
-  const k = Math.min(1, 4096 / Math.max(w, h));
-  const c = document.createElement('canvas');
-  c.width = Math.round(w * k); c.height = Math.round(h * k);
-  const x = c.getContext('2d');
-  x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
-  x.drawImage(source, 0, 0, c.width, c.height);
-  return { url: c.toDataURL('image/jpeg', 0.9), w: c.width, h: c.height };
-}
+/** Fields the sheet bar and sheet list don't need: lists of a set's sheets leave them out. */
+const SHEET_OMIT = ['underlay', 'strokes', 'texts', 'rooms', 'codeOptions', 'placement', 'view'];
 
 export function openEditor(root, ctx, id) {
   const { store, ui, nav } = ctx;
@@ -149,7 +130,12 @@ export function openEditor(root, ctx, id) {
   const paperBtn = btn('grid', 'Paper type', () => cyclePaper(), { class: 'wide-only' });
 
   const topLeft = h('div', { class: 'cv-bar cv-top-left' },
-    btn('chevron-left', 'Back to drawings', () => { flushSave(); nav('#/drawings' + (d.jobId ? '?jobId=' + d.jobId : '')); }),
+    btn('chevron-left', 'Back to drawings', () => {
+      flushSave();
+      // back to the gallery with this sheet's set opened up
+      const qs = [d.jobId ? 'jobId=' + encodeURIComponent(d.jobId) : null, d.planSet?.id ? 'set=' + encodeURIComponent(d.planSet.id) : null].filter(Boolean).join('&');
+      nav('#/drawings' + (qs ? '?' + qs : ''));
+    }),
     titleBtn);
   const topRight = h('div', { class: 'cv-bar cv-top-right' },
     undoBtn, redoBtn, h('span', { class: 'cv-sep' }),
@@ -195,7 +181,13 @@ export function openEditor(root, ctx, id) {
     btn('minus', 'Zoom out', () => zoomBy(1 / 1.25), { size: 18 }), zoomLabel, btn('plus', 'Zoom in', () => zoomBy(1.25), { size: 18 }),
     h('span', { class: 'cv-sep' }), btn(RAW.fit, 'Fit drawing (0)', () => fit(), { size: 18 }));
 
-  const wrap = h('div', { class: 'cv' }, canvas, topLeft, topRight, ctxBar, shapes, wheel, pop, zoomBar);
+  // plan set: previous / sheet list / next (only on drawings that are sheets of a set)
+  const sheetPrev = btn('chevron-left', 'Previous sheet (Page Up)', () => goSheet(-1));
+  const sheetNext = btn('chevron-right', 'Next sheet (Page Down)', () => goSheet(1));
+  const sheetLabelBtn = h('button', { class: 'cv-sheet-label', type: 'button', onClick: () => sheetsSheet() });
+  const sheetBar = h('nav', { class: 'cv-bar cv-sheetbar', 'aria-label': 'Sheets in this plan set', hidden: true }, sheetPrev, sheetLabelBtn, sheetNext);
+
+  const wrap = h('div', { class: 'cv' }, canvas, topLeft, topRight, ctxBar, shapes, wheel, pop, zoomBar, sheetBar);
   root.append(wrap);
 
   // ---------- helpers ----------
@@ -220,12 +212,18 @@ export function openEditor(root, ctx, id) {
   function snapshot() {
     return {
       json: JSON.stringify({ layers: d.layers, strokes: d.strokes, objects: d.objects, texts: d.texts, rooms: d.rooms, codeOptions: d.codeOptions ?? null, placement: d.placement ?? null, paper: d.paper, scale: d.scale,
-        underlayX: d.underlayX, underlayY: d.underlayY, underlayW: d.underlayW, underlayH: d.underlayH, underlayOpacity: d.underlayOpacity, underlayLocked: d.underlayLocked }),
+        underlayX: d.underlayX, underlayY: d.underlayY, underlayW: d.underlayW, underlayH: d.underlayH, underlayOpacity: d.underlayOpacity, underlayLocked: d.underlayLocked,
+        ...(d.scaleSet !== undefined ? { scaleSet: d.scaleSet } : {}), ...(d.planSet !== undefined ? { planSet: d.planSet } : {}) }),
       underlay: d.underlay,
     };
   }
   function restore(s) {
-    Object.assign(d, JSON.parse(s.json));
+    const snap = JSON.parse(s.json);
+    const setBefore = d.planSet?.id;
+    // undoing back past a plan set import: null (not delete) so the saved record loses it too
+    for (const k of ['planSet', 'scaleSet']) if (!(k in snap) && d[k] != null) d[k] = null;
+    Object.assign(d, snap);
+    if (d.planSet?.id !== setBefore) renderSheetBar();
     if (d.underlay !== s.underlay) { d.underlay = s.underlay; loadUnderlay(); }
     if (!layerOf(st.activeLayer)) st.activeLayer = d.layers[d.layers.length - 1].id;
     st.selection = st.selection.filter((x) => findSel(x));
@@ -261,13 +259,16 @@ export function openEditor(root, ctx, id) {
   function save() {
     clearTimeout(saveTimer);
     saveTimer = 0;
-    if (!store.get('drawings', id)) return; // deleted
+    if (!store.count('drawings', (x) => x.id === id)) return; // deleted (count: no copy of the underlay)
     const patch = {
       name: d.name, jobId: d.jobId || null, paper: d.paper, scale: d.scale, layers: d.layers, strokes: d.strokes, objects: d.objects, texts: d.texts,
       rooms: d.rooms, codeOptions: d.codeOptions || null, placement: d.placement || null,
       underlay: d.underlay || null, underlayX: d.underlayX || 0, underlayY: d.underlayY || 0, underlayW: d.underlayW || 0, underlayH: d.underlayH || 0,
       underlayOpacity: d.underlayOpacity, underlayLocked: !!d.underlayLocked, view: st.view ? { ...st.view } : null,
     };
+    // only on drawings that have them, so older drawings don't gain empty fields
+    if (d.scaleSet !== undefined) patch.scaleSet = d.scaleSet;
+    if (d.planSet !== undefined) patch.planSet = d.planSet;
     if (contentDirty) {
       contentDirty = false;
       try {
@@ -699,7 +700,11 @@ export function openEditor(root, ctx, id) {
         st.setScale = false;
         let m = ans == null ? null : parseLength(ans, { units: units(), bare: units() === 'imperial' ? 'ft' : 'm' });
         if (m != null && units() === 'metric' && /^\s*\d+(\.\d+)?\s*$/.test(ans) && m > 30) m /= 1000;
-        if (m > 0) { checkpoint(); d.scale = len / (m / M_PER_FT); changed(); ui.toast(`Scale set: ${fmtLength(m, { units: units(), denom: 4 })} = ${Math.round(len)} canvas units`, 'success'); }
+        if (m > 0) {
+          checkpoint(); d.scale = len / (m / M_PER_FT); d.scaleSet = true; changed();
+          ui.toast(`Scale set: ${fmtLength(m, { units: units(), denom: 4 })} = ${Math.round(len)} canvas units`, 'success');
+          offerScaleToSet();
+        }
         else { if (ans != null) ui.toast('Could not read that length', 'error'); updateChrome(); requestFrame(); }
         return;
       }
@@ -771,6 +776,7 @@ export function openEditor(root, ctx, id) {
     if (k === 'delete' || k === 'backspace') { if (st.selection.length) { e.preventDefault(); deleteSel(); } return; }
     if (k === 'escape') { if (op?.type === 'wire') { op = null; st.snap = null; } st.placing = null; st.setScale = false; st.selection = []; pop.hidden = true; updateChrome(); requestFrame(); return; }
     if (k === 'enter') { finishWire(); return; }
+    if (k === 'pageup' || k === 'pagedown') { e.preventDefault(); goSheet(k === 'pageup' ? -1 : 1); return; }
     if (k === '0') { fit(); return; }
     if (k === '=' || k === '+') { zoomBy(1.25); return; }
     if (k === '-') { zoomBy(0.8); return; }
@@ -1044,6 +1050,9 @@ export function openEditor(root, ctx, id) {
     const total = rows.reduce((a, r) => a + (r.item ? r.item.priceCents * r.n : 0), 0);
     const wires = d.strokes.filter((s) => s.tool === 'wire' && layerOf(s.layer)?.visible !== false);
     const wirePx = wires.reduce((a, s) => a + wireLength(s.points), 0);
+    // a sheet of a plan set can also price the whole set (every sheet's symbols together)
+    const sheets = setSheets();
+    const setSymbols = sheets.reduce((a, x) => a + (x.objects || []).filter((o) => o.symbol).length, 0);
     const s = ui.openSheet({
       title: 'Takeoff',
       body: h('div', { class: 'stack' },
@@ -1056,11 +1065,13 @@ export function openEditor(root, ctx, id) {
           ], rows,
         }) : ui.empty({ icon: RAW.outlet, title: 'No symbols yet', text: 'Place receptacles, switches and lights from the Symbols library to count them here.' }),
         wires.length ? h('p', { class: 'muted', style: { margin: 0 } }, `${wires.length} wire run${wires.length === 1 ? '' : 's'} drawn, about ${fmtWorldLength(wirePx, d, units())} at the drawing scale.`) : null,
-        rows.length ? h('div', { class: 'row' }, h('strong', { class: 'grow' }, 'Price-book value'), h('strong', { class: 'num' }, ui.fmtMoney(total))) : null),
+        rows.length ? h('div', { class: 'row' }, h('strong', { class: 'grow' }, 'Price-book value'), h('strong', { class: 'num' }, ui.fmtMoney(total))) : null,
+        sheets.length > 1 ? h('p', { class: 'muted', style: { margin: 0 } }, `This sheet only. The whole set (${sheets.length} sheets) has ${setSymbols} symbol${setSymbols === 1 ? '' : 's'}.`) : null),
       actions: [
         ui.button('Close', { variant: 'ghost', onClick: () => s.close() }),
-        ui.button('Create estimate', { variant: 'primary', icon: 'file-text', disabled: !rows.length, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromDrawing=${encodeURIComponent(id)}`); } }),
-      ],
+        sheets.length > 1 ? ui.button(`Estimate whole set (${sheets.length})`, { icon: 'layers', disabled: !setSymbols, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromPlanSet=${encodeURIComponent(d.planSet.id)}`); } }) : null,
+        ui.button(sheets.length > 1 ? 'Estimate this sheet' : 'Create estimate', { variant: 'primary', icon: 'file-text', disabled: !rows.length, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromDrawing=${encodeURIComponent(id)}`); } }),
+      ].filter(Boolean),
     });
   }
 
@@ -1077,9 +1088,11 @@ export function openEditor(root, ctx, id) {
       onSubmit: (v) => {
         d.name = v.name.trim() || 'Untitled';
         d.jobId = v.jobId || null;
-        if (v.paper !== d.paper || (v.scale > 0 && v.scale !== d.scale)) { checkpoint(); d.paper = v.paper; if (v.scale > 0) d.scale = v.scale; }
+        const rescaled = v.scale > 0 && Math.abs(v.scale - Math.round(d.scale * 100) / 100) > 1e-9;
+        if (v.paper !== d.paper || rescaled) { checkpoint(); d.paper = v.paper; if (rescaled) { d.scale = v.scale; d.scaleSet = true; } }
         changed();
         save();
+        if (rescaled) offerScaleToSet();
       },
     });
   }
@@ -1100,19 +1113,122 @@ export function openEditor(root, ctx, id) {
           row(RAW.wand, 'Auto-place boxes in every room', d.rooms.length ? `${d.rooms.length} room${d.rooms.length === 1 ? '' : 's'}: receptacles, switches, lights, alarms` : 'Draw a room first', () => rooms.autoPlace()),
           row(RAW.check, 'Code check', 'CEC 2024 receptacle rules, GFCI, AFCI, alarms', () => rooms.openCheck()),
           row('sliders', 'Placement & check settings', 'Mounting heights, alarms, live check', () => rooms.settingsSheet()),
-          row('upload', 'Import plan', 'Image or PDF as an underlay', importUnderlay),
+          row('upload', 'Import plan', 'Image or PDF. A PDF with several pages becomes a plan set, one drawing per sheet', importUnderlay),
+          d.planSet?.id ? row('layers', 'Sheets in this set', `${d.planSet.name}: jump to any sheet`, sheetsSheet) : null,
           row('list', 'Takeoff', 'Count symbols and create an estimate', takeoffSheet),
           row('image', 'Export PNG', 'High-resolution image', exportPNG),
           row('download', 'Export SVG', 'Vector file for CAD and print', exportSVG),
           job ? row('briefcase', 'Open job', `${job.number} · ${job.title}`, () => { flushSave(); nav('#/jobs/' + job.id); }) : null,
-          row('trash', 'Delete drawing', 'Removes it from this device', async () => {
-            if (!(await ui.confirmDialog(`Delete "${d.name}"? This can't be undone.`, { okLabel: 'Delete drawing' }))) return;
-            clearTimeout(saveTimer); saveTimer = 0;
-            store.remove('drawings', id);
-            ui.toast('Drawing deleted');
-            nav('#/drawings');
-          }))),
+          row('trash', d.planSet?.id ? 'Delete sheet or set' : 'Delete drawing', d.planSet?.id ? 'This sheet, or every sheet in the set' : 'Removes it from this device', deleteDrawing))),
     });
+  }
+
+  async function deleteDrawing() {
+    flushSave();
+    const sheets = setSheets();
+    if (sheets.length > 1) {
+      const pick = await chooseDialog(ui, {
+        title: 'Delete from the plan set',
+        message: `"${d.name}" is one of ${sheets.length} sheets in ${d.planSet.name}. Delete just this sheet, or every sheet in the set? This can't be undone.`,
+        choices: [{ id: 'one', label: 'Delete this sheet', variant: 'danger' }, { id: 'all', label: `Delete all ${sheets.length} sheets`, variant: 'danger solid' }],
+      });
+      if (!pick) return;
+      clearTimeout(saveTimer); saveTimer = 0;
+      if (pick === 'all') {
+        for (const x of sheets) store.remove('drawings', x.id);
+        ui.toast(`Deleted ${sheets.length} sheets`);
+        return nav('#/drawings' + (d.jobId ? '?jobId=' + d.jobId : ''));
+      }
+      const { prev, next } = neighbours(sheets, id);
+      store.remove('drawings', id);
+      ui.toast('Sheet deleted');
+      return nav('#/drawings/' + (next || prev).id); // carry on in the set
+    }
+    if (!(await ui.confirmDialog(`Delete "${d.name}"? This can't be undone.`, { okLabel: 'Delete drawing' }))) return;
+    clearTimeout(saveTimer); saveTimer = 0;
+    store.remove('drawings', id);
+    ui.toast('Drawing deleted');
+    nav('#/drawings');
+  }
+
+  // ---------- plan sets ----------
+  /** This drawing's set, sheets in page order, without their underlays. Empty when it isn't a sheet. */
+  function setSheets() {
+    const sid = d.planSet?.id;
+    if (!sid) return [];
+    const rows = store.list('drawings', (x) => x.planSet?.id === sid || x.id === id, { omit: SHEET_OMIT });
+    // this drawing as it is now, which may be ahead of the store
+    return sortSheets(rows.map((x) => (x.id === id ? { ...x, name: d.name, scale: d.scale, scaleSet: d.scaleSet, planSet: d.planSet, objects: d.objects } : x)));
+  }
+
+  function renderSheetBar() {
+    const sheets = setSheets();
+    const nb = neighbours(sheets, id);
+    sheetBar.hidden = sheets.length < 2 || nb.index < 0;
+    if (sheetBar.hidden) return;
+    sheetPrev.disabled = !nb.prev;
+    sheetNext.disabled = !nb.next;
+    ui.clear(sheetLabelBtn).append(h('strong', null, sheetLabel(d.planSet)), h('span', { class: 'cv-sheet-pos' }, `${nb.index + 1}/${nb.count}`), icon('chevron-down', 16));
+    sheetLabelBtn.title = 'All sheets in this set';
+    sheetLabelBtn.setAttribute('aria-label', `Sheet ${sheetLabel(d.planSet)}, ${nb.index + 1} of ${nb.count}. Show all sheets`);
+  }
+
+  function goSheet(step) {
+    const sheets = setSheets();
+    if (sheets.length < 2) return;
+    const nb = neighbours(sheets, id);
+    const to = step < 0 ? nb.prev : nb.next;
+    if (to) openSheetId(to.id);
+  }
+  function openSheetId(sid) {
+    if (sid === id) return;
+    flushSave();
+    nav('#/drawings/' + sid);
+  }
+
+  function sheetsSheet() {
+    const sheets = setSheets();
+    if (!sheets.length) return;
+    const symbolsOf = (x) => (x.objects || []).filter((o) => o.symbol).length;
+    const s = ui.openSheet({
+      title: d.planSet.name,
+      body: h('div', { class: 'stack' },
+        h('p', { class: 'muted', style: { margin: 0 } }, `${sheets.length} sheet${sheets.length === 1 ? '' : 's'}. Each sheet keeps its own scale and markup.`),
+        h('div', { class: 'list cv-sheet-list' }, sheets.map((x) => {
+          const here = x.id === id;
+          const n = symbolsOf(x);
+          return h('button', { class: ['list-row', 'click', 'cv-sheet-row', here ? 'on' : null], type: 'button', 'aria-current': here ? 'page' : null, onClick: () => { s.close(); openSheetId(x.id); } },
+            h('span', { class: 'cv-sheet-thumb' }, x.thumb ? h('img', { src: x.thumb, alt: '', loading: 'lazy' }) : icon('image', 20)),
+            h('span', { class: 'grow cv-sheet-text' },
+              h('span', { class: 'title' }, sheetLabel(x.planSet)),
+              h('span', { class: 'meta' }, [x.planSet?.label ? `Page ${x.planSet.page}` : null, hasOwnScale(x) ? 'Scale set' : 'No scale yet', n ? `${n} symbol${n === 1 ? '' : 's'}` : null, here ? 'Open now' : null].filter(Boolean).join(' · '))),
+            here ? null : icon('chevron-right', 18));
+        }))),
+    });
+  }
+
+  /** After a sheet's scale changes: offer it to the set's other sheets (unscaled ones, or all). */
+  async function offerScaleToSet() {
+    flushSave(); // this sheet's new scale goes to the store before the others take it
+    const sheets = setSheets();
+    if (sheets.length < 2) return;
+    const me = sheets.find((x) => x.id === id);
+    const others = sheets.length - 1;
+    const unscaled = scaleTargets(sheets, me, 'unscaled');
+    const all = scaleTargets(sheets, me, 'all');
+    const choices = [];
+    if (unscaled.length) choices.push({ id: 'unscaled', label: unscaled.length === others ? `Use on all ${others}` : `Only the ${unscaled.length} with no scale`, variant: 'primary' });
+    if (unscaled.length < others) choices.push({ id: 'all', label: `All ${others}, replacing theirs`, variant: unscaled.length ? 'secondary' : 'primary' });
+    const scaled = others - unscaled.length;
+    const pick = await chooseDialog(ui, {
+      title: 'Same scale on the other sheets?',
+      message: `Use this scale on the other ${others} sheet${others === 1 ? '' : 's'} in this set?${scaled ? ` ${scaled} already ha${scaled === 1 ? 's its' : 've their'} own scale.` : ''} Sheets drawn at a different scale (site plan, details) need their own.`,
+      choices, cancelLabel: 'Not now',
+    });
+    if (!pick) return;
+    const targets = pick === 'all' ? all : unscaled;
+    for (const t of targets) store.update('drawings', t.id, { scale: t.scale, scaleSet: true }, { summary: `Scale copied from ${d.name}`.slice(0, 80) });
+    ui.toast(`Scale set on ${targets.length} more sheet${targets.length === 1 ? '' : 's'}`, 'success');
   }
 
   function cyclePaper() {
@@ -1122,52 +1238,83 @@ export function openEditor(root, ctx, id) {
     ui.toast(`Paper: ${next.label}`);
   }
 
-  async function importUnderlay() {
-    const file = await ui.pickFile('image/*,application/pdf');
+  /** Put a rendered page or image under this drawing (undoable). */
+  function setUnderlay(out, planSet) {
+    checkpoint();
+    d.underlay = out.url;
+    d.underlayW = out.w; d.underlayH = out.h;
+    d.underlayX = 0; d.underlayY = 0;
+    d.underlayLocked = true;
+    d.underlayOpacity = d.underlayOpacity ?? 1;
+    if (planSet !== undefined) d.planSet = planSet;
+    loadUnderlay();
+    changed();
+    underImg.addEventListener('load', () => fit(), { once: true });
+  }
+
+  /**
+   * Import a plan: an image, one PDF page, or several PDF pages as a plan set. With a set,
+   * this drawing gets the first page and every other page becomes a new drawing that copies
+   * this one's job, paper and layers.
+   * @param {File} [given] a file instead of the picker (tests)
+   */
+  async function importUnderlay(given) {
+    const file = given instanceof Blob ? given : await ui.pickFile('image/*,application/pdf');
     if (!file) return;
+    if (!isPdf(file)) {
+      if (!file.type.startsWith('image/')) { ui.toast('Pick an image or a PDF', 'error'); return; }
+      try {
+        setUnderlay(await renderImage(file));
+        ui.toast('Plan imported. Set the scale with Measure → Set scale.', 'success', 4000);
+      } catch (err) {
+        ui.toast(err?.message || 'Could not import that file', 'error', 4000);
+      }
+      return;
+    }
+    let doc = null;
     try {
-      let out;
-      if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
-        ui.toast('Reading PDF…');
-        const lib = await loadPdfJs();
-        // isEvalSupported: false keeps a crafted PDF from running script (CVE-2024-4367 class)
-        const pdf = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
-        let pageNo = 1;
-        if (pdf.numPages > 1) {
-          const ans = await ui.promptDialog(`This PDF has ${pdf.numPages} pages. Which page is the plan?`, { title: 'Pick a page', value: '1', okLabel: 'Import' });
-          if (ans == null) return;
-          pageNo = Math.min(pdf.numPages, Math.max(1, parseInt(ans, 10) || 1));
-        }
-        const page = await pdf.getPage(pageNo);
-        const v1 = page.getViewport({ scale: 1 });
-        const k = Math.min(3, 4096 / Math.max(v1.width, v1.height));
-        const vp = page.getViewport({ scale: k });
-        const c = document.createElement('canvas');
-        c.width = Math.round(vp.width); c.height = Math.round(vp.height);
-        const cx = c.getContext('2d');
-        cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
-        await page.render({ canvasContext: cx, viewport: vp }).promise;
-        out = flatten(c, c.width, c.height);
-      } else if (file.type.startsWith('image/')) {
-        const img = await loadImage(await readAsDataURL(file));
-        out = flatten(img, img.naturalWidth, img.naturalHeight);
-      } else {
-        ui.toast('Pick an image or a PDF', 'error');
+      ui.toast('Reading PDF…', 'info', 1400);
+      doc = await openPdf(file);
+      const pages = doc.numPages > 1 ? await pickPages(ui, doc, { title: `Import sheets · ${doc.name}` }) : [1];
+      if (!pages?.length || destroyed) return;
+      if (pages.length === 1) {
+        const out = await renderSheet(doc, pages[0]);
+        if (destroyed) return;
+        // a sheet of a set keeps its place; only the render size can change
+        setUnderlay(out, d.planSet?.id ? makePlanSet({ ...d.planSet, pxPerPt: out.pxPerPt }) : undefined);
+        ui.toast('Plan imported. Set the scale with Measure → Set scale.', 'success', 4000);
         return;
       }
-      checkpoint();
-      d.underlay = out.url;
-      d.underlayW = out.w; d.underlayH = out.h;
-      d.underlayX = 0; d.underlayY = 0;
-      d.underlayLocked = true;
-      d.underlayOpacity = d.underlayOpacity ?? 1;
-      loadUnderlay();
-      changed();
-      underImg.addEventListener('load', () => fit(), { once: true });
-      ui.toast('Plan imported. Set the scale with Measure → Set scale.', 'success', 4000);
+      await importSet(doc, pages);
     } catch (err) {
-      console.warn(err);
       ui.toast(err?.message || 'Could not import that file', 'error', 4000);
+    } finally {
+      doc?.close();
+    }
+  }
+
+  async function importSet(doc, pages) {
+    flushSave();
+    const setId = uid();
+    const base = { jobId: d.jobId, paper: d.paper, layers: d.layers };
+    let first = true;
+    const res = await importPages(ui, doc, pages, async (r) => {
+      const ps = makePlanSet({ id: setId, name: doc.name, page: r.page, label: r.label, pageCount: doc.numPages, pxPerPt: r.pxPerPt });
+      if (first && !destroyed && store.count('drawings', (x) => x.id === id)) {
+        first = false;
+        if (isDefaultDrawingName(d.name)) d.name = sheetName(ps.name, ps.label, ps.page);
+        setUnderlay(r, ps);
+        save(); // in the store now, so the set is whole even if the import stops here
+      } else {
+        store.add('drawings', sheetRecord(base, ps, r));
+      }
+    });
+    if (destroyed) return;
+    renderSheetBar();
+    updateChrome();
+    const n = res.done.length;
+    if (n && !res.failed.length && !res.cancelled) {
+      ui.toast(n === 1 ? 'Plan imported. Set the scale with Measure → Set scale.' : `Imported ${n} sheets. This drawing is ${sheetLabel(d.planSet)}; use the sheet bar to move between them.`, 'success', 5000);
     }
   }
 
@@ -1215,9 +1362,13 @@ export function openEditor(root, ctx, id) {
   loadUnderlay();
   resize();
   updateChrome();
+  renderSheetBar();
 
   // exposed for tests
-  globalThis.kelbeCanvas = { d, st, setTool, fit, takeoff: () => takeoff(d), save: () => save(), rooms };
+  globalThis.kelbeCanvas = {
+    d, st, setTool, fit, takeoff: () => takeoff(d), save: () => save(), rooms,
+    importFile: (file) => importUnderlay(file), sheets: () => setSheets(), goSheet,
+  };
 
   return () => {
     destroyed = true;
@@ -1232,6 +1383,10 @@ export function openEditor(root, ctx, id) {
     document.removeEventListener('visibilitychange', onHide);
     document.body.classList.remove('canvas-open');
     root.classList.remove('full-bleed');
+    // Flipping through a plan set opens a new editor per sheet: let go of this one's pixels now
+    // (two screen-sized canvases and a decoded 4096 px plan) rather than whenever Safari collects.
+    release(canvas); release(base);
+    if (underImg) { underImg.src = ''; underImg = null; }
     if (globalThis.kelbeCanvas?.d === d) delete globalThis.kelbeCanvas;
   };
 }
