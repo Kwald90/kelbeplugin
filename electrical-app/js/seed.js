@@ -152,7 +152,7 @@ export function seedIfEmpty(store) {
   // time entries (yesterday + one open shift today)
   store.add('timeEntries', { employeeId: marcus.id, jobId: j1.id, clockIn: iso(-1, 7, 0), clockOut: iso(-1, 15, 30), breakMins: 30, note: '', approved: true }, S);
   store.add('timeEntries', { employeeId: tom.id, jobId: j1.id, clockIn: iso(-1, 7, 5), clockOut: iso(-1, 15, 30), breakMins: 30, note: '', approved: false }, S);
-  store.add('timeEntries', { employeeId: marcus.id, jobId: j1.id, clockIn: iso(0, 7, 0), clockOut: null, breakMins: 0, note: '', approved: false }, S);
+  store.add('timeEntries', { employeeId: marcus.id, jobId: j1.id, clockIn: new Date(Date.now() - 2.5 * 3600e3).toISOString(), clockOut: null, breakMins: 0, note: '', approved: false }, S);
 
   // stock moves
   store.add('stockMoves', { itemId: items.rec.id, fromLocationId: shop.id, toLocationId: van1.id, qty: 10, jobId: null, date: today(-3), note: 'Restock van' }, S);
