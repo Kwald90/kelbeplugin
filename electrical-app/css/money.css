@@ -1,0 +1,87 @@
+/* Estimates, invoices, inventory. Tokens only. */
+.money-stats { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.money-links:empty { display: none; }
+.money-void { display: flex; gap: var(--s2); align-items: center; }
+
+/* builder layout: editor left, sticky totals right */
+.doc-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--s4); align-items: start; }
+.doc-side { position: sticky; top: var(--s4); }
+@media (max-width: 1000px) { .doc-layout { grid-template-columns: 1fr; } .doc-side { position: static; } }
+
+/* line editor */
+.lines { display: flex; flex-direction: column; gap: var(--s2); }
+.line-row { display: grid; grid-template-columns: minmax(0, 1fr) 84px 120px 110px auto; gap: var(--s2); align-items: start; padding: var(--s2) 0; border-bottom: 1px solid var(--border); }
+.line-head { font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); padding-top: 0; }
+.line-head .right { text-align: right; }
+.lines-body .line-row:last-child { border-bottom: 0; }
+.line-row .input { min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-input); border-radius: var(--r-sm); background: var(--surface); width: 100%; }
+.line-row .input.num { text-align: right; }
+.line-meta { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; margin-top: 4px; font-size: var(--fs-xs); }
+.line-kind { font-size: var(--fs-xs); border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--surface-2); padding: 1px 6px; color: var(--text-muted); }
+.line-amt { text-align: right; padding-top: 8px; font-weight: 600; }
+.line-actions { display: flex; gap: 0; }
+.line-label { display: none; }
+.lines-empty { padding: var(--s4) 0; text-align: center; }
+.lines-add { padding-top: var(--s2); }
+@media (max-width: 640px) {
+  .line-head { display: none; }
+  .line-row { grid-template-columns: 1fr 1fr 1fr; grid-template-areas: "desc desc desc" "qty unit amt" "act act act"; padding: var(--s3) 0; }
+  .line-desc { grid-area: desc; } .line-qty { grid-area: qty; } .line-unit { grid-area: unit; } .line-amt { grid-area: amt; padding-top: 0; }
+  .line-actions { grid-area: act; justify-content: flex-end; }
+  .line-label { display: block; font-size: var(--fs-xs); color: var(--text-muted); font-weight: 600; margin-bottom: 2px; }
+  .line-amt .line-amount { min-height: 36px; display: flex; align-items: center; justify-content: flex-end; }
+}
+
+/* totals */
+.totals { display: flex; flex-direction: column; gap: 6px; }
+.totals-row { display: flex; justify-content: space-between; gap: var(--s3); color: var(--text-muted); }
+.totals-row.strong { color: var(--text); font-weight: 600; border-top: 1px solid var(--border); padding-top: 6px; }
+.totals-row.grand { color: var(--text); font-weight: 700; font-size: var(--fs-lg); line-height: var(--lh-lg); }
+.totals-hint { font-size: var(--fs-xs); margin-top: var(--s1); }
+
+/* ageing */
+.ageing-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s3); }
+.ageing-cell { display: flex; flex-direction: column; gap: 4px; }
+.ageing-cell .label { font-size: var(--fs-xs); color: var(--text-muted); font-weight: 600; }
+.ageing-cell .value { font-weight: 700; font-size: var(--fs-base); }
+.ageing-cell.late .value { color: var(--danger); }
+.ageing-cell.late .progress > i { background: var(--danger); }
+@media (max-width: 640px) { .ageing-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* price-book picker */
+.picker-list { max-height: 60vh; overflow-y: auto; }
+.picker-row { width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border); background: transparent; font: inherit; color: inherit; }
+
+/* inventory */
+.inv-sku { font-size: var(--fs-xs); }
+.inv-margin-low { color: var(--danger); font-weight: 600; }
+
+/* printable document (preview sheet and print) */
+.doc-preview { background: var(--surface-2); padding: var(--s4); border-radius: var(--r-md); }
+.doc-sheet { background: #fff; color: #1c1b19; padding: 40px; border-radius: 4px; box-shadow: var(--shadow-card); font-size: 13px; line-height: 18px; max-width: 800px; margin: 0 auto; }
+.doc-top { display: flex; justify-content: space-between; gap: 24px; border-bottom: 3px solid #f5b301; padding-bottom: 16px; margin-bottom: 20px; }
+.doc-brand { font-size: 22px; line-height: 28px; font-weight: 800; letter-spacing: -0.02em; }
+.doc-title { text-align: right; }
+.doc-kind { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #5f5a51; }
+.doc-num { font-size: 20px; line-height: 26px; font-weight: 700; font-family: var(--font-mono); }
+.doc-small { font-size: 12px; color: #5f5a51; }
+.doc-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #5f5a51; margin-bottom: 2px; }
+.doc-strong { font-weight: 700; }
+.doc-parties { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 20px; }
+.doc-lines { width: 100%; border-collapse: collapse; }
+.doc-lines th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #5f5a51; border-bottom: 1px solid #1c1b19; padding: 6px 4px; }
+.doc-lines td { padding: 7px 4px; border-bottom: 1px solid #e2ded5; vertical-align: top; }
+.doc-lines .right, .doc-totals .right { text-align: right; }
+.doc-totals { margin: 12px 0 0 auto; min-width: 260px; border-collapse: collapse; }
+.doc-totals td { padding: 4px; }
+.doc-totals tr.grand td { font-weight: 800; font-size: 15px; border-top: 1px solid #1c1b19; }
+.doc-notes { margin-top: 24px; } .doc-notes p { margin: 0; white-space: pre-wrap; }
+.doc-foot { margin-top: 32px; text-align: center; }
+@media (max-width: 640px) { .doc-sheet { padding: 20px; } .doc-top, .doc-parties { grid-template-columns: 1fr; flex-direction: column; } .doc-title { text-align: left; } }
+
+.doc-print { display: none; }
+@media print {
+  body.printing-doc > *:not(.doc-print) { display: none !important; }
+  body.printing-doc .doc-print { display: block; }
+  .doc-print .doc-sheet { box-shadow: none; padding: 0; max-width: none; }
+}
