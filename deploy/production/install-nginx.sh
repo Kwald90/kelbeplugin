@@ -22,12 +22,16 @@ else
     ["$HERE/nginx/fishtape.conf"]=/etc/nginx/sites-available/fishtape.conf
     ["$HERE/nginx/security-headers.conf"]=/etc/nginx/snippets/fishtape-headers.conf
     ["$HERE/nginx/proxy.conf"]=/etc/nginx/snippets/fishtape-proxy.conf
+    ["$HERE/nginx/deny.conf"]=/etc/nginx/snippets/fishtape-deny.conf
+    ["$HERE/nginx/tls.conf"]=/etc/nginx/snippets/fishtape-tls.conf
+    ["$HERE/logrotate-nginx"]=/etc/logrotate.d/fishtape-production-nginx
   )
   LINK_SRC=/etc/nginx/sites-available/fishtape.conf
   LINK_DST=/etc/nginx/sites-enabled/fishtape.conf
 fi
 
 mkdir -p /etc/nginx/snippets /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/certbot "$BACKUP_DIR"
+install -d -o root -g adm -m 0750 /var/log/fishtape-production
 for src in "${!FILES[@]}"; do
   dst="${FILES[$src]}"
   if [ -f "$dst" ]; then cp -p "$dst" "$BACKUP_DIR/$(basename "$dst")"; fi

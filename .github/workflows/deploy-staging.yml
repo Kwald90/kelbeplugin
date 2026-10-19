@@ -41,6 +41,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             server/package.json
+            deploy/check-exposure.sh
           sparse-checkout-cone-mode: false
 
       - name: Check deploy secrets
@@ -86,6 +87,13 @@ jobs:
             curl -fsS --retry 6 --retry-delay 5 --retry-all-errors "$STAGING_URL/api/v1/status"
             echo
           fi
+
+      - name: Exposure check (no secrets or repo files served, security headers present)
+        env:
+          HAS_SERVER: ${{ hashFiles('server/package.json') != '' }}
+        run: |
+          if [ "$HAS_SERVER" = true ]; then bash deploy/check-exposure.sh "$STAGING_URL"
+          else bash deploy/check-exposure.sh "$STAGING_URL" --no-api; fi
 
       - name: Remove the key
         if: always()

@@ -84,6 +84,18 @@ record() { # result message
 
 image_exists() { docker image inspect "$IMAGE_REPO:$1" >/dev/null 2>&1; }
 
+# After a successful deploy: is anything sensitive served, is any header missing? Warns only
+# (the release is already live); output kept for the evidence bundle.
+exposure_check() {
+  local args=("https://$PUBLIC_HOST" --resolve "$PUBLIC_HOST:443:127.0.0.1")
+  [ "$SERVER" -eq 1 ] || args+=(--no-api)
+  if "$REPO_DIR/deploy/check-exposure.sh" "${args[@]}" > "$STATE_DIR/last-exposure-check.txt" 2>&1; then
+    say "exposure check passed"
+  else
+    say "WARNING: exposure check failed: $(tail -n 1 "$STATE_DIR/last-exposure-check.txt"); see $STATE_DIR/last-exposure-check.txt"
+  fi
+}
+
 wait_ready() { # seconds
   local deadline=$(( $(date +%s) + $1 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
@@ -160,6 +172,7 @@ if [ "$SERVER" -eq 0 ]; then
   trap - ERR
   record success "static app only (no server/ in this commit)$NOTE"
   say "done: static app at ${TARGET:0:12}"
+  exposure_check
   exit 0
 fi
 
@@ -220,3 +233,4 @@ record success "deployed$NOTE"
       done; } || true
 
 say "done: staging is on ${TARGET:0:12} in $(( $(date +%s) - START ))s"
+exposure_check

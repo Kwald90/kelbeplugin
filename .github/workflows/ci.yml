@@ -69,6 +69,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: No .env files, private keys, dumps or keystores in the tree
+        run: node .github/scripts/check-committed-files.mjs
+
       - name: Shared deploy scripts are identical in staging and production
         run: |
           status=0
@@ -86,13 +89,13 @@ jobs:
           while IFS= read -r f; do
             mode="$(git ls-files -s -- "$f" | cut -d' ' -f1)"
             if [ "$mode" != 100755 ]; then echo "::error file=$f::not executable in git (git update-index --chmod=+x $f)"; status=1; fi
-          done < <(git ls-files 'deploy/staging/*.sh' 'deploy/production/*.sh')
+          done < <(git ls-files 'deploy/*.sh' 'deploy/staging/*.sh' 'deploy/production/*.sh')
           exit "$status"
 
       - name: shellcheck
         run: |
           shellcheck --version | head -2
-          shellcheck -x -S style deploy/staging/*.sh deploy/staging/initdb/*.sh deploy/production/*.sh deploy/production/initdb/*.sh
+          shellcheck -x -S style deploy/check-exposure.sh deploy/staging/*.sh deploy/staging/initdb/*.sh deploy/production/*.sh deploy/production/initdb/*.sh
 
       - name: actionlint
         run: |
@@ -116,20 +119,24 @@ jobs:
       - name: nginx -t (production config and staging vhost)
         run: |
           t="$(mktemp -d)"
-          mkdir -p "$t/le/live/fishtape" "$t/le/live/tgelectrical.truecollarbuilt.com" "$t/snippets" "$t/sites"
+          mkdir -p "$t/le/live/fishtape" "$t/le/live/tgelectrical.truecollarbuilt.com" "$t/snippets" "$t/sites" "$t/log-prod" "$t/log-staging"
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=ci \
             -keyout "$t/le/live/fishtape/privkey.pem" -out "$t/le/live/fishtape/fullchain.pem" 2>/dev/null
           cp "$t"/le/live/fishtape/*.pem "$t/le/live/tgelectrical.truecollarbuilt.com/"
           cp deploy/production/nginx/security-headers.conf "$t/snippets/fishtape-headers.conf"
           cp deploy/production/nginx/proxy.conf "$t/snippets/fishtape-proxy.conf"
+          cp deploy/production/nginx/deny.conf "$t/snippets/fishtape-deny.conf"
+          cp deploy/production/nginx/tls.conf "$t/snippets/fishtape-tls.conf"
+          cp deploy/staging/nginx-http.conf "$t/snippets/fishtape-staging-http.conf"
           cp deploy/staging/security-headers.conf "$t/snippets/fishtape-staging-headers.conf"
           cp deploy/staging/nginx-api.conf.snippet "$t/snippets/fishtape-staging-site.conf"
           cp deploy/production/nginx/fishtape.conf deploy/staging/vhost.example.conf "$t/sites/"
           printf 'events {}\nhttp {\n  include /etc/nginx/mime.types;\n  include /etc/nginx/sites/*.conf;\n}\n' > "$t/nginx.conf"
-          chmod -R a+rX "$t"
+          chmod -R a+rwX "$t"
           docker run --rm \
             -v "$t/nginx.conf:/etc/nginx/nginx.conf:ro" -v "$t/snippets:/etc/nginx/snippets:ro" \
             -v "$t/sites:/etc/nginx/sites:ro" -v "$t/le:/etc/letsencrypt:ro" \
+            -v "$t/log-prod:/var/log/fishtape-production" -v "$t/log-staging:/var/log/fishtape-staging" \
             "$NGINX_IMAGE" nginx -t
           # The first-run ACME config on its own.
           rm "$t"/sites/*.conf

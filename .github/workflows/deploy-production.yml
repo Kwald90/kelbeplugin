@@ -74,6 +74,13 @@ jobs:
       SHA: ${{ needs.verify-tag.outputs.sha }}
       PRODUCTION_URL: ${{ vars.PRODUCTION_URL || 'https://app.fishtapehq.com' }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            deploy/check-exposure.sh
+          sparse-checkout-cone-mode: false
+
       - name: Check deploy secrets
         env:
           SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
@@ -114,6 +121,13 @@ jobs:
           curl -fsS --retry 6 --retry-delay 5 --retry-all-errors "$PRODUCTION_URL/api/v1/status"
           echo
           echo "Deployed $TAG ($SHA) to $PRODUCTION_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Exposure check (no secrets or repo files served, security headers present)
+        env:
+          HQ_URL: ${{ vars.PRODUCTION_HQ_URL || 'https://hq.fishtapehq.com' }}
+        run: |
+          bash deploy/check-exposure.sh "$PRODUCTION_URL" --production
+          bash deploy/check-exposure.sh "$HQ_URL" --hq
 
       - name: Remove the key
         if: always()

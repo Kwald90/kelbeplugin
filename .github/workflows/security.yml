@@ -39,7 +39,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: No .env files, private keys, dumps or keystores in the tree
+        run: node .github/scripts/check-committed-files.mjs
       - name: Install gitleaks (pinned, checksum-verified)
+        if: always()
         run: |
           curl -fsSLo gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
@@ -47,6 +50,7 @@ jobs:
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
           rm -f gitleaks gitleaks.tgz
       - name: Scan the whole git history
+        if: always()
         run: gitleaks git --config .gitleaks.toml --redact --no-banner --exit-code 1 --report-format sarif --report-path gitleaks.sarif .
       - name: Upload to code scanning
         if: always() && hashFiles('gitleaks.sarif') != ''

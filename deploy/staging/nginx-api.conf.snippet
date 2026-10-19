@@ -3,17 +3,23 @@
 #   /etc/nginx/sites-enabled/tgelectrical.truecollarbuilt.com.conf
 #
 # install-nginx.sh copies this file to /etc/nginx/snippets/fishtape-staging-site.conf, and the
-# vhost includes it with one line (README.md, "Edit the vhost"). You can paste the contents
-# instead, but then every change means editing the vhost again.
+# vhost includes it with one line (README.md, "Edit the vhost"). It also needs
+# /etc/nginx/snippets/fishtape-staging-http.conf included once at the top of the vhost file,
+# outside any server block (log format), and fishtape-staging-headers.conf (included below).
 #
-# Whichever you choose, remove the old Fishtape lines from the vhost (root, index, the sw.js /
-# index.html / static-file locations, location /, the dot-file rule, old add_header lines).
-# Keep CloudPanel's listen, server_name, ssl_* and ACME (/.well-known/acme-challenge/) lines.
-# Needs /etc/nginx/snippets/fishtape-staging-headers.conf (install-nginx.sh copies it too).
+# Remove the old Fishtape lines from the vhost (root, index, the sw.js / index.html / static-file
+# locations, location /, the dot-file rule, old add_header lines). Keep CloudPanel's listen,
+# server_name, ssl_* and ACME (/.well-known/acme-challenge/) lines.
+#
+# What is served: an allow-list. The web root is electrical-app/ only; secrets (.env) live in
+# deploy/staging/, outside it. Only app file types are served, `/` serves index.html, and every
+# other path is 404 (the app uses a hash router, so no SPA fallback is needed). Check after each
+# deploy with deploy/check-exposure.sh.
 
 root /var/www/tgelectrical/current/electrical-app;
 index index.html;
 server_tokens off;
+autoindex off;
 charset utf-8;
 
 # Every response gets the security headers (HSTS, CSP, Permissions-Policy, ...).
@@ -25,6 +31,8 @@ client_body_timeout 30s;
 
 # ---- API: 127.0.0.1:3410 (docker compose project fishtape-staging) ----
 location ^~ /api/ {
+    # Logged without query strings or Referer queries (format in fishtape-staging-http.conf).
+    access_log /var/log/fishtape-staging/nginx-api.access.log fishtape_staging_noquery;
     proxy_pass http://127.0.0.1:3410;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
@@ -39,22 +47,29 @@ location ^~ /api/ {
     proxy_read_timeout 60s;
     # Never replay a request on another upstream: a retried POST could double-write.
     proxy_next_upstream off;
-    # The API sets its own Cache-Control and CSP for anything it serves. This location has
-    # add_header lines, so the server-level ones don't apply here; repeat the transport ones.
+    # API answers may hold customer data: never stored by the browser or any cache.
+    proxy_hide_header Cache-Control;
+    proxy_hide_header X-Powered-By;
+    add_header Cache-Control "no-store" always;
+    # This location has add_header lines, so the server-level ones don't apply here; repeat the
+    # transport ones. The API sets its own CSP for anything HTML it serves.
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header X-Frame-Options "DENY" always;
 }
 
-# ---- HQ console (Phase 1), served from the checkout once hq/ exists ----
+# ---- HQ console (Phase 1), served from the checkout's hq/ folder once it exists ----
 location ^~ /hq/ {
     root /var/www/tgelectrical/current;
-    try_files $uri $uri/ /hq/index.html;
     expires epoch;
     # Optional on staging: only your own address.
     # allow 203.0.113.10;
     # deny all;
+    location ~ /\. { return 404; }
+    location ~* \.(?:html|js|mjs|css|json|png|jpe?g|gif|webp|avif|svg|ico|woff2?)$ { try_files $uri =404; }
+    location = /hq/ { try_files /hq/index.html =404; }
+    return 404;
 }
 
 # ---- RFC 9116 security contact. Renew Expires every year (compliance calendar). ----
@@ -63,26 +78,40 @@ location = /.well-known/security.txt {
     return 200 "Contact: https://github.com/Kwald90/kelbeplugin/security/advisories/new\nExpires: 2027-10-19T00:00:00Z\nPolicy: https://github.com/Kwald90/kelbeplugin/security/policy\nPreferred-Languages: en, fr\nCanonical: https://tgelectrical.truecollarbuilt.com/.well-known/security.txt\n";
 }
 
-# ---- PWA ----
-# Nothing hidden is served (.git, .env, ...), except ACME challenges. Regex locations match in
-# file order, so this one comes before the static-file rules.
+# ---- Never served. Regex locations match in file order, so these come first. ----
+# Dotfiles and dot-folders (.env, .git, .github ...), except /.well-known/.
 location ~ /\.(?!well-known/) {
     return 404;
 }
-# The service worker, HTML shell and manifest must always be revalidated so updates reach devices.
-location = /sw.js {
+# Repo folders that must never be reachable, even if the root ever moves up a level.
+location ~ ^/(?:deploy|server|docs|compliance|replica|includes|assets|tests|node_modules|mobile)(?:/|$) {
+    return 404;
+}
+# Secrets, dumps, backups, keys, archives, scripts, docs and build files, by name.
+location ~* (?:^|/)(?:[^/]*\.(?:env|sql|sh|bash|ps1|md|txt|bak|old|orig|save|swp|tmp|log|ya?ml|toml|ini|conf|cfg|pem|key|crt|csr|p12|pfx|jks|dump|age|sqlite3?|db|gz|tgz|bz2|xz|zip|tar|7z|rar|lock|map)|package(?:-lock)?\.json|Dockerfile|docker-compose[^/]*|Makefile)$ {
+    return 404;
+}
+
+# ---- PWA: the allow-list ----
+# `/`, the HTML shell, the service worker and the manifest are always revalidated so updates
+# reach devices.
+location = / {
+    try_files /index.html =404;
     expires epoch;
-    try_files $uri =404;
 }
 location = /index.html {
     expires epoch;
+}
+location = /sw.js {
+    expires epoch;
+    try_files $uri =404;
 }
 location = /manifest.webmanifest {
     default_type application/manifest+json;
     expires epoch;
 }
 # App code is not content-hashed (no build step), so it revalidates on every load (cheap 304s).
-# A long cache here would pin old code on devices.
+# A long cache here would pin old code on devices. JSON = the shared schemas in js/schema/.
 location ~* \.(?:js|mjs|css|json)$ {
     expires epoch;
     try_files $uri =404;
@@ -94,11 +123,12 @@ location ~* \.(?:png|jpe?g|gif|webp|avif|svg|ico|woff2?)$ {
 }
 # Version-named third-party bundles (e.g. vendor/pdfjs-3.11.174/) never change.
 location ^~ /vendor/ {
+    location ~ /\. { return 404; }
     expires 1y;
     try_files $uri =404;
 }
+# Anything else: not part of the app.
 location / {
-    try_files $uri $uri/ /index.html;
-    expires epoch;
+    return 404;
 }
 # ---- end Fishtape staging ----------------------------------------------------------------------

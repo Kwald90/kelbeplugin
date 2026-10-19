@@ -217,3 +217,14 @@ record success "deployed $TAG"
       done; } || true
 
 say "done: production is on $TAG (${TARGET:0:12}) in $(( $(date +%s) - START ))s"
+
+# Is anything sensitive served, is any header missing? Warns only (the release is live); the
+# output is kept for the evidence bundle. The deploy workflow runs the same check from outside.
+HQ_HOST="${HQ_HOST:-hq.fishtapehq.com}"
+if { "$REPO_DIR/deploy/check-exposure.sh" "https://$APP_HOST" --production --resolve "$APP_HOST:443:127.0.0.1" \
+     && "$REPO_DIR/deploy/check-exposure.sh" "https://$HQ_HOST" --hq --resolve "$HQ_HOST:443:127.0.0.1"; } \
+     > "$STATE_DIR/last-exposure-check.txt" 2>&1; then
+  say "exposure check passed"
+else
+  say "WARNING: exposure check failed; see $STATE_DIR/last-exposure-check.txt"
+fi

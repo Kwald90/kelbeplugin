@@ -21,7 +21,10 @@ Other sites share this box. **Don't touch** the host's Postgres on 127.0.0.1:543
 | `host-status.sh` | disk, certificate expiry and load for the HQ health page |
 | `security-headers.conf` | HSTS, CSP, Permissions-Policy and friends |
 | `nginx-api.conf.snippet` | everything Fishtape needs inside the vhost (static app, `/api/`, `/hq/`, caching) |
-| `install-nginx.sh` | copies the two nginx files into `/etc/nginx/snippets/`, runs `nginx -t`, reloads |
+| `nginx-http.conf` | http-level part: a log format that drops query strings |
+| `logrotate-nginx` | keeps the API access log 30 days |
+| `install-nginx.sh` | copies the nginx files into `/etc/nginx/snippets/` and the logrotate file, runs `nginx -t`, reloads |
+| `../check-exposure.sh` | after every deploy: sensitive paths must not be served, required headers must be there |
 | `vhost.example.conf` | what the whole CloudPanel vhost should look like afterwards, for comparison |
 | `deploy-gate.sh` | SSH forced command for the CI deploy key |
 | `systemd/` | timers for the nightly backup and the host status snapshot |
@@ -70,6 +73,12 @@ sudo nano .env        # check PUBLIC_ORIGIN, CORS_ORIGINS; add Google/Microsoft 
 Copy `SECRETS_MASTER_KEY` into the password manager now. Without it, tenant secrets stored in the
 database can't be decrypted.
 
+`.env` lives at `/var/www/tgelectrical/current/deploy/staging/.env`: outside the web root
+(`electrical-app/`), owned by root, mode 600. `init-env.sh` sets that and every `update.sh` run
+re-applies it. Never put a `.env` (or a copy, backup or `.env.bak`) under `electrical-app/`.
+`update-vps.sh` chowns the whole checkout to `www-data`, which would make `.env` readable by the
+web server's user, so don't run it again after step 2.
+
 ### 4. Backup key (on your own computer, not the server)
 
 ```bash
@@ -98,13 +107,17 @@ may write its own copy back over yours later.
 sudo cp -a /etc/nginx/sites-enabled/tgelectrical.truecollarbuilt.com.conf \
   /root/tgelectrical.vhost.$(date +%Y%m%d-%H%M%S).bak
 
-# b) install the two snippets (runs nginx -t; puts the old files back if it fails)
+# b) install the snippets and the log rotation (runs nginx -t; puts the old files back if it fails)
 sudo /var/www/tgelectrical/current/deploy/staging/install-nginx.sh
 
-# c) edit the vhost: inside the `listen 443` server block, delete the old Fishtape lines
-#    (root, index, the sw.js / index.html / static-file locations, location /, the dot-file
-#    rule, the old add_header lines) and add this one line in their place:
+# c) edit the vhost. Two additions, one removal:
+#    - first line of the file, outside any server block:
+#        include /etc/nginx/snippets/fishtape-staging-http.conf;
+#    - inside the `listen 443` server block, delete the old Fishtape lines (root, index, the
+#      sw.js / index.html / static-file locations, location /, the dot-file rule, the old
+#      add_header lines) and put this in their place:
 #        include /etc/nginx/snippets/fishtape-staging-site.conf;
+#    - in the port 80 server block, add `server_tokens off;`
 #    Keep listen, server_name, ssl_* and the /.well-known/acme-challenge/ location.
 #    Compare with deploy/staging/vhost.example.conf.
 sudo nano /etc/nginx/sites-enabled/tgelectrical.truecollarbuilt.com.conf
@@ -112,10 +125,18 @@ sudo nano /etc/nginx/sites-enabled/tgelectrical.truecollarbuilt.com.conf
 # d) test, then reload. Only reload if the test passes.
 sudo nginx -t && sudo systemctl reload nginx
 
-# e) check
-curl -sI https://tgelectrical.truecollarbuilt.com/ | grep -iE 'strict-transport|content-security|cache-control'
-curl -sI https://tgelectrical.truecollarbuilt.com/sw.js | grep -i cache-control      # no-cache
+# e) check: headers present, nothing sensitive reachable, unknown paths 404
+/var/www/tgelectrical/current/deploy/check-exposure.sh https://tgelectrical.truecollarbuilt.com
 ```
+
+What nginx serves after this: the web root is `electrical-app/` and nothing else. The secrets in
+`deploy/staging/.env` sit outside it (root-owned, mode 600). nginx serves only app file types
+from the root (`/`, `.js`, `.css`, `.json` schemas, images, fonts, the manifest and service
+worker), returns 404 for every other path including dotfiles, `*.env*`, `*.sql`, `*.sh`, `*.md`,
+dumps, keys and archives, and for `/deploy`, `/server`, `/docs`, `/tests` and the other repo
+folders. There is no SPA fallback: the app uses a hash router, so unknown paths are 404.
+`/api/` responses carry `Cache-Control: no-store` and are logged to
+`/var/log/fishtape-staging/nginx-api.access.log` without query strings (kept 30 days).
 
 If `nginx -t` fails, nothing has changed yet: fix the file or restore the backup
 (`sudo cp /root/tgelectrical.vhost.<stamp>.bak /etc/nginx/sites-enabled/tgelectrical.truecollarbuilt.com.conf`),
