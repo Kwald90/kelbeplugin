@@ -147,6 +147,11 @@ async function boot() {
   ui.setCurrency(store.settings().currency);
   store.setActor(auth.current().id);
   addEventListener('hashchange', route);
+  // Settings can change the theme too; keep the rail's sun/moon in step.
+  new MutationObserver(() => {
+    const btn = rail?.querySelector('[aria-label="Toggle dark mode"]');
+    btn?.firstChild?.replaceWith(icon(isDark() ? 'sun' : 'moon', 20));
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   store.on('*', (e) => { if (e.type === 'reset') rebuild(); });
   document.getElementById('boot')?.remove();
   rebuild();
