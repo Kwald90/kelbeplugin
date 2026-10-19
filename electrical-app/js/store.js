@@ -20,8 +20,7 @@ const QUEUE = 'queue';
 const SILENT = new Set(['auditLog']); // collections that are not themselves audited
 /**
  * Server bookkeeping in records that come from the API. `version` there is the row version
- * (kept in `versions`), not a record field. VERIFY: sops use their own `version` field for the
- * document revision, which the server currently strips and overwrites (reported to the lead).
+ * (kept in `versions`), not a record field. SOPs keep their document revision in `revision`.
  */
 const SERVER_KEYS = ['version', 'changeSeq', 'deleted', 'tenantId'];
 
@@ -146,6 +145,19 @@ async function loadAll() {
   const q = [];
   await readAll(QUEUE, (e) => q.push(e));
   queue = q.sort((a, b) => a.seq - b.seq);
+  if (scope?.kind === 'demo') upgradeDemoRecords();
+}
+
+// SOPs kept their document revision in `version` before sync. The server owns `version` (its
+// row counter), so the field is `revision` now. Only the local demo can hold the old shape.
+function upgradeDemoRecords() {
+  for (const s of bucket('sops').values()) {
+    if (s.revision == null && Number.isInteger(s.version)) {
+      s.revision = s.version;
+      delete s.version;
+      persist('sops', s.id);
+    }
+  }
 }
 
 // Writes are batched per tick so a burst of updates costs one transaction.

@@ -2,6 +2,7 @@
 import { ROLES } from '../auth.js';
 import { entryHours } from '../lib/money.js';
 import { weekStart, addDays } from './schedule.js';
+import { sopRev, ackRev } from './sops.js';
 
 const COLORS = ['#8a5a00', '#1f5fb8', '#1d7044', '#7a3fb0', '#b42318', '#0f7b8a', '#c25e00', '#5f5a51'];
 
@@ -112,7 +113,7 @@ function detailView(root, ctx, id) {
     h('div', { class: 'grid ops-stats' },
       ui.stat({ label: 'This week', value: ui.fmtHours(weekHours), hint: weekHours > 40 ? 'overtime' : `${week.length} shift(s)`, tone: weekHours > 40 ? 'danger' : null }),
       ui.stat({ label: 'Licence', value: e.licenceNo || '—', hint: e.licenceExpiry ? `expires ${ui.fmtDate(e.licenceExpiry)}` : 'no expiry set', tone: ui.daysUntil(e.licenceExpiry) < 0 ? 'danger' : ui.daysUntil(e.licenceExpiry) <= 30 ? 'accent' : null }),
-      ui.stat({ label: 'SOPs signed', value: `${required.filter((s) => (s.acks || []).some((a) => a.employeeId === e.id && a.version === s.version)).length}/${required.length}`, hint: 'required for role' })),
+      ui.stat({ label: 'SOPs signed', value: `${required.filter((s) => (s.acks || []).some((a) => a.employeeId === e.id && ackRev(a) === sopRev(s))).length}/${required.length}`, hint: 'required for role' })),
     h('div', { class: 'grid-2', style: { marginTop: '16px' } },
       h('div', { class: 'card' }, h('h3', null, 'Contact'),
         h('div', { class: 'stack' },
@@ -131,11 +132,11 @@ function detailView(root, ctx, id) {
     })) : h('p', { class: 'muted' }, 'Nothing scheduled.'),
     h('h2', { class: 'section' }, 'SOP acknowledgements'),
     sops.length ? h('div', { class: 'list' }, sops.map((s) => {
-      const ack = (s.acks || []).filter((a) => a.employeeId === e.id).sort((a, b) => b.version - a.version)[0];
+      const ack = (s.acks || []).filter((a) => a.employeeId === e.id).sort((a, b) => ackRev(b) - ackRev(a))[0];
       const isReq = (s.requiredRoles || []).includes(e.role);
       return h('a', { class: 'list-row click', href: '#/sops/' + s.id, style: { color: 'inherit', textDecoration: 'none' } },
-        h('div', { class: 'grow' }, h('div', { class: 'title' }, s.title), h('div', { class: 'meta' }, `v${s.version}${isReq ? ' · required' : ''}`)),
-        ack && ack.version === s.version ? ui.badge(`signed ${ui.fmtDate(ack.at)}`, 'success') : ack ? ui.badge(`v${ack.version} only`, 'warning') : isReq ? ui.badge('not signed', 'danger') : ui.badge('optional', 'neutral'));
+        h('div', { class: 'grow' }, h('div', { class: 'title' }, s.title), h('div', { class: 'meta' }, `v${sopRev(s)}${isReq ? ' · required' : ''}`)),
+        ack && ackRev(ack) === sopRev(s) ? ui.badge(`signed ${ui.fmtDate(ack.at)}`, 'success') : ack ? ui.badge(`v${ackRev(ack)} only`, 'warning') : isReq ? ui.badge('not signed', 'danger') : ui.badge('optional', 'neutral'));
     })) : h('p', { class: 'muted' }, 'No SOPs yet.')));
   };
   root.append(host);

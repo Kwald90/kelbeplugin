@@ -190,7 +190,7 @@ export function seedIfEmpty(store) {
 
   // SOPs
   store.add('sops', {
-    title: 'Lockout / tagout before work on equipment', category: 'Safety', version: 3, requiredRoles: ['foreman', 'electrician', 'apprentice'],
+    title: 'Lockout / tagout before work on equipment', category: 'Safety', revision: 3, requiredRoles: ['foreman', 'electrician', 'apprentice'],
     steps: [
       { text: 'Tell everyone affected that the equipment is being shut down.' },
       { text: 'Identify every energy source (electrical, stored, mechanical).' },
@@ -199,10 +199,10 @@ export function seedIfEmpty(store) {
       { text: 'Test for absence of voltage with a tested meter: live-dead-live (CSA Z462).' },
       { text: 'Only you remove your lock, after the work is complete and the area is clear.' },
     ],
-    acks: [{ employeeId: marcus.id, version: 3, at: iso(-30) }, { employeeId: priya.id, version: 3, at: iso(-28) }],
+    acks: [{ employeeId: marcus.id, revision: 3, at: iso(-30) }, { employeeId: priya.id, revision: 3, at: iso(-28) }],
   }, S);
   store.add('sops', {
-    title: 'Site arrival and customer walk-through', category: 'Customer', version: 1, requiredRoles: ['foreman', 'electrician'],
+    title: 'Site arrival and customer walk-through', category: 'Customer', revision: 1, requiredRoles: ['foreman', 'electrician'],
     steps: [
       { text: 'Text the customer 30 minutes before arrival.' },
       { text: 'Boot covers on, drop cloths down in the work area.' },
@@ -211,7 +211,7 @@ export function seedIfEmpty(store) {
     ], acks: [],
   }, S);
   store.add('sops', {
-    title: 'Panel change-out checklist', category: 'Install', version: 2, requiredRoles: ['foreman', 'electrician'],
+    title: 'Panel change-out checklist', category: 'Install', revision: 2, requiredRoles: ['foreman', 'electrician'],
     steps: [
       { text: 'Confirm the ESA notification number and the utility disconnect/reconnect appointment.' },
       { text: 'Label every existing circuit before removal.' },

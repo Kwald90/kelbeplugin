@@ -1,7 +1,12 @@
 // SOPs: a library of step-by-step procedures, versioned, acknowledged by staff.
 import { ROLES } from '../auth.js';
 
-const ackedCurrent = (sop) => (sop.acks || []).filter((a) => a.version === sop.version);
+// The document revision. The server owns a record's `version` (its row counter), so SOPs use
+// `revision`; acknowledgements made before that change still carry `version`.
+export const sopRev = (s) => s?.revision ?? 1;
+export const ackRev = (a) => a?.revision ?? a?.version ?? null;
+
+const ackedCurrent = (sop) => (sop.acks || []).filter((a) => ackRev(a) === sopRev(sop));
 
 function audience(store, sop) {
   const roles = sop.requiredRoles || [];
@@ -52,7 +57,7 @@ function library(root, { store, ui, auth, nav }) {
         const mine = (s.requiredRoles || []).includes(me.role) || !(s.requiredRoles || []).length;
         const iAcked = p.ids.has(me.id);
         return h('a', { class: 'card click sop-card', href: `#/sops/${s.id}` },
-          h('div', { class: 'row' }, ui.badge(`v${s.version || 1}`, 'neutral'), h('span', { class: 'muted' }, `${(s.steps || []).length} steps`),
+          h('div', { class: 'row' }, ui.badge(`v${sopRev(s)}`, 'neutral'), h('span', { class: 'muted' }, `${(s.steps || []).length} steps`),
             h('span', { class: 'grow' }), mine ? (iAcked ? ui.badge('Read', 'success') : ui.badge('To read', 'warning')) : null),
           h('h3', null, s.title),
           h('div', { class: 'meta muted' }, `${p.done} of ${p.total} acknowledged`),
@@ -89,12 +94,12 @@ function reader(root, ctx, id) {
     }, h('span', { class: 'sop-num' }, String(i + 1)), h('span', { class: 'sop-text' }, s.text), h('span', { class: 'sop-tick' }, ui.icon('check', 22))));
     return li;
   }));
-  const ackBtn = ui.button(iAcked ? `You acknowledged v${sop.version}` : `I've read and understood v${sop.version}`, {
+  const ackBtn = ui.button(iAcked ? `You acknowledged v${sopRev(sop)}` : `I've read and understood v${sopRev(sop)}`, {
     variant: iAcked ? 'secondary' : 'primary', size: 'lg', icon: iAcked ? 'check' : null, disabled: true,
     onClick: () => {
       const cur = store.get('sops', id);
-      if ((cur.acks || []).some((a) => a.employeeId === me.id && a.version === cur.version)) return;
-      store.update('sops', id, { acks: [...(cur.acks || []), { employeeId: me.id, version: cur.version, at: new Date().toISOString() }] }, { summary: `${me.name} acknowledged ${cur.title} v${cur.version}` });
+      if ((cur.acks || []).some((a) => a.employeeId === me.id && ackRev(a) === sopRev(cur))) return;
+      store.update('sops', id, { acks: [...(cur.acks || []), { employeeId: me.id, revision: sopRev(cur), at: new Date().toISOString() }] }, { summary: `${me.name} acknowledged ${cur.title} v${sopRev(cur)}` });
       ui.toast('Acknowledged', 'success');
       ctx.route();
     },
@@ -109,7 +114,7 @@ function reader(root, ctx, id) {
 
   root.append(ui.page({
     title: sop.title,
-    subtitle: `${sop.category || 'General'} · version ${sop.version || 1} · ${(sop.requiredRoles || []).map((r) => ROLES[r]?.label || r).join(', ') || 'Everyone'}`,
+    subtitle: `${sop.category || 'General'} · version ${sopRev(sop)} · ${(sop.requiredRoles || []).map((r) => ROLES[r]?.label || r).join(', ') || 'Everyone'}`,
     actions: [
       ui.button('All SOPs', { variant: 'ghost', icon: 'chevron-left', href: '#/sops' }),
       ui.button('Print', { icon: 'printer', onClick: () => print() }),
@@ -119,7 +124,7 @@ function reader(root, ctx, id) {
   h('p', { class: 'muted no-print' }, iAcked ? 'You have acknowledged this version.' : 'Tap each step as you read it, then acknowledge at the bottom.'),
   steps,
   h('div', { class: 'row no-print', style: { margin: '24px 0' } }, ackBtn),
-  h('div', { class: 'no-print' }, ...ui.section(`Acknowledgements for v${sop.version} (${p.done}/${p.total})`, who))));
+  h('div', { class: 'no-print' }, ...ui.section(`Acknowledgements for v${sopRev(sop)} (${p.done}/${p.total})`, who))));
 }
 
 function editor(root, ctx, sop) {
@@ -127,7 +132,7 @@ function editor(root, ctx, sop) {
   const { h } = ui;
   if (!auth.isManager()) { root.append(ui.page({ title: 'Edit SOP' }, ui.empty({ icon: 'lock', title: 'Managers only' }))); return; }
   if (ctx.params[0] !== 'new' && !sop) { root.append(ui.page({ title: 'Edit SOP' }, ui.empty({ icon: 'book', title: 'SOP not found' }))); return; }
-  const draft = sop ? structuredClone(sop) : { title: '', category: 'Safety', version: 1, requiredRoles: ['foreman', 'electrician', 'apprentice'], steps: [{ text: '' }], acks: [] };
+  const draft = sop ? structuredClone(sop) : { title: '', category: 'Safety', revision: 1, requiredRoles: ['foreman', 'electrician', 'apprentice'], steps: [{ text: '' }], acks: [] };
   const original = JSON.stringify({ t: draft.title, s: draft.steps.map((s) => s.text) });
 
   const title = ui.field({ label: 'Title', name: 'title', value: draft.title, required: true, span: true });
@@ -152,7 +157,7 @@ function editor(root, ctx, sop) {
   const form = h('form', { class: 'stack', onSubmit: (e) => { e.preventDefault(); save(); } },
     h('div', { class: 'card stack' }, ui.formGrid([title, category]), h('div', { class: 'field' }, h('span', null, 'Who must acknowledge it'), roleBoxes)),
     ...ui.section('Steps', h('div', { class: 'card stack' }, stepsHost, h('div', null, ui.button('Add step', { icon: 'plus', onClick: () => { draft.steps.push({ text: '' }); drawSteps(); stepsHost.lastChild?.querySelector('textarea')?.focus(); } })))),
-    h('p', { class: 'muted' }, sop ? `Changing the title or steps publishes v${(sop.version || 1) + 1} and everyone must acknowledge it again.` : ''));
+    h('p', { class: 'muted' }, sop ? `Changing the title or steps publishes v${sopRev(sop) + 1} and everyone must acknowledge it again.` : ''));
 
   function save() {
     if (!form.reportValidity()) return;
@@ -164,14 +169,14 @@ function editor(root, ctx, sop) {
       requiredRoles: Object.keys(ROLES).filter((k) => v['role-' + k]),
     };
     if (!sop) {
-      const rec = store.add('sops', { ...fields, version: 1, acks: [] });
+      const rec = store.add('sops', { ...fields, revision: 1, acks: [] });
       ui.toast('SOP created', 'success');
       return nav(`sops/${rec.id}`);
     }
     const changed = JSON.stringify({ t: fields.title, s: steps.map((s) => s.text) }) !== original;
-    store.update('sops', sop.id, { ...fields, version: changed ? (sop.version || 1) + 1 : sop.version || 1 },
-      { summary: `${fields.title}${changed ? ` → v${(sop.version || 1) + 1}` : ''}` });
-    ui.toast(changed ? `Published v${(sop.version || 1) + 1}` : 'Saved', 'success');
+    store.update('sops', sop.id, { ...fields, revision: changed ? sopRev(sop) + 1 : sopRev(sop) },
+      { summary: `${fields.title}${changed ? ` → v${sopRev(sop) + 1}` : ''}` });
+    ui.toast(changed ? `Published v${sopRev(sop) + 1}` : 'Saved', 'success');
     nav(`sops/${sop.id}`);
   }
 

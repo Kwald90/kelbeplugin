@@ -44,7 +44,7 @@
       ],
       "maxLength": 100
     },
-    "version": {
+    "revision": {
       "type": [
         "integer",
         "null"
@@ -102,6 +102,12 @@
               "null"
             ],
             "maxLength": 128
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "version": {
             "type": [
