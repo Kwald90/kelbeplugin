@@ -1,5 +1,6 @@
 // UI kit: a tiny DOM builder plus the primitives from replica/design/components.md.
 import { icon } from './icons.js';
+import { isNativeApp, saveAndShare } from './lib/native.js';
 
 export { icon };
 
@@ -306,6 +307,8 @@ export function toast(message, kind = 'info', ms = 2600) {
 
 /** Trigger a download of text or a Blob. */
 export function download(filename, content, type = 'application/json') {
+  // In the iOS app <a download> does nothing: save to Files and open the share sheet instead.
+  if (isNativeApp()) return saveAndShare(filename, content, type).catch((e) => toast(`Couldn't save ${filename}: ${e.message}`, 'error', 4500));
   const blob = content instanceof Blob ? content : new Blob([content], { type });
   const a = h('a', { href: URL.createObjectURL(blob), download: filename });
   document.body.append(a); a.click(); a.remove();
