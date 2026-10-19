@@ -12,7 +12,8 @@
     "sync": "node scripts/copy-web.mjs && cap sync ios",
     "open": "cap open ios",
     "build:sim": "xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath \"${DERIVED_DATA_PATH:-.derived}\" build",
-    "build:device": "xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -destination 'generic/platform=iOS' -derivedDataPath \"${DERIVED_DATA_PATH:-.derived}\" CODE_SIGNING_ALLOWED=NO build"
+    "build:device": "xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -destination 'generic/platform=iOS' -derivedDataPath \"${DERIVED_DATA_PATH:-.derived}\" CODE_SIGNING_ALLOWED=NO build",
+    "test": "node --test scripts/*.test.mjs"
   },
   "dependencies": {
     "@capacitor/core": "8.5.3",

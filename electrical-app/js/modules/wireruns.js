@@ -564,8 +564,7 @@ function renderEditor(root, ctx, id) {
     ui.download(W.runFileName(run, job(), 'csv'), W.runToCsv(run, { units, jobLabel: jobLabel(job()) }), 'text/csv');
     store.log('export', `CSV: ${run.name}`, 'wireRuns', id);
   };
-  // WKWebView ignores window.print(); in the iOS app the PDF's share sheet has Print.
-  const print = () => { if (isNativeApp()) { downloadPdf(); return; } save.flush(); printRun(ui, run, { store, units, job: job() }); };
+  const print = () => { save.flush(); printRun(ui, run, { store, units, job: job() }); };
 
   // ----- add to estimate -----
   function addToEstimate() {

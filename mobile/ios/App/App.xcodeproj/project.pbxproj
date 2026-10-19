@@ -20,6 +20,8 @@
 		F15A7A9E0000000000000002 /* FishtapeMeasurePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000012 /* FishtapeMeasurePlugin.swift */; };
 		F15A7A9E0000000000000003 /* MeasureViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000013 /* MeasureViewController.swift */; };
 		F15A7A9E0000000000000004 /* MeasureFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000014 /* MeasureFormat.swift */; };
+		F15A7A9E0000000000000005 /* FishtapeKeychainPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000015 /* FishtapeKeychainPlugin.swift */; };
+		F15A7A9E0000000000000006 /* FishtapePrintPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000016 /* FishtapePrintPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +40,8 @@
 		F15A7A9E0000000000000012 /* FishtapeMeasurePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FishtapeMeasurePlugin.swift; sourceTree = "<group>"; };
 		F15A7A9E0000000000000013 /* MeasureViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeasureViewController.swift; sourceTree = "<group>"; };
 		F15A7A9E0000000000000014 /* MeasureFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeasureFormat.swift; sourceTree = "<group>"; };
+		F15A7A9E0000000000000015 /* FishtapeKeychainPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FishtapeKeychainPlugin.swift; sourceTree = "<group>"; };
+		F15A7A9E0000000000000016 /* FishtapePrintPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FishtapePrintPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +79,7 @@
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				F15A7A9E0000000000000011 /* MainViewController.swift */,
 				F15A7A9E0000000000000020 /* FishtapeMeasure */,
+				F15A7A9E0000000000000021 /* Plugins */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -95,6 +100,15 @@
 				F15A7A9E0000000000000014 /* MeasureFormat.swift */,
 			);
 			path = FishtapeMeasure;
+			sourceTree = "<group>";
+		};
+		F15A7A9E0000000000000021 /* Plugins */ = {
+			isa = PBXGroup;
+			children = (
+				F15A7A9E0000000000000015 /* FishtapeKeychainPlugin.swift */,
+				F15A7A9E0000000000000016 /* FishtapePrintPlugin.swift */,
+			);
+			path = Plugins;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -184,6 +198,8 @@
 				F15A7A9E0000000000000002 /* FishtapeMeasurePlugin.swift in Sources */,
 				F15A7A9E0000000000000003 /* MeasureViewController.swift in Sources */,
 				F15A7A9E0000000000000004 /* MeasureFormat.swift in Sources */,
+				F15A7A9E0000000000000005 /* FishtapeKeychainPlugin.swift in Sources */,
+				F15A7A9E0000000000000006 /* FishtapePrintPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
