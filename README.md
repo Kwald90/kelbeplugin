@@ -1,13 +1,23 @@
 # kelbeplugin
 
-## Kelbe Circuit (electrical CRM/ERP app)
+## Fishtape (electrical contractor SaaS)
 
-[`electrical-app/`](electrical-app/) is an installable, offline-first web app
-for running an electrical contracting business: a Concepts-style infinite
-canvas for plans and markups, plus CRM, jobs, estimating, invoicing,
-inventory, crew, time clock, SOPs, compliance, security audit and NEC
-calculators. See [`electrical-app/README.md`](electrical-app/README.md).
+Fishtape is a multi-company app for Canadian electrical contractors: CRM, jobs,
+estimating, invoicing, crew and time, a plan canvas with box auto-placement and
+CEC checks, wire runs, pipe bending and CEC calculators.
 
-It was built with the [replica skill](https://github.com/Jakeschincariol/replica-skill)
-pack, installed in [`.claude/skills/`](.claude/skills/). The recon map,
-feature matrix, architecture and design tokens are in [`replica/`](replica/).
+| folder | what |
+| --- | --- |
+| [`electrical-app/`](electrical-app/) | the installable web app (PWA), see its [README](electrical-app/README.md) |
+| [`server/`](server/) | the API: Node 22, Fastify, PostgreSQL with row-level security, see its [README](server/README.md) |
+| [`docs/`](docs/) | build plan, architecture, code research, field guides, security and compliance |
+| [`deploy/`](deploy/) | local, staging and production setup |
+| [`replica/`](replica/) | the original recon map, feature matrix and design tokens |
+
+Start with [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md): decisions, the 13 layers,
+contracts and who owns what.
+
+Staging: https://tgelectrical.truecollarbuilt.com
+
+The rest of the repo (`includes/`, `kelbe-project-tracker.php`) is the older
+WordPress plugin and is not served.
