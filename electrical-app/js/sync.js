@@ -214,9 +214,10 @@ export function queueCounts(queue) {
  * @param {(status: object) => void} [o.onStatus]
  * @param {(conflicts: object[]) => void} [o.onConflicts]
  * @param {(err: Error) => void} [o.onAuthError] the session ended or needs MFA: sign in again
+ * @param {() => void} [o.onSynced] after every cycle that reached the server
  */
 export function createSync({
-  store, api, onStatus = () => {}, onConflicts = () => {}, onRejected = () => {}, onAuthError = () => {},
+  store, api, onStatus = () => {}, onConflicts = () => {}, onRejected = () => {}, onAuthError = () => {}, onSynced = () => {},
   timers = globalThis, isOnline = () => globalThis.navigator?.onLine !== false,
   isVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
   newMid = uid,
@@ -231,12 +232,13 @@ export function createSync({
   let lastError = null;
   let lastSyncAt = store.meta('lastSyncAt') || null;
   let busy = false;
+  let checking = true; // until the first cycle of this run has an answer
   const off = [];
 
   function snapshot() {
     const { waiting, rejected } = queueCounts(store.queue);
     let state = 'synced';
-    if (busy) state = 'syncing';
+    if (busy || (checking && !offline && !lastError)) state = 'syncing';
     else if (offline) state = 'offline';
     else if (lastError) state = 'error';
     return { state, waiting, rejected, lastSyncAt, error: lastError ? { code: lastError.code, message: lastError.message } : null, pulledOnce: Boolean(store.meta('pulledOnce')) };
@@ -311,7 +313,7 @@ export function createSync({
   }
 
   async function run() {
-    if (!isOnline()) { offline = true; publish(); return; }
+    if (!isOnline()) { offline = true; checking = false; publish(); return; }
     const { waiting } = queueCounts(store.queue);
     busy = waiting > 0 || !store.meta('pulledOnce');
     publish();
@@ -322,7 +324,10 @@ export function createSync({
       lastSyncAt = new Date().toISOString();
       store.setMeta('lastSyncAt', lastSyncAt);
       if (isVisible()) schedule(POLL_MS);
+      checking = false;
+      try { onSynced(); } catch (e) { console.error(e); }
     } catch (err) {
+      checking = false;
       handleError(err);
     } finally {
       busy = false;

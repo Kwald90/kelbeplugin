@@ -14,6 +14,8 @@ import { BRAND } from '../brand.js';
 import { getUnits } from '../lib/units.js';
 
 const { h } = ui;
+/** Replace an element's children; null/false/arrays handled like h() (replaceChildren would print "null"). */
+const put = (el, ...kids) => h(ui.clear(el), null, ...kids);
 
 // Inline icons (BUILD-PLAN: modules inline the ones icons.js lacks).
 export const ICON = {
@@ -107,7 +109,7 @@ function signInView(go, ctx, o) {
     field('Email', email), field('Password', password), submit,
     h('div', { class: 'row gate-links' }, h('a', { href: '#/sign-in', onClick: (e) => { e.preventDefault(); go('forgot', { email: email.value }); } }, 'Forgot password?')));
   const doSignIn = busyButton(submit, async () => {
-    msg.replaceChildren();
+    put(msg);
     try {
       const r = await session.login(email.value.trim(), password.value);
       if (r.mfa) return go('mfa', { mfa: r.mfa });
@@ -157,7 +159,7 @@ function forgotView(go, o) {
   const submit = ui.button('Email me a link', { variant: 'primary lg', type: 'submit' });
   submit.classList.add('wide');
   const send = busyButton(submit, async () => {
-    msg.replaceChildren();
+    put(msg);
     try {
       await api.post('/api/v1/auth/password/forgot', { email: email.value.trim() });
       msg.append(note('If an account uses that email, a link is on its way. It works for one hour.', 'success'));
@@ -177,7 +179,7 @@ function resetView(go) {
   const submit = ui.button('Set password', { variant: 'primary lg', type: 'submit', disabled: !resetToken });
   submit.classList.add('wide');
   const save = busyButton(submit, async () => {
-    msg.replaceChildren();
+    put(msg);
     if (pw.value !== pw2.value) { msg.append(note('The two passwords are different.', 'danger')); return; }
     try {
       await api.post('/api/v1/auth/password/reset', { token: resetToken, newPassword: pw.value });
@@ -210,12 +212,12 @@ function verifyView(go, ctx) {
   const submit = ui.button('Verify', { variant: 'primary lg', type: 'submit' });
   submit.classList.add('wide');
   const draw = () => {
-    host.replaceChildren(recovery ? field('Recovery code', rcode, 'One of the codes you saved when you set this up. Each works once.') : field('6-digit code from your authenticator app', code));
+    put(host, recovery ? field('Recovery code', rcode, 'One of the codes you saved when you set this up. Each works once.') : field('6-digit code from your authenticator app', code));
     toggle.textContent = recovery ? 'Use the authenticator app instead' : 'Use a recovery code instead';
     (recovery ? rcode : code).focus();
   };
   const verify = busyButton(submit, async () => {
-    msg.replaceChildren();
+    put(msg);
     try {
       const r = await api.post('/api/v1/auth/mfa/verify', recovery ? { recoveryCode: rcode.value.trim() } : { code: code.value.trim() });
       if (r.recoveryCodesLeft != null) {
@@ -252,16 +254,16 @@ export function enrolFlow({ onDone, onCancel }) {
     const code = input({ inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]{6}', maxlength: 6, required: true, placeholder: '123456', class: 'input code-input' });
     const submit = ui.button('Turn on two-step sign-in', { variant: 'primary', type: 'submit' });
     const confirm = busyButton(submit, async () => {
-      msg.replaceChildren();
+      put(msg);
       try {
         const { recoveryCodes } = await api.post('/api/v1/auth/mfa/totp/confirm', { code: code.value.trim() });
-        host.replaceChildren(recoveryCodesView(recoveryCodes, onDone));
+        put(host, recoveryCodesView(recoveryCodes, onDone));
       } catch (e) {
         code.value = '';
         msg.append(note(e.code === 'invalid_code' ? "That code didn't match. Check the time on your phone and try again." : e.message, 'danger'));
       }
     });
-    host.replaceChildren(msg,
+    put(host, msg,
       h('ol', { class: 'enrol-steps' },
         h('li', null, 'Open an authenticator app on your phone: Google Authenticator, Microsoft Authenticator, 1Password or similar.'),
         h('li', null, 'Scan this code, or enter the key by hand.'),
@@ -275,7 +277,7 @@ export function enrolFlow({ onDone, onCancel }) {
       h('form', { class: 'stack', onSubmit: (e) => { e.preventDefault(); confirm(); } }, field('6-digit code', code), h('div', { class: 'row' }, submit, onCancel ? ui.button('Cancel', { variant: 'ghost', onClick: onCancel }) : null)));
     code.focus();
   }).catch((e) => {
-    host.replaceChildren(note(e.code === 'mfa_required' ? 'Verify your current authenticator first.' : e.message, 'danger'));
+    put(host, note(e.code === 'mfa_required' ? 'Verify your current authenticator first.' : e.message, 'danger'));
   });
   return host;
 }
@@ -314,9 +316,9 @@ function crewView(go, ctx, o) {
     msg, body,
     h('div', { class: 'row gate-links' }, h('a', { href: '#/sign-in', onClick: (e) => { e.preventDefault(); go('sign-in'); } }, 'Manager? Sign in with email')));
   api.get('/api/v1/devices/crew').then(({ company, crew }) => {
-    if (!crew.length) { body.replaceChildren(note('Nobody has a PIN yet. A manager can set PINs in Account → Shared iPad.', 'info')); return; }
+    if (!crew.length) { put(body, note('Nobody has a PIN yet. A manager can set PINs in Account → Shared iPad.', 'info')); return; }
     card.querySelector('.gate-sub').textContent = `${company}: tap your name, then your PIN.`;
-    body.replaceChildren(h('div', { class: 'crew-grid' }, crew.map((c) => h('button', { type: 'button', class: 'crew-tile', onClick: () => pinPad(body, msg, c, ctx) },
+    put(body, h('div', { class: 'crew-grid' }, crew.map((c) => h('button', { type: 'button', class: 'crew-tile', onClick: () => pinPad(body, msg, c, ctx) },
       h('span', { class: 'avatar' }, ui.initials(c.name)), h('span', { class: 'title' }, c.name)))));
   }).catch((e) => {
     if (e.code === 'invalid_device' || e.status === 401) {
@@ -325,7 +327,7 @@ function crewView(go, ctx, o) {
       ui.toast('This iPad is no longer registered for crew sign-in', 'error', 4000);
       return;
     }
-    body.replaceChildren(note(isUnreachable(e) ? 'Crew sign-in needs a connection. Try again when this iPad is online.' : e.message, 'warning'),
+    put(body, note(isUnreachable(e) ? 'Crew sign-in needs a connection. Try again when this iPad is online.' : e.message, 'warning'),
       ui.button('Try again', { icon: 'redo', onClick: () => go('crew') }));
   });
   return card;
@@ -334,13 +336,13 @@ function crewView(go, ctx, o) {
 function pinPad(host, msg, person, ctx) {
   let pin = '';
   const dots = h('div', { class: 'pin-dots', 'aria-live': 'polite' });
-  const draw = () => { dots.replaceChildren(...Array.from({ length: Math.max(4, pin.length) }, (_, i) => h('span', { class: i < pin.length ? 'on' : null }))); dots.setAttribute('aria-label', `${pin.length} digits entered`); };
+  const draw = () => { put(dots, ...Array.from({ length: Math.max(4, pin.length) }, (_, i) => h('span', { class: i < pin.length ? 'on' : null }))); dots.setAttribute('aria-label', `${pin.length} digits entered`); };
   const press = (d) => { if (pin.length < 8) { pin += d; draw(); } };
   const back = () => { pin = pin.slice(0, -1); draw(); };
   const ok = h('button', { type: 'button', class: 'pin-key ok', 'aria-label': 'Sign in' }, ui.icon('check', 22));
   const submit = busyButton(ok, async () => {
     if (pin.length < 4) return;
-    msg.replaceChildren();
+    put(msg);
     try {
       await api.post('/api/v1/devices/crew/sign-in', { membershipId: person.membershipId, pin });
       ctx.restart('dashboard');
@@ -358,7 +360,7 @@ function pinPad(host, msg, person, ctx) {
     else if (e.key === 'Enter') submit();
   };
   document.addEventListener('keydown', onKey);
-  host.replaceChildren(
+  put(host, 
     h('div', { class: 'row' }, h('span', { class: 'avatar' }, ui.initials(person.name)), h('strong', { class: 'grow' }, person.name),
       ui.button('Not me', { variant: 'ghost', size: 'sm', onClick: () => { document.removeEventListener('keydown', onKey); ctx.restart(''); } })),
     dots,
@@ -400,10 +402,10 @@ export function syncPanel(app) {
   const host = h('div', { class: 'stack' });
   const draw = () => {
     const s = app.sync?.status();
-    if (!s) { host.replaceChildren(h('p', { class: 'muted' }, 'Demo mode: nothing syncs. Data stays on this device.')); return; }
+    if (!s) { put(host, h('p', { class: 'muted' }, 'Demo mode: nothing syncs. Data stays on this device.')); return; }
     const l = syncLabel(s);
     const rejected = app.store.queue.filter((e) => e.state === 'rejected' && e.collection !== 'auditLog');
-    host.replaceChildren(
+    put(host, 
       h('div', { class: 'row' }, h('span', { class: ['sync-dot', l.tone] }), h('strong', { class: 'grow' }, l.text),
         ui.button('Sync now', { size: 'sm', icon: 'redo', onClick: async () => { await app.sync.syncNow(); draw(); } })),
       h('div', { class: 'muted' }, s.lastSyncAt ? `Last synced ${ui.fmtDateTime(s.lastSyncAt)}` : 'Not synced yet on this device'),
@@ -475,7 +477,7 @@ function pinDialog(title, label) {
     const b = input({ type: 'password', inputmode: 'numeric', autocomplete: 'off', pattern: '[0-9]{4,8}', maxlength: 8 });
     const err = h('div');
     const ok = () => {
-      err.replaceChildren();
+      put(err);
       if (!/^\d{4,8}$/.test(a.value)) return err.append(note('Use 4 to 8 digits.', 'danger'));
       if (a.value !== b.value) return err.append(note('The two PINs are different.', 'danger'));
       done = true; resolve(a.value); s.close();
@@ -530,16 +532,16 @@ function sharedDeviceCard(app, auth) {
     // Crew PINs (managers): who can sign in on a shared iPad.
     const list = h('div', { class: 'list' }, h('div', { class: 'list-row muted' }, 'Loading crew…'));
     kids.push(h('strong', null, 'Crew PINs'), list);
-    host.replaceChildren(...kids);
+    put(host, ...kids);
     try {
       const { data } = await api.get('/api/v1/members');
-      list.replaceChildren(...data.filter((m) => m.status === 'active').map((m) => h('div', { class: 'list-row' },
+      put(list, ...data.filter((m) => m.status === 'active').map((m) => h('div', { class: 'list-row' },
         h('span', { class: 'avatar', style: { background: '#5f5a51' } }, ui.initials(m.displayName || '?')),
         h('div', { class: 'grow' }, h('div', { class: 'title' }, m.displayName), h('div', { class: 'meta' }, ROLE_LABEL[m.role] || m.role)),
         m.hasPin ? ui.badge('PIN set', 'success') : ui.badge('No PIN', 'neutral'),
         ui.button(m.hasPin ? 'Change' : 'Set PIN', { size: 'sm', onClick: async () => { if (await setPin(m.id, m.displayName)) draw(); } }))));
     } catch (e) {
-      list.replaceChildren(h('div', { class: 'list-row muted' }, isUnreachable(e) ? 'Needs a connection.' : e.message));
+      put(list, h('div', { class: 'list-row muted' }, isUnreachable(e) ? 'Needs a connection.' : e.message));
     }
   };
   draw();
@@ -588,7 +590,7 @@ export default {
       let theme = 'system';
       try { theme = localStorage.getItem('kc.theme') || 'system'; } catch { /* ignore */ }
       const set = async (k, v) => { await savePref(session.me, k, v); drawPrefs(); app.refreshShell(); };
-      prefsHost.replaceChildren(
+      put(prefsHost, 
         h('div', { class: 'stack', style: { gap: 'var(--s2)' } }, h('strong', null, 'Lengths'),
           ui.tabs([{ id: 'metric', label: 'Metric (m, mm)' }, { id: 'imperial', label: 'Imperial (ft, in)' }], getUnits(app.store.settings().units), (u) => set('units', u))),
         h('div', { class: 'stack', style: { gap: 'var(--s2)' } }, h('strong', null, 'Theme'),
@@ -601,7 +603,7 @@ export default {
     const mfaHost = h('div', { class: 'stack' });
     const drawMfa = () => {
       const on = me.session?.mfaEnrolled;
-      mfaHost.replaceChildren(
+      put(mfaHost, 
         h('div', { class: 'row' }, h('span', { class: 'grow' }, on ? 'On: a code from your phone is needed at each new sign-in.' : 'Off.'), ui.badge(on ? 'On' : 'Off', on ? 'success' : 'neutral')),
         on ? ui.button('Make new recovery codes', { icon: 'key', disabled: offline, onClick: async () => {
           if (!(await ui.confirmDialog('Your old recovery codes stop working.', { title: 'Make new recovery codes?', okLabel: 'Make new codes', danger: false }))) return;

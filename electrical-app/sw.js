@@ -1,5 +1,5 @@
 // Offline cache: app shell is cached on install, everything else on first use.
-const CACHE = 'fishtape-v3';
+const CACHE = 'fishtape-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './css/tokens.css', './css/app.css', './css/canvas.css', './icons/icon.svg', './js/app.js'];
 
 self.addEventListener('install', (e) => {
@@ -12,9 +12,6 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
-  // Never cache the API: responses are per user and company (no-store), and offline must
-  // look offline rather than replay an old /me or sync page.
-  if (new URL(req.url).pathname.startsWith('/api/')) return;
   e.respondWith(fetch(req).then((res) => {
     if (res.ok && (new URL(req.url).origin === location.origin || req.url.includes('cdnjs.cloudflare.com'))) {
       const copy = res.clone();

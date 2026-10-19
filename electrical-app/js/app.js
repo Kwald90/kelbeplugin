@@ -18,6 +18,7 @@ import { createSync } from './sync.js';
 import { FEATURE_PLAN, hasFeature } from './plans.js';
 
 const { h, icon } = ui;
+const put = (el, ...kids) => h(ui.clear(el), null, ...kids);
 // The Account page is part of the shell, not a plan module, so it is not in modules/index.js.
 const ALL = [...MODULES, account];
 // Records each plan-gated module shows, to offer read-only viewing after a downgrade.
@@ -143,7 +144,7 @@ function paintSync(btn, s) {
   btn.className = ['rail-btn', 'sync-btn', l.tone, s?.state === 'syncing' ? 'spinning' : null].filter(Boolean).join(' ');
   btn.setAttribute('aria-label', `Sync: ${l.text}`);
   const count = (s?.waiting || 0) + (s?.rejected || 0);
-  btn.replaceChildren(icon(l.icon, 22), count ? h('span', { class: 'sync-count' }, count > 99 ? '99+' : String(count)) : null, h('span', { class: 'tip' }, l.text));
+  put(btn, icon(l.icon, 22), count ? h('span', { class: 'sync-count' }, count > 99 ? '99+' : String(count)) : null, h('span', { class: 'tip' }, l.text));
 }
 
 function demoButton() {
@@ -248,7 +249,7 @@ function paintBanner() {
     : null;
   if (!text) { banner?.remove(); banner = null; return; }
   if (!banner) { banner = h('div', { class: 'net-banner no-print', role: 'status' }); document.body.append(banner); }
-  banner.replaceChildren(icon('alert', 14), h('span', null, text));
+  put(banner, icon('alert', 14), h('span', null, text));
 }
 
 // ---------- the API the Account page and sheets use ----------
@@ -260,6 +261,11 @@ const shellApi = {
   refreshShell: () => rebuild(),
   signOut, switchCompany, leaveDemo, switchDemoUser: () => switchUser(),
 };
+
+/** Empty Cache Storage (threat model TM-WEB-04): nothing from this session stays in the service worker's caches. */
+async function clearCacheStorage() {
+  try { for (const k of await globalThis.caches?.keys?.() || []) await caches.delete(k); } catch { /* not available */ }
+}
 
 async function signOut({ keepData = false } = {}) {
   const shared = keepData || Boolean(session.device());
@@ -280,6 +286,7 @@ async function signOut({ keepData = false } = {}) {
     // A personal device forgets this person's company data: every company database of theirs.
     await store.destroy();
     if (userId) for (const name of await userDatabases(userId)) await deleteDatabase(name);
+    await clearCacheStorage();
   }
   session.forget();
   restart(session.device() ? '' : 'sign-in');
@@ -292,6 +299,7 @@ async function switchCompany(tenantId) {
   } catch (e) { ui.toast(e.message, 'error'); return; }
   sync?.stop();
   await store.close();
+  if (!session.device()) await clearCacheStorage();
   restart('dashboard');
 }
 
@@ -391,15 +399,17 @@ async function startSynced(me) {
   sync = createSync({
     store, api,
     onStatus: (s) => {
-      const wasOffline = syncStatus?.state === 'offline';
       syncStatus = s;
       paintSync(rail?.querySelector('.sync-btn'), s);
       paintBanner();
       for (const fn of statusListeners) { try { fn(s); } catch (e) { console.error(e); } }
-      if (s.state !== 'offline' && s.state !== 'syncing' && (wasOffline || !session.online)) {
-        session.online = true;
-        refreshMe().catch(() => {});
-      }
+    },
+    // Reached the server: after an offline start, check the session, role, plan and prefs.
+    onSynced: () => {
+      if (session.online) return;
+      session.online = true;
+      lastMeCheck = 0;
+      refreshMe().catch(() => {});
     },
     onConflicts: (list) => ui.toast(list.length === 1 ? 'Updated from another device' : `${list.length} records updated from another device`, 'info', 3500),
     onRejected: (list) => ui.toast(`${list.length} change${list.length === 1 ? " wasn't" : "s weren't"} saved on the server. See Sync.`, 'error', 4500),
