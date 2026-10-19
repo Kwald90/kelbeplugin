@@ -687,7 +687,7 @@ export function createRooms(api) {
       fields.push(lenField('Width', 'widthM', sp.b - sp.a), lenField('From the wall\'s start corner', 'atM', sp.a, `This wall is ${fmt(w.lenM)}. You can also drag the item along the wall.`));
       if (kind.depthM) fields.push(lenField('Depth into the room', 'depthM', f.depthM ?? kind.depthM));
       if (f.kind === 'door') {
-        fields.push({ label: 'Hinge side (facing the door from inside)', name: 'hinge', type: 'select', value: f.hinge === 'end' ? 'end' : 'start',
+        fields.push({ label: 'Hinge side, facing the door from inside (latch and switch go on the other side)', name: 'hinge', type: 'select', value: f.hinge === 'end' ? 'end' : 'start',
           options: [{ value: 'start', label: startIsLeft ? 'Left' : 'Right' }, { value: 'end', label: startIsLeft ? 'Right' : 'Left' }] },
         { label: 'Swing', name: 'swing', type: 'select', value: f.swing === 'out' ? 'out' : 'in', options: [{ value: 'in', label: 'Into this room' }, { value: 'out', label: 'Out of this room' }] },
         { label: 'Entry: put a switch on the latch side', name: 'entry', type: 'checkbox', value: f.entry !== false });
