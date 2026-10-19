@@ -81,6 +81,10 @@ record() { # result message
   printf '%s\n' "$line" > "$STATE_DIR/status/last-deploy.json.tmp"
   chmod 644 "$STATE_DIR/status/last-deploy.json.tmp"
   mv -f "$STATE_DIR/status/last-deploy.json.tmp" "$STATE_DIR/status/last-deploy.json"
+  # The last 50 deploys, for the HQ "recent deploys" list (DEPLOY_LOG_FILE in the containers).
+  tail -n 50 "$DEPLOY_LOG" > "$STATE_DIR/status/recent-deploys.jsonl.tmp"
+  chmod 644 "$STATE_DIR/status/recent-deploys.jsonl.tmp"
+  mv -f "$STATE_DIR/status/recent-deploys.jsonl.tmp" "$STATE_DIR/status/recent-deploys.jsonl"
 }
 
 image_exists() { docker image inspect "$IMAGE_REPO:$1" >/dev/null 2>&1; }

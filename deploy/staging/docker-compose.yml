@@ -40,6 +40,8 @@ x-server: &server
     FISHTAPE_HQ_PASSWORD: ""
     # Written by backup.sh / host-status.sh, read by /api/hq/health.
     BACKUP_STATUS_FILE: /run/fishtape/status/last-backup.json
+    DEPLOY_LOG_FILE: /run/fishtape/status/recent-deploys.jsonl
+    COMPLIANCE_CONTROLS_FILE: /app/compliance/controls.yaml
     # Public certificate chain copied by host-status.sh (never the key), for HQ health.
     TLS_CERT_FILE: /run/fishtape/status/tls-cert.pem
   volumes:

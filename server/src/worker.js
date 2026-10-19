@@ -7,8 +7,9 @@ import { HANDLERS, reclaimStuck, runOnce, scheduleRecurring } from './services/q
 import { INTEGRATION_HANDLERS, scheduleIntegrationJobs } from './integrations/jobs.js';
 import { createAiHandlers, scheduleAiJobs } from './ai/jobs.js';
 import { HQ_HANDLERS } from './services/hq-jobs.js';
+import { PLATFORM_EMAIL_HANDLERS, schedulePlatformEmail } from './services/platform-email.js';
 
-Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS);
+Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS, PLATFORM_EMAIL_HANDLERS);
 
 const HOUR = 3600_000;
 
@@ -32,6 +33,7 @@ async function main() {
           await scheduleRecurring(db);
           await scheduleIntegrationJobs(db);
           await scheduleAiJobs(db);
+          await schedulePlatformEmail(db);
         }
         const r = await runOnce(db, { workerId, handlers, log: { info: (m) => log('info', m), error: (m) => log('error', m) } });
         if (r) { log(r.outcome === 'done' ? 'info' : 'warn', `job ${r.kind} ${r.outcome}`, { jobId: r.id, ...(r.error ? { error: r.error } : {}) }); continue; }

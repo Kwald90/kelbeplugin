@@ -69,6 +69,17 @@ location ^~ /hq/ {
     return 404;
 }
 
+# ---- Public pages from the checkout's site/ folder: pricing + Enterprise form, status ----
+# They use /css/tokens.css and /icons/ from the app root, and call /api/ on this host.
+location ^~ /site/ {
+    root /var/www/tgelectrical/current;
+    expires epoch;
+    location ~ /\. { return 404; }
+    location ~* \.(?:html|js|mjs|css|png|jpe?g|gif|webp|avif|svg|ico|woff2?)$ { try_files $uri =404; }
+    location = /site/ { return 302 /site/pricing.html; }
+    return 404;
+}
+
 # ---- RFC 9116 security contact. Renew Expires every year (compliance calendar). ----
 location = /.well-known/security.txt {
     default_type text/plain;

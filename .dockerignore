@@ -8,6 +8,7 @@
 !electrical-app/js/lib/cec/
 !electrical-app/js/lib/money.js
 !electrical-app/js/lib/tax.js
+!compliance/controls.yaml
 
 # Never send these into the build, even inside allowed folders.
 **/node_modules

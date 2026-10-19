@@ -81,7 +81,7 @@ SENSITIVE=(
   /wp-config.php /config.php /phpinfo.php /server-status
   /tests/units.test.mjs /js/app.js.map /electrical-app/index.html
   /%2e%2e/.env /..%2f.env /%2e%2e%2fdeploy/staging/.env /js/../../deploy/staging/.env /js/..%2f..%2fdeploy/staging/.env
-  /hq/../.env /hq/../deploy/staging/.env /hq/..%2f..%2fdeploy/staging/.env /api/../.env /vendor/../.env /.well-known/../.env
+  /hq/../.env /site/../.env /site/..%2f..%2fdeploy/staging/.env /hq/../deploy/staging/.env /hq/..%2f..%2fdeploy/staging/.env /api/../.env /vendor/../.env /.well-known/../.env
   /index.html.bak /index.html~ /sw.js.bak
 )
 exposed=0

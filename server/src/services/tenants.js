@@ -27,6 +27,12 @@ async function uniqueSlug(q, name) {
   return `${base}-${randomUUID().slice(0, 8)}`;
 }
 
+/** Free trial length for new companies: env TRIAL_DAYS, default 30. */
+export function trialDays(env = process.env) {
+  const n = Number.parseInt(env.TRIAL_DAYS ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 30;
+}
+
 export async function isSignupOpen(q) {
   const { rows } = await q.query("SELECT enabled FROM feature_flags WHERE key = 'signup_open' AND tenant_id IS NULL");
   return Boolean(rows[0]?.enabled);
@@ -47,7 +53,9 @@ export async function createTenantWithOwner(db, { name, province = null, userId 
 
   return db.withTenant({ tenantId, userId }, async (tx) => {
     const slug = await uniqueSlug(tx, tenantName);
-    await tx.query('INSERT INTO tenants (id, slug, name, province) VALUES ($1, $2, $3, $4)', [tenantId, slug, tenantName, province]);
+    // Every new company starts on a trial that ends (plan 'trial' with no end date never would).
+    await tx.query('INSERT INTO tenants (id, slug, name, province, trial_ends_at) VALUES ($1, $2, $3, $4, now() + make_interval(days => $5))',
+      [tenantId, slug, tenantName, province, trialDays()]);
     let uid = userId;
     if (!uid) {
       const email = normaliseEmail(owner.email);

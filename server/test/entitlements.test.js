@@ -36,3 +36,11 @@ test('assertFeature and requireFeature refuse with feature_not_in_plan', async (
   await assert.rejects(requireFeature(db, 'mcp')({ principal: { tenantId: 't-pro' } }), (e) => e.code === 'feature_not_in_plan');
   await requireFeature(db, 'panels')({ principal: { tenantId: 't-pro' } });
 });
+
+test('new companies get a trial that ends: TRIAL_DAYS, default 30', async () => {
+  const { trialDays } = await import('../src/services/tenants.js');
+  assert.equal(trialDays({}), 30);
+  assert.equal(trialDays({ TRIAL_DAYS: '14' }), 14);
+  assert.equal(trialDays({ TRIAL_DAYS: '0' }), 30);
+  assert.equal(trialDays({ TRIAL_DAYS: 'soon' }), 30);
+});
