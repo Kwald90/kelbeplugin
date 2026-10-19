@@ -135,8 +135,11 @@ export function placementSettings(...layers) {
     if (!l || typeof l !== 'object') continue;
     for (const [k, v] of Object.entries(l)) {
       if (v == null) continue;
-      if (k === 'alarms' && typeof v === 'object') Object.assign(out.alarms, v);
-      else if (k in DEFAULT_PLACEMENT) out[k] = v;
+      if (k === 'alarms') {
+        // older settings stored one on/off switch for every alarm location
+        if (typeof v === 'object') Object.assign(out.alarms, v);
+        else for (const a of Object.keys(out.alarms)) out.alarms[a] = !!v;
+      } else if (k in DEFAULT_PLACEMENT) out[k] = v;
     }
   }
   return out;

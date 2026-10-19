@@ -5,14 +5,12 @@ import { isBackupTag } from '../store.js';
 import { getUnits, setUnits, parseLength, fmtLength } from '../lib/units.js';
 import { PROVINCES, TREATMENTS, treatmentsFor, treatmentHint, taxSetup, newDocTax, describeTaxes, ratesOn, provinceName, isGstHstNumber } from '../lib/tax.js';
 import { adoptionFor, CODE_BOOKS } from '../lib/cec/provinces.js';
+import { placementSettings } from '../lib/placement-rules.js';
 
 export const APP_VERSION = '0.3.0';
 
 const CURRENCIES = ['CAD', 'USD'];
 
-// Box placement defaults. The placement workstream exports DEFAULT_PLACEMENT from
-// js/lib/placement-rules.js; this fallback stands in until that import is wired.
-const PLACEMENT_FALLBACK = { switchHeightM: 1.2, switchLatchSide: true, alarms: true };
 const KIND_LABEL = { material: 'Materials', labour: 'Labour', other: 'Other' };
 
 export default {
@@ -131,23 +129,35 @@ export default {
         saveRow('Save tax set-up', save));
     };
 
-    // box placement on drawings (settings.placement)
+    // box placement on drawings (settings.placement); defaults live in lib/placement-rules.js
     const placementHost = h('div', { class: 'stack' });
     const drawPlacement = () => {
       ui.clear(placementHost);
       const cur = store.settings();
       const units = getUnits(cur.units);
-      const pl = { ...PLACEMENT_FALLBACK, ...(cur.placement || {}) };
+      const pl = placementSettings(cur.placement);
+      const unitLabel = units === 'imperial' ? 'ft-in' : 'm';
+      const len = (m) => (units === 'imperial' ? fmtLength(m, { units, denom: 8 }) : String(m));
       const form = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
-        { label: `Switch height (${units === 'imperial' ? 'ft-in' : 'm'})`, name: 'switchHeight', value: units === 'imperial' ? fmtLength(pl.switchHeightM, { units, denom: 8 }) : String(pl.switchHeightM), hint: 'Centre of the switch box above the finished floor' },
-        { label: 'Switches on the latch side of doors', name: 'switchLatchSide', type: 'checkbox', value: pl.switchLatchSide },
-        { label: 'Place smoke and CO alarms', name: 'alarms', type: 'checkbox', value: pl.alarms },
+        { label: `Switch height (${unitLabel})`, name: 'switchHeight', value: len(pl.switchHeightM), hint: 'Centre of the switch box above the finished floor' },
+        { label: `Switch from the latch-side jamb (${unitLabel})`, name: 'switchFromJamb', value: len(pl.switchFromJambM), hint: 'Door jamb to the centre of the switch box' },
+        { label: `Receptacle height (${unitLabel})`, name: 'receptacleHeight', value: len(pl.receptacleHeightM), hint: 'Centre above the finished floor' },
+        { label: 'Smoke/CO alarms in bedrooms', name: 'alarmBedrooms', type: 'checkbox', value: pl.alarms.bedrooms },
+        { label: 'Smoke/CO alarms in hallways', name: 'alarmHallways', type: 'checkbox', value: pl.alarms.hallways },
+        { label: 'Smoke/CO alarm in the basement', name: 'alarmBasement', type: 'checkbox', value: pl.alarms.basement },
       ]));
       const save = () => {
         const v = ui.readForm(form);
-        const m = parseLength(v.switchHeight, { units, bare: units === 'imperial' ? 'in' : 'm' });
-        if (m == null || m <= 0 || m > 3) { ui.toast(`Enter a switch height like ${units === 'imperial' ? `48" or 4'` : '1.2 or 1200 mm'}`, 'error'); return; }
-        store.saveSettings({ placement: { ...(store.settings().placement || {}), switchHeightM: Math.round(m * 1000) / 1000, switchLatchSide: !!v.switchLatchSide, alarms: !!v.alarms } });
+        const read = (s, max) => {
+          const m = parseLength(s, { units, bare: units === 'imperial' ? 'in' : 'm' });
+          return m != null && m >= 0 && m <= max ? Math.round(m * 1000) / 1000 : null;
+        };
+        const switchHeightM = read(v.switchHeight, 3);
+        const switchFromJambM = read(v.switchFromJamb, 1);
+        const receptacleHeightM = read(v.receptacleHeight, 3);
+        if (!switchHeightM || switchFromJambM == null || !receptacleHeightM) { ui.toast(`Enter lengths like ${units === 'imperial' ? `48" or 4'` : '1.2 or 1200 mm'}`, 'error'); return; }
+        store.saveSettings({ placement: { ...(store.settings().placement || {}), switchHeightM, switchFromJambM, receptacleHeightM,
+          alarms: { bedrooms: !!v.alarmBedrooms, hallways: !!v.alarmHallways, basement: !!v.alarmBasement } } });
         ui.toast('Placement defaults saved', 'success');
         drawPlacement();
       };
