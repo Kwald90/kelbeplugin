@@ -19,12 +19,13 @@ import calcs from './calcs.js';
 import bending from './bending.js';
 import panels from './panels.js';
 import settings from './settings.js';
+import assistant from './assistant.js';
 
 export const GROUPS = {
   home: 'Home', sales: 'Sales', work: 'Work', money: 'Money', people: 'People', field: 'Field', admin: 'Admin',
 };
 
 export const MODULES = [
-  dashboard, clients, leads, sequences, jobs, schedule, drawings, wireruns, estimates, invoices, inventory,
+  dashboard, assistant, clients, leads, sequences, jobs, schedule, drawings, wireruns, estimates, invoices, inventory,
   employees, time, sops, compliance, security, calcs, bending, panels, settings,
 ];
