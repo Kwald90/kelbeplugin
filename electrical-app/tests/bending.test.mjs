@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as B from '../js/lib/bending.js';
 import * as P from '../js/lib/bending-profiles.js';
+import * as S from '../js/lib/bending-svg.js';
 import { inToM, mToIn } from '../js/lib/units.js';
 
 const near = (actual, expected, tol = 1e-3, msg = '') =>
@@ -409,6 +410,40 @@ test('code minimum radius', () => {
   near(P.minBendRadius('RMC', '103'), 0.406, 1e-12);
   near(inch(P.minBendRadius('PVC', '53')), 12, 1e-9); // PVC field bends: 6 × trade size
   assert.equal(P.minBendRadius('EMT', '12'), null);
+});
+
+test('diagrams: every kind draws, one line per mark, text escaped', () => {
+  const fmt = (m) => `${(m / 0.0254).toFixed(1)}"`; // quotes must be escaped in the SVG
+  const cases = {
+    offset: { riseM: inToM(6), angleDeg: 30, obstacleM: inToM(36) },
+    kick: { riseM: inToM(3), angleDeg: 22.5 },
+    saddle3: { heightM: inToM(2), centerM: inToM(24) },
+    saddle4: { heightM: inToM(4), widthM: inToM(10) },
+    stub90: { stubM: inToM(10), takeUpM: inToM(5), radiusM: inToM(4.1875), odM: inToM(0.706), otherLegM: inToM(30) },
+    backToBack: { stubM: inToM(10), backToBackM: inToM(30), takeUpM: inToM(5), radiusM: inToM(4.1875), odM: inToM(0.706) },
+    boxOffset: { riseM: inToM(0.5) },
+    rolling: { riseM: inToM(6), rollM: inToM(8), angleDeg: 45, obstacleM: inToM(40) },
+    parallel: { riseM: inToM(6), angleDeg: 30, count: 3, centersM: inToM(2), obstacleM: inToM(36) },
+    segment: { radiusM: inToM(30), stubM: inToM(48), shots: 10, odM: inToM(2.375) },
+    concentric: { count: 3, centersM: inToM(4), innerRadiusM: inToM(20), startM: inToM(12), shots: 9 },
+  };
+  for (const [kind, input] of Object.entries(cases)) {
+    const r = B.compute(kind, input, { fmt });
+    const bent = S.bentSvg(r, { fmt, width: 480, odM: input.odM || 0 });
+    const straight = S.marksSvg(r, { fmt, width: 480 });
+    for (const svg of [bent, straight]) {
+      assert.match(svg, /^<svg class="bend-svg" viewBox="0 0 480 \d+"/, kind);
+      assert.ok(!/NaN|undefined/.test(svg), `${kind} has no NaN`);
+      assert.ok(!/>[^<]*"[^<]*</.test(svg), `${kind} escapes quotes in text`);
+    }
+    const lines = (straight.match(/class="bd-markline"/g) || []).length;
+    assert.equal(lines, r.marks.filter((m) => m.symbol !== 'tick').length, `${kind} one line per mark`);
+  }
+  const par = S.marksSvg(B.compute('parallel', cases.parallel, { fmt }), { fmt });
+  assert.ok(par.includes('Pipe 3'), 'one row per pipe');
+  assert.ok(S.rollSvg(B.compute('rolling', cases.rolling, { fmt }), { fmt }).includes('53.1° from up'));
+  // the star shows on a back-to-back's second mark
+  assert.ok(S.marksSvg(B.compute('backToBack', cases.backToBack, { fmt }), { fmt }).includes('<polygon class="bd-sym"'));
 });
 
 test('calibrate: take-up and gain from one test 90', () => {

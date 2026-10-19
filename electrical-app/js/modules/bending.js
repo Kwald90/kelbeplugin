@@ -460,7 +460,11 @@ function calculatorView(root) {
       ui.button('My benders', { icon: 'wrench', href: '#/bending/profiles' }),
     ],
   },
-  h('div', { class: 'bend-tabs no-print' }, ui.tabs(TABS, kind, (id) => { state.kind = id; remember(); ctx.nav('#/bending/' + id); })),
+  h('div', { class: 'bend-tabs no-print' }, ui.tabs(TABS, kind, (id) => {
+    // a saved bend stays open only on its own kind, so Save can't turn a saddle into an offset
+    if (state.editing && state.editing.kind !== id) state.editing = null;
+    state.kind = id; remember(); ctx.nav('#/bending/' + id);
+  })),
   body);
   root.append(page);
   let observer = null;
@@ -553,13 +557,13 @@ function offsetReference(kind) {
   return h('details', { class: 'bend-ref' },
     h('summary', null, 'Multipliers and shrink'),
     h('table', { class: 'calc-lines' }, h('tbody', null,
-      h('tr', { class: 'demand' }, h('td', null, 'Angle'), h('td', { class: 'right' }, 'Multiplier'), h('td', { class: 'right' }, 'Shrink per inch of rise'), h('td', { class: 'right' }, 'Chart')),
+      h('tr', { class: 'demand' }, h('td', null, 'Angle'), h('td', { class: 'right' }, 'Multiplier'), h('td', { class: 'right' }, 'Shrink per unit of rise'), h('td', { class: 'right' }, 'Chart')),
       B.offsetTable().map((r) => h('tr', null,
         h('td', null, deg(r.angleDeg)),
         h('td', { class: 'right num' }, r.multiplier.toFixed(3)),
-        h('td', { class: 'right num' }, `${r.shrinkPerUnit.toFixed(3)}"`),
-        h('td', { class: 'right num' }, `${r.chartMultiplier} · ${fmtFrac(r.chartShrink)}"`))))),
-    h('p', { class: 'calc-note muted' }, 'Multiplier = 1 ÷ sin(angle); shrink = rise × tan(angle ÷ 2). Chart: the rounded numbers printed on hand benders.'));
+        h('td', { class: 'right num' }, r.shrinkPerUnit.toFixed(3)),
+        h('td', { class: 'right num' }, `${r.chartMultiplier} · ${fmtFrac(r.chartShrink)}`))))),
+    h('p', { class: 'calc-note muted' }, 'Multiplier = 1 ÷ sin(angle); shrink = rise × tan(angle ÷ 2). Chart: the rounded numbers printed on hand benders (shrink in inches per inch of rise, so per mm per mm too).'));
 }
 const fmtFrac = (x) => ({ 0.0625: '1/16', 0.1875: '3/16', 0.25: '1/4', 0.375: '3/8', 0.5: '1/2' }[x] || String(x));
 
@@ -600,7 +604,7 @@ function saveSheet({ asNew = false } = {}) {
       let saved;
       if (ed && !asNew && store.get('bends', ed.id)) saved = store.update('bends', ed.id, rec);
       else saved = store.add('bends', rec);
-      state.editing = { id: saved.id, name: saved.name, jobId: saved.jobId, notes: saved.notes };
+      state.editing = { id: saved.id, kind: saved.kind, name: saved.name, jobId: saved.jobId, notes: saved.notes };
       ui.toast(`Saved "${saved.name}"`, 'success');
       ctx.route();
     },
@@ -633,7 +637,7 @@ function openSaved(id) {
     if (differs('gainM', prof?.gainM)) state.over.gainM = fmt(b.inputs.gainM);
     if (differs('radiusM', prof?.minRadiusM)) state.over.radiusM = fmt(b.inputs.radiusM);
   }
-  state.editing = { id: b.id, name: b.name, jobId: b.jobId, notes: b.notes };
+  state.editing = { id: b.id, kind: state.kind, name: b.name, jobId: b.jobId, notes: b.notes };
   remember();
   return true;
 }
@@ -656,15 +660,19 @@ function savedView(root) {
     ui.clear(listHost);
     const needle = q.trim().toLowerCase();
     const rows = store.list('bends', (b) => (!jobId || b.jobId === jobId) && (!needle || [b.name, kindLabel(b.kind), jobName(b.jobId), b.notes].some((s) => String(s || '').toLowerCase().includes(needle))));
-    listHost.append(ui.table({
-      columns: [
-        { key: 'name', label: 'Name', sort: (b) => b.name, render: (b) => h('strong', null, b.name) },
-        { key: 'kind', label: 'Bend', sort: (b) => kindLabel(b.kind), render: (b) => kindLabel(b.kind) },
-        { key: 'pipe', label: 'Pipe', render: (b) => `${B.conduitLabel(b.conduit?.type)} ${B.tradeSizeLabel(b.conduit?.tradeSize)}` },
-        { key: 'marks', label: 'Marks', render: (b) => (b.result?.marks || []).slice(0, 4).map((m) => fmt(m.atM)).join(', ') + ((b.result?.marks || []).length > 4 ? '…' : '') },
-        { key: 'job', label: 'Job', sort: (b) => jobName(b.jobId), render: (b) => jobName(b.jobId) },
-        { key: 'updated', label: 'Updated', sort: (b) => b.updatedAt, render: (b) => ui.fmtDate(b.updatedAt) },
-        { key: 'act', label: '', render: (b) => h('div', { class: 'row bend-row-actions', onClick: (e) => e.stopPropagation() },
+    if (!rows.length) {
+      listHost.append(ui.empty({ icon: 'wrench', title: jobId ? 'No bends saved for this job' : needle ? 'Nothing matches' : 'No saved bends yet', text: 'Work out a bend, then Save it with a name and a job.', action: ui.button('New bend', { variant: 'primary', icon: 'plus', href: '#/bending' }) }));
+      return;
+    }
+    // Cards rather than a table, so the actions stay in reach on a phone.
+    listHost.append(h('div', { class: 'list bend-saved' }, rows.map((b) => {
+      const marks = b.result?.marks || [];
+      return h('div', { class: 'list-row click', tabindex: 0, onClick: () => ctx.nav('#/bending/open/' + b.id), onKeydown: (e) => { if (e.key === 'Enter') ctx.nav('#/bending/open/' + b.id); } },
+        h('div', { class: 'grow bend-saved-main' },
+          h('div', { class: 'title' }, b.name),
+          h('div', { class: 'meta' }, [kindLabel(b.kind), `${B.conduitLabel(b.conduit?.type)} ${B.tradeSizeLabel(b.conduit?.tradeSize)}`, b.jobId ? jobName(b.jobId) : null, ui.fmtDate(b.updatedAt)].filter(Boolean).join(' · ')),
+          marks.length ? h('div', { class: 'bend-saved-marks num' }, marks.slice(0, 6).map((m) => fmt(m.atM)).join('  ·  ') + (marks.length > 6 ? '  …' : '')) : null),
+        h('div', { class: 'row bend-row-actions', onClick: (e) => e.stopPropagation(), onKeydown: (e) => e.stopPropagation() },
           ui.button('', { size: 'sm', variant: 'ghost', icon: 'printer', title: 'Print', onClick: () => { const c = computeSaved(b); if (c) printBend(c, b); else ui.toast('This bend no longer computes', 'error'); } }),
           ui.button('', { size: 'sm', variant: 'ghost', icon: 'copy', title: 'Duplicate', onClick: () => {
             const { id, createdAt, updatedAt, ...rest } = b;
@@ -673,12 +681,8 @@ function savedView(root) {
           } }),
           ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: 'Delete', onClick: async () => {
             if (await ui.confirmDialog(`Delete "${b.name}"?`, { okLabel: 'Delete' })) { store.remove('bends', b.id); if (state.editing?.id === b.id) state.editing = null; ui.toast('Deleted'); }
-          } })) },
-      ],
-      rows,
-      onRowClick: (b) => ctx.nav('#/bending/open/' + b.id),
-      empty: ui.empty({ icon: 'wrench', title: jobId ? 'No bends saved for this job' : 'No saved bends yet', text: 'Work out a bend, then Save it with a name and a job.', action: ui.button('New bend', { variant: 'primary', icon: 'plus', href: '#/bending' }) }),
-    }));
+          } })));
+    })));
   };
   const jobPick = h('select', { class: 'bend-input', 'aria-label': 'Job', onChange: (e) => ctx.nav(e.target.value ? `#/bending/saved?jobId=${encodeURIComponent(e.target.value)}` : '#/bending/saved') },
     jobOptions().map((o) => h('option', { value: o.value, selected: o.value === jobId }, o.value ? o.label : 'All jobs')));
@@ -706,9 +710,11 @@ function inputLines(kind, input) {
       else if (spec.fit && Number.isFinite(input[spec.fit.name])) lines.push([spec.fit.label, fmt(input[spec.fit.name])]);
     }
   }
-  if (Number.isFinite(input.takeUpM)) lines.push(['Take-up', fmt(input.takeUpM)]);
-  if (Number.isFinite(input.gainM)) lines.push(['Gain', fmt(input.gainM)]);
-  if (Number.isFinite(input.radiusM)) lines.push(['Bend radius', fmt(input.radiusM)]);
+  if (['stub90', 'backToBack'].includes(kind)) {
+    if (Number.isFinite(input.takeUpM)) lines.push(['Take-up', fmt(input.takeUpM)]);
+    if (Number.isFinite(input.gainM)) lines.push(['Gain', fmt(input.gainM)]);
+    if (Number.isFinite(input.radiusM)) lines.push(['Bend radius', fmt(input.radiusM)]);
+  }
   if (input.chart) lines.push(['Numbers', 'Bender chart (rounded)']);
   return lines;
 }
@@ -734,9 +740,9 @@ function bendSheet(cur, meta) {
       h('thead', null, h('tr', null, h('th', null, 'Mark'), h('th', { class: 'right' }, r.reference === 'end' ? 'From the end' : 'From mark 1'), h('th', null, 'Bend'))),
       h('tbody', null, r.marks.map((m) => h('tr', null, h('td', null, m.label), h('td', { class: 'right num' }, fmt(m.atM)), h('td', null, [m.angleDeg ? deg(m.angleDeg) : '', m.symbol && m.symbol !== 'tick' ? SYMBOL_NAMES[m.symbol] : '', m.note || ''].filter(Boolean).join(' · ')))))),
     h('p', { class: 'bend-sheet-small' }, [r.shrinkM ? `Shrink ${fmt(r.shrinkM)}` : null, r.developedLengthM ? `Pipe ${fmt(r.developedLengthM)}` : null, `${deg(r.degrees)} of bends`].filter(Boolean).join(' · ')),
+    r.warnings.length ? h('div', { class: 'bend-sheet-warn' }, r.warnings.map((w) => h('p', null, w))) : null,
     h('h2', null, 'How to bend it'),
     h('ol', null, r.steps.map((t) => h('li', null, t))),
-    r.warnings.length ? h('div', { class: 'bend-sheet-warn' }, r.warnings.map((w) => h('p', null, w))) : null,
     meta?.notes ? h('p', null, h('strong', null, 'Notes: '), meta.notes) : null,
     h('footer', { class: 'bend-sheet-small' }, 'Check every mark against your own bender before you bend. Bender values vary by make, model and wear.'));
 }
@@ -804,11 +810,16 @@ function pullView() {
 // Bender profiles and calibration
 // ---------------------------------------------------------------------------
 
+let builtInFilter = null; // { type, size } for the built-in table
+
 function profilesView(root) {
   const host = h('div');
+  if (!builtInFilter) builtInFilter = { type: state.type === 'PVC' ? 'EMT' : state.type, size: state.size };
   const draw = () => {
     ui.clear(host);
     const mine = userProfiles();
+    const f = builtInFilter;
+    const builtIns = P.DEFAULT_PROFILES.filter((p) => (f.type === 'all' || p.conduitType === f.type) && (f.size === 'all' || p.tradeSize === f.size));
     host.append(
       h('h2', { class: 'section' }, 'Your benders'),
       ui.table({
@@ -829,6 +840,9 @@ function profilesView(root) {
         empty: ui.empty({ icon: 'wrench', title: 'No benders of your own yet', text: 'Calibrate one: bend a test 90, measure it, and save its real take-up and gain.', action: ui.button('Calibrate a bender', { variant: 'primary', icon: 'wrench', onClick: () => calibrateSheet(draw) }) }),
       }),
       h('h2', { class: 'section' }, 'Built-in values'),
+      h('div', { class: 'row bend-filter' },
+        select('Conduit', [{ value: 'all', label: 'All' }, ...typeOptions().filter((o) => o.value !== 'PVC')], f.type, (v) => { f.type = v; draw(); }),
+        select('Trade size', [{ value: 'all', label: 'All sizes' }, ...sizeOptions()], f.size, (v) => { f.size = v; draw(); })),
       h('p', { class: 'bend-verify' }, ui.icon('alert', 14), 'Typical published figures (Klein, Greenlee and IDEAL guides). Check them against the marks on your own bender, or calibrate it.'),
       ui.table({
         columns: [
@@ -840,7 +854,8 @@ function profilesView(root) {
           { key: 'src', label: 'Source', render: (p) => h('span', { class: 'muted bend-src' }, p.source) },
           { key: 'act', label: '', render: (p) => ui.button('Copy', { size: 'sm', icon: 'copy', onClick: (e) => { e.stopPropagation(); profileSheet(copyOf(p)); } }) },
         ],
-        rows: P.DEFAULT_PROFILES,
+        rows: builtIns,
+        empty: h('p', { class: 'muted' }, 'No built-in values for that pipe. Calibrate your bender, or use a segment bend.'),
       }),
       h('p', { class: 'calc-note muted' }, '* Gain is worked out from the radius and the pipe OD (radius × (2 − π/2) + OD). The makers do not publish it.'));
   };

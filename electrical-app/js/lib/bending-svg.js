@@ -62,8 +62,8 @@ function capSegments(segments, startHeading, leadIn = false) {
   const last = segs.length - 1;
   // measured from mark 1: draw some pipe before it so the first bend reads as a bend
   if (leadIn && startHeading === 0 && segs[0].straightM < 0.25 * span) segs[0].straightM = 0.25 * span;
-  if (startHeading === 0 && segs[0].straightM > 1.4 * span) { segs[0].straightM = 0.7 * span; breaks.push('first'); }
-  if (segs[last].straightM > 1.4 * span) { segs[last].straightM = 0.7 * span; breaks.push('last'); }
+  if (startHeading === 0 && segs[0].straightM > 1.2 * span) { segs[0].straightM = 0.4 * span; breaks.push('first'); }
+  if (segs[last].straightM > 1.2 * span) { segs[last].straightM = 0.4 * span; breaks.push('last'); }
   return { segs, breaks };
 }
 
@@ -207,7 +207,7 @@ export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight =
       const y = Y(lowest - od / 2) + gap;
       parts.push(dim(X(-od / 2), y, X(main.end[0] + (d.type === 'backToBack' ? od / 2 : 0)), y, fmt(d.label)));
     } else if (d.type === 'obstacle') {
-      const label = d.round ? `${fmt(d.heightM)} obstruction` : `${fmt(d.heightM)} × ${fmt(d.widthM)}`;
+      const label = d.round ? fmt(d.heightM) : `${fmt(d.heightM)} × ${fmt(d.widthM)}`;
       const b = main.bends[1];
       if (b) parts.push(text(X(b.x) + (d.round ? 0 : ((main.bends[2]?.x ?? b.x) - b.x) * s / 2), Y(-od / 2) + 16, label, 'bd-dimtext'));
     } else if (d.type === 'radius') {
