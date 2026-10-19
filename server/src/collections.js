@@ -63,6 +63,7 @@ const DEFS = {
   stockMoves: { table: 'stock_moves', gen: [JOB, g('item_id', 'itemId')], read: ['inventory', 'jobs'], write: ['inventory'], portal: null },
   employees: { table: 'employees', gen: [], read: ['employees', 'time', 'schedule', 'jobs', 'sops', 'compliance', 'security', 'drawings', 'dashboard'], write: ['employees'], portal: null },
   timeEntries: { table: 'time_entries', gen: [EMPLOYEE, JOB], read: ['time', 'time-approve', 'jobs', 'employees', 'dashboard'], write: ['time'], ownRows: true, portal: null },
+  // Underlays are data URLs for now (<= 4096 px); they move to object storage later.
   drawings: { table: 'drawings', gen: [JOB], read: ['drawings', 'jobs'], write: ['drawings'], portal: null, maxBytes: 24 * MB },
   sops: { table: 'sops', gen: [], read: ['sops'], write: ['sops'], portal: null },
   permits: { table: 'permits', gen: [JOB, STATUS, NUMBER], read: ['compliance', 'jobs'], write: ['compliance'], portal: null },
@@ -71,7 +72,8 @@ const DEFS = {
   checklists: { table: 'checklists', gen: [JOB], read: ['compliance', 'security', 'jobs'], write: ['compliance', 'security'], portal: null },
   panels: { table: 'panels', gen: [JOB], read: ['panels', 'jobs'], write: ['panels'], portal: null },
   settings: { table: 'settings', gen: [], read: [], readAll: true, write: ['settings', 'estimates', 'invoices', 'jobs'], portal: null },
-  wireRuns: { table: 'wire_runs', gen: [JOB, g('drawing_id', 'drawingId')], read: ['drawings', 'jobs', 'estimates'], write: ['drawings'], portal: null, maxBytes: 8 * MB },
+  // Photos are data URLs for now (up to 12 x ~4.8 MB); they move to object storage later.
+  wireRuns: { table: 'wire_runs', gen: [JOB, g('drawing_id', 'drawingId')], read: ['drawings', 'jobs', 'estimates'], write: ['drawings'], portal: null, maxBytes: 64 * MB },
   bends: { table: 'bends', gen: [JOB], read: ['calcs', 'jobs'], write: ['calcs'], portal: null },
   benderProfiles: { table: 'bender_profiles', gen: [], read: ['calcs'], write: ['calcs'], portal: null },
 };

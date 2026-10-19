@@ -19,7 +19,7 @@
     "gen:collections-sql": "node scripts/gen-collections-sql.js"
   },
   "dependencies": {
-    "@fastify/cookie": "11.1.2",
+    "@fastify/cookie": "11.1.0",
     "@fastify/cors": "11.3.0",
     "@fastify/helmet": "13.1.1",
     "@fastify/rate-limit": "11.2.0",
@@ -34,5 +34,9 @@
   },
   "devDependencies": {
     "embedded-postgres": "17.9.0-beta.16"
-  }
+  },
+  "overrides": {
+    "light-my-request": "6.6.0"
+  },
+  "overridesNote": "cookie 2.x is ESM-only and needs Node >= 22.12 (require(esm)); these pins keep Node 22.11 working. Drop them once every machine runs >= 22.12."
 }
