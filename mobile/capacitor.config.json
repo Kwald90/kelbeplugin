@@ -1,0 +1,9 @@
+{
+  "appId": "com.fishtapehq.app",
+  "appName": "Fishtape",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "allowsLinkPreview": false
+  }
+}

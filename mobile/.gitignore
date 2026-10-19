@@ -1,0 +1,8 @@
+# Installed packages and the copied web app (scripts/copy-web.mjs rebuilds www/ from ../electrical-app)
+node_modules/
+www/
+# Xcode build output if built with -derivedDataPath inside the repo
+.derived/
+*.xcarchive
+*.ipa
+.DS_Store
