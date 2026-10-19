@@ -145,6 +145,10 @@ if [ -n "$SHA" ]; then
 else
   TARGET="$BRANCH_HEAD"
 fi
+# Server-only files (secrets and root-sourced config) must never come from git: a checkout of a
+# commit that tracks them would overwrite the server's copies.
+TRACKED_LOCAL="$(git_ ls-tree -r --name-only "$TARGET" -- deploy/staging/.env deploy/staging/backup.conf deploy/staging/backup-recipients.txt | tr '\n' ' ')"
+[ -z "$TRACKED_LOCAL" ] || fail "commit ${TARGET:0:12} tracks server-only files ($TRACKED_LOCAL); refusing to check it out"
 if git_ cat-file -e "$TARGET:server/package.json" 2>/dev/null; then SERVER=1; fi
 
 if [ "$FORCE" -eq 0 ] && [ "$TARGET" = "$PREV_SHA" ] && { [ "$SERVER" -eq 0 ] || [ "$PREV_TAG" = "$TARGET" ]; }; then

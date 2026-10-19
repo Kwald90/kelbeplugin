@@ -26,3 +26,10 @@ psql -v ON_ERROR_STOP=1 --no-psqlrc \
   -f /fishtape-db/bootstrap.sql
 
 echo "fishtape: bootstrap.sql applied"
+
+# The superuser may connect only through the container's own Unix socket (docker compose exec,
+# which is what backup.sh uses). Over TCP it is rejected: on staging the published port
+# 127.0.0.1:5433 is reachable by every process on the shared host. Takes effect when the
+# entrypoint restarts the server after these scripts.
+sed -i '1i host all postgres all reject' "$PGDATA/pg_hba.conf"
+echo "fishtape: superuser login over TCP disabled"

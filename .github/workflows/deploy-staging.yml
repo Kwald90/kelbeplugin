@@ -42,6 +42,7 @@ jobs:
           sparse-checkout: |
             server/package.json
             deploy/check-exposure.sh
+            deploy/staging/security-headers.conf
           sparse-checkout-cone-mode: false
 
       - name: Check deploy secrets

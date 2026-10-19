@@ -8,6 +8,7 @@ deploy/*/.env
 deploy/*/.env.*
 !deploy/*/.env.example
 deploy/*/backup.conf
+deploy/*/backup-recipients.txt
 # Keys and certificates
 *.pem
 *.key
@@ -20,7 +21,7 @@ age-identity*.txt
 *.dump
 *.dump.age
 *.sql.gz
-# Evidence bundles are collected locally and kept outside git (see compliance/README.md)
+# Evidence bundles are collected locally and kept outside git (see docs/compliance/README.md)
 compliance/evidence/out/
 # Dependencies
 node_modules/

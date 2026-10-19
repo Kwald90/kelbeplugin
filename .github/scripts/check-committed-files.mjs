@@ -21,7 +21,7 @@ const FORBIDDEN = [
   [/\.(pem|key|p12|pfx|jks|keystore|ppk|asc|gpg)$/i, 'key, certificate bundle or keystore'],
   [/(^|\/)(age-identity[^/]*|[^/]*backup[^/]*\.key)$/i, 'age identity'],
   [/\.(dump|dump\.age|sql\.gz|sql\.bz2|sqlite3?|db|bak)$/i, 'database dump, backup or database file'],
-  [/(^|\/)(backup\.conf|\.htpasswd|\.netrc|\.npmrc|\.pgpass|credentials(\.json)?|secrets?\.(json|ya?ml|txt))$/i, 'credentials or local config'],
+  [/(^|\/)(backup\.conf|backup-recipients\.txt|\.htpasswd|\.netrc|\.npmrc|\.pgpass|credentials(\.json)?|secrets?\.(json|ya?ml|txt))$/i, 'credentials or local config'],
   [/(^|\/)terraform\.tfstate(\.backup)?$/i, 'infrastructure state'],
 ];
 const CONTENT = [

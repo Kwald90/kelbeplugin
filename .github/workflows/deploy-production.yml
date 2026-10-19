@@ -79,6 +79,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             deploy/check-exposure.sh
+            deploy/staging/security-headers.conf
           sparse-checkout-cone-mode: false
 
       - name: Check deploy secrets

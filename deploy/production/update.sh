@@ -138,6 +138,9 @@ git_ fetch -q --force origin "+refs/heads/$RELEASE_BRANCH:refs/remotes/origin/$R
 TARGET="$(git_ rev-parse -q --verify "refs/tags/$TAG^{commit}")" || fail "tag $TAG not found"
 if [ -n "$SHA" ] && [ "$SHA" != "$TARGET" ]; then fail "tag $TAG points at $TARGET, not the tested commit $SHA"; fi
 git_ merge-base --is-ancestor "$TARGET" "origin/$RELEASE_BRANCH" || fail "$TAG is not on $RELEASE_BRANCH"
+# Server-only files (secrets and root-sourced config) must never come from git.
+TRACKED_LOCAL="$(git_ ls-tree -r --name-only "$TARGET" -- deploy/production/.env deploy/production/backup.conf deploy/production/backup-recipients.txt | tr '\n' ' ')"
+[ -z "$TRACKED_LOCAL" ] || fail "$TAG tracks server-only files ($TRACKED_LOCAL); refusing to check it out"
 if [ "$REQUIRE_SIGNED_TAGS" = 1 ]; then git_ verify-tag "$TAG" >/dev/null 2>&1 || fail "tag $TAG has no valid signature"; fi
 git_ cat-file -e "$TARGET:server/package.json" 2>/dev/null || fail "$TAG has no server/; production needs the API"
 

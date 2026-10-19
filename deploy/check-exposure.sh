@@ -120,6 +120,14 @@ else
   script_src="$(printf '%s' "$csp" | tr ';' '\n' | grep -E '^[[:space:]]*script-src[[:space:]]' || true)"
   [[ "$script_src" == *"'unsafe-inline'"* ]] && missing="$missing [script-src 'unsafe-inline' present]"
   if [ -z "$missing" ]; then ok "CSP present with the key directives"; else bad "CSP problems:$missing"; fi
+  # The live CSP must be the one in the repo: header files only change on the server when
+  # install-nginx.sh runs, so a deploy can ship code that needs a CSP the server doesn't send yet.
+  repo_headers="$(dirname "${BASH_SOURCE[0]}")/staging/security-headers.conf"
+  if [ -f "$repo_headers" ]; then
+    want="$(sed -n 's/^add_header Content-Security-Policy "\(.*\)" always;$/\1/p' "$repo_headers")"
+    if [ "$csp" = "$want" ]; then ok "live CSP matches the repo"
+    else bad "live CSP differs from deploy/*/security-headers.conf: run install-nginx.sh on the server"; fi
+  fi
 fi
 check "X-Content-Type-Options: nosniff" "X-Content-Type-Options: nosniff missing" [ "$(hdr x-content-type-options | tr '[:upper:]' '[:lower:]')" = nosniff ]
 check "Referrer-Policy: $(hdr referrer-policy)" "Referrer-Policy missing" [ -n "$(hdr referrer-policy)" ]
