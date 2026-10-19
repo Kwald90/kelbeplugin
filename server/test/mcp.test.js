@@ -63,7 +63,10 @@ describe('handshake and auth', { skip }, () => {
     const session = await rpc(A.token, 'tools/list');
     assert.equal(session.status, 401, 'session tokens are not API keys');
     const none = await app.inject({ method: 'POST', url: '/api/mcp', headers: { 'content-type': 'application/json' }, payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' } });
-    assert.equal(none.statusCode, 403, 'no credentials: refused by the CSRF guard before reaching MCP');
+    assert.equal(none.statusCode, 401, 'no credentials: a clear 401, not csrf_failed');
+    assert.equal(JSON.parse(none.body).error.code, 'unauthenticated');
+    const cookie = await app.inject({ method: 'POST', url: '/api/mcp', headers: { 'content-type': 'application/json', cookie: `ft_session=${A.token}` }, payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' } });
+    assert.equal(cookie.statusCode, 401, 'a session cookie alone never reaches MCP');
     const tmp = await apiKey(app, A.token, ['clients:read'], 'to revoke');
     const keys = (await call(app, { url: '/api/v1/api-keys', token: A.token })).body.data;
     const id = keys.find((k) => k.name === 'to revoke').id;

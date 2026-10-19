@@ -30,7 +30,9 @@ export default async function mcpRoutes(app, { db, records, config }) {
     return apiKeyPrincipal(req.auth.apiKey);
   }
 
-  app.post('/api/mcp', { config: { auth: 'public', rateLimit: limit }, schema: { hide: true } }, async (req, reply) => {
+  // csrf: false: only company API keys get in (never cookies), so the CSRF header check has nothing
+  // to protect, and a client with no key should get a clear 401 instead of csrf_failed.
+  app.post('/api/mcp', { config: { auth: 'public', csrf: false, rateLimit: limit }, schema: { hide: true } }, async (req, reply) => {
     const p = principalFor(req);
     await assertFeature(db, p.tenantId, 'mcp');
     const r = await mcp.post(p, req.body, requestFacts(req));
@@ -46,6 +48,6 @@ export default async function mcpRoutes(app, { db, records, config }) {
     reply.code(405).header('allow', 'POST');
     return { error: { code: 'method_not_allowed', message: 'The MCP endpoint takes POST only (no SSE stream, no sessions).', requestId: req.id } };
   };
-  app.get('/api/mcp', { config: { auth: 'public', rateLimit: limit }, schema: { hide: true } }, notAllowed);
-  app.delete('/api/mcp', { config: { auth: 'public', rateLimit: limit }, schema: { hide: true } }, notAllowed);
+  app.get('/api/mcp', { config: { auth: 'public', csrf: false, rateLimit: limit }, schema: { hide: true } }, notAllowed);
+  app.delete('/api/mcp', { config: { auth: 'public', csrf: false, rateLimit: limit }, schema: { hide: true } }, notAllowed);
 }
