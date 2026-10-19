@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pricing · Fishtape</title>
+  <meta name="description" content="Fishtape plans for Canadian electrical contractors: Starter, Pro, Business and Enterprise. Prices in CAD.">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <!-- Where the API lives. Empty = this origin. On a separate marketing domain, set the app origin
+       and add this site's origin to CORS_ORIGINS on the API. -->
+  <meta name="fishtape-api" content="">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/site/site.css">
+</head>
+<body>
+  <header class="site-head">
+    <a class="site-brand" href="/site/pricing.html"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+    <nav><a href="#features">Features</a> <a href="#talk">Contact sales</a> <a class="site-btn ghost" href="/">Sign in</a></nav>
+  </header>
+
+  <main>
+    <section class="site-hero">
+      <h1>Pricing</h1>
+      <p>Jobs, quotes, drawings, crew time and CEC tools in one app. Every plan starts with a free trial. Prices are per month in Canadian dollars, before GST/HST/PST.</p>
+    </section>
+
+    <section class="site-plans" id="plans" aria-label="Plans">
+      <p class="site-muted">Loading plans…</p>
+    </section>
+    <p class="site-fine" id="extra-users"></p>
+
+    <section id="features" class="site-section">
+      <h2>What each plan includes</h2>
+      <div class="site-table-wrap"><table class="site-table" id="feature-table"><caption class="sr-only">Features by plan</caption></table></div>
+      <p class="site-fine">Downgrading never deletes data: you keep reading everything you made. Features above your plan are locked until you upgrade.</p>
+    </section>
+
+    <section id="talk" class="site-section site-talk">
+      <div>
+        <h2>Enterprise: let's talk</h2>
+        <p>For larger shops: custom user counts, single sign-on, and setup done for you (we connect Stripe, email and SMS, and import your data). Tell us a little about your company and we will reply within one business day.</p>
+      </div>
+      <form id="talk-form" class="site-form" novalidate>
+        <label>Your name <input name="name" autocomplete="name" required maxlength="120"></label>
+        <label>Work email <input name="email" type="email" autocomplete="email" required maxlength="254"></label>
+        <label>Company <input name="company" autocomplete="organization" required maxlength="200"></label>
+        <label>Phone <span class="site-muted">(optional)</span> <input name="phone" type="tel" autocomplete="tel" maxlength="40"></label>
+        <label>Province
+          <select name="province">
+            <option value="">—</option>
+            <option>AB</option><option>BC</option><option>MB</option><option>NB</option><option>NL</option><option>NS</option>
+            <option>NT</option><option>NU</option><option>ON</option><option>PE</option><option>QC</option><option>SK</option><option>YT</option>
+          </select>
+        </label>
+        <label>Team size
+          <select name="teamSize">
+            <option value="">—</option><option>1-5</option><option>6-15</option><option>16-50</option><option>51-200</option><option>200+</option>
+          </select>
+        </label>
+        <label class="wide">What do you need? <textarea name="message" rows="4" maxlength="4000"></textarea></label>
+        <!-- Honeypot: people never see or fill this; bots do. -->
+        <div class="site-hp" aria-hidden="true"><label>Website <input name="website" tabindex="-1" autocomplete="off"></label></div>
+        <p class="site-error wide" id="talk-error" role="alert" hidden></p>
+        <button class="site-btn wide" type="submit">Send</button>
+        <p class="site-fine wide">We use these details only to reply to you. They are not shared or added to a mailing list.</p>
+      </form>
+      <div id="talk-done" class="site-done" hidden role="status">
+        <h3>Thanks, we have your message.</h3>
+        <p>We will reply within one business day.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <span>© <span id="year"></span> <span data-brand>Fishtape</span></span>
+    <a href="/site/status.html">Service status</a>
+  </footer>
+
+  <script type="module" src="/site/pricing.js"></script>
+</body>
+</html>

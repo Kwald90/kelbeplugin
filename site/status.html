@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Status · Fishtape</title>
+  <meta name="description" content="Is Fishtape up? Live service status.">
+  <meta name="fishtape-api" content="">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/site/site.css">
+</head>
+<body>
+  <header class="site-head">
+    <a class="site-brand" href="/site/pricing.html"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span> status</a>
+    <nav><a class="site-btn ghost" href="/">Open the app</a></nav>
+  </header>
+  <main class="site-status">
+    <section id="overall" class="site-overall checking" role="status" aria-live="polite">
+      <span class="dot" aria-hidden="true"></span>
+      <div><h1 id="overall-title">Checking…</h1><p id="overall-sub" class="site-muted">Asking the service how it is doing.</p></div>
+    </section>
+    <section class="site-section">
+      <h2>Components</h2>
+      <ul class="site-components" id="components"></ul>
+    </section>
+    <section class="site-section">
+      <h2>Details</h2>
+      <dl class="site-kv" id="details"></dl>
+      <p class="site-fine">Checked every 30 seconds while this page is open. Nothing here is about any customer.</p>
+    </section>
+  </main>
+  <footer class="site-foot"><span>© <span id="year"></span> <span data-brand>Fishtape</span></span><a href="/site/pricing.html">Pricing</a></footer>
+  <script type="module" src="/site/status.js"></script>
+</body>
+</html>
