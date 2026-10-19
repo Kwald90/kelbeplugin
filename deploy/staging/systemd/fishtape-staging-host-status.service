@@ -1,0 +1,15 @@
+# Writes /var/lib/fishtape-staging/status/host-status.json for the HQ developer health page.
+[Unit]
+Description=Fishtape staging host status snapshot
+
+[Service]
+Type=oneshot
+ExecStart=/var/www/tgelectrical/current/deploy/staging/host-status.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true

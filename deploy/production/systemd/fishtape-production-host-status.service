@@ -1,0 +1,15 @@
+# Writes /var/lib/fishtape-production/status/host-status.json for the HQ developer health page.
+[Unit]
+Description=Fishtape production host status snapshot
+
+[Service]
+Type=oneshot
+ExecStart=/srv/fishtape/repo/deploy/production/host-status.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true

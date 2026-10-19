@@ -1,0 +1,24 @@
+# Encrypted nightly Postgres backup for Fishtape production. Started by the .timer of the same name.
+# Run now:  sudo systemctl start fishtape-production-backup.service
+[Unit]
+Description=Fishtape production encrypted Postgres backup
+Documentation=file:///srv/fishtape/repo/docs/runbooks/restore-from-backup.md
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/srv/fishtape/repo/deploy/production/backup.sh
+TimeoutStartSec=3h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true

@@ -1,0 +1,29 @@
+# Settings for backup.sh. Copy to backup.conf next to backup.sh, then:
+#   sudo chown root:root backup.conf && sudo chmod 600 backup.conf
+# backup.sh refuses a backup.conf that isn't root's or is group/world-writable.
+# Everything here is optional; the defaults are shown.
+
+# Where encrypted backups go (daily/, weekly/, predeploy/ are created inside).
+#BACKUP_DIR=/var/backups/fishtape-staging
+# State, logs and status/last-backup.json (mounted read-only into the API container).
+#STATE_DIR=/var/lib/fishtape-staging
+
+# age public keys, one per line (age1... or ssh-ed25519 ...). Only public keys live on the server.
+# Use one key per environment. Add a second recipient (a sealed spare key) so one lost key isn't fatal.
+#AGE_RECIPIENTS_FILE=/var/www/tgelectrical/current/deploy/staging/backup-recipients.txt
+
+#KEEP_DAILY=14
+#KEEP_WEEKLY=8
+#KEEP_PREDEPLOY=5
+#WEEKLY_DAY=7
+
+# Offsite copy, one of the two. Files are already encrypted, so the far end only needs to store
+# them. Pick a Canadian location for production (data residency) and turn on the provider's own
+# retention or object lock there: backup.sh never deletes offsite copies.
+#OFFSITE_RSYNC_TARGET=fishtape-backup@backup.example.ca:/srv/backups/fishtape-staging
+#OFFSITE_SSH_KEY=/root/.ssh/fishtape_offsite_ed25519
+#OFFSITE_RCLONE_REMOTE=offsite-ca:fishtape-backups/staging
+
+# Dead-man's switch: pinged after every run (".../fail" when it failed or the offsite copy failed).
+# A service such as healthchecks.io alerts you when the ping doesn't arrive on schedule.
+#HEARTBEAT_URL=https://hc-ping.com/00000000-0000-0000-0000-000000000000

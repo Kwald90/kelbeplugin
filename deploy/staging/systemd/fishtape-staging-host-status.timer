@@ -1,0 +1,10 @@
+[Unit]
+Description=Fishtape staging host status every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Unit=fishtape-staging-host-status.service
+
+[Install]
+WantedBy=timers.target

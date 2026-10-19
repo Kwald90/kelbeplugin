@@ -1,0 +1,159 @@
+# Fishtape production: Postgres 17, the API and the worker, on the dedicated production host.
+#
+# Normally driven by update.sh (from a v* tag). By hand, from this folder:
+#   sudo docker compose ps
+#   sudo docker compose logs -f api
+#   sudo docker compose exec postgres psql -U postgres -d fishtape
+#
+# Differences from staging: APP_ENV=production, no seed service, Postgres is not published on
+# any host port (admin through `docker compose exec`), tuning comes from .env, and every secret
+# is generated for production alone (init-env.sh). See README.md.
+
+name: fishtape-production
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "10"
+
+x-server: &server
+  # ".invalid" never resolves (RFC 2606), so this name can never be pulled from a registry.
+  image: fishtape.invalid/server:${IMAGE_TAG:-current}
+  pull_policy: never
+  env_file: .env
+  environment: &server-environment
+    APP_ENV: production
+    HOST: 0.0.0.0
+    PORT: "3410"
+    DATABASE_URL: postgres://fishtape_app:${FISHTAPE_APP_PASSWORD:?set in .env}@postgres:5432/fishtape
+    HQ_DATABASE_URL: postgres://fishtape_hq:${FISHTAPE_HQ_PASSWORD:?set in .env}@postgres:5432/fishtape
+    POSTGRES_SUPERUSER_PASSWORD: ""
+    FISHTAPE_OWNER_PASSWORD: ""
+    FISHTAPE_APP_PASSWORD: ""
+    FISHTAPE_HQ_PASSWORD: ""
+    BACKUP_STATUS_FILE: /run/fishtape/status/last-backup.json
+  volumes:
+    - /var/lib/fishtape-production/status:/run/fishtape/status:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  networks:
+    - backend
+  logging: *logging
+
+services:
+  postgres:
+    image: postgres:17.11-trixie@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set in .env}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8 --data-checksums"
+      FISHTAPE_OWNER_PASSWORD: ${FISHTAPE_OWNER_PASSWORD:?set in .env}
+      FISHTAPE_APP_PASSWORD: ${FISHTAPE_APP_PASSWORD:?set in .env}
+      FISHTAPE_HQ_PASSWORD: ${FISHTAPE_HQ_PASSWORD:?set in .env}
+    # Size these in .env for the host (rule of thumb: shared_buffers 25% of RAM given to
+    # Postgres, effective_cache_size 50-75%).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-1GB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-3GB}
+      - -c
+      - work_mem=${PG_WORK_MEM:-16MB}
+      - -c
+      - maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-256MB}
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-100}
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - wal_compression=on
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - idle_in_transaction_session_timeout=60s
+      - -c
+      - log_min_duration_statement=500ms
+      - -c
+      - log_lock_waits=on
+      - -c
+      - log_temp_files=10MB
+      - -c
+      - log_connections=on
+      - -c
+      - log_disconnections=on
+      - -c
+      - password_encryption=scram-sha-256
+    shm_size: 512mb
+    cpus: ${PG_CPUS:-4}
+    mem_limit: ${PG_MEM_LIMIT:-4g}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ../../server/db:/fishtape-db:ro
+    # No ports: nothing outside the compose network talks to Postgres.
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    networks:
+      - backend
+    logging: *logging
+
+  api:
+    <<: *server
+    build:
+      context: ../..
+      dockerfile: server/Dockerfile
+      args:
+        GIT_SHA: ${IMAGE_TAG:-unknown}
+    command: ["node", "src/index.js"]
+    ports:
+      - "127.0.0.1:3410:3410"
+    cpus: ${API_CPUS:-2}
+    mem_limit: ${API_MEM_LIMIT:-1g}
+    pids_limit: 512
+
+  worker:
+    <<: *server
+    command: ["node", "src/worker.js"]
+    healthcheck:
+      disable: true
+    cpus: ${WORKER_CPUS:-1}
+    mem_limit: ${WORKER_MEM_LIMIT:-512m}
+    pids_limit: 256
+
+  # One-off: `docker compose run --rm migrate` (update.sh runs it on every deploy).
+  migrate:
+    <<: *server
+    command: ["npm", "run", "--silent", "migrate"]
+    environment:
+      <<: *server-environment
+      MIGRATE_DATABASE_URL: postgres://fishtape_owner:${FISHTAPE_OWNER_PASSWORD:?set in .env}@postgres:5432/fishtape
+    restart: "no"
+    healthcheck:
+      disable: true
+    profiles: ["tools"]
+
+volumes:
+  pgdata:
+
+networks:
+  backend:
