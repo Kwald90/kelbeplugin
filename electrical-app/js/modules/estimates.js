@@ -1,6 +1,7 @@
 // Estimates (S17): list, builder with price-book line editor, takeoff from drawings, print.
 import { docTotals, moneyFormatter } from '../lib/money.js';
 import { newDocTax } from '../lib/tax.js';
+import { mergeForTakeoff, sortSheets } from '../lib/plansets.js';
 import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
 
 const STATUSES = ['draft', 'sent', 'accepted', 'declined'];
@@ -127,6 +128,21 @@ function createNew(ctx) {
       } else rec.title = rec.title || `${d.name} — takeoff`;
       summary = `Takeoff: ${t.symbols} symbols → ${t.lines.length} lines` + (t.unmatched ? ` (${t.unmatched} without a price book item)` : '');
     } else ui.toast('Drawing not found', 'error');
+  } else if (query.fromPlanSet) {
+    // a whole plan set: every sheet's symbols together (js/lib/plansets.js)
+    const sheets = sortSheets(store.list('drawings', (d) => d.planSet?.id === query.fromPlanSet, { omit: ['underlay', 'strokes', 'texts', 'rooms', 'thumb'] }));
+    if (sheets.length) {
+      const t = takeoff(store, mergeForTakeoff(sheets));
+      const setName = sheets[0].planSet.name || sheets[0].name;
+      rec.lines = t.lines;
+      rec.drawingId = sheets[0].id;
+      rec.planSetId = query.fromPlanSet;
+      const jobId = sheets.find((d) => d.jobId)?.jobId;
+      const job = jobId && store.get('jobs', jobId);
+      if (jobId) { rec.jobId = jobId; if (job) rec.clientId = rec.clientId || job.clientId || null; }
+      rec.title = rec.title || `${job?.title || setName} — takeoff, ${sheets.length} sheets`;
+      summary = `Takeoff from ${sheets.length} sheets: ${t.symbols} symbols → ${t.lines.length} lines` + (t.unmatched ? ` (${t.unmatched} without a price book item)` : '');
+    } else ui.toast('Plan set not found', 'error');
   }
   const created = store.add('estimates', rec);
   if (summary) ui.toast(summary, 'success', 4000);
@@ -271,7 +287,8 @@ function renderDetail(root, ctx, id) {
   };
 
   const links = h('div', { class: 'row muted money-links' },
-    doc.drawingId ? ui.button('Source drawing', { size: 'sm', variant: 'ghost', icon: 'pen', href: '#/drawings/' + doc.drawingId }) : null,
+    doc.planSetId ? ui.button('Source plan set', { size: 'sm', variant: 'ghost', icon: 'layers', href: '#/drawings?set=' + encodeURIComponent(doc.planSetId) })
+      : doc.drawingId ? ui.button('Source drawing', { size: 'sm', variant: 'ghost', icon: 'pen', href: '#/drawings/' + doc.drawingId }) : null,
     doc.leadId ? ui.button('Lead', { size: 'sm', variant: 'ghost', icon: 'funnel', href: '#/leads' }) : null);
 
   root.append(ui.page({

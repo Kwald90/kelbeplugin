@@ -201,7 +201,7 @@ function detailView(root, ctx, id) {
   }
 
   function drawings(el, job) {
-    const rows = store.list('drawings', (d) => d.jobId === job.id);
+    const rows = store.list('drawings', (d) => d.jobId === job.id, { omit: ['underlay', 'strokes', 'texts', 'rooms'] });
     el.append(h('div', { class: 'row ops-sub-actions' }, ui.button('New drawing', { variant: 'primary', icon: 'pen', href: `#/drawings/new?jobId=${job.id}` })));
     if (!rows.length) return el.append(ui.empty({ icon: 'pen', title: 'No drawings for this job', text: 'Import a plan and mark it up with symbols and wiring.' }));
     el.append(h('div', { class: 'grid' }, rows.map((d) => h('a', { class: 'card click ops-drawing', href: '#/drawings/' + d.id },

@@ -59,6 +59,70 @@
       ],
       "description": "Pixels per foot."
     },
+    "scaleSet": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "True once someone set this drawing's scale (Measure, details, or copied from another sheet of its plan set)."
+    },
+    "planSet": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Set when the drawing is one sheet of a multi-page PDF imported as a plan set (js/lib/plansets.js). Drawings without it are single drawings.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300,
+          "description": "The PDF's file name without .pdf."
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000,
+          "description": "1-based page in the PDF."
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 60,
+          "description": "The PDF's own page label (e.g. E1.0), or null."
+        },
+        "pageCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 100000,
+          "description": "Pages in the PDF."
+        },
+        "pxPerPt": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "description": "Canvas units per PDF point the page was rendered at, so a scale can move between sheets."
+        }
+      },
+      "required": [
+        "id",
+        "page"
+      ]
+    },
     "layers": {
       "type": [
         "array",

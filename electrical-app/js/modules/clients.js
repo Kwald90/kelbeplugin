@@ -115,7 +115,7 @@ function detailView(root, ctx, id) {
     const estimates = store.list('estimates', (e) => e.clientId === id || (e.jobId && jobIds.has(e.jobId)));
     const invoices = store.list('invoices', (i) => invoiceClientId(store, i) === id);
     const leads = store.list('leads', (l) => l.clientId === id);
-    const drawings = store.list('drawings', (d) => d.jobId && jobIds.has(d.jobId));
+    const drawings = store.list('drawings', (d) => d.jobId && jobIds.has(d.jobId), { omit: ['underlay', 'strokes', 'texts', 'rooms'] });
     const owed = clientBalanceCents(store, id);
     const lifetime = invoices.filter((i) => i.status !== 'void').reduce((s, i) => s + docTotals(i).totalCents, 0);
 
