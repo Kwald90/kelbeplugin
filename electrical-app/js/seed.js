@@ -106,7 +106,7 @@ export function seedIfEmpty(store) {
   const e1 = store.add('estimates', {
     number: store.nextNumber('estimate'), clientId: c2.id, jobId: null, title: 'Kitchen remodel rewire', status: 'sent',
     lines: [line(items.rec, 14), line(items.gfci, 4), line(items.sw, 6), line(items.dim, 2), line(items.can, 12), line(items.afci, 4), line(items.r240, 1)],
-    labourRateCents: 9500, markupPct: 15, taxPct: 8, notes: 'Permit fees included. Drywall patching by others.', validUntil: today(30),
+    labourRateCents: 9500, markupPct: 0, taxPct: 8, notes: 'Permit fees included. Drywall patching by others.', validUntil: today(30),
   }, S);
 
   // jobs
