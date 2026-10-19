@@ -1,9 +1,8 @@
-// Shared pieces for estimates and invoices: line editor, totals panel,
-// price-book picker and the printable document.
-import { h, clear, icon, button, fmtMoney, parseMoney, centsToInput, fmtDate, fmtNum, openSheet, searchBox, toast, badge } from '../ui.js';
-import { docTotals, lineCents } from './money.js';
-
-const KINDS = ['material', 'labour', 'other'];
+// Shared pieces for estimates and invoices: line editor, tax editor, totals
+// panel, price-book picker and the printable document.
+import { h, clear, icon, button, parseMoney, centsToInput, fmtDate, fmtNum, openSheet, searchBox, toast, badge, field } from '../ui.js';
+import { docTotals, lineCents, moneyFormatter, combinedPct, KINDS } from './money.js';
+import { PROVINCES, TREATMENTS, treatmentsFor, treatmentHint, taxComponents, taxSetup, newDocTax, describeTaxes, fmtPct, provinceName } from './tax.js';
 
 /**
  * lineEditor({ doc, store, onChange, labourRateCents }) -> element
@@ -11,6 +10,7 @@ const KINDS = ['material', 'labour', 'other'];
  */
 export function lineEditor({ doc, store, onChange, readOnly = false }) {
   doc.lines = doc.lines || [];
+  const money = moneyFormatter(store.settings());
   const wrap = h('div', { class: 'lines' });
   const body = h('div', { class: 'lines-body' });
 
@@ -25,15 +25,16 @@ export function lineEditor({ doc, store, onChange, readOnly = false }) {
   const changed = (redraw) => { if (redraw) draw(); onChange?.(); };
 
   function row(l, i) {
-    const amount = h('div', { class: 'line-amount num' }, fmtMoney(lineCents(l)));
-    const refreshAmount = () => { amount.textContent = fmtMoney(lineCents(l)); };
+    const amount = h('div', { class: 'line-amount num' }, money(lineCents(l)));
+    const refreshAmount = () => { amount.textContent = money(lineCents(l)); };
     const desc = h('input', { class: 'input', value: l.description || '', 'aria-label': `Line ${i + 1} description`, placeholder: 'Description', readonly: readOnly,
       onInput: (e) => { l.description = e.target.value; changed(); } });
     const qty = h('input', { class: 'input num', type: 'number', step: 'any', min: '0', inputmode: 'decimal', value: l.qty ?? 1, 'aria-label': `Line ${i + 1} quantity`, readonly: readOnly,
       onInput: (e) => { l.qty = e.target.value === '' ? 0 : Number(e.target.value); refreshAmount(); changed(); } });
     const unit = h('input', { class: 'input num', type: 'number', step: '0.01', inputmode: 'decimal', value: centsToInput(l.unitCents), 'aria-label': `Line ${i + 1} unit price`, readonly: readOnly,
       onInput: (e) => { l.unitCents = parseMoney(e.target.value); refreshAmount(); changed(); } });
-    const kind = h('select', { class: 'line-kind', 'aria-label': `Line ${i + 1} type`, disabled: readOnly,
+    // The kind decides how each tax applies to the line (see tax.js treatments).
+    const kind = h('select', { class: 'line-kind', 'aria-label': `Line ${i + 1} type (sets how tax applies)`, title: 'Type: sets how tax applies to this line', disabled: readOnly,
       onChange: (e) => { l.kind = e.target.value; changed(); } },
       KINDS.map((k) => h('option', { value: k, selected: (l.kind || 'material') === k }, k)));
     const hrs = Number(l.labourHours) || 0;
@@ -80,24 +81,101 @@ export function lineEditor({ doc, store, onChange, readOnly = false }) {
   return wrap;
 }
 
+/** Tax fields for a document: [province field, treatment field, summary]. Sets doc.taxes etc. */
+export function taxEditor({ doc, store, onChange, readOnly = false, dateKey = null }) {
+  const s = store.settings();
+  const setup = taxSetup(s);
+  const legacy = !Array.isArray(doc.taxes);
+  const hasCustom = setup.custom.length > 0;
+  const summary = h('div', { class: 'field span-2' });
+
+  const apply = (province, treatment) => {
+    if (treatment === 'custom') {
+      Object.assign(doc, newDocTax({ ...s, tax: { ...setup, mode: 'custom' } }));
+    } else {
+      const date = (dateKey && doc[dateKey]) || new Date();
+      doc.taxes = taxComponents({ province, treatment, date });
+      doc.taxProvince = province;
+      doc.taxTreatment = treatment;
+      doc.taxPct = combinedPct(doc.taxes.filter((t) => t.applies.material || t.applies.labour || t.applies.other));
+    }
+  };
+
+  const provinceSel = field({ label: 'Tax province', name: 'taxProvince', type: 'select', value: doc.taxProvince || (legacy ? '' : setup.province),
+    options: [legacy ? { value: '', label: '—' } : null, ...PROVINCES.map((p) => ({ value: p.code, label: p.name }))].filter(Boolean),
+    hint: 'Where the work is done' });
+  const treatmentHost = h('div', { style: { display: 'contents' } });
+  let treatmentSel;
+  const drawTreatment = () => {
+    clear(treatmentHost);
+    const prov = doc.taxProvince || setup.province;
+    const opts = [
+      legacy ? { value: 'legacy', label: `Old single rate ${fmtPct(doc.taxPct)}% (all lines)` } : null,
+      ...treatmentsFor(prov).map((id) => ({ value: id, label: TREATMENTS[id].label })),
+      hasCustom ? { value: 'custom', label: 'Company custom rates' } : null,
+    ].filter(Boolean);
+    treatmentSel = field({ label: 'Tax treatment', name: 'taxTreatment', type: 'select', value: legacy ? 'legacy' : doc.taxTreatment, options: opts });
+    treatmentSel.querySelector('select').disabled = readOnly;
+    treatmentSel.querySelector('select').addEventListener('change', (e) => {
+      if (e.target.value === 'legacy') return;
+      apply(doc.taxProvince || setup.province, e.target.value);
+      drawSummary(); onChange?.();
+    });
+    treatmentHost.append(treatmentSel);
+  };
+  const drawSummary = () => {
+    clear(summary);
+    const hint = treatmentHint(doc.taxTreatment, doc.taxProvince);
+    const pst = (doc.taxes || []).some((x) => ['PST', 'RST'].includes(x.id));
+    h(summary, null,
+      h('span', null, h('strong', null, describeTaxes(docTaxesOf(doc))), doc.taxProvince ? ` · ${provinceName(doc.taxProvince)}` : ''),
+      hint ? h('span', { class: 'hint' }, hint) : null,
+      pst ? h('span', { class: 'hint' }, icon('info', 14), ' PST/RST on contracting work depends on the job and the customer. Check with your accountant.') : null);
+  };
+  provinceSel.querySelector('select').disabled = readOnly;
+  provinceSel.querySelector('select').addEventListener('change', (e) => {
+    const prov = e.target.value;
+    if (!prov) return;
+    const keep = treatmentsFor(prov).includes(doc.taxTreatment) ? doc.taxTreatment : treatmentsFor(prov)[0];
+    apply(prov, keep);
+    drawTreatment(); drawSummary(); onChange?.();
+  });
+  drawTreatment(); drawSummary();
+  const nodes = [provinceSel, treatmentHost, summary];
+  /** Re-rate after the document date changes (rates are dated, e.g. NS HST on 2025-04-01). */
+  nodes.recompute = () => {
+    if (Array.isArray(doc.taxes) && doc.taxProvince && TREATMENTS[doc.taxTreatment]) { apply(doc.taxProvince, doc.taxTreatment); drawSummary(); }
+  };
+  return nodes;
+}
+
+const docTaxesOf = (doc) => (Array.isArray(doc.taxes) ? doc.taxes : (Number(doc.taxPct) ? [{ label: 'Tax', pct: doc.taxPct }] : []));
+
+/** Label for a tax row: "GST 5%", plus "on $1,200.00" when it doesn't apply to the whole subtotal. */
+function taxLabel(t, subtotalCents, money) {
+  return `${t.label} ${fmtPct(t.pct)}%${t.baseCents !== subtotalCents ? ` on ${money(t.baseCents)}` : ''}`;
+}
+
 /** Totals card that can be refreshed in place: el.update(doc). */
-export function totalsPanel(doc, { showMarkup = true, paidCents = null } = {}) {
+export function totalsPanel(doc, { showMarkup = true, paidCents = null, money = moneyFormatter(null) } = {}) {
   const el = h('div', { class: 'totals' });
   el.update = (d) => {
     const t = docTotals(d);
     const paid = typeof paidCents === 'function' ? paidCents() : paidCents;
     clear(el);
     const row = (label, v, cls) => h('div', { class: ['totals-row', cls] }, h('span', null, label), h('span', { class: 'num' }, v));
+    const charged = t.taxes.filter((x) => x.baseCents > 0 || x.cents);
     h(el, null,
-      row('Materials', fmtMoney(t.materialCents)),
-      row('Labour', fmtMoney(t.labourCents)),
-      row('Other', fmtMoney(t.otherCents)),
-      showMarkup && t.markupCents ? row(`Markup (${fmtNum(d.markupPct, 1)}%)`, fmtMoney(t.markupCents)) : null,
-      row('Subtotal', fmtMoney(t.subtotalCents), 'strong'),
-      row(`Tax (${fmtNum(d.taxPct || 0, 2)}%)`, fmtMoney(t.taxCents)),
-      row('Total', fmtMoney(t.totalCents), 'grand'),
-      paid != null ? row('Paid', fmtMoney(paid)) : null,
-      paid != null ? row('Balance due', fmtMoney(t.totalCents - paid), 'grand') : null,
+      row('Materials', money(t.materialCents)),
+      row('Labour', money(t.labourCents)),
+      row('Other', money(t.otherCents)),
+      showMarkup && t.markupCents ? row(`Markup (${fmtNum(d.markupPct, 1)}%)`, money(t.markupCents)) : null,
+      row('Subtotal', money(t.subtotalCents), 'strong'),
+      charged.length ? charged.map((x) => row(taxLabel(x, t.subtotalCents, money), money(x.cents))) : row('Tax', money(0)),
+      row('Total', money(t.totalCents), 'grand'),
+      paid != null ? row('Paid', money(paid)) : null,
+      paid != null ? row('Balance due', money(t.totalCents - paid), 'grand') : null,
+      t.taxes.filter((x) => x.note && !x.baseCents).map((x) => h('div', { class: 'totals-hint muted' }, x.note)),
       h('div', { class: 'totals-hint muted' }, `Crew time: ${fmtNum(t.hours, 1)} h`));
   };
   el.update(doc);
@@ -106,6 +184,7 @@ export function totalsPanel(doc, { showMarkup = true, paidCents = null } = {}) {
 
 /** Searchable price-book picker. onPick(item) is called per click; the sheet stays open. */
 export function pickItems(store, onPick) {
+  const money = moneyFormatter(store.settings());
   const items = store.list('items').sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.name.localeCompare(b.name));
   let q = '';
   const list = h('div', { class: 'list picker-list' });
@@ -117,7 +196,7 @@ export function pickItems(store, onPick) {
     for (const it of rows.slice(0, 200)) {
       list.append(h('button', { type: 'button', class: 'list-row click picker-row', onClick: () => { onPick(it); toast(`Added ${it.name}`, 'success', 1400); } },
         h('div', { class: 'grow' }, h('div', { class: 'title' }, it.name), h('div', { class: 'meta' }, [it.sku, it.category, it.unit].filter(Boolean).join(' · '))),
-        h('span', { class: 'num' }, fmtMoney(it.priceCents)), icon('plus', 16)));
+        h('span', { class: 'num' }, money(it.priceCents)), icon('plus', 16)));
     }
   };
   const s = openSheet({
@@ -132,17 +211,26 @@ export function pickItems(store, onPick) {
 /** Build the printable document node. */
 export function documentNode({ kind, doc, store, paidCents = null, extra }) {
   const s = store.settings();
+  const money = moneyFormatter(s);
   const co = s.company || {};
   const client = doc.clientId ? store.get('clients', doc.clientId) : null;
   const job = doc.jobId ? store.get('jobs', doc.jobId) : null;
   const t = docTotals(doc);
   const tr = (label, v, cls) => h('tr', { class: cls }, h('td', null, label), h('td', { class: 'right num' }, v));
+  // CRA: an invoice must show the supplier's GST/HST registration number for the
+  // customer to claim input tax credits. PST numbers are shown when set.
+  const regs = [
+    co.gstHstNo ? `GST/HST No. ${co.gstHstNo}` : null,
+    co.pstNo ? `${(doc.taxes || []).find((x) => x.id === 'RST') ? 'RST' : 'PST'} No. ${co.pstNo}` : null,
+  ].filter(Boolean).join(' · ');
+  const charged = t.taxes.filter((x) => x.baseCents > 0 || x.cents);
   return h('article', { class: 'doc-sheet' },
     h('header', { class: 'doc-top' },
       h('div', null,
         h('div', { class: 'doc-brand' }, co.name || 'Company'),
         h('div', { class: 'doc-small' }, [co.address, co.phone, co.email].filter(Boolean).join(' · ')),
-        co.licenceNo ? h('div', { class: 'doc-small' }, `Licence ${co.licenceNo}`) : null),
+        co.licenceNo ? h('div', { class: 'doc-small' }, `Licence ${co.licenceNo}`) : null,
+        regs ? h('div', { class: 'doc-small' }, regs) : null),
       h('div', { class: 'doc-title' },
         h('div', { class: 'doc-kind' }, kind),
         h('div', { class: 'doc-num' }, doc.number || ''),
@@ -160,14 +248,15 @@ export function documentNode({ kind, doc, store, paidCents = null, extra }) {
       h('thead', null, h('tr', null, h('th', null, 'Description'), h('th', { class: 'right' }, 'Qty'), h('th', { class: 'right' }, 'Unit'), h('th', { class: 'right' }, 'Amount'))),
       h('tbody', null, (doc.lines || []).map((l) => h('tr', null,
         h('td', null, l.description || ''), h('td', { class: 'right num' }, fmtNum(l.qty, Number.isInteger(Number(l.qty)) ? 0 : 2)),
-        h('td', { class: 'right num' }, fmtMoney(l.unitCents)), h('td', { class: 'right num' }, fmtMoney(lineCents(l))))))),
+        h('td', { class: 'right num' }, money(l.unitCents)), h('td', { class: 'right num' }, money(lineCents(l))))))),
     h('table', { class: 'doc-totals' }, h('tbody', null,
-      tr('Subtotal', fmtMoney(t.subtotalCents - t.markupCents)),
-      t.markupCents ? tr('Materials adjustment', fmtMoney(t.markupCents)) : null,
-      tr(`Tax (${fmtNum(doc.taxPct || 0, 2)}%)`, fmtMoney(t.taxCents)),
-      tr('Total', fmtMoney(t.totalCents), 'grand'),
-      paidCents != null ? tr('Paid', fmtMoney(paidCents)) : null,
-      paidCents != null ? tr('Balance due', fmtMoney(t.totalCents - paidCents), 'grand') : null)),
+      tr('Subtotal', money(t.subtotalCents - t.markupCents)),
+      t.markupCents ? tr('Materials adjustment', money(t.markupCents)) : null,
+      charged.length ? charged.map((x) => tr(taxLabel(x, t.subtotalCents, money), money(x.cents))) : tr('Tax', money(0)),
+      tr(`Total (${s.currency || 'CAD'})`, money(t.totalCents), 'grand'),
+      paidCents != null ? tr('Paid', money(paidCents)) : null,
+      paidCents != null ? tr('Balance due', money(t.totalCents - paidCents), 'grand') : null)),
+    t.taxes.filter((x) => x.note && !x.baseCents).map((x) => h('p', { class: 'doc-small' }, x.note)),
     doc.notes ? h('section', { class: 'doc-notes' }, h('div', { class: 'doc-label' }, 'Notes'), h('p', null, doc.notes)) : null,
     extra || null,
     h('footer', { class: 'doc-foot doc-small' }, `Thank you for choosing ${co.name || 'us'}.`));

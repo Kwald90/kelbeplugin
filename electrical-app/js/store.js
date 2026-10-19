@@ -20,12 +20,17 @@ export const COLLECTIONS = [
 
 export const DEFAULT_SETTINGS = {
   id: 'settings',
-  company: { name: 'Kelbe Electric', phone: '', email: '', address: '', licenceNo: '' },
-  taxPct: 8,
+  // province drives the code book's amendments, the permit authority and sales tax.
+  company: { name: 'Your company', phone: '', email: '', address: '', licenceNo: '', province: 'ON', gstHstNo: '', pstNo: '' },
+  codeBook: 'CEC-2024', // 'CEC-2024' | 'NEC-2023'
+  // tax.mode 'province' uses js/lib/tax.js rates for company.province with a treatment
+  // preset; 'custom' uses tax.custom [{ label, pct, applies: { material, labour, other } }].
+  tax: { mode: 'province', treatment: null, custom: [] },
+  taxPct: 13, // legacy single rate (combined), kept for records and readers from before tax.js
   labourRateCents: 9500,
   markupPct: 20,
-  units: 'imperial',
-  currency: 'USD',
+  units: 'metric', // company default; each user can switch (js/lib/units.js)
+  currency: 'CAD',
   nextNumbers: { job: 1001, estimate: 2001, invoice: 3001 },
 };
 

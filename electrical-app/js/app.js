@@ -5,6 +5,7 @@ import * as ui from './ui.js';
 import { MODULES, GROUPS } from './modules/index.js';
 import { seedIfEmpty } from './seed.js';
 import { BRAND } from './brand.js';
+import { hasUnitsChoice, setUnits, getUnits } from './lib/units.js';
 
 const { h, icon } = ui;
 let main, rail, cleanup = null;
@@ -156,7 +157,29 @@ async function boot() {
   store.on('*', (e) => { if (e.type === 'reset') rebuild(); });
   document.getElementById('boot')?.remove();
   rebuild();
+  askUnitsOnce();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+
+// First launch on this device: ask once whether lengths show in metric or imperial.
+// The company default (Settings) is preselected; Settings can switch it later.
+function askUnitsOnce() {
+  if (hasUnitsChoice()) return;
+  const fallback = getUnits(store.settings().units);
+  const choose = (u) => { setUnits(u); s.close(); ui.toast(u === 'metric' ? 'Lengths in metres and millimetres' : 'Lengths in feet and inches', 'success'); route(); };
+  const option = (u, title, text) => h('button', { type: 'button', class: ['list-row', 'click'], style: { width: '100%', textAlign: 'left', font: 'inherit', color: 'inherit', background: 'transparent', border: 0, borderBottom: '1px solid var(--border)' }, onClick: () => choose(u) },
+    h('div', { class: 'grow' }, h('div', { class: 'title' }, title), h('div', { class: 'meta' }, text)),
+    u === fallback ? ui.badge('Company default', 'accent') : null);
+  const s = ui.openSheet({
+    title: 'How do you measure?', dialog: true,
+    body: h('div', { class: 'stack' },
+      h('p', { class: 'muted', style: { margin: 0 } }, 'Lengths on drawings, wire runs, bends and calculators show in your choice. You can change it any time in Settings.'),
+      h('div', { class: 'list' },
+        option('metric', 'Metric', 'Metres and millimetres: 3.25 m, 450 mm'),
+        option('imperial', 'Imperial', `Feet and inches: 12' 3 5/8"`))),
+    // Closing without a choice keeps the company default until they pick.
+    actions: [ui.button('Decide later', { variant: 'ghost', onClick: () => s.close() })],
+  });
 }
 
 boot();

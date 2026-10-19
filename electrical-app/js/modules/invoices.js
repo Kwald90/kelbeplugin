@@ -1,8 +1,9 @@
 // Invoices & payments (S18): list with ageing, builder, payments, print.
-import { docTotals, invoicePaidCents, invoiceBalanceCents, invoiceStatus } from '../lib/money.js';
-import { lineEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
+import { docTotals, invoicePaidCents, invoiceBalanceCents, invoiceStatus, moneyFormatter, combinedPct } from '../lib/money.js';
+import { newDocTax, taxComponents, TREATMENTS } from '../lib/tax.js';
+import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
 
-const METHODS = ['cash', 'check', 'card', 'transfer'];
+const METHODS = ['e-transfer', 'cheque', 'card', 'cash', 'transfer'];
 
 export default {
   id: 'invoices',
@@ -59,7 +60,8 @@ function renderList(root, ctx) {
     }
     const outstanding = open.reduce((s, r) => s + r.balance, 0);
     const overdue = outstanding - buckets.current;
-    const m = (c) => ui.fmtMoney(c, { whole: true });
+    const money = moneyFormatter(store.settings());
+    const m = (c) => money(c, { whole: true });
     h(host, null,
       h('div', { class: 'grid money-stats' },
         ui.stat({ label: 'Outstanding', value: m(outstanding), hint: `${open.length} open invoices`, tone: 'accent' }),
@@ -98,8 +100,8 @@ function renderList(root, ctx) {
           { key: 'client', label: 'Client / job', render: (r) => clientOrJob(store, r.inv), sort: (r) => clientOrJob(store, r.inv) },
           { key: 'issue', label: 'Issued', render: (r) => ui.fmtDate(r.inv.issueDate), sort: (r) => r.inv.issueDate || '' },
           { key: 'due', label: 'Due', render: (r) => ui.fmtDate(r.inv.dueDate), sort: (r) => r.inv.dueDate || '' },
-          { key: 'total', label: 'Total', align: 'right', render: (r) => ui.fmtMoney(r.total), sort: (r) => r.total },
-          { key: 'balance', label: 'Balance', align: 'right', render: (r) => ui.fmtMoney(r.balance), sort: (r) => r.balance },
+          { key: 'total', label: 'Total', align: 'right', render: (r) => money(r.total), sort: (r) => r.total },
+          { key: 'balance', label: 'Balance', align: 'right', render: (r) => money(r.balance), sort: (r) => r.balance },
           { key: 'status', label: 'Status', render: (r) => ui.statusBadge(r.status), sort: (r) => r.status },
         ],
         rows,
@@ -132,13 +134,14 @@ async function createNew(ctx) {
   const s = store.settings();
   const rec = {
     number: null, clientId: null, jobId: null, estimateId: null, status: 'draft', lines: [],
-    taxPct: s.taxPct ?? 0, issueDate: ui.today(), dueDate: ui.today(14), notes: '',
+    ...newDocTax(s, ui.today()), issueDate: ui.today(), dueDate: ui.today(14), notes: '',
   };
   if (query.estimateId) {
     const e = store.get('estimates', query.estimateId);
     if (e) {
       const t = docTotals(e);
-      Object.assign(rec, { clientId: e.clientId || null, jobId: e.jobId || null, estimateId: e.id, taxPct: e.taxPct ?? rec.taxPct, notes: e.notes || '', title: e.title || '' });
+      Object.assign(rec, { clientId: e.clientId || null, jobId: e.jobId || null, estimateId: e.id, notes: e.notes || '', title: e.title || '' });
+      Object.assign(rec, invoiceTaxFromEstimate(e, rec));
       rec.lines = (e.lines || []).map((l) => ({ ...l }));
       if (t.markupCents) rec.lines.push({ itemId: null, description: `Materials markup (${e.markupPct}%)`, qty: 1, unitCents: t.markupCents, labourHours: 0, kind: 'other' });
     }
@@ -160,6 +163,20 @@ async function createNew(ctx) {
   location.replace('#/invoices/' + created.id);
 }
 
+/** Keep the estimate's tax choice, re-rated for the invoice date (rates change, e.g. NS HST in 2025). */
+function invoiceTaxFromEstimate(e, rec) {
+  if (!Array.isArray(e.taxes)) {
+    // An estimate from before tax.js: keep its single rate.
+    delete rec.taxes; delete rec.taxProvince; delete rec.taxTreatment;
+    return { taxPct: e.taxPct ?? rec.taxPct };
+  }
+  if (e.taxProvince && TREATMENTS[e.taxTreatment]) {
+    const taxes = taxComponents({ province: e.taxProvince, treatment: e.taxTreatment, date: rec.issueDate });
+    return { taxes, taxProvince: e.taxProvince, taxTreatment: e.taxTreatment, taxPct: combinedPct(taxes.filter((t) => t.applies.material || t.applies.labour || t.applies.other)) };
+  }
+  return { taxes: e.taxes.map((t) => ({ ...t })), taxProvince: e.taxProvince ?? null, taxTreatment: e.taxTreatment, taxPct: e.taxPct };
+}
+
 // ---------- detail ----------
 function renderDetail(root, ctx, id) {
   const { store, ui, nav } = ctx;
@@ -176,6 +193,7 @@ function renderDetail(root, ctx, id) {
     if (cur && cur.status !== doc.status) { doc.status = cur.status; drawStatus(); }
   }, 450);
   const paid = () => invoicePaidCents(store, id);
+  const money = moneyFormatter(store.settings());
   const changed = () => { totals.update(doc); save(); };
 
   const clients = store.list('clients').sort((a, b) => a.name.localeCompare(b.name));
@@ -187,15 +205,16 @@ function renderDetail(root, ctx, id) {
     return el;
   };
   const readOnly = doc.status === 'void';
+  const taxNodes = taxEditor({ doc, store, onChange: changed, readOnly, dateKey: 'issueDate' });
   const header = h('div', { class: 'form-grid' },
     fieldEl({ label: 'Client', name: 'clientId', type: 'select', value: doc.clientId || '', options: ui.recordOptions(clients) }, (v) => { doc.clientId = v || null; }),
     fieldEl({ label: 'Job', name: 'jobId', type: 'select', value: doc.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`) }, (v) => { doc.jobId = v || null; }),
-    fieldEl({ label: 'Issue date', name: 'issueDate', type: 'date', value: doc.issueDate }, (v) => { doc.issueDate = v; }),
+    fieldEl({ label: 'Issue date', name: 'issueDate', type: 'date', value: doc.issueDate }, (v) => { doc.issueDate = v; taxNodes.recompute(); }),
     fieldEl({ label: 'Due date', name: 'dueDate', type: 'date', value: doc.dueDate }, (v) => { doc.dueDate = v; }),
-    fieldEl({ label: 'Tax %', name: 'taxPct', type: 'number', step: '0.01', min: '0', value: doc.taxPct ?? 0 }, (v) => { doc.taxPct = v || 0; }));
+    taxNodes);
   const notes = fieldEl({ label: 'Notes shown on the invoice', name: 'notes', type: 'textarea', value: doc.notes, span: true }, (v) => { doc.notes = v; });
   const editor = lineEditor({ doc, store, onChange: changed, readOnly });
-  const totals = totalsPanel(doc, { showMarkup: false, paidCents: paid });
+  const totals = totalsPanel(doc, { showMarkup: false, paidCents: paid, money });
   const refreshPaid = () => totals.update(doc);
 
   const statusHost = h('div', { class: 'stack' });
@@ -218,9 +237,9 @@ function renderDetail(root, ctx, id) {
     ui.clear(paymentsHost);
     const pays = store.list('payments', (p) => p.invoiceId === id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     paymentsHost.append(pays.length ? h('div', { class: 'list' }, pays.map((p) => h('div', { class: 'list-row' },
-      h('div', { class: 'grow' }, h('div', { class: 'title num' }, ui.fmtMoney(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), p.method, p.reference].filter(Boolean).join(' · '))),
+      h('div', { class: 'grow' }, h('div', { class: 'title num' }, money(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), p.method, p.reference].filter(Boolean).join(' · '))),
       ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: 'Delete payment', onClick: async () => {
-        if (!(await ui.confirmDialog(`Delete the ${ui.fmtMoney(p.amountCents)} payment?`, { okLabel: 'Delete' }))) return;
+        if (!(await ui.confirmDialog(`Delete the ${money(p.amountCents)} payment?`, { okLabel: 'Delete' }))) return;
         store.remove('payments', p.id); afterPayment();
       } }))))
       : h('p', { class: 'muted', style: { margin: 0 } }, 'No payments recorded.'));
@@ -238,16 +257,16 @@ function renderDetail(root, ctx, id) {
       title: `Record payment · ${doc.number}`,
       submitLabel: 'Record payment',
       fields: [
-        { label: 'Amount', name: 'amountCents', type: 'money', value: Math.max(0, bal), required: true, hint: `Balance ${ui.fmtMoney(bal)}` },
+        { label: 'Amount', name: 'amountCents', type: 'money', value: Math.max(0, bal), required: true, hint: `Balance ${money(bal)}` },
         { label: 'Date', name: 'date', type: 'date', value: ui.today(), required: true },
-        { label: 'Method', name: 'method', type: 'select', value: 'transfer', options: METHODS },
-        { label: 'Reference', name: 'reference', placeholder: 'Check #, transaction id…' },
+        { label: 'Method', name: 'method', type: 'select', value: 'e-transfer', options: METHODS },
+        { label: 'Reference', name: 'reference', placeholder: 'Cheque #, e-Transfer reference…' },
       ],
       onSubmit: (v) => {
         if (!(v.amountCents > 0)) { ui.toast('Enter an amount above zero', 'error'); return false; }
         store.add('payments', { invoiceId: id, ...v });
         afterPayment();
-        ui.toast(`Payment of ${ui.fmtMoney(v.amountCents)} recorded`, 'success');
+        ui.toast(`Payment of ${money(v.amountCents)} recorded`, 'success');
       },
     });
   };
