@@ -38,7 +38,8 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** Settings → Data: when signed in, "Wipe" means "download again" and restoring a backup is refused; reword the card.
 - **dev** Security screen shows only this device's log when signed in; read `/api/v1/auditLog`.
 - **dev** A dev script that serves the PWA with an `/api/` proxy to a local API (the E2E driver has one).
-- **dev** Photos and drawing underlays as data URLs: move to object storage.
+- **dev** Photos and drawing underlays as data URLs: move to object storage. A dense 20-sheet plan set is about 140 MB held in memory and synced as whole records (each sheet up to ~7 MB).
+- **dev** Plan sets: the wire-runs plan picker still copies full drawings; job and client tabs list sheets one by one instead of grouped; read sheet numbers from the title block when a PDF has no page labels.
 - **dev** Server hardening from the platform review: HQ-only mode for `hq-api`, `__Host-` session cookie, decrypt-only previous master key for rotation, a CSP report endpoint, a full resync after a database restore.
 - **dev** `docs/architecture/api.md`: add the integrations, webhooks, `/me` and pay-link endpoints.
 - **dev** Drop `blob:` from `worker-src` after a test pass with the self-hosted pdf.js.
