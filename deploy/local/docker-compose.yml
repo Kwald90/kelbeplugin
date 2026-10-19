@@ -1,0 +1,32 @@
+# Local Postgres 17 for Fishtape development and tests.
+#   cp deploy/local/.env.example deploy/local/.env   # then set the four passwords
+#   docker compose -f deploy/local/docker-compose.yml --env-file deploy/local/.env up -d
+# Listens on 127.0.0.1:5433 only. On first start it runs server/db/bootstrap.sql
+# (roles fishtape_owner / fishtape_app / fishtape_hq and database `fishtape`).
+# Then, from server/: npm run migrate && npm run seed && npm start
+name: fishtape-local
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/local/.env}
+      FISHTAPE_OWNER_PASSWORD: ${FISHTAPE_OWNER_PASSWORD:?set FISHTAPE_OWNER_PASSWORD in deploy/local/.env}
+      FISHTAPE_APP_PASSWORD: ${FISHTAPE_APP_PASSWORD:?set FISHTAPE_APP_PASSWORD in deploy/local/.env}
+      FISHTAPE_HQ_PASSWORD: ${FISHTAPE_HQ_PASSWORD:?set FISHTAPE_HQ_PASSWORD in deploy/local/.env}
+    volumes:
+      - fishtape-pg:/var/lib/postgresql/data
+      - ../../server/db/bootstrap.sql:/fishtape/bootstrap.sql:ro
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fishtape"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  fishtape-pg:

@@ -88,11 +88,11 @@ export async function seed({ db, ownerClient, log = console.log }) {
 
 async function main() {
   loadEnvFile();
-  const config = readConfig();
-  if (config.appEnv === 'production') {
+  if ((process.env.APP_ENV || 'local') === 'production') {
     console.error('Refusing to seed: APP_ENV is production.');
     process.exit(2);
   }
+  const config = readConfig();
   const db = createDb({ app: createPool(config.databaseUrl, { max: 2, applicationName: 'fishtape-seed' }) });
   let ownerClient = null;
   if (config.migrateDatabaseUrl && config.appEnv === 'local') {

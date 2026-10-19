@@ -1,0 +1,3 @@
+# psql and Linux containers read these; CRLF would break meta-commands like \connect.
+*.sql text eol=lf
+*.sh text eol=lf
