@@ -74,6 +74,18 @@ export async function authInit(headers = {}, { webCredentials = 'include', newSe
 }
 
 /**
+ * fetch() for an API path ('/api/v1/...'). Every API call in the PWA goes through here (request()
+ * below, and the billing, integrations and assistant helpers that need the raw Response): same
+ * origin with the session cookie on the web; FISHTAPE_API_BASE with the Keychain tokens and no
+ * cookies in the iOS app. `init` is fetch()'s; its `credentials` is the web setting.
+ */
+export async function apiFetch(path, init = {}) {
+  const { newSession = false, ...rest } = init;
+  const { headers, credentials } = await authInit(init.headers || {}, { webCredentials: init.credentials || 'include', newSession });
+  return fetch(API_BASE + path, { ...rest, headers, credentials });
+}
+
+/**
  * One API call. JSON in and out; state-changing calls send X-Fishtape: 1 (the CSRF guard).
  * Throws ApiError with the server's { code, message } on errors, code 'offline' when the
  * network fails and 'no_api' when something other than the API answered (a static server).
@@ -82,13 +94,12 @@ export async function request(method, path, body) {
   const nativeApp = isNativeApp();
   const startsSession = nativeApp && method === 'POST' && SESSION_STARTS.has(path);
   if (startsSession) body = { ...(body || {}), mode: 'bearer' };
-  const base = { Accept: 'application/json' };
-  if (method !== 'GET') base['X-Fishtape'] = '1';
-  if (body !== undefined) base['Content-Type'] = 'application/json';
-  const { headers, credentials } = await authInit(base, { newSession: startsSession });
+  const headers = { Accept: 'application/json' };
+  if (method !== 'GET') headers['X-Fishtape'] = '1';
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
   let res;
   try {
-    res = await fetch(API_BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), credentials, cache: 'no-store' });
+    res = await apiFetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'include', cache: 'no-store', newSession: startsSession });
   } catch {
     throw new ApiError(0, 'offline', "Can't reach the server. Check your connection.");
   }

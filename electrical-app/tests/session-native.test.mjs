@@ -104,6 +104,16 @@ test('iOS app: a failed sign-in keeps the old token; Google and Microsoft are hi
   assert.deepEqual(await S.session.providers(), { password: true, google: false, microsoft: false, signupOpen: false });
 });
 
+test('iOS app: the assistant helper goes through apiFetch too (API origin, bearer, no cookies)', async () => {
+  globalThis.Capacitor = nativeBridge;
+  const A = await import('../js/lib/assistant-api.js');
+  answers = [[200, { enabled: true }]];
+  assert.deepEqual(await A.api('/api/v1/ai/status'), { enabled: true });
+  assert.equal(last().url, `${ORIGIN}/api/v1/ai/status`);
+  assert.equal(last().headers.Authorization, 'Bearer crew-1');
+  assert.equal(last().credentials, 'omit');
+});
+
 test('authInit (also used by integrations.js): Keychain token in the app, the cookie on the web', async () => {
   globalThis.Capacitor = nativeBridge;
   const n = await S.authInit({ 'x-fishtape': '1' }, { webCredentials: 'same-origin' });
@@ -127,5 +137,8 @@ test('web: same origin with the cookie, no mode, no token handling', async () =>
   assert.equal(last().headers.Authorization, undefined);
   answers = [[200, { password: true, google: true, microsoft: false }]];
   assert.deepEqual(await W.session.providers(), { password: true, google: true, microsoft: false });
+  answers = [[200, {}]];
+  await W.apiFetch('/api/v1/integrations', { credentials: 'same-origin', headers: { 'x-fishtape': '1' }, method: 'POST' });
+  assert.deepEqual({ url: last().url, credentials: last().credentials, headers: last().headers }, { url: '/api/v1/integrations', credentials: 'same-origin', headers: { 'x-fishtape': '1' } });
   assert.deepEqual(keychain, before);
 });

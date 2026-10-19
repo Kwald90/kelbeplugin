@@ -4,7 +4,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isNativeApp, safeFileName, toBase64, isShareCancel, saveAndShare, getSecret, setSecret, removeSecret, nativePrint, installNativePrint,
+  isNativeApp, safeFileName, toBase64, isShareCancel, saveAndShare, getSecret, setSecret, removeSecret, nativePrint, installNativePrint, openExternal,
 } from '../js/lib/native.js';
 
 afterEach(() => { delete globalThis.Capacitor; });
@@ -73,6 +73,36 @@ test('saveAndShare: closing the share sheet is not an error, other share errors 
 test('saveAndShare explains a missing plugin', async () => {
   globalThis.Capacitor = { isNativePlatform: () => true, Plugins: {} };
   await assert.rejects(saveAndShare('a.pdf', 'x'), /missing the Filesystem plugin/);
+});
+
+test('openExternal: this tab on the web, a Safari sheet in the app (https only)', async () => {
+  const assigned = [];
+  const win = { location: { assign: (u) => assigned.push(u) } };
+  await openExternal('https://checkout.stripe.com/c/pay/cs_test_1', { win });
+  assert.deepEqual(assigned, ['https://checkout.stripe.com/c/pay/cs_test_1']);
+
+  const opened = [];
+  let finished;
+  let removed = 0;
+  globalThis.Capacitor = {
+    isNativePlatform: () => true,
+    Plugins: {
+      Browser: {
+        open: async (o) => { opened.push(o); },
+        addListener: async (name, cb) => { assert.equal(name, 'browserFinished'); finished = cb; return { remove: () => { removed++; } }; },
+      },
+    },
+  };
+  let closed = 0;
+  await openExternal('https://billing.stripe.com/p/session/x', { win, onClose: () => closed++ });
+  assert.deepEqual(opened, [{ url: 'https://billing.stripe.com/p/session/x', presentationStyle: 'fullscreen' }]);
+  assert.equal(assigned.length, 1, 'the app never navigates its own web view away');
+  finished();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(closed, 1);
+  assert.equal(removed, 1);
+  await assert.rejects(openExternal('http://example.com/pay', { win }), /Only https/);
+  await assert.rejects(openExternal('javascript:alert(1)', { win }), /Only https/);
 });
 
 test('Keychain helpers call the FishtapeKeychain plugin', async () => {

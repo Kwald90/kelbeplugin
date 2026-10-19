@@ -63,6 +63,28 @@ export async function saveAndShare(filename, content, type) {
   }
 }
 
+// ---- pages outside the app --------------------------------------------------------
+
+/**
+ * Open a page that isn't part of Fishtape, such as Stripe Checkout or the billing portal. On the
+ * web it replaces this page, as before. In the iOS app it opens in a Safari sheet over the app
+ * (Browser plugin), never inside the app's web view; `onClose` runs when the person closes it.
+ */
+export async function openExternal(url, { onClose, win = globalThis } = {}) {
+  if (!isNativeApp()) { win.location.assign(url); return; }
+  const u = new URL(String(url));
+  if (u.protocol !== 'https:') throw new Error('Only https pages can be opened from the app.');
+  const browser = plugin('Browser');
+  if (onClose) {
+    let handle = null;
+    handle = await browser.addListener('browserFinished', () => {
+      Promise.resolve(handle).then((h) => h?.remove?.()).catch(() => {});
+      onClose();
+    });
+  }
+  await browser.open({ url: u.href, presentationStyle: 'fullscreen' });
+}
+
 // ---- Keychain -------------------------------------------------------------------
 
 /** Keys the FishtapeKeychain plugin accepts. */

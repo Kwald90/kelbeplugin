@@ -10,7 +10,7 @@
 import * as UI from '../ui.js';
 import { renderMarkdown } from '../lib/markdown.js';
 import { PLANS, monthlyCents } from '../plans.js';
-import { API_BASE, authInit } from '../session.js';
+import { apiFetch } from '../session.js';
 
 const PLUG = '<path d="M9 2v5M15 2v5"/><path d="M6 7h12v4a6 6 0 01-12 0z"/><path d="M12 17v5"/>';
 const ICONS = { stripe: 'dollar', resend: 'mail', twilio: 'phone', facebook: 'funnel', anthropic: 'zap' };
@@ -26,15 +26,13 @@ const WEBHOOK_HINT = {
 
 // ---- API -----------------------------------------------------------------------
 
-/** Call the Fishtape API: same origin with the session cookie (the iOS app: its API origin and Keychain token). Throws Error with .status and .code. */
+/** Call the Fishtape API through session.js apiFetch (cookie on the web, Bearer token in the iOS app). Throws Error with .status and .code. */
 export async function api(path, { method = 'GET', body } = {}) {
-  const { headers, credentials } = await authInit(
-    { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(method !== 'GET' ? { 'x-fishtape': '1' } : {}) },
-    { webCredentials: 'same-origin' });
   let res;
   try {
-    res = await fetch(`${API_BASE}/api/v1${path}`, {
-      method, credentials, cache: 'no-store', headers,
+    res = await apiFetch(`/api/v1${path}`, {
+      method, credentials: 'same-origin', cache: 'no-store',
+      headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(method !== 'GET' ? { 'x-fishtape': '1' } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
