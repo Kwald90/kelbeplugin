@@ -169,6 +169,7 @@ function renderEditor(root, ctx, id) {
   const BARE = imperial ? 'ft' : 'm';
   const BARE_SMALL = imperial ? 'in' : 'mm';
   let removed = false;
+  let alive = true;
 
   const save = debounce(() => {
     if (removed) return;
@@ -206,6 +207,16 @@ function renderEditor(root, ctx, id) {
   });
   const iconBtn = (icon, title, onClick, opts = {}) => ui.button('', { variant: opts.danger ? 'ghost danger' : 'ghost', size: 'sm', icon, title, onClick, disabled: opts.disabled });
   const move = (arr, i, d, redraw) => { const j = i + d; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; redraw(); changed(); };
+  // Removing a row never asks first; it offers Undo instead.
+  const removeAt = (arr, i, redraw, what) => {
+    const [gone] = arr.splice(i, 1);
+    redraw(); changed();
+    undoToast(ui, `${what} removed`, () => {
+      if (!alive) return;
+      arr.splice(Math.min(i, arr.length), 0, gone);
+      redraw(); changed();
+    });
+  };
 
   // ----- details -----
   const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
@@ -253,7 +264,7 @@ function renderEditor(root, ctx, id) {
         h('div', { class: 'wr-actions' },
           iconBtn('<path d="M12 19V5M5 12l7-7 7 7"/>', 'Move up', () => move(run.segments, i, -1, drawSegs), { disabled: i === 0 }),
           iconBtn('<path d="M12 5v14M5 12l7 7 7-7"/>', 'Move down', () => move(run.segments, i, 1, drawSegs), { disabled: i === run.segments.length - 1 }),
-          iconBtn('trash', 'Delete segment', () => { run.segments.splice(i, 1); drawSegs(); changed(); }, { danger: true }))));
+          iconBtn('trash', 'Delete segment', () => removeAt(run.segments, i, drawSegs, s.label || `Segment ${i + 1}`), { danger: true }))));
     });
   }
   const addManual = () => {
@@ -394,7 +405,7 @@ function renderEditor(root, ctx, id) {
         h('span', { class: 'wr-x' }, numInput(d.count, (v) => { d.count = Math.max(0, v || 0); changed(); }, { 'aria-label': `Drop ${i + 1} count` }), '×'),
         lengthInput({ value: d.lengthM, label: `Drop ${i + 1} length each`, onChange: (v) => { d.lengthM = v; changed(); } }),
         sub,
-        iconBtn('trash', 'Delete drop', () => { a.drops.splice(i, 1); drawAllowances(); changed(); }, { danger: true })));
+        iconBtn('trash', 'Delete drop', () => removeAt(a.drops, i, drawAllowances, 'Drop'), { danger: true })));
     });
     const freeMm = Math.round(W.CEC_FREE_CONDUCTOR_M * 1000);
     h(allowHost, null,
@@ -457,7 +468,7 @@ function renderEditor(root, ctx, id) {
             itemOpts.map((it) => h('option', { value: it.id, selected: it.id === c.itemId }, `${it.name}${it.priceCents != null ? ` · ${ui.fmtMoney(it.priceCents)}/${it.unit}` : ''}`))))),
         h('div', { class: 'wr-cond-foot' },
           h('div', { class: 'wr-cond-out' }, total, rolls),
-          iconBtn('trash', 'Delete conductor', () => { run.conductors.splice(i, 1); drawConductors(); changed(); }, { danger: true }))));
+          iconBtn('trash', 'Delete conductor', () => removeAt(run.conductors, i, drawConductors, 'Conductor'), { danger: true }))));
     });
     refreshTotals();
   }
@@ -471,7 +482,7 @@ function renderEditor(root, ctx, id) {
       h('img', { src: p.dataUrl, alt: p.caption || `Photo ${i + 1}`, loading: 'lazy' }),
       h('figcaption', null,
         textInput(p.caption, 'Caption', (v) => { p.caption = v; save(); }, { 'aria-label': `Photo ${i + 1} caption` }),
-        iconBtn('trash', 'Delete photo', () => { run.photos.splice(i, 1); drawPhotos(); changed(); }, { danger: true })))));
+        iconBtn('trash', 'Delete photo', () => removeAt(run.photos, i, drawPhotos, 'Photo'), { danger: true })))));
   }
   async function addPhotos() {
     const room = MAX_PHOTOS - run.photos.length;
@@ -633,7 +644,7 @@ function renderEditor(root, ctx, id) {
     actions: [
       ui.button('PDF', { icon: 'download', variant: 'primary', onClick: downloadPdf }),
       ui.button('Duplicate', { icon: 'copy', onClick: duplicate }),
-      ui.button('', { icon: 'trash', variant: 'ghost danger', title: 'Delete run', onClick: remove }),
+      ui.button('Delete run', { icon: 'trash', variant: 'ghost danger', onClick: remove }),
     ],
   },
   sizeList, typeList,
@@ -681,7 +692,18 @@ function renderEditor(root, ctx, id) {
   refreshTotals();
   if (query.fresh) { nameInput.focus(); nameInput.select(); history.replaceState(null, '', '#/wireruns/' + id); }
 
-  return () => { if (!removed) save.flush(); };
+  return () => { alive = false; if (!removed) save.flush(); };
+}
+
+function undoToast(ui, message, undo) {
+  let used = false;
+  const btn = ui.h('button', { type: 'button', class: 'wr-undo', onClick: () => {
+    if (used) return;
+    used = true;
+    undo();
+    btn.closest('.toast')?.remove();
+  } }, 'Undo');
+  ui.toast(ui.h('span', { class: 'wr-undo-msg' }, message, btn), 'info', 6000);
 }
 
 // ---------- photos ----------

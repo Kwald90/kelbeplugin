@@ -1,5 +1,9 @@
 /* Wire runs: measured runs, AR tape, totals and printable report. Tokens only (see tokens.css). */
 
+/* undo after removing a row (toasts ignore pointers, so the button opts back in) */
+.wr-undo-msg { display: inline-flex; align-items: center; gap: var(--s3); }
+.wr-undo { pointer-events: auto; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; min-height: 32px; padding: 0 var(--s1); cursor: pointer; }
+
 /* ---------- list ---------- */
 .wr-stats { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .wr-job-filter { width: auto; min-width: 180px; border-radius: var(--r-pill); }
