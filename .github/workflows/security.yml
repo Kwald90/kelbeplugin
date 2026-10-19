@@ -1,0 +1,139 @@
+# Security scanning: committed secrets (gitleaks, full history), static analysis (CodeQL for
+# JavaScript and for these workflows), known-vulnerable dependencies (osv-scanner, npm audit),
+# and dependency review on pull requests. Runs on every push and PR, and weekly so newly
+# published advisories are caught even when nothing changes.
+#
+# Findings appear under the repo's Security tab (code scanning is free for public repos).
+# Keep CodeQL "default setup" turned off in Settings: this advanced workflow replaces it.
+# Triage and fix times: docs/security/vulnerability-management.md.
+name: Security
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: No .env files, private keys, dumps or keystores in the tree
+        run: node .github/scripts/check-committed-files.mjs
+      - name: Install gitleaks (pinned, checksum-verified)
+        if: always()
+        run: |
+          curl -fsSLo gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          tar -xzf gitleaks.tgz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          rm -f gitleaks gitleaks.tgz
+      - name: Scan the whole git history
+        if: always()
+        run: gitleaks git --config .gitleaks.toml --redact --no-banner --exit-code 1 --report-format sarif --report-path gitleaks.sarif .
+      - name: Upload to code scanning
+        if: always() && hashFiles('gitleaks.sarif') != ''
+        # Fork PRs get a read-only token; the scan result above still fails the job.
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+          config: |
+            paths-ignore:
+              - replica
+              - includes
+              - assets
+              - .claude
+      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          category: /language:${{ matrix.language }}
+
+  dependencies:
+    name: Vulnerable dependencies
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      OSV_VERSION: "2.7.0"
+      OSV_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: npm audit (server, production dependencies, high and above)
+        if: hashFiles('server/package-lock.json') != ''
+        working-directory: server
+        run: npm audit --omit=dev --audit-level=high
+      - name: Install osv-scanner (pinned, checksum-verified)
+        run: |
+          curl -fsSLo osv-scanner "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SHA256}  osv-scanner" | sha256sum -c -
+          chmod +x osv-scanner
+      - name: osv-scanner (every lockfile in the repo)
+        run: |
+          rc=0
+          ./osv-scanner scan source --recursive . || rc=$?
+          # 128 = no lockfiles found (nothing to scan until server/ lands)
+          if [ "$rc" -eq 128 ]; then echo "No lockfiles to scan yet."; exit 0; fi
+          exit "$rc"
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          # Strong-copyleft network licences don't fit a closed SaaS server; review case by case.
+          deny-licenses: AGPL-1.0-only, AGPL-1.0-or-later, AGPL-3.0-only, AGPL-3.0-or-later, SSPL-1.0

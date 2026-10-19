@@ -1,0 +1,63 @@
+# gitleaks configuration: the built-in rules plus Fishtape's own secret formats.
+# CI scans the whole history on every push (.github/workflows/security.yml). Locally:
+#   gitleaks git --config .gitleaks.toml --redact .
+# A finding means: rotate the secret first (docs/runbooks/rotate-secrets.md), then clean up.
+# Allow-list a false positive narrowly (one regex or path, with a comment), never a whole rule.
+
+title = "Fishtape gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "fishtape-api-key"
+description = "Fishtape API key (ft_live_ / ft_test_)"
+regex = '''\bft_(?:live|test)_[A-Za-z0-9_-]{20,}'''
+keywords = ["ft_live_", "ft_test_"]
+
+[[rules]]
+id = "fishtape-secrets-master-key"
+description = "SECRETS_MASTER_KEY with a value (base64 of 32 bytes)"
+regex = '''SECRETS_MASTER_KEY\s*[=:]\s*["']?[A-Za-z0-9+/]{43}='''
+keywords = ["secrets_master_key"]
+
+[[rules]]
+id = "fishtape-db-role-password"
+description = "Postgres role password from a Fishtape .env"
+regex = '''(?i)\b(?:POSTGRES_SUPERUSER|FISHTAPE_(?:OWNER|APP|HQ))_PASSWORD\s*[=:]\s*["']?[A-Za-z0-9+/=_-]{12,}'''
+keywords = ["_password"]
+
+[[rules]]
+id = "postgres-url-with-password"
+description = "Postgres connection URL with an inline password"
+regex = '''postgres(?:ql)?://[A-Za-z0-9_.-]+:([^@\s'"<>${}]{8,})@'''
+secretGroup = 1
+keywords = ["postgres://", "postgresql://"]
+  # Throwaway credentials of the CI Postgres service (.github/workflows/ci.yml) only.
+  [[rules.allowlists]]
+  regexes = ['''^(?:ci_(?:app|owner|hq)|postgres)$''']
+
+# age private keys (the backup identities) are covered by the built-in "age-secret-key" rule.
+
+[[rules]]
+id = "fishtape-session-token"
+description = "Fishtape session cookie value"
+regex = '''ft_session=([A-Za-z0-9_-]{24,})'''
+secretGroup = 1
+keywords = ["ft_session="]
+
+[[allowlists]]
+description = "Obviously fake Stripe test keys (sk_test_1234...) in the server's test fixtures"
+targetRules = ["stripe-access-token", "generic-api-key"]
+condition = "AND"
+paths = ['''(?:^|/)server/test/''']
+regexTarget = "line"
+regexes = ['''['"]sk_test_1234''']
+
+[[allowlists]]
+description = "Example env files hold empty values; generated evidence and dependencies are never committed"
+paths = [
+  '''(?:^|/)\.env\.example$''',
+  '''(?:^|/)node_modules/''',
+  '''^compliance/evidence/out/''',
+]

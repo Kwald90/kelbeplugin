@@ -1,0 +1,19 @@
+# Build context is the repo root (server/Dockerfile needs files from electrical-app/js/).
+# Allow-list: ignore everything, then let in only what the server image needs.
+*
+!server/
+!electrical-app/js/schema/
+!electrical-app/js/brand.js
+!electrical-app/js/plans.js
+
+# Never send these into the build, even inside allowed folders.
+**/node_modules
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.log
+**/.DS_Store
+server/test/
+server/coverage/
+server/.nyc_output/

@@ -1,0 +1,101 @@
+# Deploy to staging over SSH. Called by ci.yml after CI passes on a push to the staging branch,
+# or run by hand (Actions -> Deploy staging -> Run workflow) to redeploy the branch head.
+#
+# Off until you set the repository variable STAGING_DEPLOY_ENABLED=true. Needs these secrets in
+# the GitHub environment "staging" (setup: deploy/staging/README.md, step 8):
+#   STAGING_SSH_KEY       private key of the fishtape-deploy user (forced command: deploy-gate.sh)
+#   STAGING_HOST          208.113.210.97
+#   STAGING_USER          fishtape-deploy
+#   STAGING_KNOWN_HOSTS   `ssh-keyscan -t ed25519 <host>` output, checked against the server's fingerprint
+# Optional variables: STAGING_URL (default https://tgelectrical.truecollarbuilt.com), STAGING_BRANCH.
+#
+# The key can only run `deploy <sha>` and `status` on the server. update.sh refuses any commit
+# that is not on the staging branch.
+name: Deploy staging
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to staging
+    if: vars.STAGING_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL || 'https://tgelectrical.truecollarbuilt.com' }}
+    env:
+      STAGING_URL: ${{ vars.STAGING_URL || 'https://tgelectrical.truecollarbuilt.com' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            server/package.json
+            deploy/check-exposure.sh
+            deploy/staging/security-headers.conf
+          sparse-checkout-cone-mode: false
+
+      - name: Check deploy secrets
+        env:
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.STAGING_HOST }}
+          DEPLOY_USER: ${{ secrets.STAGING_USER }}
+          KNOWN_HOSTS: ${{ secrets.STAGING_KNOWN_HOSTS }}
+        run: |
+          missing=""
+          [ -n "$SSH_KEY" ] || missing="$missing STAGING_SSH_KEY"
+          [ -n "$DEPLOY_HOST" ] || missing="$missing STAGING_HOST"
+          [ -n "$DEPLOY_USER" ] || missing="$missing STAGING_USER"
+          [ -n "$KNOWN_HOSTS" ] || missing="$missing STAGING_KNOWN_HOSTS"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets in the 'staging' environment:$missing. See deploy/staging/README.md step 8."
+            exit 1
+          fi
+
+      - name: Deploy over SSH
+        env:
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.STAGING_HOST }}
+          DEPLOY_USER: ${{ secrets.STAGING_USER }}
+          KNOWN_HOSTS: ${{ secrets.STAGING_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          ssh -i "$HOME/.ssh/deploy_key" \
+            -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "deploy $GITHUB_SHA $GITHUB_RUN_ID"
+
+      - name: Smoke test
+        env:
+          HAS_SERVER: ${{ hashFiles('server/package.json') != '' }}
+        run: |
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors -o /dev/null "$STAGING_URL/"
+          if [ "$HAS_SERVER" = true ]; then
+            curl -fsS --retry 6 --retry-delay 5 --retry-all-errors "$STAGING_URL/api/v1/status"
+            echo
+          fi
+
+      - name: Exposure check (no secrets or repo files served, security headers present)
+        env:
+          HAS_SERVER: ${{ hashFiles('server/package.json') != '' }}
+        run: |
+          if [ "$HAS_SERVER" = true ]; then bash deploy/check-exposure.sh "$STAGING_URL"
+          else bash deploy/check-exposure.sh "$STAGING_URL" --no-api; fi
+
+      - name: Remove the key
+        if: always()
+        run: rm -f "$HOME/.ssh/deploy_key"

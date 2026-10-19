@@ -1,0 +1,24 @@
+# Settings for backup.sh on production. Copy to backup.conf next to backup.sh, then:
+#   sudo chown root:root backup.conf && sudo chmod 600 backup.conf
+# backup.sh refuses a backup.conf that isn't root's or is group/world-writable.
+
+#BACKUP_DIR=/var/backups/fishtape-production
+#STATE_DIR=/var/lib/fishtape-production
+
+# Production's own age public key(s). Never the staging key. Two recipients: the working
+# offline key and a sealed spare kept somewhere else (docs/compliance/backup-retention.md).
+AGE_RECIPIENTS_FILE=/srv/fishtape/repo/deploy/production/backup-recipients.txt
+
+#KEEP_DAILY=14
+#KEEP_WEEKLY=8
+#KEEP_PREDEPLOY=5
+
+# Offsite copy: required for production (RPO/RTO in docs/compliance/business-continuity.md).
+# Keep it in Canada, with a different provider from the production host, and turn on
+# retention or object lock there. backup.sh never deletes offsite copies.
+#OFFSITE_RSYNC_TARGET=fishtape-backup@backup.example.ca:/srv/backups/fishtape-production
+#OFFSITE_SSH_KEY=/root/.ssh/fishtape_offsite_ed25519
+#OFFSITE_RCLONE_REMOTE=offsite-ca:fishtape-backups/production
+
+# Dead-man's switch (alerts when the nightly ping is missing or reports /fail).
+#HEARTBEAT_URL=https://hc-ping.com/00000000-0000-0000-0000-000000000000

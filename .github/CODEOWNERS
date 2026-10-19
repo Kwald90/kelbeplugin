@@ -1,0 +1,12 @@
+# Every change is reviewed by the owner. With "Require review from Code Owners" in branch
+# protection, no pull request merges without Kelvin's approval (docs/compliance/change-management.md).
+*                         @Kwald90
+
+# Security-sensitive paths, listed separately so the rule is visible and can be tightened later.
+/.github/                 @Kwald90
+/deploy/                  @Kwald90
+/server/migrations/       @Kwald90
+/server/src/auth/         @Kwald90
+/server/db/               @Kwald90
+/SECURITY.md              @Kwald90
+/.gitleaks.toml           @Kwald90

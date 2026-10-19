@@ -1,0 +1,13 @@
+# Nightly at 03:17 server time (+ up to 10 minutes of jitter). Persistent=true runs a missed
+# backup at the next boot.
+[Unit]
+Description=Nightly Fishtape staging backup
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=10m
+Persistent=true
+Unit=fishtape-staging-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,195 @@
+# Fishtape staging: Postgres 17, the API and the worker, on the shared VPS.
+#
+# Normally driven by update.sh. By hand, from this folder:
+#   sudo docker compose ps
+#   sudo docker compose logs -f api
+#   sudo docker compose run --rm migrate
+#
+# Secrets come from .env next to this file (root:root, chmod 600, never in git; see
+# .env.example). Images are built on the box and tagged with the git SHA; update.sh sets
+# IMAGE_TAG and re-tags the deployed build as "current", which is the default below.
+#
+# This box hosts other sites. Their Postgres (127.0.0.1:5432) and app (127.0.0.1:3000)
+# are not ours: we bind only 127.0.0.1:5433 and 127.0.0.1:3410.
+
+name: fishtape-staging
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-server: &server
+  # ".invalid" never resolves (RFC 2606), so this name can never be pulled from a registry.
+  image: fishtape.invalid/server:${IMAGE_TAG:-current}
+  pull_policy: never
+  env_file: .env
+  environment: &server-environment
+    APP_ENV: staging
+    HOST: 0.0.0.0
+    PORT: "3410"
+    # Built from the role passwords in .env so they can't drift apart. Passwords must be
+    # URL-safe (init-env.sh generates hex). Every server container gets the app role; only
+    # hq-api gets the BYPASSRLS HQ role, and only the migrate/seed one-offs get the owner role.
+    DATABASE_URL: postgres://fishtape_app:${FISHTAPE_APP_PASSWORD:?set in .env}@postgres:5432/fishtape
+    # The raw passwords from .env are blanked inside app containers: they only need the URLs.
+    POSTGRES_SUPERUSER_PASSWORD: ""
+    FISHTAPE_OWNER_PASSWORD: ""
+    FISHTAPE_APP_PASSWORD: ""
+    FISHTAPE_HQ_PASSWORD: ""
+    # Written by backup.sh / host-status.sh, read by /api/hq/health.
+    BACKUP_STATUS_FILE: /run/fishtape/status/last-backup.json
+    # Public certificate chain copied by host-status.sh (never the key), for HQ health.
+    TLS_CERT_FILE: /run/fishtape/status/tls-cert.pem
+  volumes:
+    - /var/lib/fishtape-staging/status:/run/fishtape/status:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  networks:
+    - backend
+  logging: *logging
+
+services:
+  postgres:
+    image: postgres:17.11-trixie@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set in .env}
+      # Builtin C.UTF-8 collation does not depend on glibc, so a base-image change can't
+      # silently corrupt text indexes. Checksums catch storage corruption early.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8 --data-checksums"
+      # Read only by initdb/10-bootstrap.sh on first start (empty volume).
+      FISHTAPE_OWNER_PASSWORD: ${FISHTAPE_OWNER_PASSWORD:?set in .env}
+      FISHTAPE_APP_PASSWORD: ${FISHTAPE_APP_PASSWORD:?set in .env}
+      FISHTAPE_HQ_PASSWORD: ${FISHTAPE_HQ_PASSWORD:?set in .env}
+    # Sized for a shared 8 CPU / 31 GB box with a small staging dataset.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - max_connections=60
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - wal_compression=on
+      - -c
+      - max_wal_size=1GB
+      - -c
+      - idle_in_transaction_session_timeout=60s
+      - -c
+      - log_min_duration_statement=500ms
+      - -c
+      - log_lock_waits=on
+      - -c
+      - log_temp_files=10MB
+      - -c
+      - password_encryption=scram-sha-256
+    shm_size: 256mb
+    cpus: 2
+    mem_limit: 2g
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ../../server/db:/fishtape-db:ro
+    ports:
+      - "127.0.0.1:5433:5432"
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    networks:
+      - backend
+    logging: *logging
+
+  api:
+    <<: *server
+    build:
+      context: ../..
+      dockerfile: server/Dockerfile
+      args:
+        GIT_SHA: ${IMAGE_TAG:-unknown}
+    command: ["node", "src/index.js"]
+    ports:
+      - "127.0.0.1:3410:3410"
+    cpus: 2
+    mem_limit: 1g
+    pids_limit: 512
+
+  # HQ console API: the same image, the only process that holds the BYPASSRLS role
+  # (fishtape_hq). nginx sends HQ traffic here; the tenant-facing api above can't reach
+  # across tenants even if it is compromised (its HQ routes answer 503).
+  hq-api:
+    <<: *server
+    command: ["node", "src/index.js"]
+    environment:
+      <<: *server-environment
+      HQ_DATABASE_URL: postgres://fishtape_hq:${FISHTAPE_HQ_PASSWORD:?set in .env}@postgres:5432/fishtape
+    ports:
+      - "127.0.0.1:3411:3410"
+    cpus: 1
+    mem_limit: 512m
+    pids_limit: 256
+
+  worker:
+    <<: *server
+    command: ["node", "src/worker.js"]
+    # No HTTP listener; queue lag and failures show in /api/readyz and /api/hq/health.
+    healthcheck:
+      disable: true
+    cpus: 1
+    mem_limit: 512m
+    pids_limit: 256
+
+  # One-off tasks: `docker compose run --rm migrate` / `docker compose run --rm seed`.
+  migrate:
+    <<: *server
+    command: ["npm", "run", "--silent", "migrate"]
+    environment:
+      <<: *server-environment
+      MIGRATE_DATABASE_URL: postgres://fishtape_owner:${FISHTAPE_OWNER_PASSWORD:?set in .env}@postgres:5432/fishtape
+    restart: "no"
+    healthcheck:
+      disable: true
+    profiles: ["tools"]
+
+  # Staging only: seeded test tenants + TG Electrical. Production has no seed service.
+  seed:
+    <<: *server
+    command: ["npm", "run", "--silent", "seed"]
+    environment:
+      <<: *server-environment
+      MIGRATE_DATABASE_URL: postgres://fishtape_owner:${FISHTAPE_OWNER_PASSWORD:?set in .env}@postgres:5432/fishtape
+    restart: "no"
+    healthcheck:
+      disable: true
+    profiles: ["tools"]
+
+volumes:
+  pgdata:
+
+networks:
+  backend:

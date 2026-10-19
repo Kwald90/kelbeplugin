@@ -1,0 +1,15 @@
+# Fishtape staging nginx API access log: 30 days, then deleted (docs/compliance/logging-monitoring.md).
+# Installed by install-nginx.sh as /etc/logrotate.d/fishtape-staging-nginx.
+/var/log/fishtape-staging/*.log {
+    daily
+    rotate 30
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 root adm
+    sharedscripts
+    postrotate
+        nginx -s reopen >/dev/null 2>&1 || true
+    endscript
+}

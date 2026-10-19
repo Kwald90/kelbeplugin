@@ -1,0 +1,12 @@
+# Nightly at 02:47 server time (+ up to 10 minutes of jitter). Persistent=true catches up after downtime.
+[Unit]
+Description=Nightly Fishtape production backup
+
+[Timer]
+OnCalendar=*-*-* 02:47:00
+RandomizedDelaySec=10m
+Persistent=true
+Unit=fishtape-production-backup.service
+
+[Install]
+WantedBy=timers.target
