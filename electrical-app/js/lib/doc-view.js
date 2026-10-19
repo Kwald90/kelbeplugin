@@ -3,6 +3,7 @@
 import { h, clear, icon, button, parseMoney, centsToInput, fmtDate, fmtNum, openSheet, searchBox, toast, badge, field } from '../ui.js';
 import { docTotals, lineCents, moneyFormatter, combinedPct, KINDS } from './money.js';
 import { PROVINCES, TREATMENTS, treatmentsFor, treatmentHint, taxComponents, taxSetup, newDocTax, describeTaxes, fmtPct, provinceName } from './tax.js';
+import { emailDocAction } from '../modules/integrations.js';
 
 /**
  * lineEditor({ doc, store, onChange, labourRateCents }) -> element
@@ -277,7 +278,7 @@ export function previewDocument(opts) {
   const s = openSheet({
     title: `${opts.kind} ${opts.doc.number || ''}`, wide: true,
     body: h('div', { class: 'doc-preview' }, documentNode(opts)),
-    actions: [button('Close', { variant: 'ghost', onClick: () => s.close() }), button('Print / save PDF', { variant: 'primary', icon: 'printer', onClick: () => printDocument(opts) })],
+    actions: [button('Close', { variant: 'ghost', onClick: () => s.close() }), emailDocAction(opts), button('Print / save PDF', { variant: 'primary', icon: 'printer', onClick: () => printDocument(opts) })],
   });
   return s;
 }

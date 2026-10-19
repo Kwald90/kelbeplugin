@@ -6,7 +6,7 @@ import { ApiError, badRequest, forbidden, notFound } from '../../errors.js';
 import { canRead, canWrite } from '../../auth/access.js';
 import { isUuid } from '../../db.js';
 import { appendAudit, requestFacts } from '../../services/audit.js';
-import { assertFeature, loadTenantPlan, requireFeature, tenantHas } from '../../services/entitlements.js';
+import { assertFeature, effectivePlan, loadTenantPlan, requireFeature, tenantHas } from '../../services/entitlements.js';
 import { deleteSecret, listSecrets, setSecret, SECRETS } from '../../services/secrets.js';
 import { docTotals, formatMoney } from '../../../../electrical-app/js/lib/money.js';
 import { PLANS, planFor } from '../../../../electrical-app/js/plans.js';
@@ -104,7 +104,8 @@ export default async function integrationRoutes(app, { config, db, records }) {
     schema: { tags: ['integrations'], summary: 'Connection status of every integration (key hints only, never values)' },
   }, async (req) => {
     const data = await db.withTenant(tenantCtx(req.principal), (tx) => cards(tx, tx.tenantId));
-    return { data };
+    const tenant = await loadTenantPlan(db, req.principal.tenantId);
+    return { data, plan: tenant ? effectivePlan(tenant) : null };
   });
 
   app.put('/api/v1/integrations/:provider', {
