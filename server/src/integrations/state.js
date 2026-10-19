@@ -91,8 +91,11 @@ export async function newPayLink(tx, invoiceId, createdBy) {
   return token;
 }
 
-export async function hasLivePayLink(tx, invoiceId) {
-  const { rows } = await tx.query('SELECT 1 FROM pay_links WHERE tenant_id = $1 AND invoice_id = $2 AND revoked_at IS NULL', [tx.tenantId, invoiceId]);
+/** Is this link (the URL stored on the invoice) still the live one for the invoice? */
+export async function isLivePayLink(tx, invoiceId, url) {
+  const token = String(url || '').split('/').pop();
+  if (!PAY_TOKEN_RE.test(token)) return false;
+  const { rows } = await tx.query('SELECT 1 FROM pay_links WHERE tenant_id = $1 AND token_hash = $2 AND invoice_id = $3 AND revoked_at IS NULL', [tx.tenantId, sha256(token), invoiceId]);
   return rows.length > 0;
 }
 

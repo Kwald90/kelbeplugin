@@ -111,13 +111,14 @@ export async function dispatchTenant({ db, records, sealer, tenantId, outboxId =
         if (!to) problem = 'The phone number is not a valid Canadian or US number.';
         else if (await isOptedOut(tx, to)) problem = 'This person replied STOP, so they get no more texts. They can reply START to opt back in.';
       }
+      // A record the records service refuses (e.g. old data that no longer validates) is skipped, not fatal.
+      const patch = (fields) => tx.savepoint(() => records.patchRecord(tx, p, 'outbox', r.id, fields, {}, who)).catch(() => null);
       if (problem) {
-        await records.patchRecord(tx, p, 'outbox', r.id, { status: 'failed', error: problem, failedAt: now.toISOString(), attempts }, {}, who);
-        result.failed++;
+        if (await patch({ status: 'failed', error: problem, failedAt: now.toISOString(), attempts })) result.failed++;
         continue;
       }
-      const rec = await records.patchRecord(tx, p, 'outbox', r.id, { status: 'sending', sendingAt: now.toISOString(), attempts, error: null }, {}, who);
-      items.push(rec);
+      const rec = await patch({ status: 'sending', sendingAt: now.toISOString(), attempts, error: null });
+      if (rec) items.push(rec);
     }
     return { items, secrets, company: settings.company || {}, resendCfg };
   }, { write: true });

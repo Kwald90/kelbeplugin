@@ -20,7 +20,7 @@ import { testAnthropic } from '../../integrations/anthropic.js';
 import { companySettings, invoiceBalance } from '../../integrations/payments.js';
 import { enqueueSend } from '../../integrations/jobs.js';
 import {
-  allSettings, clearSettings, findPayLink, getSettings, hasLivePayLink, hasRequired, newPayLink, payUrl, providerSecrets,
+  allSettings, clearSettings, findPayLink, getSettings, hasRequired, isLivePayLink, newPayLink, payUrl, providerSecrets,
   saveConfig, setStatus,
 } from '../../integrations/state.js';
 import { tenantCtx, who } from '../util.js';
@@ -261,7 +261,7 @@ export default async function integrationRoutes(app, { config, db, records }) {
     // Reuse the invoice's link unless asked for a new one, so printed copies keep working.
     const out = await db.withTenant(ctx, async (tx) => {
       let url = pre.bal.invoice.payLink?.url || null;
-      if (req.body.rotate || !url || !(await hasLivePayLink(tx, req.body.invoiceId))) {
+      if (req.body.rotate || !url || !(await isLivePayLink(tx, req.body.invoiceId, url))) {
         const token = await newPayLink(tx, req.body.invoiceId, `user:${p.userId}`);
         url = payUrl(config.publicOrigin, tx.tenantId, token);
         await records.patchRecord(tx, p, 'invoices', req.body.invoiceId, { payLink: { url, createdAt: new Date().toISOString() } }, {}, who(req));
