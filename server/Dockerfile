@@ -38,6 +38,9 @@ COPY server/ ./
 COPY electrical-app/js/schema/ /app/electrical-app/js/schema/
 COPY electrical-app/js/brand.js /app/electrical-app/js/brand.js
 COPY electrical-app/js/plans.js /app/electrical-app/js/plans.js
+# The AI tools run the app's own CEC calculators and money/tax code (no imports outside lib/).
+COPY electrical-app/js/lib/cec/ /app/electrical-app/js/lib/cec/
+COPY electrical-app/js/lib/money.js electrical-app/js/lib/tax.js /app/electrical-app/js/lib/
 
 ARG GIT_SHA=unknown
 ENV GIT_SHA=${GIT_SHA}

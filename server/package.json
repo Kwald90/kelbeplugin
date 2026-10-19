@@ -19,6 +19,7 @@
     "gen:collections-sql": "node scripts/gen-collections-sql.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.132.1",
     "@fastify/cookie": "11.1.0",
     "@fastify/cors": "11.3.0",
     "@fastify/helmet": "13.1.1",
@@ -34,6 +35,7 @@
     "stripe": "23.0.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "embedded-postgres": "17.9.0-beta.16"
   },
   "overrides": {
