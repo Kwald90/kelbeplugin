@@ -19,7 +19,7 @@ export const FEATURE_PLAN = {
   // modules
   dashboard: 'starter', clients: 'starter', leads: 'starter', jobs: 'starter', schedule: 'starter',
   estimates: 'starter', invoices: 'starter', employees: 'starter', time: 'starter', sops: 'starter',
-  calcs: 'starter', bending: 'starter', wireruns: 'starter', settings: 'starter', integrations: 'starter',
+  calcs: 'starter', bending: 'starter', wireruns: 'starter', settings: 'starter', integrations: 'starter', billing: 'starter',
   drawings: 'pro', panels: 'pro', inventory: 'pro', compliance: 'pro', sequences: 'pro', security: 'pro',
   assistant: 'business',
   // features inside modules

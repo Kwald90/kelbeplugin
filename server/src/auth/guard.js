@@ -10,6 +10,7 @@
 //   device   a registered shared device token (crew list and PIN sign-in)
 //   hq       HQ staff: platform role + TOTP verified on this session
 // config.apiKey === false keeps API keys out of a tenant route.
+// config.csrf === false (public routes only) skips the CSRF check for signed webhooks.
 import { ApiError, forbidden, unauthenticated } from '../errors.js';
 import { ADMIN_ROLES, capCrewRole, isManagerRole, permsForRole } from './permissions.js';
 import { looksLikeApiKey, lookupApiKey } from './apikeys.js';

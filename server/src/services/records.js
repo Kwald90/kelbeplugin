@@ -6,6 +6,7 @@ import { AUDIT_COLLECTION, TABLE_COLLECTIONS, collectionDef, isCollection } from
 import { ApiError, badRequest, conflict, forbidden, notFound, tooLarge, validationFailed } from '../errors.js';
 import { canRead, canWrite, checkWriteRules, redactForReader, rowFilter, sanitizeForStorage } from '../auth/access.js';
 import { appendAudit, auditRowToRecord, describeRecord } from './audit.js';
+import { assertCollectionWritable, loadTenantPlan } from './entitlements.js';
 
 export const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const META_KEYS = ['id', 'version', 'changeSeq', 'deleted', 'tenantId'];
@@ -110,6 +111,15 @@ export function createRecords({ validator }) {
     return appendAudit(tx, tx.tenantId, {
       actor: who.actor, action, collection: coll, recordId: id, summary: describeRecord({ ...data, id }), meta, request: who.request,
     });
+  }
+
+  // Plan entitlements: writes into a collection whose module is not in the company's plan
+  // are refused (feature_not_in_plan); reads stay open. Loaded once per transaction, so a
+  // sync push of 500 mutations reads the plan once.
+  const planCache = new WeakMap();
+  async function assertPlanAllows(tx, p, coll) {
+    if (!planCache.has(tx)) planCache.set(tx, await loadTenantPlan(tx, tx.tenantId));
+    assertCollectionWritable(planCache.get(tx), coll, p);
   }
 
   function checkRules(p, coll, existing, next) {
@@ -221,6 +231,7 @@ export function createRecords({ validator }) {
   async function createRecord(tx, p, coll, body, who) {
     assertCollection(coll);
     if (!canWrite(p, coll)) throw forbidden(`You cannot change ${coll}.`);
+    await assertPlanAllows(tx, p, coll);
     const def = collectionDef(coll);
     const id = body?.id ?? randomUUID();
     assertId(id);
@@ -235,6 +246,7 @@ export function createRecords({ validator }) {
   async function patchRecord(tx, p, coll, id, patch, opts, who) {
     assertCollection(coll);
     if (!canWrite(p, coll)) throw forbidden(`You cannot change ${coll}.`);
+    await assertPlanAllows(tx, p, coll);
     assertId(id);
     const def = collectionDef(coll);
     const cur = await lockRow(tx, def, id);
@@ -255,6 +267,7 @@ export function createRecords({ validator }) {
   async function deleteRecord(tx, p, coll, id, opts, who) {
     assertCollection(coll);
     if (!canWrite(p, coll)) throw forbidden(`You cannot change ${coll}.`);
+    await assertPlanAllows(tx, p, coll);
     assertId(id);
     const def = collectionDef(coll);
     const cur = await lockRow(tx, def, id);
@@ -304,6 +317,7 @@ export function createRecords({ validator }) {
     }
 
     if (!canWrite(p, coll)) throw forbidden(`You cannot change ${coll}.`);
+    await assertPlanAllows(tx, p, coll);
     const def = collectionDef(coll);
     const now = Date.now();
     const cur = await lockRow(tx, def, m.id);

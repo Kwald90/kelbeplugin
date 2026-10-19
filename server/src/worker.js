@@ -6,8 +6,9 @@ import { createDb, createPool } from './db.js';
 import { HANDLERS, reclaimStuck, runOnce, scheduleRecurring } from './services/queue.js';
 import { INTEGRATION_HANDLERS, scheduleIntegrationJobs } from './integrations/jobs.js';
 import { createAiHandlers, scheduleAiJobs } from './ai/jobs.js';
+import { HQ_HANDLERS } from './services/hq-jobs.js';
 
-Object.assign(HANDLERS, INTEGRATION_HANDLERS);
+Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS);
 
 const HOUR = 3600_000;
 
