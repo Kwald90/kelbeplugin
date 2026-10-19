@@ -4,6 +4,7 @@
 import { getUnits, fmtLength, parseLength, M_PER_FT } from '../lib/units.js';
 import * as W from '../lib/wireruns.js';
 import { getArSupport, measurePath, isCancelled, AR_TIPS } from '../lib/ar-measure.js';
+import { isNativeApp } from '../lib/native.js';
 import { BRAND } from '../brand.js';
 
 // Icons drawn for this screen (24px grid, stroke), passed to ui.icon() as markup.
@@ -549,7 +550,8 @@ function renderEditor(root, ctx, id) {
     } catch (e) { console.error(e); ui.toast(`Couldn't make the PDF: ${e.message}`, 'error', 4500); }
   };
   let canShare = false;
-  try { canShare = !!navigator.canShare?.({ files: [new File(['x'], 'x.pdf', { type: 'application/pdf' })] }); } catch { canShare = false; }
+  // In the iOS app, Download PDF already opens the share sheet.
+  try { canShare = !isNativeApp() && !!navigator.canShare?.({ files: [new File(['x'], 'x.pdf', { type: 'application/pdf' })] }); } catch { canShare = false; }
   const sharePdf = async () => {
     try {
       const file = new File([pdfBytes()], W.runFileName(run, job()), { type: 'application/pdf' });
@@ -562,7 +564,8 @@ function renderEditor(root, ctx, id) {
     ui.download(W.runFileName(run, job(), 'csv'), W.runToCsv(run, { units, jobLabel: jobLabel(job()) }), 'text/csv');
     store.log('export', `CSV: ${run.name}`, 'wireRuns', id);
   };
-  const print = () => { save.flush(); printRun(ui, run, { store, units, job: job() }); };
+  // WKWebView ignores window.print(); in the iOS app the PDF's share sheet has Print.
+  const print = () => { if (isNativeApp()) { downloadPdf(); return; } save.flush(); printRun(ui, run, { store, units, job: job() }); };
 
   // ----- add to estimate -----
   function addToEstimate() {

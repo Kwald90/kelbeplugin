@@ -193,8 +193,9 @@ Notes for whoever builds it on the Mac:
 - The WebXR tape was tested in headless Chrome against a scripted fake XR session (overlay, WebGL
   set-up, points, undo, done, cancel). It has not been run on a real ARCore phone yet. The native
   path was tested with a mocked plugin.
-- In the Capacitor iOS app, `<a download>` with a blob URL may not save files. The app will need the
-  Filesystem or Share plugin for **Download PDF**. **Share PDF** (Web Share) may work as is.
+- In the iOS app, `<a download>` does nothing, so **Download PDF**, **CSV** and **Print** save the file
+  to the Files app and open the share sheet through the Filesystem and Share plugins
+  (`js/lib/native.js`, see `docs/mobile/README.md`). **Share PDF** is hidden there.
 - Photos are stored inline as data URLs. They are fine for IndexedDB, but when sync arrives they
   should move to object storage.
 - The plan trace draws the drawing's underlay, strokes, symbols (as circles) and text itself, so the
