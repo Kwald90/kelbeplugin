@@ -1,0 +1,1199 @@
+# Fishtape controls register.
+#
+# One entry per control: what it is, which Trust Services Criteria it supports, how often it runs,
+# where the evidence comes from, and whether it is in place. Policies live in docs/compliance/;
+# each policy lists its controls in the table at the top. Evidence is collected monthly with
+#   node compliance/evidence/collect.mjs
+# into compliance/evidence/out/<YYYY-MM-DD>/ (gitignored), then zipped and stored encrypted outside
+# git for 3 years.
+#
+# Status is honest: "implemented" means in place and working now; "partial" means some of it exists
+# (often the script or workflow) but setup on a server or in GitHub, or the API, is still missing;
+# "planned" means not started. Update the status in the same commit as the change that moves it.
+#
+# This repository is public. Keep descriptions free of secrets and of details that would help an attacker.
+
+version: 1
+framework: "AICPA Trust Services Criteria (2017, revised points of focus 2022)"
+owner: Kelvin Waldner
+last_reviewed: "2026-10-19"
+
+scope:
+  system: "Fishtape, a multi-tenant SaaS for Canadian electrical contractors: the PWA, the iOS wrapper, the API and worker, PostgreSQL, the HQ console, the status endpoint, the staging and production hosts, and the GitHub repository with its CI/CD."
+  categories: [Security, Availability, Confidentiality, Processing Integrity (light), Privacy (light)]
+  environments: [local, staging, production]
+  out_of_scope:
+    - "The old WordPress plugin on branch main (includes/, kelbe-project-tracker.php, replica/)."
+    - "Tenants' own accounts with Stripe, Twilio, Resend, Meta and Anthropic (shared responsibility, see docs/compliance/vendor-management.md)."
+    - "Physical security of data centres, which is inherited from the hosting providers."
+  notes:
+    - "SOC 2-aligned controls with evidence. No SOC 2 audit and no certification is claimed."
+    - "One-person company. Where a control needs more than one person, the compensating control is described (CHG-07, HRS-01, GOV-02)."
+    - "Production is not built yet and the API is being built, so many controls are partial or planned."
+
+statuses: [implemented, partial, planned]
+frequencies: [continuous, per-change, daily, weekly, monthly, quarterly, annually, on-event]
+
+controls:
+
+  # ---------------------------------------------------------------- governance (CC1, CC2, CC4, CC5)
+
+  - id: GOV-01
+    title: Security and privacy policy set
+    description: "Fifteen policies in docs/compliance/ set how Fishtape handles security, availability, confidentiality and privacy. Each names an owner, review cadence and controls, and is reviewed at least annually and after a SEV1/SEV2 or major change."
+    tsc: [CC1.1, CC2.2, CC5.3]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "Review log table at the end of each policy in docs/compliance/"
+      - "Git history of docs/compliance/"
+      - "Evidence bundle: manifest.json"
+    status: implemented
+    notes: "First annual review due October 2027."
+    links:
+      - docs/compliance/README.md
+      - docs/compliance/information-security.md
+
+  - id: GOV-02
+    title: Roles, authority and oversight
+    description: "Kelvin Waldner is owner, security officer, privacy officer and incident commander, and the only approver of production changes; roles for contractors, AI agents and tenants are written down. With no board, Kelvin reviews the controls register quarterly with the access review, and a trusted backup contact holds sealed instructions."
+    tsc: [CC1.2, CC1.3, CC2.2]
+    owner: Kelvin Waldner
+    frequency: quarterly
+    evidence:
+      - "docs/compliance/information-security.md roles table"
+      - "Evidence bundle: controls-summary.json"
+      - "Evidence bundle: access-review-<date>.md"
+    status: partial
+    notes: "Backup contact not named yet. No independent oversight; consider an annual review with an outside advisor once there are paying customers."
+    links:
+      - docs/compliance/information-security.md
+      - docs/compliance/business-continuity.md
+
+  - id: GOV-03
+    title: Controls register and monthly evidence collection
+    description: "This register maps each control to the Trust Services Criteria with frequency, evidence and status. The evidence collector runs monthly; bundles are zipped and kept encrypted outside git for 3 years."
+    tsc: [CC2.1, CC4.1, CC5.1, CC5.2]
+    owner: Kelvin Waldner
+    frequency: monthly
+    evidence:
+      - "compliance/controls.yaml and its git history"
+      - "Evidence bundle: manifest.json"
+      - "Evidence bundle: controls-summary.json"
+      - "Encrypted archive fishtape-evidence-<YYYY-MM-DD>.zip"
+    status: partial
+    notes: "The collector exists; the encrypted storage location and the monthly routine still need to be set up."
+    links:
+      - compliance/controls.yaml
+      - compliance/evidence/collect.mjs
+      - docs/compliance/README.md
+
+  - id: GOV-04
+    title: Deficiencies, exceptions and risk acceptances
+    description: "Findings from reviews, scans, tests and incidents are tracked to closure with an owner and date. Exceptions and risk acceptances need Kelvin's written approval and an expiry (at most 90 days for vulnerability deadlines, 12 months otherwise) and are checked monthly."
+    tsc: [CC4.2, CC3.2, CC5.1]
+    owner: Kelvin Waldner
+    frequency: monthly
+    evidence:
+      - "docs/compliance/risk-assessment.md exceptions and risk acceptances table"
+      - "GitHub issues (non-sensitive) and private security advisories (sensitive)"
+      - "Monthly review notes in the evidence bundle"
+    status: partial
+    notes: "Process defined and one acceptance recorded; the monthly check starts with the first evidence collection."
+    links:
+      - docs/compliance/information-security.md
+      - docs/compliance/risk-assessment.md
+
+  - id: GOV-05
+    title: External communication of commitments
+    description: "SECURITY.md tells researchers how to report vulnerabilities, the public status endpoint shows service health, and the policies are public. Tenants get a privacy notice, terms with a data processing addendum, and a sub-processor list."
+    tsc: [CC2.3]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "SECURITY.md"
+      - "https://status.fishtapehq.com/api/v1/status"
+      - "Published privacy notice, terms and sub-processor list with their history"
+    status: partial
+    notes: "SECURITY.md exists. Privacy notice, terms, DPA and sub-processor list are planned; the status endpoint comes with production."
+    links:
+      - SECURITY.md
+      - docs/compliance/privacy.md
+
+  # ---------------------------------------------------------------- risk (CC3, CC9.1)
+
+  - id: RSK-01
+    title: Annual risk assessment and register
+    description: "Risks are scored likelihood x impact (1 to 5 each) in the risk register with an owner, treatment and related controls, and the whole register is re-scored every September."
+    tsc: [CC3.1, CC3.2, CC9.1]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "docs/compliance/risk-assessment.md and its git history"
+      - "September re-scoring commit"
+    status: implemented
+    links:
+      - docs/compliance/risk-assessment.md
+      - docs/security/threat-model.md
+
+  - id: RSK-02
+    title: Risk review on significant change
+    description: "A new host or provider, a new integration or kind of data, an architecture change, entering Quebec, the first paying customer, or a SEV1/SEV2 triggers a risk review before the change goes live."
+    tsc: [CC3.4, CC3.2]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Pull requests that reference the risk register"
+      - "Register entries dated outside the annual cycle"
+    status: partial
+    notes: "Defined; onboarding the production host is the first trigger."
+    links:
+      - docs/compliance/risk-assessment.md
+
+  - id: RSK-03
+    title: Fraud and misuse risks
+    description: "The register covers fraud and misuse: payment redirection through a changed tenant Stripe key or payout setting, misuse of HQ's BYPASSRLS access, and contractor misuse. Controls are MFA for owners and admins, audited secret changes and HQ reads, and no production access for contractors."
+    tsc: [CC3.3]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "docs/compliance/risk-assessment.md (R-05, R-18)"
+      - "audit_events for tenant secret changes and HQ reads"
+    status: partial
+    notes: "Owner alerts on payment-setting changes and audited secret changes arrive with the API."
+    links:
+      - docs/compliance/risk-assessment.md
+      - docs/compliance/access-control.md
+
+  # ---------------------------------------------------------------- people (CC1.4, CC1.5)
+
+  - id: HRS-01
+    title: Contractor onboarding
+    description: "Before access, contractors sign an agreement covering confidentiality and acceptable use, turn on MFA, get a security briefing, and get least-privilege access (own branch, pull requests, no production). Background checks are not done; the compensating controls are no production access, review of every change and prompt removal of access."
+    tsc: [CC1.1, CC1.4, CC1.5, CC2.2]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Signed contractor agreements (kept outside git)"
+      - "Evidence bundle: access-review-<date>.md (collaborators, briefing dates)"
+    status: partial
+    notes: "Prepare an agreement template and briefing outline before the next contractor."
+    links:
+      - docs/compliance/hr-security.md
+      - docs/compliance/acceptable-use.md
+
+  - id: HRS-02
+    title: Contractor offboarding within 24 hours
+    description: "All contractor access is removed within 24 hours of the end of an engagement, secrets they could have seen are rotated, and written confirmation that data was returned or deleted is kept."
+    tsc: [CC1.5, CC6.2, CC6.3]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Evidence bundle: access-review-<date>.md"
+      - "GitHub collaborator history"
+      - "Written confirmation from the contractor (kept outside git)"
+    status: partial
+    links:
+      - docs/compliance/hr-security.md
+      - docs/runbooks/rotate-secrets.md
+
+  - id: HRS-03
+    title: Security awareness
+    description: "Kelvin completes a security refresher every February (phishing, account takeover, secure coding, lessons from incidents) and records it; contractors get a briefing at onboarding."
+    tsc: [CC1.4, CC2.2]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "Training record (date, topic, source) in the February evidence bundle"
+    status: planned
+    links:
+      - docs/compliance/hr-security.md
+
+  # ---------------------------------------------------------------- access (CC6.1-CC6.3, CC6.6)
+
+  - id: ACC-01
+    title: MFA on company and vendor accounts
+    description: "MFA is required on GitHub, hosting panels, the DNS registrar, the password manager, email, and the Stripe, Twilio, Resend, Meta, Apple developer, Google and Microsoft consoles. Hardware keys or passkeys are preferred for GitHub, email and the password manager."
+    tsc: [CC6.1, CC6.2]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Evidence bundle: access-review-<date>.md (MFA per account)"
+      - "GitHub collaborator 2FA status"
+      - "Vendor console security settings (screenshots at the quarterly review)"
+    status: partial
+    notes: "Confirm MFA on every listed account at the October 2026 access review. No hardware keys recorded yet."
+    links:
+      - docs/compliance/access-control.md
+
+  - id: ACC-02
+    title: Quarterly access review
+    description: "In January, April, July and October Kelvin reviews GitHub collaborators and 2FA, deploy keys, environment secrets, server accounts and authorized_keys, sudoers, HQ staff, OAuth app owners and vendor console users, removes what is not needed, and keeps the completed checklist."
+    tsc: [CC6.2, CC6.3, CC4.1]
+    owner: Kelvin Waldner
+    frequency: quarterly
+    evidence:
+      - "Evidence bundle: access-review-<date>.md (pre-filled by collect.mjs, completed by Kelvin)"
+      - "Evidence bundle: branch-protection.json"
+      - "Evidence bundle: check-host-production.json"
+    status: partial
+    notes: "First review due October 2026."
+    links:
+      - docs/compliance/access-control.md
+      - compliance/evidence/collect.mjs
+
+  - id: ACC-03
+    title: GitHub permissions and branch protection
+    description: "Kelvin is the only admin of Kwald90/kelbeplugin. Contractors and AI agents push to their own branches and reach the release branch through review; branch protection on claude/electrical-concept-app-h4qz12 requires ci-ok, CODEOWNERS is * @Kwald90, and the production environment allows only v* tags with Kelvin as required reviewer."
+    tsc: [CC6.1, CC6.3, CC8.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Evidence bundle: branch-protection.json"
+      - "GitHub Settings > Branches, Settings > Environments"
+      - ".github/CODEOWNERS"
+    status: partial
+    notes: "Branch protection and environment rules must be set in GitHub. The cloud agent session pushes straight to the release branch today."
+    links:
+      - .github/CODEOWNERS
+      - docs/compliance/access-control.md
+      - docs/compliance/change-management.md
+
+  - id: ACC-04
+    title: Server access and privileged use
+    description: "SSH uses keys only, with password and root logins off and AllowUsers set on production. Only named admin accounts have sudo, fishtape-deploy may sudo only its environment's update.sh, and break-glass use of the provider console is reviewed within 2 business days."
+    tsc: [CC6.1, CC6.3, CC6.6]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Evidence bundle: check-host-production.json (ssh-passwords, ssh-root, uid0, login-accounts)"
+      - "Evidence bundle: access-review-<date>.md (authorized_keys, sudoers)"
+    status: partial
+    notes: "Production host not built yet. Staging uses the shared ubuntu account on a box Fishtape does not fully control, with no automated check."
+    links:
+      - deploy/production/check-host.sh
+      - deploy/production/README.md
+      - docs/compliance/access-control.md
+
+  - id: ACC-05
+    title: CI deploy keys limited by forced commands
+    description: "Each host has a fishtape-deploy user whose key is limited by an authorized_keys forced command (deploy-gate.sh) to deploying a commit or tag, or reading status. Private keys live only in GitHub environment secrets and host keys are pinned."
+    tsc: [CC6.1, CC6.3, CC8.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "deploy/staging/deploy-gate.sh and deploy/production/deploy-gate.sh"
+      - "GitHub environment secret names and update dates (access review)"
+      - "System journal entries tagged fishtape-deploy-gate"
+    status: partial
+    notes: "Scripts exist. Deploy users, keys and the STAGING_DEPLOY_ENABLED and PRODUCTION_DEPLOY_ENABLED variables are not set up yet."
+    links:
+      - deploy/staging/deploy-gate.sh
+      - deploy/production/deploy-gate.sh
+      - .github/workflows/deploy-staging.yml
+      - .github/workflows/deploy-production.yml
+
+  - id: ACC-06
+    title: Database role separation
+    description: "fishtape_owner owns the schema and is used only by the one-off migrate container; the API uses fishtape_app (NOBYPASSRLS, INSERT-only on audit_events); fishtape_hq (BYPASSRLS) is for HQ only. Production Postgres has no host port."
+    tsc: [CC6.1, CC6.3]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "deploy/production/docker-compose.yml (connection URLs per container, no Postgres ports)"
+      - "server/db/bootstrap.sql role definitions"
+      - "Evidence bundle: ci-runs.json (server job migrates and tests with these roles)"
+    status: partial
+    notes: "Done in the compose files: only hq-api gets HQ_DATABASE_URL and nginx sends it only sign-in, HQ and health routes. Still to do: an HQ-only mode in the API (no tenant routes in hq-api), and the production host itself."
+    links:
+      - deploy/production/docker-compose.yml
+      - deploy/staging/docker-compose.yml
+      - docs/compliance/access-control.md
+
+  - id: ACC-07
+    title: HQ console and BYPASSRLS access
+    description: "HQ is served only on hq.fishtapehq.com (404 on app.), needs TOTP for HQ staff, and every HQ read of tenant data writes an audit event that is reviewed monthly. An IP allow-list is ready to enable."
+    tsc: [CC6.1, CC6.3, CC7.2]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "deploy/production/nginx/fishtape.conf (/api/hq/ and /hq/ return 404 on app.)"
+      - "audit_events with actor hq staff (monthly review notes)"
+      - "HQ staff list in access-review-<date>.md"
+    status: planned
+    notes: "nginx routing is in place; HQ and its audit events are being built."
+    links:
+      - deploy/production/nginx/fishtape.conf
+      - docs/compliance/access-control.md
+      - docs/compliance/logging-monitoring.md
+
+  - id: ACC-08
+    title: In-app authentication, tenant user access and API keys
+    description: "Passwords use argon2id, TOTP MFA with recovery codes is required for owners, admins and HQ staff, every auth route is rate-limited with lockouts, session tokens are stored as sha-256 hashes, and cookie requests that change state need the Origin check and X-Fishtape header. Tenant owners and admins manage their users, crew devices and scoped, hashed, revocable API keys."
+    tsc: [CC6.1, CC6.2, CC6.3, CC6.6]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Server auth tests (evidence bundle: ci-runs.json)"
+      - "deploy/production/nginx/fishtape.conf (auth route rate limit)"
+      - "audit_events for sign-in, MFA, API key and device changes"
+    status: planned
+    notes: "nginx rate limits are written; the API auth layer is being built."
+    links:
+      - docs/BUILD-PLAN.md
+      - docs/compliance/access-control.md
+      - docs/security/secure-sdlc.md
+
+  - id: ACC-09
+    title: Tenant isolation with row-level security
+    description: "Every tenant table has ENABLE and FORCE ROW LEVEL SECURITY, and every request goes through one withTenant helper that sets app.tenant_id (unset means no rows). Isolation tests run in CI, and every restore test fails if a tenant data table lacks ENABLE and FORCE RLS."
+    tsc: [CC6.1, C1.1]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - "server/test/isolation.test.js results (evidence bundle: ci-runs.json)"
+      - "Evidence bundle: restore-tests-<env>.jsonl (rlsForcedTables, failures)"
+    status: partial
+    notes: "The restore-test RLS check is implemented; isolation tests arrive with the API."
+    links:
+      - deploy/staging/restore-test.sh
+      - docs/BUILD-PLAN.md
+      - docs/security/threat-model.md
+
+  # ---------------------------------------------------------------- encryption (CC6.1, CC6.7)
+
+  - id: CRY-01
+    title: Encryption in transit
+    description: "Public traffic uses TLS 1.2 or 1.3 with ECDHE AEAD ciphers, HTTP redirects to HTTPS, HSTS is one year with includeSubDomains, certificates come from Let's Encrypt with automatic renewal, and a CAA record allows only Let's Encrypt."
+    tsc: [CC6.1, CC6.7]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "deploy/production/nginx/fishtape.conf"
+      - "deploy/production/nginx/security-headers.conf and deploy/staging/security-headers.conf"
+      - "host-status.json certificate daysLeft"
+      - "TLS scan output saved at the annual review"
+    status: partial
+    notes: "Production config written, host not built. Staging TLS protocols are set by CloudPanel and need confirming."
+    links:
+      - docs/compliance/encryption.md
+      - docs/security/headers-csp.md
+
+  - id: CRY-02
+    title: Encryption at rest for backups, hosts and devices
+    description: "Backups are encrypted with age to public keys whose private halves stay offline (production adds a sealed spare). Host disks use provider encryption or LUKS, and devices use full-disk encryption."
+    tsc: [CC6.1, CC6.7, A1.2]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Evidence bundle: last-backup-<env>.json (encryption field)"
+      - "Evidence bundle: check-host-production.json (disk-encryption)"
+      - "Device encryption status in docs/compliance/asset-inventory.md"
+    status: partial
+    notes: "Backup encryption is implemented in backup.sh. Disk encryption is unknown for both hosts; device encryption to confirm."
+    links:
+      - deploy/staging/backup.sh
+      - docs/compliance/encryption.md
+      - docs/compliance/asset-inventory.md
+
+  - id: CRY-03
+    title: Application-level encryption and hashing
+    description: "Tenant integration secrets are encrypted with AES-256-GCM data keys wrapped by SECRETS_MASTER_KEY; passwords and PINs use argon2id; session tokens, device tokens and API keys are stored as sha-256 hashes."
+    tsc: [CC6.1, C1.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Server tests for tenant_secrets encryption and token hashing (evidence bundle: ci-runs.json)"
+      - "docs/security/secrets-management.md"
+    status: planned
+    notes: "Being built with the API. Confirm how TOTP secrets and recovery codes are stored."
+    links:
+      - docs/compliance/encryption.md
+      - docs/security/secrets-management.md
+
+  - id: CRY-04
+    title: Key management and rotation
+    description: "Every key has a custodian, storage place and rotation rule. .env files are root 600 and never in git, SECRETS_MASTER_KEY and age keys have two offline copies, and secrets are rotated each November and on suspected exposure."
+    tsc: [CC6.1]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "Evidence bundle: check-host-production.json (env-file)"
+      - "Rotation record in the November evidence bundle"
+      - "GitHub environment secret update dates"
+    status: partial
+    links:
+      - docs/compliance/encryption.md
+      - docs/runbooks/rotate-secrets.md
+      - docs/security/secrets-management.md
+      - deploy/staging/init-env.sh
+
+  # ---------------------------------------------------------------- assets (CC6.1, CC6.4)
+
+  - id: AST-01
+    title: Asset inventory
+    description: "Devices, hosts, domains, vendor accounts, repositories, data stores and keys are listed with owner and data class, and updated at each quarterly access review."
+    tsc: [CC6.1, CC2.1]
+    owner: Kelvin Waldner
+    frequency: quarterly
+    evidence:
+      - "docs/compliance/asset-inventory.md and its git history"
+      - "Evidence bundle: access-review-<date>.md"
+    status: partial
+    notes: "Several entries (registrars, device encryption, production host details) are marked to confirm."
+    links:
+      - docs/compliance/asset-inventory.md
+
+  - id: AST-02
+    title: Device and physical security
+    description: "Devices used for Fishtape have full-disk encryption, a screen lock, current updates and built-in malware protection, and a lost device has its sessions and device tokens revoked. Fishtape has no premises; physical security of servers is inherited from the hosting providers."
+    tsc: [CC6.4, CC6.7, CC6.8]
+    owner: Kelvin Waldner
+    frequency: quarterly
+    evidence:
+      - "Device checklist in access-review-<date>.md"
+      - "Hosting provider security evidence (annual vendor review)"
+    status: partial
+    links:
+      - docs/compliance/asset-inventory.md
+      - docs/compliance/acceptable-use.md
+      - docs/compliance/vendor-management.md
+
+  # ---------------------------------------------------------------- change management (CC8.1)
+
+  - id: CHG-01
+    title: All changes through git and reviewed pull requests
+    description: "Code, migrations, workflows, deploy scripts and nginx files change only through git. Contractor and AI agent changes arrive on branches or pull requests with the security checklist and are reviewed by Kelvin before merge; update.sh discards and records hand edits on a host."
+    tsc: [CC8.1]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - "Evidence bundle: git-changes.json"
+      - ".github/pull_request_template.md"
+      - "Evidence bundle: deploy-log-<env>.jsonl (discarded local edits noted in the message)"
+    status: partial
+    notes: "Move the cloud agent session from pushing to the release branch to its own branch with pull requests."
+    links:
+      - docs/compliance/change-management.md
+      - .github/pull_request_template.md
+
+  - id: CHG-02
+    title: Required CI gates
+    description: "ci.yml (unit tests, CSP guard, infra lint, server tests against Postgres, Docker build and smoke test) and security.yml run on every push and pull request; the ci-ok job gates merges and both deploy workflows."
+    tsc: [CC8.1, CC7.1]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - "Evidence bundle: ci-runs.json"
+      - "Evidence bundle: branch-protection.json (required status checks)"
+    status: partial
+    notes: "Workflows exist; ci-ok still has to be made a required check in branch protection."
+    links:
+      - .github/workflows/ci.yml
+      - .github/workflows/security.yml
+      - docs/compliance/change-management.md
+
+  - id: CHG-03
+    title: Staging first, production only from approved tags
+    description: "Changes deploy to staging after CI passes. Production deploys only from a v* tag on the release branch that matches the CI-tested commit, after Kelvin approves the run in the GitHub production environment."
+    tsc: [CC8.1, CC5.2]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - "Evidence bundle: deploy-log-staging.jsonl and deploy-log-production.jsonl"
+      - "GitHub production environment deployment history (approver and time)"
+      - "Evidence bundle: ci-runs.json"
+    status: partial
+    notes: "Workflows and update.sh checks exist; both deploy workflows are off until the environments are set up."
+    links:
+      - .github/workflows/deploy-staging.yml
+      - .github/workflows/deploy-production.yml
+      - deploy/production/update.sh
+      - docs/runbooks/deploy-staging.md
+      - docs/runbooks/deploy-production.md
+
+  - id: CHG-04
+    title: Deploy log and monthly change review
+    description: "update.sh appends one JSON line per run (time, result, from and to commit, tag, actor) to deploy-log.jsonl. Each month Kelvin compares it with tags, CI runs and merged changes and explains anything that does not match."
+    tsc: [CC8.1, CC4.1]
+    owner: Kelvin Waldner
+    frequency: monthly
+    evidence:
+      - "Evidence bundle: deploy-log-<env>.jsonl"
+      - "Evidence bundle: git-changes.json"
+      - "Evidence bundle: ci-runs.json"
+      - "Monthly review notes in the evidence bundle"
+    status: partial
+    notes: "The deploy log is implemented; the monthly review starts with the first evidence collection."
+    links:
+      - deploy/staging/update.sh
+      - deploy/production/update.sh
+      - docs/compliance/change-management.md
+
+  - id: CHG-05
+    title: Emergency changes
+    description: "In an outage or attack Kelvin may deploy by hand or skip the pre-deploy backup (logged in the actor field). The change is still committed, and within 2 business days it is written up, CI is confirmed green and it goes into the monthly review."
+    tsc: [CC8.1]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Evidence bundle: deploy-log-production.jsonl (manual actor or skip-backup entries)"
+      - "Emergency change write-ups in the evidence bundle"
+    status: implemented
+    links:
+      - docs/compliance/change-management.md
+      - docs/runbooks/rollback.md
+
+  - id: CHG-06
+    title: Migrations, pre-deploy backup and rollback
+    description: "Migrations are forward-only and expand/contract, and run only in the migrate container with the owner role after a pre-deploy backup (required in production). If migration or readiness fails, update.sh restores the previous image and, in production, the previous static release."
+    tsc: [CC8.1, A1.2]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - "Evidence bundle: deploy-log-<env>.jsonl (rolled_back results)"
+      - "Evidence bundle: backup-log-<env>.jsonl (kind predeploy)"
+      - "Evidence bundle: ci-runs.json (server job migrate step)"
+    status: implemented
+    links:
+      - deploy/staging/update.sh
+      - deploy/production/update.sh
+      - docs/runbooks/rollback.md
+      - docs/compliance/change-management.md
+
+  - id: CHG-07
+    title: Segregation of duties compensating controls
+    description: "One person writes, approves and deploys, so Fishtape relies on CI as an independent check, the required production approval pause, /code-review and /security-review on security-relevant changes, Kelvin's review of all contractor and AI agent changes, and a monthly self-review of deploys and merges."
+    tsc: [CC8.1, CC5.1, CC1.3]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - "Pull requests with AI review notes"
+      - "GitHub production deployment approvals"
+      - "Monthly review notes in the evidence bundle"
+      - "Evidence bundle: ci-runs.json"
+    status: partial
+    links:
+      - docs/compliance/change-management.md
+      - docs/security/secure-sdlc.md
+
+  # ---------------------------------------------------------------- secure development (CC6.8, CC7.1, CC8.1, PI1)
+
+  - id: SDL-01
+    title: Secure development lifecycle and threat model
+    description: "docs/security/secure-sdlc.md sets the rules for design, coding, review and testing. The threat model is updated when the architecture changes and feeds the risk register."
+    tsc: [CC8.1, CC3.2, CC5.2]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - "Git history of docs/security/secure-sdlc.md and docs/security/threat-model.md"
+      - "Pull request security checklist"
+    status: partial
+    links:
+      - docs/security/secure-sdlc.md
+      - docs/security/threat-model.md
+
+  - id: SDL-02
+    title: Automated security scanning
+    description: "GitHub secret scanning with push protection, gitleaks over the full history, CodeQL (security-extended), osv-scanner, npm audit (high and above) and dependency review run on pushes, pull requests and weekly. Dependabot opens grouped weekly updates with a 7-day cooldown."
+    tsc: [CC7.1, CC6.8, CC8.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Evidence bundle: security-alerts.json (Dependabot, code scanning, secret scanning counts)"
+      - "Evidence bundle: npm-audit-server.json"
+      - "Evidence bundle: osv-scanner.json"
+      - "Evidence bundle: ci-runs.json (security.yml runs)"
+    status: partial
+    notes: "Dependabot security updates are off; turn them on. Dependabot alerts and security updates follow the default branch, which is still main."
+    links:
+      - .github/workflows/security.yml
+      - .github/dependabot.yml
+      - .gitleaks.toml
+      - docs/security/vulnerability-management.md
+
+  - id: SDL-03
+    title: Vulnerability fix deadlines
+    description: "Findings are fixed by severity from triage: Critical 7 days (72 hours if actively exploited and internet-facing, mitigated within 24 hours), High 30 days, Medium 90 days, Low 180 days or the next planned release. Exceptions need a written risk acceptance with an expiry of at most 90 days."
+    tsc: [CC7.1, CC4.2, CC3.2]
+    owner: Kelvin Waldner
+    frequency: monthly
+    evidence:
+      - "Evidence bundle: security-alerts.json, month over month"
+      - "docs/compliance/risk-assessment.md exceptions table"
+      - "Fix commits and pull requests"
+    status: partial
+    links:
+      - docs/security/vulnerability-management.md
+      - SECURITY.md
+      - docs/compliance/risk-assessment.md
+
+  - id: SDL-04
+    title: Supply chain and container hardening
+    description: "Third-party actions are pinned to full commit SHAs, workflows default to contents read, images are pinned by digest, server dependencies install from a lockfile with npm ci, and containers run non-root with a read-only root filesystem, cap_drop ALL, no-new-privileges, resource limits and ports bound to 127.0.0.1."
+    tsc: [CC6.8, CC8.1, CC6.1]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - ".github/workflows/*.yml"
+      - "server/Dockerfile"
+      - "deploy/production/docker-compose.yml"
+      - "Evidence bundle: check-host-production.json (docker-ports)"
+    status: implemented
+    links:
+      - server/Dockerfile
+      - deploy/production/docker-compose.yml
+      - docs/security/secure-sdlc.md
+
+  - id: SDL-05
+    title: Browser security headers and CSP guard
+    description: "nginx sends a strict Content-Security-Policy, HSTS, X-Frame-Options DENY, nosniff, COOP, CORP, Referrer-Policy and a restrictive Permissions-Policy. check-csp.mjs in CI fails on unhashed inline code, eval or inline handlers, or a CSP difference between staging and production."
+    tsc: [CC6.6, CC6.8]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - "Evidence bundle: ci-runs.json (CSP guard step)"
+      - "deploy/staging/security-headers.conf"
+      - "deploy/production/nginx/security-headers.conf"
+    status: implemented
+    links:
+      - docs/security/headers-csp.md
+      - deploy/production/nginx/security-headers.conf
+
+  - id: SDL-06
+    title: Independent security testing
+    description: "Each August Fishtape runs an OWASP ASVS self-assessment with the pentest checklist, and commissions an external penetration test once there are paying customers. Findings follow the vulnerability deadlines."
+    tsc: [CC4.1, CC7.1]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "Completed copy of docs/security/pentest-checklist-asvs.md in the August evidence bundle"
+      - "External test report, when commissioned"
+    status: planned
+    links:
+      - docs/security/pentest-checklist-asvs.md
+
+  - id: SDL-07
+    title: AI coding agents as contributors
+    description: "AI coding agents work in worktrees on their own branches with seeded data only, never get production secrets, SSH keys or GitHub admin, never deploy, and mark commits with a Co-Authored-By trailer. Kelvin reviews their changes before merge."
+    tsc: [CC8.1, CC6.3, CC1.5]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - "Evidence bundle: git-changes.json (co-author trailers)"
+      - "Pull requests and merge history"
+      - "docs/BUILD-PLAN.md definition of done"
+    status: partial
+    notes: "The cloud session pushes directly to the release branch, so its changes can reach staging before review."
+    links:
+      - docs/compliance/hr-security.md
+      - docs/BUILD-PLAN.md
+
+  - id: SDL-08
+    title: In-app AI and agent safeguards
+    description: "AI features and background agents use the tenant's own provider key, act only through scoped API keys, never get secrets in prompts, need human confirmation before sending messages or moving money, and every action is audited. Tenant content is treated as untrusted input to limit prompt injection."
+    tsc: [CC6.8, CC7.2, PI1.3]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "audit_events with actor agent"
+      - "Prompt-injection section of docs/security/threat-model.md"
+      - "Tests for agent scope limits (evidence bundle: ci-runs.json)"
+    status: planned
+    links:
+      - docs/security/threat-model.md
+      - docs/BUILD-PLAN.md
+
+  - id: SDL-09
+    title: Input validation and sync integrity
+    description: "Every write is validated against the JSON Schemas in electrical-app/js/schema/, shared by browser and server (ajv). Sync push is idempotent by mutation id, detects conflicts by base version and keeps the losing version in history, and pull uses a change_seq cursor so no change is skipped."
+    tsc: [PI1.1, PI1.2, PI1.3, PI1.5]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Schema and sync tests (evidence bundle: ci-runs.json)"
+      - "Rejected mutations returned with error codes (API logs)"
+    status: planned
+    links:
+      - docs/BUILD-PLAN.md
+
+  - id: SDL-10
+    title: Calculation and output integrity
+    description: "Money is stored as integer cents and measurements in SI units. CEC tables, tax rates and electrical formulas cite their source and are covered by unit tests in CI, so estimates, invoices and calculator results are reproducible."
+    tsc: [PI1.4, PI1.3, PI1.1]
+    owner: Kelvin Waldner
+    frequency: per-change
+    evidence:
+      - "Evidence bundle: ci-runs.json (web unit tests)"
+      - "electrical-app/tests/*.test.mjs"
+    status: partial
+    notes: "Unit tests exist for electrical calculations and units; CEC, tax and money tests are being added."
+    links:
+      - electrical-app/tests/electrical.test.mjs
+      - electrical-app/tests/units.test.mjs
+      - docs/BUILD-PLAN.md
+
+  # ---------------------------------------------------------------- operations and monitoring (CC6.6, CC7.1, CC7.2, A1.1)
+
+  - id: OPS-01
+    title: External uptime and heartbeat monitoring
+    description: "An external monitor checks /api/readyz and the public status endpoint and alerts Kelvin's phone, and a dead-man's switch alerts if the nightly backup heartbeat does not arrive."
+    tsc: [CC7.2, A1.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Monitor configuration and alert history (screenshot at the quarterly review)"
+      - "Evidence bundle: backup-log-<env>.jsonl"
+    status: planned
+    links:
+      - docs/compliance/logging-monitoring.md
+      - deploy/production/README.md
+
+  - id: OPS-02
+    title: Host health and capacity
+    description: "host-status.sh records disk, certificate expiry, load, memory, pending reboots and security updates every 15 minutes for the HQ developer health page. Containers have CPU, memory and pids limits, and disk use is acted on at 70% (warn) and 85% (fail)."
+    tsc: [CC7.1, CC7.2, A1.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "host-status.json on each host"
+      - "Evidence bundle: check-host-production.json (disk checks)"
+      - "Resource limits in deploy/*/docker-compose.yml"
+    status: partial
+    notes: "Scripts and timers exist; the HQ health page is being built."
+    links:
+      - deploy/staging/host-status.sh
+      - deploy/production/check-host.sh
+      - docs/compliance/logging-monitoring.md
+
+  - id: OPS-03
+    title: Logging and log review
+    description: "nginx, API, worker, Postgres (slow queries, lock waits, connections) and system logs are kept about 30 days with no secrets or tokens, on NTP-synced clocks in UTC. Kelvin checks health weekly and reviews auth failures, lockouts and HQ access events monthly."
+    tsc: [CC7.2, CC7.3]
+    owner: Kelvin Waldner
+    frequency: weekly
+    evidence:
+      - "Monthly review notes in the evidence bundle"
+      - "Evidence bundle: check-host-production.json (time-sync)"
+      - "Logging and Postgres log settings in deploy/production/docker-compose.yml"
+    status: partial
+    notes: "Fishtape's nginx logs go to /var/log/fishtape-<env>/ with logrotate keeping 30 days (deploy/*/logrotate-nginx). Container logs rotate by size (staging 5 x 10 MB, production 10 x 20 MB per container); confirm that covers about 30 days at real traffic."
+    links:
+      - docs/compliance/logging-monitoring.md
+
+  - id: OPS-04
+    title: Audit trail
+    description: "Every write (sync, REST, HQ, agents) appends to audit_events with actor, action, record, IP, user agent and request id. The API role can only insert, and events are hash-chained per tenant so edits or deletions show."
+    tsc: [CC7.2, CC7.3, PI1.5]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Evidence bundle: restore-tests-<env>.jsonl (newestAuditEvent)"
+      - "Audit chain verification results (planned, in HQ)"
+    status: planned
+    links:
+      - docs/BUILD-PLAN.md
+      - docs/compliance/logging-monitoring.md
+
+  - id: OPS-05
+    title: Host hardening and patching
+    description: "Production runs Ubuntu LTS with unattended security upgrades, fail2ban, NTP and hardened SSH. check-host.sh audits these read-only before the first deploy, after host changes and quarterly, and pending updates show in host-status.json."
+    tsc: [CC7.1, CC6.8, CC6.6]
+    owner: Kelvin Waldner
+    frequency: quarterly
+    evidence:
+      - "Evidence bundle: check-host-production.json"
+      - "host-status.json (pendingSecurityUpdates, rebootRequired)"
+    status: partial
+    notes: "Production host not built. Staging is a shared box patched by hand, with no automated check."
+    links:
+      - deploy/production/check-host.sh
+      - deploy/production/README.md
+
+  - id: OPS-06
+    title: Network boundary protection
+    description: "ufw denies inbound traffic except 22, 80 and 443, and every container port is bound to 127.0.0.1. nginx drops unknown host names, rate-limits /api/ (20 r/s) and auth routes (10 r/min), blocks the API docs UI and serves HQ only on its own host name."
+    tsc: [CC6.6]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Evidence bundle: check-host-production.json (firewall, listeners, docker-ports)"
+      - "deploy/production/nginx/fishtape.conf"
+    status: partial
+    notes: "Config and checks exist; production host not built."
+    links:
+      - deploy/production/nginx/fishtape.conf
+      - deploy/production/check-host.sh
+      - docs/compliance/access-control.md
+
+  # ---------------------------------------------------------------- incidents (CC7.3-CC7.5)
+
+  - id: INC-01
+    title: Incident response policy and runbook
+    description: "Incidents are triaged SEV1 to SEV4 with set response times (SEV1 immediately, 24/7, hourly updates), Kelvin is incident commander, and the runbook covers detection through recovery. Reports come through SECURITY.md, alerts, tenants and vendors."
+    tsc: [CC7.3, CC7.4]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Incident records (encrypted evidence store)"
+      - "Git history of docs/runbooks/incident-response.md"
+    status: implemented
+    links:
+      - docs/compliance/incident-response.md
+      - docs/runbooks/incident-response.md
+      - docs/runbooks/on-call.md
+      - SECURITY.md
+
+  - id: INC-02
+    title: Evidence preservation and incident records
+    description: "Before changing a compromised system Kelvin snapshots the host, copies logs and relevant audit events off it with sha-256 hashes, and keeps a UTC timeline in the incident record in the encrypted evidence store."
+    tsc: [CC7.4, CC7.3]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Incident records with timelines and evidence hashes"
+    status: implemented
+    links:
+      - docs/compliance/incident-response.md
+
+  - id: INC-03
+    title: Post-incident review
+    description: "A blameless review is written within 5 business days of closing a SEV1 or SEV2, with the root cause and dated actions that are tracked to closure and fed back into policies, runbooks and the risk register."
+    tsc: [CC7.5, CC4.2]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Post-incident reviews (encrypted evidence store)"
+      - "Commits that close review actions"
+    status: implemented
+    links:
+      - docs/compliance/incident-response.md
+
+  - id: INC-04
+    title: Annual tabletop exercise
+    description: "Each March Kelvin walks through one incident scenario (for example a leaked deploy key or a cross-tenant exposure) with the runbook, including notifications, and records what was learned."
+    tsc: [CC7.4, CC7.5]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "Tabletop write-up in the March evidence bundle"
+    status: planned
+    links:
+      - docs/compliance/incident-response.md
+      - docs/runbooks/incident-response.md
+
+  # ---------------------------------------------------------------- backup and continuity (A1, CC9.1)
+
+  - id: BCK-01
+    title: Nightly and pre-deploy encrypted backups
+    description: "backup.sh streams pg_dump into age nightly from a systemd timer and before every deploy, writes a sha-256 checksum, and keeps 14 daily, 8 weekly and 5 pre-deploy backups."
+    tsc: [A1.2, PI1.5]
+    owner: Kelvin Waldner
+    frequency: daily
+    evidence:
+      - "Evidence bundle: backup-log-<env>.jsonl"
+      - "Evidence bundle: last-backup-<env>.json (retention and counts)"
+      - "Evidence bundle: check-host-production.json (backup-timer, last-backup)"
+    status: partial
+    notes: "Scripts and timers are implemented. Production host not built; confirm the staging timer is installed and the backup key is set."
+    links:
+      - deploy/staging/backup.sh
+      - deploy/staging/systemd/fishtape-staging-backup.timer
+      - deploy/production/systemd/fishtape-production-backup.timer
+      - docs/compliance/backup-retention.md
+
+  - id: BCK-02
+    title: Offsite backup copy in Canada
+    description: "Each production backup is copied, already encrypted, to storage in Canada with a different provider, using credentials that cannot delete, with provider-side retention or object lock of at least 8 weeks."
+    tsc: [A1.2, CC9.1]
+    owner: Kelvin Waldner
+    frequency: daily
+    evidence:
+      - "Evidence bundle: last-backup-production.json (offsite field ok)"
+      - "Offsite retention settings (screenshot at the vendor review)"
+    status: planned
+    notes: "backup.sh supports rsync and rclone targets; no provider chosen yet. On production, backup.sh reports degraded and check-host.sh fails while no offsite target or heartbeat is set."
+    links:
+      - deploy/production/backup.conf.example
+      - docs/compliance/backup-retention.md
+      - docs/compliance/vendor-management.md
+
+  - id: BCK-03
+    title: Backup monitoring
+    description: "last-backup.json feeds the HQ health page, backup-log.jsonl keeps every run, a heartbeat ping (or its fail URL) goes to the dead-man's switch, and check-host.sh fails if the last production backup is not ok or is older than 26 hours."
+    tsc: [A1.2, CC7.2]
+    owner: Kelvin Waldner
+    frequency: daily
+    evidence:
+      - "Evidence bundle: last-backup-<env>.json"
+      - "Evidence bundle: backup-log-<env>.jsonl"
+      - "Heartbeat monitor history"
+    status: partial
+    notes: "Status files and log are implemented; heartbeat monitor and HQ page are not set up."
+    links:
+      - deploy/staging/backup.sh
+      - deploy/production/check-host.sh
+      - docs/compliance/backup-retention.md
+
+  - id: BCK-04
+    title: Quarterly restore test
+    description: "Every quarter, for staging and production, restore-test.sh decrypts a backup with the offline key (never written to the server's disk), restores it into a throwaway container with no network, and checks tables, migrations, tenants, the newest audit row and RLS."
+    tsc: [A1.3]
+    owner: Kelvin Waldner
+    frequency: quarterly
+    evidence:
+      - "Evidence bundle: restore-tests-<env>.jsonl"
+      - "Saved output when the test is run on Kelvin's computer"
+    status: partial
+    notes: "Script implemented; first tests due October 2026."
+    links:
+      - deploy/staging/restore-test.sh
+      - docs/runbooks/restore-from-backup.md
+      - docs/compliance/backup-retention.md
+
+  - id: BCK-05
+    title: Continuity plan and annual DR rebuild drill
+    description: "The plan sets production RPO 24 hours and RTO 8 hours (staging 24 hours and 2 business days) and covers host loss, provider outage, data corruption, ransomware, GitHub loss and DNS loss. Each May a fresh VPS is rebuilt from the checklist and timed against the RTO."
+    tsc: [A1.3, CC9.1, CC7.5]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "dr-drill-<date>.md in the May evidence bundle"
+      - "Git history of docs/compliance/business-continuity.md"
+    status: partial
+    notes: "Plan written; run the first drill before production holds real data if possible, otherwise May 2027."
+    links:
+      - docs/compliance/business-continuity.md
+      - deploy/production/README.md
+      - docs/runbooks/restore-from-backup.md
+
+  - id: BCK-06
+    title: Key-person continuity
+    description: "A trusted person holds sealed instructions and has emergency access to the password manager with a waiting period, so the service can be kept running, handed over or wound down in order if Kelvin is unavailable."
+    tsc: [CC9.1]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "Annual note confirming the sealed instructions were reviewed"
+      - "Password manager emergency-access settings (screenshot)"
+    status: planned
+    links:
+      - docs/compliance/business-continuity.md
+
+  - id: BCK-07
+    title: WAL archiving for a 15-minute RPO
+    description: "Continuous WAL archiving to encrypted offsite storage will cut the production RPO from 24 hours to 15 minutes. Until then the 24-hour RPO is an accepted risk (A-01)."
+    tsc: [A1.2]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "docs/compliance/risk-assessment.md acceptance A-01"
+      - "WAL archive status on the HQ health page (when built)"
+    status: planned
+    links:
+      - docs/compliance/backup-retention.md
+      - docs/compliance/risk-assessment.md
+
+  # ---------------------------------------------------------------- vendors (CC9.2)
+
+  - id: VND-01
+    title: Vendor inventory
+    description: "Every vendor is listed with the service, data shared, data class, location (to confirm until confirmed in writing), criticality, security evidence to collect and MFA."
+    tsc: [CC9.2]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "docs/compliance/vendor-management.md and its git history"
+    status: implemented
+    links:
+      - docs/compliance/vendor-management.md
+
+  - id: VND-02
+    title: Vendor due diligence and annual review
+    description: "Before a vendor sees Confidential or Restricted data Kelvin collects its SOC 2 or ISO 27001 evidence, DPA, sub-processor list, breach terms and data location, and every vendor is reviewed again each June."
+    tsc: [CC9.2, P6.4]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "Vendor documents and review notes in the June evidence bundle"
+    status: planned
+    links:
+      - docs/compliance/vendor-management.md
+
+  - id: VND-03
+    title: Production host agreement
+    description: "Before production data, dotmoose confirms the data-centre location and disk encryption, and agrees in writing to confidentiality, breach notice to Fishtape, staff access limits, and disposal of disks and snapshots."
+    tsc: [CC9.2, P6.4, P6.5]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Written agreement or email (kept outside git)"
+      - "dotmoose row in docs/compliance/vendor-management.md"
+    status: planned
+    links:
+      - docs/compliance/vendor-management.md
+      - deploy/production/README.md
+
+  - id: VND-04
+    title: Shared responsibility for tenant-supplied integrations
+    description: "Tenants contract with Stripe, Twilio, Resend, Meta and Anthropic themselves. Fishtape stores their keys encrypted, uses them only for features the tenant turned on, audits their use and never logs them."
+    tsc: [CC9.2, C1.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Shared responsibility table in docs/compliance/vendor-management.md"
+      - "In-app setup guides"
+      - "audit_events for tenant secret changes"
+    status: partial
+    notes: "Responsibilities are written down; key storage and auditing arrive with the API."
+    links:
+      - docs/compliance/vendor-management.md
+      - docs/security/secrets-management.md
+
+  # ---------------------------------------------------------------- confidentiality (C1)
+
+  - id: DAT-01
+    title: Data classification and handling
+    description: "Data is classed Public, Internal, Confidential or Restricted with Fishtape examples, and each class has rules for storage, sharing, AI access, logging and deletion."
+    tsc: [C1.1]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "docs/compliance/data-classification.md and its git history"
+    status: implemented
+    links:
+      - docs/compliance/data-classification.md
+
+  - id: DAT-02
+    title: No production data outside production
+    description: "Staging and local development use only seeded or synthetic data, and staging never holds production secrets. Production data is never copied down, and the public repository holds only Public data."
+    tsc: [C1.1, CC6.7]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Staging seed path (update.sh --seed)"
+      - "Evidence bundle: security-alerts.json (secret scanning)"
+      - "Confirmation line in access-review-<date>.md"
+    status: implemented
+    links:
+      - docs/compliance/data-classification.md
+      - docs/compliance/acceptable-use.md
+
+  - id: DAT-03
+    title: Retention and disposal
+    description: "Data is kept per the retention schedule (for example logs 30 days, audit events the life of the tenant plus 1 year, evidence and breach records 3 years) and then deleted. Devices, disks and cancelled servers are wiped and the method recorded."
+    tsc: [C1.2, CC6.5, P4.2, P4.3]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Evidence bundle: last-backup-<env>.json (retention counts)"
+      - "Disposal records in docs/compliance/asset-inventory.md"
+      - "Deletion records from tenant offboarding"
+    status: partial
+    notes: "Backup pruning is implemented; purge jobs for tombstones, expired sessions and closed tenants are planned with the API."
+    links:
+      - docs/compliance/backup-retention.md
+      - docs/compliance/asset-inventory.md
+
+  - id: DAT-04
+    title: Tenant offboarding, export and deletion
+    description: "When a tenant leaves, Fishtape exports its data through an encrypted or expiring link, deletes its records and secrets, keeps audit events for 1 year unless on legal hold, and tells the tenant that backups age out within about 8 weeks."
+    tsc: [C1.2, P4.3, P5.1]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Offboarding records (date, tenant id, export delivered, deletion confirmed)"
+    status: planned
+    links:
+      - docs/runbooks/offboard-tenant.md
+      - docs/compliance/privacy.md
+
+  # ---------------------------------------------------------------- privacy (P1-P8, light)
+
+  - id: PRV-01
+    title: Privacy program, notice and complaints
+    description: "Kelvin is privacy officer and the internal privacy policy applies PIPEDA's 10 principles. A public privacy notice names the privacy contact and how to complain to the Privacy Commissioner of Canada or a provincial commissioner, and the policy is reviewed each October."
+    tsc: [P1.1, P8.1, CC2.3]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "Git history of docs/compliance/privacy.md"
+      - "Published privacy notice"
+      - "Request and complaint log"
+    status: partial
+    notes: "Internal policy written; public notice and privacy contact address planned. Counsel review before launch."
+    links:
+      - docs/compliance/privacy.md
+
+  - id: PRV-02
+    title: Service-provider role, purpose and collection limits
+    description: "Tenant data is used only to provide the service on the tenant's instructions, under terms and a data processing addendum. The product collects only the fields features need and has no SIN, health or banking fields."
+    tsc: [P3.1, P3.2, P4.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Terms and data processing addendum (when published)"
+      - "Field lists in the JSON Schemas under electrical-app/js/schema/"
+    status: partial
+    notes: "Terms and DPA planned."
+    links:
+      - docs/compliance/privacy.md
+      - docs/compliance/data-classification.md
+
+  - id: PRV-03
+    title: CASL consent for email and SMS sequences
+    description: "Contacts carry express or implied consent records, sequences skip contacts without consent, every message identifies the sender with contact details, and email unsubscribe links and SMS STOP take effect immediately."
+    tsc: [P2.1, P4.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Consent and unsubscribe records in the product"
+      - "Message template tests (evidence bundle: ci-runs.json)"
+    status: planned
+    links:
+      - docs/compliance/privacy.md
+
+  - id: PRV-04
+    title: Access, correction and deletion requests
+    description: "Requests from tenants' customers or crews are passed to the tenant within 5 business days. Fishtape helps tenants answer within the legal limit (30 days under PIPEDA) and answers requests about its own data within 30 days, after verifying identity."
+    tsc: [P5.1, P5.2, P7.1]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Request log (date, type, handler, date answered)"
+      - "audit_events for HQ-assisted corrections"
+    status: partial
+    notes: "Process defined; no requests yet. HQ tooling comes with the API."
+    links:
+      - docs/compliance/privacy.md
+      - docs/runbooks/offboard-tenant.md
+
+  - id: PRV-05
+    title: Breach assessment, notification and records
+    description: "Every breach is assessed for real risk of significant harm. Affected tenants are notified with a target of 72 hours from confirmation; for Fishtape's own data the OPC, the Alberta commissioner or the CAI and the people affected are notified as the law requires; every breach is recorded and the record kept 3 years."
+    tsc: [P6.3, P6.5, P6.6, CC7.4]
+    owner: Kelvin Waldner
+    frequency: on-event
+    evidence:
+      - "Breach records (encrypted evidence store)"
+      - "Tenant and regulator notices"
+    status: implemented
+    links:
+      - docs/compliance/privacy.md
+      - docs/compliance/incident-response.md
+
+  - id: PRV-06
+    title: Third-party disclosure, sub-processors and residency
+    description: "Personal information goes only to listed sub-processors and to providers the tenant connects. Fishtape publishes a sub-processor list with countries, gives notice before adding one that sees tenant data, prefers Canadian hosting, and records HQ reads and agent actions in audit_events."
+    tsc: [P6.1, P6.2, P6.4, P6.7, CC9.2]
+    owner: Kelvin Waldner
+    frequency: annually
+    evidence:
+      - "Published sub-processor list and its history"
+      - "docs/compliance/vendor-management.md"
+      - "audit_events (HQ reads, integration calls)"
+    status: partial
+    notes: "Sub-processor list planned; production host and several vendor locations still to confirm."
+    links:
+      - docs/compliance/privacy.md
+      - docs/compliance/vendor-management.md
