@@ -23,6 +23,8 @@ import authRoutes from './routes/v1/auth.js';
 import recordRoutes from './routes/v1/records.js';
 import syncRoutes from './routes/v1/sync.js';
 import adminRoutes from './routes/v1/admin.js';
+import aiRoutes from './routes/v1/ai.js';
+import mcpRoutes from './routes/mcp.js';
 
 const MB = 1024 * 1024;
 /** Sync pushes may carry one maximum-size record plus a normal batch. */
@@ -172,6 +174,8 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(recordRoutes, deps);
   await app.register(syncRoutes, deps);
   await app.register(hqRoutes, deps);
+  await app.register(aiRoutes, deps);
+  await app.register(mcpRoutes, deps);
 
   app.get('/api/v1/openapi.json', { config: { auth: 'public' }, schema: { hide: true } }, async () => app.swagger());
 

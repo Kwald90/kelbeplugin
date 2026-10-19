@@ -3,7 +3,8 @@
 import { hostname } from 'node:os';
 import { loadEnvFile, readConfig } from './config.js';
 import { createDb, createPool } from './db.js';
-import { reclaimStuck, runOnce, scheduleRecurring } from './services/queue.js';
+import { HANDLERS, reclaimStuck, runOnce, scheduleRecurring } from './services/queue.js';
+import { createAiHandlers, scheduleAiJobs } from './ai/jobs.js';
 
 const HOUR = 3600_000;
 
@@ -12,6 +13,7 @@ async function main() {
   const config = readConfig();
   const db = createDb({ app: createPool(config.databaseUrl, { max: config.worker.concurrency + 1, applicationName: 'fishtape-worker' }) });
   const workerId = `${hostname()}:${process.pid}`;
+  const handlers = { ...HANDLERS, ...createAiHandlers({ config }) };
   const log = (level, msg, extra = {}) => process.stdout.write(JSON.stringify({ level, time: Date.now(), workerId, msg, ...extra }) + '\n');
   let stopping = false;
   let lastHousekeeping = 0;
@@ -24,8 +26,9 @@ async function main() {
           const n = await reclaimStuck(db);
           if (n) log('warn', 'requeued stuck jobs', { count: n });
           await scheduleRecurring(db);
+          await scheduleAiJobs(db);
         }
-        const r = await runOnce(db, { workerId, log: { info: (m) => log('info', m), error: (m) => log('error', m) } });
+        const r = await runOnce(db, { workerId, handlers, log: { info: (m) => log('info', m), error: (m) => log('error', m) } });
         if (r) { log(r.outcome === 'done' ? 'info' : 'warn', `job ${r.kind} ${r.outcome}`, { jobId: r.id, ...(r.error ? { error: r.error } : {}) }); continue; }
       } catch (e) {
         log('error', 'worker loop error', { error: e.message });
