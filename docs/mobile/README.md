@@ -11,7 +11,7 @@ Kelvin's Mac over SSH.
 | Bundle ID | `com.fishtapehq.app` (registration still to do, see [Signing and TestFlight](#signing-and-testflight)) |
 | API | `https://tgelectrical.truecollarbuilt.com` (staging) by default; see [API origin](#api-origin) |
 | Name on the home screen | Fishtape |
-| Capacitor | 8.5.3 (`@capacitor/core`, `cli`, `ios`), Filesystem 8.1.5, Share 8.0.3, all pinned exactly |
+| Capacitor | 8.5.3 (`@capacitor/core`, `cli`, `ios`), Filesystem 8.1.5, Share 8.0.3, Browser 8.0.5, all pinned exactly |
 | iOS packages | Swift Package Manager (no CocoaPods). `Package.resolved` is committed |
 | Minimum iOS | 15.0 (Capacitor 8's minimum) |
 | Devices | iPhone and iPad. AR needs world tracking (A9 chip or later); LiDAR models do better on plain walls |
@@ -57,12 +57,12 @@ mobile/
   nothing breaks.
 - **Plugins without a bundler.** The PWA has no build step, so it can't `import` from `@capacitor/*`.
   It doesn't need to: the native bridge puts every registered plugin on `window.Capacitor.Plugins`
-  before the page loads (`FishtapeMeasure`, `FishtapeKeychain`, `FishtapePrint`, `Filesystem`, `Share`,
+  before the page loads (`FishtapeMeasure`, `FishtapeKeychain`, `FishtapePrint`, `Filesystem`, `Share`, `Browser`,
   plus Capacitor's built-ins), and `window.Capacitor.isNativePlatform()` is true.
 - **Local plugin registration.** Our plugins live in the App target, so `cap sync` doesn't know about
   them. `MainViewController.capacitorDidLoad()` registers each with
   `bridge?.registerPluginInstance(...)`, Capacitor's documented way for plugins inside the app. npm
-  plugins (Filesystem, Share) are registered by Capacitor from `packageClassList`.
+  plugins (Filesystem, Share, Browser) are registered by Capacitor from `packageClassList`.
 - **Sign-in and the API.** See [Sign-in and the API](#sign-in-and-the-api).
 - **Printing.** WKWebView ignores `window.print()`. In the app, `js/lib/native.js` replaces it with a
   call to `FishtapePrint`, which opens the iOS print sheet on the live web view (`@media print`
@@ -91,8 +91,11 @@ app's pages come from `capacitor://localhost`, a different origin, so relative `
 that cookie can't work there. In the app (and only there; the web path is unchanged):
 
 - **API origin.** `npm run sync` writes `www/config.js` (`window.FISHTAPE_API_BASE`,
-  `window.FISHTAPE_ENV`) and loads it before `js/app.js`. `js/session.js` prefixes every API call
-  with it; `modules/integrations.js` uses the same helper (`authInit`).
+  `window.FISHTAPE_ENV`) and loads it before `js/app.js`. Every API call in the PWA goes through
+  `apiFetch()` in `js/session.js`, which prefixes it: `api.*`/`request()`, billing (`modules/billing.js`),
+  integrations (`modules/integrations.js`) and the AI assistant (`js/lib/assistant-api.js`, including
+  the streamed chat reply). A new screen that calls the API must use `api.*` or `apiFetch()`, never a
+  bare `fetch('/api/…')`, or it won't work in the app.
 - **Bearer tokens.** Sign-in (`/auth/login`, `/auth/signup`) and crew PIN sign-in
   (`/devices/crew/sign-in`) send `mode: 'bearer'`; the API then returns the session token in the
   body instead of setting a cookie (`server/src/routes/v1/auth.js`, `admin.js`; no server change was
@@ -110,6 +113,11 @@ that cookie can't work there. In the app (and only there; the web path is unchan
   by setting a cookie; doing it in the app needs `ASWebAuthenticationSession` and a one-time code the
   app can swap for a bearer token (a server change). Hiding them also keeps App Review's rule on
   third-party sign-in (guideline 4.8) out of play for now.
+- **Pages outside the app.** Stripe Checkout and the billing portal open with `openExternal()`
+  (`js/lib/native.js`): this tab on the web, a Safari sheet over the app in iOS (`@capacitor/browser`),
+  and Billing reloads when the sheet closes. Stripe's return page is the web app, shown in that sheet;
+  people tap Done to get back. Other external links (`target="_blank"`, maps, `mailto:`) never load
+  inside the app: Capacitor hands any page from another site to Safari, Maps or Mail.
 - **Password reset and invite links** open the web app in Safari; after setting a password, sign in
   in the app.
 
@@ -324,10 +332,15 @@ Other review points:
   (guideline 5.1.1(v)). The app doesn't offer sign-up today; if it does, add "Delete account".
 - **5.1.1 Privacy.** The camera text says what it's for. If the app later uploads photos or
   location, add the matching purpose strings and update the App Privacy answers.
-- **Payments.** Customers paying a contractor's invoice with Stripe is payment for real-world
-  services, which in-app purchase rules don't cover. Selling Fishtape plans inside the iOS app would
-  fall under guideline 3.1 (in-app purchase). Keep plan upgrades on the web and check the current
-  rules on mentioning or linking to them from the app before launch.
+- **Payments (guideline 3.1), a real risk.** Customers paying a contractor's invoice with Stripe is
+  payment for real-world services, which in-app purchase rules don't cover. Fishtape's own plans are
+  different: the Billing screen (owners and admins) opens Stripe Checkout and the customer portal,
+  and in the app those open in a Safari sheet. Apple generally requires in-app purchase for digital
+  subscriptions sold in an iOS app, and outside the US storefront doesn't allow buttons or links to
+  other ways of paying. Fishtape is sold to companies for their crews, which may fit the
+  "enterprise services" exception (3.1.3(c)), but that is Apple's call. Options before submitting:
+  hide the plan purchase and portal buttons in the iOS app (show the current plan only), argue
+  3.1.3(c) in the review notes, or add in-app purchase. Kelvin to decide.
 - **Placeholder content.** The icon and launch image are Fishtape's own, drawn from
   `electrical-app/icons/icon.svg` (the Capacitor placeholders are gone). Seeded demo data should not
   appear in the review build's screenshots as if it were real customers.
