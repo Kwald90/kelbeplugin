@@ -321,16 +321,14 @@ export function draftCard(ui, d, { nav, onDecided } = {}) {
   return card;
 }
 
-/** Go to a document; if sync has not brought it to this device yet, wait a moment for it. */
-function openRecord(ui, nav, coll, id) {
+/** Go to a document; if sync has not brought it to this device yet, sync first. */
+async function openRecord(ui, nav, coll, id) {
   const store = globalThis.kelbe?.store;
   if (!store || store.get(coll, id)) return nav(`#/${coll}/${id}`);
-  requestSync();
   ui.toast('Fetching it from the server…');
-  let tries = 0;
-  const timer = setInterval(() => {
-    if (store.get(coll, id)) { clearInterval(timer); nav(`#/${coll}/${id}`); } else if (++tries > 20) { clearInterval(timer); ui.toast('It is saved on the server and will appear after the next sync.', 'info', 4000); }
-  }, 500);
+  await requestSync();
+  if (store.get(coll, id)) nav(`#/${coll}/${id}`);
+  else ui.toast('It is saved on the server and will appear after the next sync.', 'info', 4000);
 }
 
 function draftsTab(ui, ctx) {

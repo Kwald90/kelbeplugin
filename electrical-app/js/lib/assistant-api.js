@@ -2,9 +2,9 @@
 // (server-sent events over fetch, since EventSource can't POST), photo downsizing and a
 // small, safe Markdown-ish renderer for replies (DOM text nodes only, never innerHTML).
 //
-// Where the API lives and how requests are signed in: same origin with the session cookie
-// by default. The sign-in workstream can call configureAssistantApi({ base, headers }) (or
-// expose globalThis.fishtape.api = { base, headers() }) for the iOS app's bearer token.
+// Where the API lives and how requests are signed in: the same rules as js/session.js (same
+// origin with the session cookie; the iOS shell may set globalThis.FISHTAPE_API_BASE).
+// configureAssistantApi({ base, headers }) overrides both, e.g. for a bearer token.
 
 const cfg = { base: null, headers: null };
 
@@ -15,13 +15,12 @@ export function configureAssistantApi({ base, headers } = {}) {
 
 function apiBase() {
   if (cfg.base != null) return cfg.base;
-  if (globalThis.fishtape?.api?.base != null) return globalThis.fishtape.api.base;
-  try { const b = localStorage.getItem('ft.apiBase'); if (b) return b.replace(/\/$/, ''); } catch { /* storage blocked */ }
+  if (globalThis.FISHTAPE_API_BASE) return String(globalThis.FISHTAPE_API_BASE).replace(/\/$/, '');
   return '';
 }
 
 function authHeaders() {
-  const h = typeof cfg.headers === 'function' ? cfg.headers() : (globalThis.fishtape?.api?.headers?.() || cfg.headers || {});
+  const h = typeof cfg.headers === 'function' ? cfg.headers() : cfg.headers;
   return h || {};
 }
 
@@ -38,7 +37,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
   const headers = { accept: 'application/json', 'x-fishtape': '1', ...authHeaders() };
   if (body !== undefined) headers['content-type'] = 'application/json';
   try {
-    return await fetch(apiBase() + path, { method, credentials: 'include', headers, body: body === undefined ? undefined : JSON.stringify(body), signal });
+    return await fetch(apiBase() + path, { method, credentials: 'include', cache: 'no-store', headers, body: body === undefined ? undefined : JSON.stringify(body), signal });
   } catch (e) {
     if (e?.name === 'AbortError') throw e;
     throw new ApiFailure(0);
@@ -145,8 +144,10 @@ export function renderReply(text) {
   return root;
 }
 
-/** Ask the sync layer (if there is one) to pull now, so an accepted draft shows up locally. */
-export function requestSync() {
-  try { globalThis.fishtape?.sync?.pullNow?.(); } catch { /* optional */ }
-  try { globalThis.dispatchEvent(new CustomEvent('fishtape:sync-request', { detail: { reason: 'ai-draft-accepted' } })); } catch { /* not a browser */ }
+/**
+ * Ask the sync layer (js/sync.js, exposed as globalThis.kelbe.sync) to run now, so a
+ * document the server just wrote shows up on this device. Resolves when it is done.
+ */
+export async function requestSync() {
+  try { await globalThis.kelbe?.sync?.syncNow?.(); } catch { /* offline: the next cycle brings it */ }
 }
