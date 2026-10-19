@@ -86,6 +86,7 @@ export async function removeSecret(key) {
 // ---- printing -------------------------------------------------------------------
 
 let printing = false;
+let ownEvent = false;
 
 /**
  * window.print() for the iOS app.
@@ -94,6 +95,8 @@ let printing = false;
  * on 'afterprint' or with setTimeout(done, …) right after print() returns. A browser's print() blocks
  * until its dialog closes; the iOS print sheet can't block JavaScript, so timers set in the rest of
  * the calling task are held until the sheet closes, and 'beforeprint'/'afterprint' fire around it.
+ * WebKit also fires those events each time the sheet lays the page out (the preview, a paper change);
+ * installNativePrint() stops them while the sheet is open, or the copy would be gone before printing.
  * The sheet prints the live web view (print CSS applies), and its share button saves a PDF.
  */
 export function nativePrint(win = globalThis) {
@@ -104,7 +107,10 @@ export function nativePrint(win = globalThis) {
   const realSetTimeout = win.setTimeout;
   win.setTimeout = (fn, ms, ...args) => { held.push([fn, ms, args]); return 0; };
   queueMicrotask(() => { win.setTimeout = realSetTimeout; });
-  const fire = (type) => { try { win.dispatchEvent(new Event(type)); } catch { /* no event target */ } };
+  const fire = (type) => {
+    ownEvent = true;
+    try { win.dispatchEvent(new Event(type)); } catch { /* no event target */ } finally { ownEvent = false; }
+  };
   fire('beforeprint');
   const done = () => {
     printing = false;
@@ -116,11 +122,19 @@ export function nativePrint(win = globalThis) {
     .then(done, (e) => { done(); console.error('Printing failed', e); });
 }
 
+/** Stop WebKit's own print events while our sheet is open (see nativePrint). */
+function holdWebKitPrintEvents(e) {
+  if (printing && !ownEvent) e.stopImmediatePropagation();
+}
+
 /** Route window.print() to the iOS print sheet. Does nothing outside the app. */
 export function installNativePrint(win = globalThis) {
   if (!isNativeApp() || win.__fishtapeNativePrint) return false;
   win.__fishtapeNativePrint = true;
   win.print = () => nativePrint(win);
+  // Capturing, and added before any screen's listener, so it runs first.
+  win.addEventListener?.('beforeprint', holdWebKitPrintEvents, true);
+  win.addEventListener?.('afterprint', holdWebKitPrintEvents, true);
   return true;
 }
 

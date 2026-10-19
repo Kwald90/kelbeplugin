@@ -158,3 +158,26 @@ test('installNativePrint only replaces window.print inside the app', () => {
   assert.notEqual(win.print, original);
   assert.equal(installNativePrint(win), false, 'once');
 });
+
+test("WebKit's own print events don't reach the screens while the sheet is open", async () => {
+  let finishPrint;
+  const win = Object.assign(new EventTarget(), {
+    document: { title: 'Bend sheet' },
+    setTimeout: (fn) => { fn(); return 1; },
+    Capacitor: { Plugins: { FishtapePrint: { print: () => new Promise((res) => { finishPrint = res; }) } } },
+  });
+  globalThis.Capacitor = { isNativePlatform: () => true, Plugins: {} };
+  assert.equal(installNativePrint(win), true);
+  const seen = [];
+  win.addEventListener('afterprint', () => seen.push('screen afterprint'));
+  win.print();
+  await new Promise((r) => setImmediate(r));
+  win.dispatchEvent(new Event('beforeprint')); // WebKit laying out the preview
+  win.dispatchEvent(new Event('afterprint'));
+  assert.deepEqual(seen, [], 'the print-only copy stays mounted');
+  finishPrint({ completed: true });
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(seen, ['screen afterprint']);
+  win.dispatchEvent(new Event('afterprint')); // once the sheet is closed, events pass again
+  assert.equal(seen.length, 2);
+});
