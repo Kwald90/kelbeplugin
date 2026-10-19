@@ -1,0 +1,257 @@
+# CI: web tests, CSP guard, deploy-config checks and (once server/ exists) server tests against
+# Postgres 17, a Docker build and a container smoke test. A push to the staging branch that
+# passes everything deploys to staging (deploy-staging.yml, off until STAGING_DEPLOY_ENABLED).
+# deploy-production.yml calls this workflow again for release tags.
+#
+# Branch protection: require the "CI passed" check (job ci-ok).
+# Third-party actions are pinned to full commit SHAs; Dependabot keeps them current.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  # Never cancel a push run: it may be about to deploy.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  detect:
+    name: Detect components
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      server: ${{ steps.check.outputs.server }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            server/package.json
+          sparse-checkout-cone-mode: false
+      - id: check
+        # The server job is skipped (not failed) until workstream A lands server/.
+        run: echo "server=${{ hashFiles('server/package.json') != '' }}" >> "$GITHUB_OUTPUT"
+
+  web:
+    name: Web app tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Unit tests
+        run: node --test electrical-app/tests/*.test.mjs
+      - name: CSP guard
+        run: node .github/scripts/check-csp.mjs
+
+  infra:
+    name: Deploy config checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      NGINX_IMAGE: nginx:1.30.6-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Shared deploy scripts are identical in staging and production
+        run: |
+          status=0
+          for f in backup.sh restore-test.sh init-env.sh host-status.sh initdb/10-bootstrap.sh; do
+            if ! cmp -s "deploy/staging/$f" "deploy/production/$f"; then
+              echo "::error file=deploy/production/$f::differs from deploy/staging/$f (keep the copies identical)"
+              status=1
+            fi
+          done
+          exit "$status"
+
+      - name: Scripts are executable
+        run: |
+          status=0
+          while IFS= read -r f; do
+            mode="$(git ls-files -s -- "$f" | cut -d' ' -f1)"
+            if [ "$mode" != 100755 ]; then echo "::error file=$f::not executable in git (git update-index --chmod=+x $f)"; status=1; fi
+          done < <(git ls-files 'deploy/staging/*.sh' 'deploy/production/*.sh')
+          exit "$status"
+
+      - name: shellcheck
+        run: |
+          shellcheck --version | head -2
+          shellcheck -x -S style deploy/staging/*.sh deploy/staging/initdb/*.sh deploy/production/*.sh deploy/production/initdb/*.sh
+
+      - name: actionlint
+        run: |
+          curl -fsSLo actionlint.tgz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tgz" | sha256sum -c -
+          tar -xzf actionlint.tgz actionlint
+          ./actionlint -color
+          rm -f actionlint actionlint.tgz
+
+      - name: docker compose config
+        run: |
+          for env in staging production; do
+            cp "deploy/$env/.env.example" "deploy/$env/.env"
+            sed -i -E 's/^(POSTGRES_SUPERUSER_PASSWORD|FISHTAPE_OWNER_PASSWORD|FISHTAPE_APP_PASSWORD|FISHTAPE_HQ_PASSWORD)=$/\1=ci0000/' "deploy/$env/.env"
+            IMAGE_TAG=ci docker compose -f "deploy/$env/docker-compose.yml" config --quiet
+            IMAGE_TAG=ci docker compose -f "deploy/$env/docker-compose.yml" --profile tools config --services | sort | tr '\n' ' '
+            echo " <- $env services"
+            rm -f "deploy/$env/.env"
+          done
+
+      - name: nginx -t (production config and staging vhost)
+        run: |
+          t="$(mktemp -d)"
+          mkdir -p "$t/le/live/fishtape" "$t/le/live/tgelectrical.truecollarbuilt.com" "$t/snippets" "$t/sites"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=ci \
+            -keyout "$t/le/live/fishtape/privkey.pem" -out "$t/le/live/fishtape/fullchain.pem" 2>/dev/null
+          cp "$t"/le/live/fishtape/*.pem "$t/le/live/tgelectrical.truecollarbuilt.com/"
+          cp deploy/production/nginx/security-headers.conf "$t/snippets/fishtape-headers.conf"
+          cp deploy/production/nginx/proxy.conf "$t/snippets/fishtape-proxy.conf"
+          cp deploy/staging/security-headers.conf "$t/snippets/fishtape-staging-headers.conf"
+          cp deploy/staging/nginx-api.conf.snippet "$t/snippets/fishtape-staging-site.conf"
+          cp deploy/production/nginx/fishtape.conf deploy/staging/vhost.example.conf "$t/sites/"
+          printf 'events {}\nhttp {\n  include /etc/nginx/mime.types;\n  include /etc/nginx/sites/*.conf;\n}\n' > "$t/nginx.conf"
+          chmod -R a+rX "$t"
+          docker run --rm \
+            -v "$t/nginx.conf:/etc/nginx/nginx.conf:ro" -v "$t/snippets:/etc/nginx/snippets:ro" \
+            -v "$t/sites:/etc/nginx/sites:ro" -v "$t/le:/etc/letsencrypt:ro" \
+            "$NGINX_IMAGE" nginx -t
+          # The first-run ACME config on its own.
+          rm "$t"/sites/*.conf
+          cp deploy/production/nginx/acme-bootstrap.conf "$t/sites/"
+          docker run --rm -v "$t/nginx.conf:/etc/nginx/nginx.conf:ro" -v "$t/sites:/etc/nginx/sites:ro" "$NGINX_IMAGE" nginx -t
+
+  server:
+    name: Server tests
+    needs: detect
+    if: needs.detect.outputs.server == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.11-trixie@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Throwaway credentials for the CI database only.
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      APP_ENV: local
+      PORT: "3410"
+      DATABASE_URL: postgres://fishtape_app:ci_app@127.0.0.1:5432/fishtape
+      MIGRATE_DATABASE_URL: postgres://fishtape_owner:ci_owner@127.0.0.1:5432/fishtape
+      HQ_DATABASE_URL: postgres://fishtape_hq:ci_hq@127.0.0.1:5432/fishtape
+      # Integration tests connect as the app role, so RLS is enforced exactly as in production.
+      TEST_DATABASE_URL: postgres://fishtape_app:ci_app@127.0.0.1:5432/fishtape
+      PUBLIC_ORIGIN: http://127.0.0.1:3410
+      CORS_ORIGINS: http://127.0.0.1:3410,capacitor://localhost
+      LOG_LEVEL: warn
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Bootstrap roles and database (server/db/bootstrap.sql)
+        run: |
+          psql -v ON_ERROR_STOP=1 --no-psqlrc -d postgres \
+            -v owner_password=ci_owner -v app_password=ci_app -v hq_password=ci_hq \
+            -f server/db/bootstrap.sql
+
+      - name: Install
+        working-directory: server
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        working-directory: server
+        run: npm run lint --if-present
+
+      - name: Migrate
+        working-directory: server
+        run: npm run migrate
+
+      - name: Test
+        working-directory: server
+        run: npm test
+
+      - name: Build the image
+        run: docker build -f server/Dockerfile --build-arg GIT_SHA="$GITHUB_SHA" -t fishtape.invalid/server:ci .
+
+      - name: Smoke test the image (same hardening as compose)
+        run: |
+          SECRETS_MASTER_KEY="$(openssl rand -base64 32)"
+          export SECRETS_MASTER_KEY
+          docker run -d --name fishtape-api --network host --read-only --tmpfs /tmp \
+            --cap-drop ALL --security-opt no-new-privileges \
+            -e APP_ENV -e PORT -e DATABASE_URL -e HQ_DATABASE_URL -e PUBLIC_ORIGIN -e CORS_ORIGINS \
+            -e SECRETS_MASTER_KEY -e LOG_LEVEL \
+            fishtape.invalid/server:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:3410/api/healthz; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:3410/api/healthz && echo
+          curl -fsS http://127.0.0.1:3410/api/readyz && echo
+          curl -fsS http://127.0.0.1:3410/api/v1/status && echo
+          docker exec fishtape-api id -u | grep -qvx 0 || { echo "::error::container runs as root"; exit 1; }
+
+      - name: Container logs
+        if: always()
+        run: docker logs fishtape-api 2>&1 | tail -n 200 || true
+
+  ci-ok:
+    name: CI passed
+    if: always()
+    needs: [web, infra, server]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: All required jobs passed (server may be skipped until it exists)
+        env:
+          WEB: ${{ needs.web.result }}
+          INFRA: ${{ needs.infra.result }}
+          SERVER: ${{ needs.server.result }}
+        run: |
+          echo "web=$WEB infra=$INFRA server=$SERVER"
+          [ "$WEB" = success ] && [ "$INFRA" = success ] && { [ "$SERVER" = success ] || [ "$SERVER" = skipped ]; }
+
+  deploy-staging:
+    name: Deploy staging
+    needs: ci-ok
+    if: >-
+      !cancelled()
+      && needs.ci-ok.result == 'success'
+      && github.event_name == 'push'
+      && github.ref == format('refs/heads/{0}', vars.STAGING_BRANCH || 'claude/electrical-concept-app-h4qz12')
+      && vars.STAGING_DEPLOY_ENABLED == 'true'
+    uses: ./.github/workflows/deploy-staging.yml
+    secrets: inherit

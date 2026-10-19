@@ -1,0 +1,81 @@
+# Dependabot version updates. Security updates are separate: turn on "Dependabot security updates"
+# in Settings -> Code security. GitHub reads this file from the default branch only.
+#
+# cooldown: wait a week before proposing a freshly published version, so a hijacked release is
+# more likely to be caught and pulled before it reaches us. Security updates ignore the cooldown.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    open-pull-requests-limit: 10
+    groups:
+      production-minor-patch:
+        dependency-type: production
+        update-types: [minor, patch]
+      development:
+        dependency-type: development
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+
+  # Uncomment when mobile/package.json exists (Capacitor iOS app, Phase 1).
+  # - package-ecosystem: npm
+  #   directory: /mobile
+  #   schedule:
+  #     interval: weekly
+  #     day: monday
+  #   cooldown:
+  #     default-days: 7
+  #   groups:
+  #     mobile-minor-patch:
+  #       update-types: [minor, patch]
+  #   commit-message:
+  #     prefix: deps
+
+  # Base image digest in server/Dockerfile (both FROM lines).
+  - package-ecosystem: docker
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: docker
+
+  # postgres image digest in the compose files. Never let a major version (17 -> 18) through
+  # without a dump/restore plan: the data directory format changes.
+  - package-ecosystem: docker-compose
+    directories:
+      - /deploy/staging
+      - /deploy/production
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: docker

@@ -1,0 +1,120 @@
+# Deploy a release to production when a v* tag is pushed:
+#   git tag -a v1.2.0 -m "..." && git push origin v1.2.0
+#
+# 1. verify-tag: vX.Y.Z format, the tagged commit is on the release branch, server/ exists
+# 2. ci: the full CI workflow again, on the tagged commit
+# 3. deploy: waits for approval in the GitHub environment "production", then SSHes to the host's
+#    forced command `deploy <tag> <sha>`; update.sh re-checks the tag and refuses it if the tag
+#    now points anywhere other than the commit CI tested
+#
+# Off until you set the repository variable PRODUCTION_DEPLOY_ENABLED=true. Environment
+# "production" (deploy/production/README.md, step 7): required reviewer Kelvin, deployment
+# tags matching v* only, and these secrets:
+#   PRODUCTION_SSH_KEY, PRODUCTION_HOST, PRODUCTION_USER, PRODUCTION_KNOWN_HOSTS
+# Optional variables: RELEASE_BRANCH (default claude/electrical-concept-app-h4qz12), PRODUCTION_URL.
+name: Deploy production
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  verify-tag:
+    name: Check the release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: check
+        env:
+          TAG: ${{ github.ref_name }}
+          RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'claude/electrical-concept-app-h4qz12' }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not vX.Y.Z (or vX.Y.Z-rc.N)"; exit 1
+          fi
+          sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          if ! git merge-base --is-ancestor "$sha" "origin/$RELEASE_BRANCH"; then
+            echo "::error::$TAG ($sha) is not on $RELEASE_BRANCH"; exit 1
+          fi
+          if [ ! -f server/package.json ]; then
+            echo "::error::$TAG has no server/; production needs the API"; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Release $TAG = $sha, on $RELEASE_BRANCH" >> "$GITHUB_STEP_SUMMARY"
+
+  ci:
+    name: CI
+    needs: verify-tag
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy to production
+    needs: [verify-tag, ci]
+    if: vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL || 'https://app.fishtapehq.com' }}
+    env:
+      TAG: ${{ github.ref_name }}
+      SHA: ${{ needs.verify-tag.outputs.sha }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL || 'https://app.fishtapehq.com' }}
+    steps:
+      - name: Check deploy secrets
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_HOST }}
+          DEPLOY_USER: ${{ secrets.PRODUCTION_USER }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          missing=""
+          [ -n "$SSH_KEY" ] || missing="$missing PRODUCTION_SSH_KEY"
+          [ -n "$DEPLOY_HOST" ] || missing="$missing PRODUCTION_HOST"
+          [ -n "$DEPLOY_USER" ] || missing="$missing PRODUCTION_USER"
+          [ -n "$KNOWN_HOSTS" ] || missing="$missing PRODUCTION_KNOWN_HOSTS"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets in the 'production' environment:$missing. See deploy/production/README.md step 7."
+            exit 1
+          fi
+
+      - name: Deploy over SSH
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_HOST }}
+          DEPLOY_USER: ${{ secrets.PRODUCTION_USER }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          ssh -i "$HOME/.ssh/deploy_key" \
+            -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "deploy $TAG $SHA $GITHUB_RUN_ID"
+
+      - name: Smoke test
+        run: |
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors -o /dev/null "$PRODUCTION_URL/"
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors "$PRODUCTION_URL/api/v1/status"
+          echo
+          echo "Deployed $TAG ($SHA) to $PRODUCTION_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the key
+        if: always()
+        run: rm -f "$HOME/.ssh/deploy_key"

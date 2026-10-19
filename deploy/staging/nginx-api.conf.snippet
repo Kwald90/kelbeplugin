@@ -57,6 +57,12 @@ location ^~ /hq/ {
     # deny all;
 }
 
+# ---- RFC 9116 security contact. Renew Expires every year (compliance calendar). ----
+location = /.well-known/security.txt {
+    default_type text/plain;
+    return 200 "Contact: https://github.com/Kwald90/kelbeplugin/security/advisories/new\nExpires: 2027-10-19T00:00:00Z\nPolicy: https://github.com/Kwald90/kelbeplugin/security/policy\nPreferred-Languages: en, fr\nCanonical: https://tgelectrical.truecollarbuilt.com/.well-known/security.txt\n";
+}
+
 # ---- PWA ----
 # Nothing hidden is served (.git, .env, ...), except ACME challenges. Regex locations match in
 # file order, so this one comes before the static-file rules.
