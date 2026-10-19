@@ -11,6 +11,7 @@ import { registerDevice, revokeDevice } from '../../auth/devices.js';
 import { hashSecret, pinProblem, verifySecret } from '../../auth/passwords.js';
 import { DEVICE_COOKIE, createSession, cookieOptions } from '../../auth/sessions.js';
 import { issuePasswordLink } from '../../services/resets.js';
+import { deleteSecret, isSecretName, listSecrets, setSecret } from '../../services/secrets.js';
 import { authLimit, setSessionCookie, tenantCtx } from '../util.js';
 
 const uuidParam = { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } };
@@ -284,41 +285,33 @@ export default async function adminRoutes(app, { config, db, email }) {
   });
 
   // ---- tenant secrets (Stripe, Resend, Twilio, AI keys...) -----------------
+  // One code path for company keys: services/secrets.js (fixed names, envelope encryption bound
+  // to the company and name, hints only on the way out). The Integrations screen uses these too.
 
   const secretName = { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z0-9][a-z0-9_.-]{0,63}$' } } };
+  const knownSecret = (name) => { if (!isSecretName(name)) throw badRequest('Unknown secret name.'); };
 
-  app.get('/api/v1/secrets', { config: { auth: 'admin' }, schema: { tags: ['secrets'], summary: 'Names of stored secrets (values are never returned)' } }, async (req) => {
-    const rows = await db.withTenant(tenantCtx(req.principal), async (tx) => (await tx.query(
-      'SELECT name, created_at, updated_at FROM tenant_secrets WHERE tenant_id = $1 ORDER BY name', [tx.tenantId])).rows);
-    return { data: rows.map((r) => ({ name: r.name, createdAt: r.created_at, updatedAt: r.updated_at })) };
+  app.get('/api/v1/secrets', { config: { auth: 'admin' }, schema: { tags: ['secrets'], summary: 'Stored secrets: names and hints, never values' } }, async (req) => {
+    const rows = await db.withTenant(tenantCtx(req.principal), (tx) => listSecrets(tx, app.sealer));
+    return { data: rows };
   });
 
   app.put('/api/v1/secrets/:name', {
     config: { auth: 'admin' },
-    schema: { tags: ['secrets'], summary: 'Store or replace a secret (envelope-encrypted)', params: secretName, body: { type: 'object', required: ['value'], additionalProperties: false, properties: { value: { type: 'string', minLength: 1, maxLength: 8192 } } } },
+    schema: { tags: ['secrets'], summary: 'Store or replace a secret (envelope-encrypted)', params: secretName, body: { type: 'object', required: ['value'], additionalProperties: false, properties: { value: { type: 'string', minLength: 1, maxLength: 4096 } } } },
   }, async (req, reply) => {
-    await audited(req, (tx) => tx.query(
-      `INSERT INTO tenant_secrets (tenant_id, name, value_enc, created_by) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (tenant_id, name) DO UPDATE SET value_enc = EXCLUDED.value_enc, updated_at = now()`,
-      [tx.tenantId, req.params.name, app.sealer.envelopeSeal(req.body.value, `${tx.tenantId}:${req.params.name}`), `user:${req.principal.userId}`]),
-    { action: 'secret.put', collection: 'tenant_secrets', recordId: req.params.name, summary: `Secret ${req.params.name} saved` });
+    knownSecret(req.params.name);
+    await audited(req, (tx) => setSecret(tx, app.sealer, req.params.name, req.body.value, `user:${req.principal.userId}`),
+      { action: 'secret.put', collection: 'tenant_secrets', recordId: req.params.name, summary: `Secret ${req.params.name} saved` });
     reply.code(204);
   });
 
   app.delete('/api/v1/secrets/:name', { config: { auth: 'admin' }, schema: { tags: ['secrets'], summary: 'Delete a secret', params: secretName } }, async (req, reply) => {
-    const n = await audited(req, async (tx) => (await tx.query('DELETE FROM tenant_secrets WHERE tenant_id = $1 AND name = $2', [tx.tenantId, req.params.name])).rowCount,
+    knownSecret(req.params.name);
+    const removed = await audited(req, (tx) => deleteSecret(tx, req.params.name),
       { action: 'secret.delete', collection: 'tenant_secrets', recordId: req.params.name, summary: `Secret ${req.params.name} deleted` });
-    if (!n) throw notFound('No such secret.');
+    if (!removed) throw notFound('No such secret.');
     reply.code(204);
   });
 
-}
-
-/**
- * Read a tenant secret inside a tenant transaction (for integrations).
- * @param {import('../../db.js').TenantTx} tx
- */
-export async function readSecret(tx, sealer, name) {
-  const { rows } = await tx.query('SELECT value_enc FROM tenant_secrets WHERE tenant_id = $1 AND name = $2', [tx.tenantId, name]);
-  return rows[0] ? sealer.envelopeOpen(rows[0].value_enc, `${tx.tenantId}:${name}`) : null;
 }

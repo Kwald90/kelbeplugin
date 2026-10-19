@@ -14,7 +14,7 @@ export const REDACT_PATHS = [
   '*.password_hash', '*.pin_hash', '*.secret_enc', '*.value',
 ];
 
-const SECRET_QUERY = /([?&](?:code|state|token|key|password|pin|id_token|access_token)=)[^&#]*/gi;
+const SECRET_QUERY = /([?&](?:code|state|token|key|password|pin|id_token|access_token|hub\.verify_token|verify_token|secret|signature)=)[^&#]*/gi;
 
 /** Strip secret-looking query values from a URL before it is logged. */
 export function redactUrl(url) {

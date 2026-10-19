@@ -182,10 +182,10 @@ describe('API: tenant A cannot reach tenant B', { skip }, () => {
     const bKeyId = (await t.superPool.query('SELECT id FROM api_keys WHERE tenant_id = $1', [B.tenantId])).rows[0].id;
     assert.equal((await call(app, { method: 'DELETE', url: `/api/v1/api-keys/${bKeyId}`, token: A.token })).status, 404);
     assert.equal((await call(app, { url: '/api/v1/jobs', token: bKey })).status, 200, 'B key still works');
-    await call(app, { method: 'PUT', url: '/api/v1/secrets/stripe', token: B.token, body: { value: SECRET } });
+    await call(app, { method: 'PUT', url: '/api/v1/secrets/stripe.secret_key', token: B.token, body: { value: SECRET } });
     const s = await call(app, { url: '/api/v1/secrets', token: A.token });
-    assert.ok(!s.body.data.some((x) => x.name === 'stripe'));
-    assert.equal((await call(app, { method: 'DELETE', url: '/api/v1/secrets/stripe', token: A.token })).status, 404);
+    assert.ok(!s.body.data.some((x) => x.name === 'stripe.secret_key'));
+    assert.equal((await call(app, { method: 'DELETE', url: '/api/v1/secrets/stripe.secret_key', token: A.token })).status, 404);
   });
 });
 
