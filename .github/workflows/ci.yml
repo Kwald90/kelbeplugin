@@ -72,6 +72,19 @@ jobs:
       - name: No .env files, private keys, dumps or keystores in the tree
         run: node .github/scripts/check-committed-files.mjs
 
+      - name: Server image ships every PWA file the server imports
+        run: |
+          status=0
+          for p in $(grep -rhE "(import|new URL\()" server/src | grep -oE "electrical-app/js/[A-Za-z0-9_./-]+" | sort -u); do
+            if ! grep -q "^COPY ${p%/}/\?\s" server/Dockerfile; then
+              echo "::error file=server/Dockerfile::server/src uses $p but the Dockerfile doesn't COPY it"; status=1
+            fi
+            if ! grep -qx "!${p%/}/\?" .dockerignore; then
+              echo "::error file=.dockerignore::server/src uses $p but .dockerignore doesn't allow it (!$p)"; status=1
+            fi
+          done
+          exit "$status"
+
       - name: Shared deploy scripts are identical in staging and production
         run: |
           status=0

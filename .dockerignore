@@ -4,6 +4,7 @@
 !server/
 !electrical-app/js/schema/
 !electrical-app/js/brand.js
+!electrical-app/js/plans.js
 
 # Never send these into the build, even inside allowed folders.
 **/node_modules

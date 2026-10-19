@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 #
 # Fishtape API and worker image. Build from the repo root, because the server reads files from
-# the PWA: the shared JSON Schemas (electrical-app/js/schema/) and the product name
-# (electrical-app/js/brand.js):
+# the PWA: the shared JSON Schemas (electrical-app/js/schema/), the product name
+# (electrical-app/js/brand.js) and the plan tiers / entitlements (electrical-app/js/plans.js):
 #
 #   docker build -f server/Dockerfile --build-arg GIT_SHA="$(git rev-parse HEAD)" -t fishtape.invalid/server:dev .
 #
@@ -37,6 +37,7 @@ COPY --from=deps /app/server/node_modules ./node_modules
 COPY server/ ./
 COPY electrical-app/js/schema/ /app/electrical-app/js/schema/
 COPY electrical-app/js/brand.js /app/electrical-app/js/brand.js
+COPY electrical-app/js/plans.js /app/electrical-app/js/plans.js
 
 ARG GIT_SHA=unknown
 ENV GIT_SHA=${GIT_SHA}
