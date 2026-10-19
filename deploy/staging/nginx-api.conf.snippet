@@ -5,7 +5,8 @@
 # install-nginx.sh copies this file to /etc/nginx/snippets/fishtape-staging-site.conf, and the
 # vhost includes it with one line (README.md, "Edit the vhost"). It also needs
 # /etc/nginx/snippets/fishtape-staging-http.conf included once at the top of the vhost file,
-# outside any server block (log format), and fishtape-staging-headers.conf (included below).
+# outside any server block (log format), plus fishtape-staging-headers.conf and
+# fishtape-staging-proxy.conf (included below). install-nginx.sh copies all four.
 #
 # Remove the old Fishtape lines from the vhost (root, index, the sw.js / index.html / static-file
 # locations, location /, the dot-file rule, old add_header lines). Keep CloudPanel's listen,
@@ -16,47 +17,31 @@
 # other path is 404 (the app uses a hash router, so no SPA fallback is needed). Check after each
 # deploy with deploy/check-exposure.sh.
 
+# Kept to the minimum at server level, so nothing here duplicates a line CloudPanel already has
+# (nginx -t fails on duplicate root / server_tokens / client_max_body_size). Body size and
+# timeouts are set on /api/ only; static files are GET-only.
 root /var/www/tgelectrical/current/electrical-app;
-index index.html;
 server_tokens off;
 autoindex off;
-charset utf-8;
 
 # Every response gets the security headers (HSTS, CSP, Permissions-Policy, ...).
 include /etc/nginx/snippets/fishtape-staging-headers.conf;
 
-# Uploads ride on sync/REST (plan images are data: URLs inside drawing records).
-client_max_body_size 25m;
-client_body_timeout 30s;
-
-# ---- API: 127.0.0.1:3410 (docker compose project fishtape-staging) ----
+# ---- API (docker compose project fishtape-staging) ----
+# Body size (72m), no-store, header clean-up and timeouts come from fishtape-staging-proxy.conf
+# (= deploy/staging/nginx-proxy.conf). Logged without query strings or Referer queries (format
+# in fishtape-staging-http.conf).
+# Tenant API on 127.0.0.1:3410.
 location ^~ /api/ {
-    # Logged without query strings or Referer queries (format in fishtape-staging-http.conf).
     access_log /var/log/fishtape-staging/nginx-api.access.log fishtape_staging_noquery;
     proxy_pass http://127.0.0.1:3410;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "";
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    # nginx is the edge: overwrite, never append, so clients can't forge their address.
-    proxy_set_header X-Forwarded-For $remote_addr;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Request-Id $request_id;
-    proxy_connect_timeout 5s;
-    proxy_send_timeout 60s;
-    proxy_read_timeout 60s;
-    # Never replay a request on another upstream: a retried POST could double-write.
-    proxy_next_upstream off;
-    # API answers may hold customer data: never stored by the browser or any cache.
-    proxy_hide_header Cache-Control;
-    proxy_hide_header X-Powered-By;
-    add_header Cache-Control "no-store" always;
-    # This location has add_header lines, so the server-level ones don't apply here; repeat the
-    # transport ones. The API sets its own CSP for anything HTML it serves.
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header X-Frame-Options "DENY" always;
+    include /etc/nginx/snippets/fishtape-staging-proxy.conf;
+}
+# HQ endpoints go to hq-api on 127.0.0.1:3411, the only process with the BYPASSRLS role.
+location ^~ /api/hq/ {
+    access_log /var/log/fishtape-staging/nginx-api.access.log fishtape_staging_noquery;
+    proxy_pass http://127.0.0.1:3411;
+    include /etc/nginx/snippets/fishtape-staging-proxy.conf;
 }
 
 # ---- HQ console (Phase 1), served from the checkout's hq/ folder once it exists ----

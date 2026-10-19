@@ -26,6 +26,7 @@ HERE="$REPO_DIR/deploy/production"
 STATE_DIR="/var/lib/fishtape-$ENV_NAME"
 DEPLOY_LOG="$STATE_DIR/deploy-log.jsonl"
 API="http://127.0.0.1:3410"
+HQ_API="http://127.0.0.1:3411"
 IMAGE_REPO=fishtape.invalid/server
 READY_TIMEOUT="${READY_TIMEOUT:-150}"
 KEEP_IMAGES="${KEEP_IMAGES:-5}"
@@ -89,7 +90,7 @@ image_exists() { docker image inspect "$IMAGE_REPO:$1" >/dev/null 2>&1; }
 wait_ready() { # seconds
   local deadline=$(( $(date +%s) + $1 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if curl -fsS -m 5 -o /dev/null "$API/api/readyz"; then return 0; fi
+    if curl -fsS -m 5 -o /dev/null "$API/api/readyz" && curl -fsS -m 5 -o /dev/null "$HQ_API/api/readyz"; then return 0; fi
     sleep 3
   done
   return 1
@@ -111,7 +112,7 @@ fail() { # message
   if [ "$SWITCHED" -eq 1 ]; then
     if [ -n "$PREV_TAG" ] && image_exists "$PREV_TAG"; then
       say "rolling containers back to ${PREV_TAG:0:12}"
-      IMAGE_TAG="$PREV_TAG" dc up -d --no-build api worker || true
+      IMAGE_TAG="$PREV_TAG" dc up -d --no-build api hq-api worker || true
       if wait_ready 90; then
         result=rolled_back
       else
@@ -119,7 +120,7 @@ fail() { # message
         msg="$msg; the previous release did not become ready either"
       fi
     else
-      dc stop api worker || true
+      dc stop api hq-api worker || true
       msg="$msg; no previous image, api stopped"
     fi
   fi
@@ -172,8 +173,8 @@ IMAGE_TAG="$TARGET" dc run --rm --no-deps migrate || fail "migrations failed"
 
 # ---- 4. switch the API ----
 SWITCHED=1
-say "starting api and worker"
-IMAGE_TAG="$TARGET" dc up -d --no-build --remove-orphans api worker || fail "containers did not start"
+say "starting api, hq-api and worker"
+IMAGE_TAG="$TARGET" dc up -d --no-build --remove-orphans api hq-api worker || fail "containers did not start"
 wait_ready "$READY_TIMEOUT" || fail "/api/readyz not ready within ${READY_TIMEOUT}s"
 STATUS="$(curl -fsS -m 5 "$API/api/v1/status" || true)"
 case "$STATUS" in

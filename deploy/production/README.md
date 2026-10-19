@@ -6,7 +6,7 @@ confirmed). It serves three names from one box:
 | host | serves |
 | --- | --- |
 | `app.fishtapehq.com` | the PWA and the tenant API (`/api/`). `/api/hq/` and `/hq/` return 404 here. |
-| `hq.fishtapehq.com` | the HQ console and its API (`/api/hq/`, BYPASSRLS role) |
+| `hq.fishtapehq.com` | the HQ console; all of its `/api/` goes to the separate `hq-api` container (127.0.0.1:3411), the only process with the BYPASSRLS role |
 | `status.fishtapehq.com` | `/api/v1/status` only (prefer an external status service; see `docs/architecture/environments.md`) |
 
 Deploys come only from `v*` tags, after CI passes and Kelvin approves in the GitHub

@@ -122,6 +122,15 @@ if [ -f "$LB" ]; then
 else
   res WARN last-backup "no backup has run yet"
 fi
+BCONF=/srv/fishtape/repo/deploy/production/backup.conf
+if [ -f "$BCONF" ]; then
+  check FAIL backup-offsite "offsite target configured" "no OFFSITE_RSYNC_TARGET or OFFSITE_RCLONE_REMOTE in $BCONF (required for production)" \
+    grep -qE '^[[:space:]]*OFFSITE_(RSYNC_TARGET|RCLONE_REMOTE)=["'\'']?[^"'\''[:space:]]' "$BCONF"
+  check FAIL backup-heartbeat "HEARTBEAT_URL set" "no HEARTBEAT_URL in $BCONF (a missed backup would go unnoticed)" \
+    grep -qE '^[[:space:]]*HEARTBEAT_URL=["'\'']?[^"'\''[:space:]]' "$BCONF"
+else
+  res FAIL backup-conf "$BCONF missing (offsite target and heartbeat are required in production)"
+fi
 ENVF=/srv/fishtape/repo/deploy/production/.env
 if [ -f "$ENVF" ]; then
   perm="$(stat -c '%U %a' "$ENVF")"

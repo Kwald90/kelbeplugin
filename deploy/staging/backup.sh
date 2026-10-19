@@ -178,6 +178,11 @@ fi
 trap - ERR
 if [ "$OFFSITE" = failed ]; then
   finish degraded "local backup ok, offsite copy failed"
+elif [ "$ENV_NAME" = production ] && [ "$OFFSITE" = skipped ]; then
+  # Production policy: an offsite copy is required (docs/compliance/backup-retention.md).
+  finish degraded "local backup ok, but no offsite target is configured (OFFSITE_* in backup.conf)"
+elif [ "$ENV_NAME" = production ] && [ -z "$HEARTBEAT_URL" ]; then
+  finish degraded "backup ok, but HEARTBEAT_URL is not set, so a missed backup would go unnoticed"
 else
   finish ok
 fi

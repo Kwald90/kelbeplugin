@@ -35,9 +35,17 @@ for p in / /var/lib/docker "$BACKUP_DIR"; do
   disks="$disks${disks:+,}{\"mount\":$(jstr "$mnt"),\"sizeBytes\":$size,\"usedBytes\":$used,\"usedPercent\":${pct%\%}}"
 done
 
+mkdir -p "$STATE_DIR/status"
 certs=""
+first_cert=1
 for c in $CERTS; do
   [ -r "$c" ] || continue
+  # The API's TLS_CERT_FILE: a copy of the public chain (never privkey.pem), refreshed here so
+  # renewals show up without remounting anything.
+  if [ "$first_cert" -eq 1 ]; then
+    install -m 0644 "$c" "$STATE_DIR/status/tls-cert.pem.tmp" && mv -f "$STATE_DIR/status/tls-cert.pem.tmp" "$STATE_DIR/status/tls-cert.pem"
+    first_cert=0
+  fi
   end="$(openssl x509 -enddate -noout -in "$c" 2>/dev/null | cut -d= -f2)" || continue
   end_epoch="$(date -d "$end" +%s)"
   days=$(( (end_epoch - $(date +%s)) / 86400 ))

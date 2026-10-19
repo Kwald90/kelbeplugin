@@ -12,7 +12,7 @@ Other sites share this box. **Don't touch** the host's Postgres on 127.0.0.1:543
 
 | file | what it does |
 | --- | --- |
-| `docker-compose.yml` | Postgres 17 (127.0.0.1:5433), API (127.0.0.1:3410), worker, and one-off `migrate`/`seed` |
+| `docker-compose.yml` | Postgres 17 (127.0.0.1:5433), API (127.0.0.1:3410), HQ API (127.0.0.1:3411, the only holder of the BYPASSRLS role), worker, and one-off `migrate`/`seed` |
 | `.env.example` | every setting; `init-env.sh` turns it into `.env` with random secrets |
 | `initdb/10-bootstrap.sh` | first start only: runs `server/db/bootstrap.sql` to create the roles and database |
 | `update.sh` | deploy: fetch, build, back up, migrate, switch, health-check, roll back on failure |
@@ -22,6 +22,7 @@ Other sites share this box. **Don't touch** the host's Postgres on 127.0.0.1:543
 | `security-headers.conf` | HSTS, CSP, Permissions-Policy and friends |
 | `nginx-api.conf.snippet` | everything Fishtape needs inside the vhost (static app, `/api/`, `/hq/`, caching) |
 | `nginx-http.conf` | http-level part: a log format that drops query strings |
+| `nginx-proxy.conf` | shared `/api/` proxy settings: 72 MB bodies, `no-store`, one source for transport headers |
 | `logrotate-nginx` | keeps the API access log 30 days |
 | `install-nginx.sh` | copies the nginx files into `/etc/nginx/snippets/` and the logrotate file, runs `nginx -t`, reloads |
 | `../check-exposure.sh` | after every deploy: sensitive paths must not be served, required headers must be there |
@@ -48,7 +49,7 @@ Do these once, in order, over SSH (`ssh -i ~/.ssh/kelvindale_vps ubuntu@208.113.
 
 ```bash
 docker --version && docker compose version     # Docker 29, Compose v2+
-sudo ss -tlnp | grep -E ':(3410|5433)\b'       # must print nothing: both ports free
+sudo ss -tlnp | grep -E ':(3410|3411|5433)\b'  # must print nothing: all three ports free
 sudo apt-get install -y age                    # backup encryption
 ```
 
@@ -135,6 +136,7 @@ from the root (`/`, `.js`, `.css`, `.json` schemas, images, fonts, the manifest 
 worker), returns 404 for every other path including dotfiles, `*.env*`, `*.sql`, `*.sh`, `*.md`,
 dumps, keys and archives, and for `/deploy`, `/server`, `/docs`, `/tests` and the other repo
 folders. There is no SPA fallback: the app uses a hash router, so unknown paths are 404.
+`/api/hq/` goes to the HQ API on 3411, everything else under `/api/` to the tenant API on 3410.
 `/api/` responses carry `Cache-Control: no-store` and are logged to
 `/var/log/fishtape-staging/nginx-api.access.log` without query strings (kept 30 days).
 

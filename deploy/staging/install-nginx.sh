@@ -17,6 +17,7 @@ command -v nginx >/dev/null || { echo "nginx not found" >&2; exit 1; }
 declare -A FILES=(
   ["$HERE/nginx-http.conf"]="$SNIPPETS/fishtape-staging-http.conf"
   ["$HERE/security-headers.conf"]="$SNIPPETS/fishtape-staging-headers.conf"
+  ["$HERE/nginx-proxy.conf"]="$SNIPPETS/fishtape-staging-proxy.conf"
   ["$HERE/nginx-api.conf.snippet"]="$SNIPPETS/fishtape-staging-site.conf"
   ["$HERE/logrotate-nginx"]=/etc/logrotate.d/fishtape-staging-nginx
 )

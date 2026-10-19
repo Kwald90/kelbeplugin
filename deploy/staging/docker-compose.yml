@@ -30,17 +30,18 @@ x-server: &server
     HOST: 0.0.0.0
     PORT: "3410"
     # Built from the role passwords in .env so they can't drift apart. Passwords must be
-    # URL-safe (init-env.sh generates hex). The long-running API and worker get the app and
-    # HQ roles only; the owner (migration) role goes to the migrate/seed one-offs below.
+    # URL-safe (init-env.sh generates hex). Every server container gets the app role; only
+    # hq-api gets the BYPASSRLS HQ role, and only the migrate/seed one-offs get the owner role.
     DATABASE_URL: postgres://fishtape_app:${FISHTAPE_APP_PASSWORD:?set in .env}@postgres:5432/fishtape
-    HQ_DATABASE_URL: postgres://fishtape_hq:${FISHTAPE_HQ_PASSWORD:?set in .env}@postgres:5432/fishtape
     # The raw passwords from .env are blanked inside app containers: they only need the URLs.
     POSTGRES_SUPERUSER_PASSWORD: ""
     FISHTAPE_OWNER_PASSWORD: ""
     FISHTAPE_APP_PASSWORD: ""
     FISHTAPE_HQ_PASSWORD: ""
-    # Written by backup.sh, read by /api/hq/health.
+    # Written by backup.sh / host-status.sh, read by /api/hq/health.
     BACKUP_STATUS_FILE: /run/fishtape/status/last-backup.json
+    # Public certificate chain copied by host-status.sh (never the key), for HQ health.
+    TLS_CERT_FILE: /run/fishtape/status/tls-cert.pem
   volumes:
     - /var/lib/fishtape-staging/status:/run/fishtape/status:ro
   depends_on:
@@ -137,6 +138,21 @@ services:
     cpus: 2
     mem_limit: 1g
     pids_limit: 512
+
+  # HQ console API: the same image, the only process that holds the BYPASSRLS role
+  # (fishtape_hq). nginx sends HQ traffic here; the tenant-facing api above can't reach
+  # across tenants even if it is compromised (its HQ routes answer 503).
+  hq-api:
+    <<: *server
+    command: ["node", "src/index.js"]
+    environment:
+      <<: *server-environment
+      HQ_DATABASE_URL: postgres://fishtape_hq:${FISHTAPE_HQ_PASSWORD:?set in .env}@postgres:5432/fishtape
+    ports:
+      - "127.0.0.1:3411:3410"
+    cpus: 1
+    mem_limit: 512m
+    pids_limit: 256
 
   worker:
     <<: *server

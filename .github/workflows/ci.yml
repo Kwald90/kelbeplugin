@@ -81,6 +81,10 @@ jobs:
               status=1
             fi
           done
+          if ! cmp -s deploy/staging/nginx-proxy.conf deploy/production/nginx/proxy.conf; then
+            echo "::error file=deploy/production/nginx/proxy.conf::differs from deploy/staging/nginx-proxy.conf"
+            status=1
+          fi
           exit "$status"
 
       - name: Scripts are executable
@@ -129,6 +133,7 @@ jobs:
           cp deploy/production/nginx/tls.conf "$t/snippets/fishtape-tls.conf"
           cp deploy/staging/nginx-http.conf "$t/snippets/fishtape-staging-http.conf"
           cp deploy/staging/security-headers.conf "$t/snippets/fishtape-staging-headers.conf"
+          cp deploy/staging/nginx-proxy.conf "$t/snippets/fishtape-staging-proxy.conf"
           cp deploy/staging/nginx-api.conf.snippet "$t/snippets/fishtape-staging-site.conf"
           cp deploy/production/nginx/fishtape.conf deploy/staging/vhost.example.conf "$t/sites/"
           printf 'events {}\nhttp {\n  include /etc/nginx/mime.types;\n  include /etc/nginx/sites/*.conf;\n}\n' > "$t/nginx.conf"
@@ -168,16 +173,16 @@ jobs:
       PGPORT: "5432"
       PGUSER: postgres
       PGPASSWORD: postgres
-      APP_ENV: local
-      PORT: "3410"
+      # The test suites create one database per test file, so they need a superuser URL. With
+      # the role passwords set, tests log in as fishtape_owner/app/hq for real (no SET ROLE).
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      TEST_OWNER_PASSWORD: ci_owner
+      TEST_APP_PASSWORD: ci_app
+      TEST_HQ_PASSWORD: ci_hq
+      # For the migrate step and the image smoke test (the `fishtape` database from bootstrap.sql).
       DATABASE_URL: postgres://fishtape_app:ci_app@127.0.0.1:5432/fishtape
       MIGRATE_DATABASE_URL: postgres://fishtape_owner:ci_owner@127.0.0.1:5432/fishtape
       HQ_DATABASE_URL: postgres://fishtape_hq:ci_hq@127.0.0.1:5432/fishtape
-      # Integration tests connect as the app role, so RLS is enforced exactly as in production.
-      TEST_DATABASE_URL: postgres://fishtape_app:ci_app@127.0.0.1:5432/fishtape
-      PUBLIC_ORIGIN: http://127.0.0.1:3410
-      CORS_ORIGINS: http://127.0.0.1:3410,capacitor://localhost
-      LOG_LEVEL: warn
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -200,27 +205,33 @@ jobs:
 
       - name: Lint
         working-directory: server
-        run: npm run lint --if-present
+        run: npm run lint
 
-      - name: Migrate
+      - name: Test (against the Postgres service; DB suites must not be skipped)
+        working-directory: server
+        run: |
+          npm test 2>&1 | tee "$RUNNER_TEMP/server-test.log"
+          if grep -q 'TEST_DATABASE_URL is not set' "$RUNNER_TEMP/server-test.log"; then
+            echo "::error::database test suites were skipped; TEST_DATABASE_URL did not reach the tests"
+            exit 1
+          fi
+
+      - name: Migrate the fishtape database (for the image smoke test)
         working-directory: server
         run: npm run migrate
-
-      - name: Test
-        working-directory: server
-        run: npm test
 
       - name: Build the image
         run: docker build -f server/Dockerfile --build-arg GIT_SHA="$GITHUB_SHA" -t fishtape.invalid/server:ci .
 
       - name: Smoke test the image (same hardening as compose)
         run: |
+          # APP_ENV=staging so the deployed-mode config checks run (real master key, no superuser).
           SECRETS_MASTER_KEY="$(openssl rand -base64 32)"
           export SECRETS_MASTER_KEY
           docker run -d --name fishtape-api --network host --read-only --tmpfs /tmp \
             --cap-drop ALL --security-opt no-new-privileges \
-            -e APP_ENV -e PORT -e DATABASE_URL -e HQ_DATABASE_URL -e PUBLIC_ORIGIN -e CORS_ORIGINS \
-            -e SECRETS_MASTER_KEY -e LOG_LEVEL \
+            -e APP_ENV=staging -e PORT=3410 -e HOST=127.0.0.1 -e DATABASE_URL -e HQ_DATABASE_URL \
+            -e PUBLIC_ORIGIN=http://127.0.0.1:3410 -e SECRETS_MASTER_KEY -e LOG_LEVEL=warn \
             fishtape.invalid/server:ci
           for _ in $(seq 1 30); do
             if curl -fsS -o /dev/null http://127.0.0.1:3410/api/healthz; then break; fi
@@ -228,8 +239,12 @@ jobs:
           done
           curl -fsS http://127.0.0.1:3410/api/healthz && echo
           curl -fsS http://127.0.0.1:3410/api/readyz && echo
-          curl -fsS http://127.0.0.1:3410/api/v1/status && echo
-          docker exec fishtape-api id -u | grep -qvx 0 || { echo "::error::container runs as root"; exit 1; }
+          status="$(curl -fsS http://127.0.0.1:3410/api/v1/status)"
+          echo "$status"
+          case "$status" in *"${GITHUB_SHA:0:12}"*) ;; *) echo "::error::/api/v1/status does not report this commit"; exit 1 ;; esac
+          if [ "$(docker exec fishtape-api id -u)" = 0 ]; then echo "::error::container runs as root"; exit 1; fi
+          owner="$(docker exec fishtape-api stat -c %U /app/server/src/index.js)"
+          if [ "$owner" != root ]; then echo "::error::app code is owned by '$owner', not root"; exit 1; fi
 
       - name: Container logs
         if: always()

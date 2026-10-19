@@ -1,24 +1,21 @@
 # syntax=docker/dockerfile:1
 #
-# Fishtape API and worker image. Build from the repo root, because the server reads the
-# shared JSON Schemas in electrical-app/js/schema/:
+# Fishtape API and worker image. Build from the repo root, because the server reads files from
+# the PWA: the shared JSON Schemas (electrical-app/js/schema/) and the product name
+# (electrical-app/js/brand.js):
 #
 #   docker build -f server/Dockerfile --build-arg GIT_SHA="$(git rev-parse HEAD)" -t fishtape.invalid/server:dev .
 #
-# One image runs both processes: the API (default CMD) and the worker (`node src/worker.js`).
-# Nothing secret is baked in. All configuration arrives at runtime through the environment
-# (see deploy/staging/.env.example and docs/BUILD-PLAN.md "Backend contract").
+# One image runs both processes: the API (default CMD) and the worker (`node src/worker.js`);
+# `npm run migrate` and `npm run seed` run as one-off containers. Nothing secret is baked in:
+# configuration arrives at runtime through the environment (deploy/<env>/.env.example).
 #
-# Base image: Debian trixie slim (glibc). argon2 ships glibc prebuilds and, failing those,
-# compiles in the deps stage below; Alpine/musl prebuilds exist but are less tested.
+# Node 22.12 or newer is required (cookie 2.x via @fastify/cookie). Debian trixie slim (glibc):
+# @node-rs/argon2 installs a prebuilt N-API binary for linux-x64-gnu, so no compiler is needed.
 # Dependabot (docker ecosystem) keeps the tag and digest current. Keep both FROM lines equal.
 
 FROM node:22.23.3-trixie-slim@sha256:154ba2f4d6fec323d28e4f4bb86bba4677f1223391a1979cf521304e03a98dfa AS deps
 WORKDIR /app/server
-# Toolchain for native modules, only in this throwaway stage.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 make g++ \
- && rm -rf /var/lib/apt/lists/*
 COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund \
  && npm cache clean --force
@@ -27,17 +24,19 @@ FROM node:22.23.3-trixie-slim@sha256:154ba2f4d6fec323d28e4f4bb86bba4677f1223391a
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3410 \
+    SCHEMA_DIR=/app/electrical-app/js/schema/ \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_CACHE=/tmp/.npm
 WORKDIR /app/server
 
-# Code is owned by root and read-only to the runtime user. Same layout as the repo, so
-# `../electrical-app/js/schema/` resolves exactly as it does in development.
+# Code is owned by root and read-only to the runtime user. Same layout as the repo, so the
+# server's relative paths (../electrical-app/js/...) resolve exactly as in development.
 COPY --from=deps /app/server/node_modules ./node_modules
 COPY server/ ./
 COPY electrical-app/js/schema/ /app/electrical-app/js/schema/
+COPY electrical-app/js/brand.js /app/electrical-app/js/brand.js
 
 ARG GIT_SHA=unknown
 ENV GIT_SHA=${GIT_SHA}

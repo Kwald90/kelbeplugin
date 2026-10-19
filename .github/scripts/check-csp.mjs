@@ -137,9 +137,13 @@ for (const p of jsFiles) {
     for (const m of code.matchAll(/\bstyle\s*:\s*(['"`])([^'"`]*)\1/g)) {
       if (!INTL_STYLES.has(m[2])) error(file, n, "string style for h() becomes a style attribute, which the CSP blocks; pass an object: style: { ... }");
     }
-    if (/(innerHTML|outerHTML|insertAdjacentHTML)/.test(code) && /(\sstyle\s*=|\son[a-z]+\s*=|<script)/i.test(code)) {
-      error(file, n, 'HTML string with style=, on*= or <script> inserted via innerHTML is blocked by the CSP');
+    // Markup built as strings (HTML or SVG for innerHTML), wherever it is built: a style="..."
+    // attribute, an inline on*= handler or a <script> in it is blocked once inserted.
+    if (/\sstyle=(?:["'`]|\\["']|\$\{)/.test(code)) {
+      error(file, n, 'markup string with a style="..." attribute: blocked by the CSP once inserted (style-src-attr). Use a class, an SVG presentation attribute (e.g. stroke-width="2"), or set el.style after inserting');
     }
+    if (/\son[a-z]+=(?:["'`]|\\["']|\$\{)/i.test(code)) error(file, n, 'markup string with an inline on*= handler: blocked by the CSP; use addEventListener');
+    if (/<script[\s>]/i.test(code) && /['"`]/.test(code)) error(file, n, 'markup string with <script>: blocked by the CSP');
     const loads = /(fetch|importScripts|import|new\s+(Worker|SharedWorker|EventSource|WebSocket))\s*\(|\.src\s*=|\bsrc\s*:/.test(code);
     for (const m of code.matchAll(/\b(https?):\/\/([a-z0-9.-]+\.[a-z]{2,})(\/[^\s'"`)]*)?/gi)) {
       if (m[2] === 'www.w3.org') continue;

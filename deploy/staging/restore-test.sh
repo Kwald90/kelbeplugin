@@ -17,6 +17,8 @@
 #   --file <path>       backup to test (default: newest nightly in /var/backups/fishtape-<env>/daily)
 #   --identity <file>   age identity file, or - to read it from stdin (required)
 #   --keep              leave the container running afterwards (prints how to remove it)
+#   --log <file>        also append the JSON result line to <file> (evidence when run on your own
+#                       computer; on the server it always goes to /var/lib/fishtape-<env>/restore-tests.jsonl)
 #
 # deploy/production/restore-test.sh is an identical copy; CI fails if they differ.
 set -Eeuo pipefail
@@ -30,12 +32,14 @@ STATE_DIR="/var/lib/fishtape-$ENV_NAME"
 FILE=""
 IDENTITY=""
 KEEP=0
+LOG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --file) FILE="${2:-}"; shift 2 ;;
     --identity) IDENTITY="${2:-}"; shift 2 ;;
     --keep) KEEP=1; shift ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    --log) LOG="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -171,12 +175,18 @@ else
   echo "PASS"
 fi
 
-# Evidence (A1.3): one JSON line per test, next to the backup log, when run on the server.
+# Evidence (A1.3): one JSON line per test, next to the backup log when run on the server, and in
+# --log <file> when given.
+esc() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '%s' "$s"; }
+RESULT_LINE="$(printf '{"ts":"%s","environment":"%s","host":"%s","file":"%s","sha256":"%s","ok":%s,"tables":%s,"rlsForcedTables":%s,"migrations":%s,"tenants":%s,"newestAuditEvent":"%s","databaseSize":"%s","durationSeconds":%d,"failures":"%s"}' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ENV_NAME" "$(hostname)" "$(basename "$FILE")" "$SHA256" "$OK" "$TABLES" "$RLS_TABLES" "$MIGRATIONS" "$TENANTS" \
+  "$NEWEST_AUDIT" "$DB_SIZE" "$(( $(date +%s) - START ))" "$(esc "${FAILURES[*]:-}")")"
 if [ -d "$STATE_DIR" ] && [ -w "$STATE_DIR" ]; then
-  esc() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '%s' "$s"; }
-  printf '{"ts":"%s","environment":"%s","file":"%s","sha256":"%s","ok":%s,"tables":%s,"rlsForcedTables":%s,"migrations":%s,"tenants":%s,"newestAuditEvent":"%s","databaseSize":"%s","durationSeconds":%d,"failures":"%s"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ENV_NAME" "$(basename "$FILE")" "$SHA256" "$OK" "$TABLES" "$RLS_TABLES" "$MIGRATIONS" "$TENANTS" \
-    "$NEWEST_AUDIT" "$DB_SIZE" "$(( $(date +%s) - START ))" "$(esc "${FAILURES[*]:-}")" >> "$STATE_DIR/restore-tests.jsonl"
+  printf '%s\n' "$RESULT_LINE" >> "$STATE_DIR/restore-tests.jsonl"
+fi
+if [ -n "$LOG" ]; then
+  printf '%s\n' "$RESULT_LINE" >> "$LOG"
+  echo "result appended to $LOG"
 fi
 
 [ "$OK" = true ]
