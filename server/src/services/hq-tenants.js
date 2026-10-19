@@ -69,7 +69,7 @@ export async function tenantDetail(c, id) {
        FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1
       ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.display_name`, [id])).rows;
   const grants = (await c.query(
-    `SELECT g.id, g.reason, g.created_at, g.expires_at, g.revoked_at, u.display_name AS staff
+    `SELECT g.id, g.reason, g.created_at, g.expires_at, g.revoked_at, g.hq_user_id, u.display_name AS staff
        FROM support_grants g JOIN users u ON u.id = g.hq_user_id WHERE g.tenant_id = $1 ORDER BY g.created_at DESC LIMIT 20`, [id])).rows;
   const hqEvents = (await c.query(
     `SELECT seq, at, actor_label, action, summary FROM audit_events WHERE tenant_id = $1 AND actor_type IN ('hq', 'system')
@@ -86,7 +86,7 @@ export async function tenantDetail(c, id) {
       mfaEnrolled: m.mfa, hasPin: m.has_pin, lastLoginAt: iso(m.last_login_at), createdAt: iso(m.created_at),
     })),
     supportGrants: grants.map((g) => ({
-      id: g.id, reason: g.reason, staff: g.staff, createdAt: iso(g.created_at), expiresAt: iso(g.expires_at), revokedAt: iso(g.revoked_at),
+      id: g.id, reason: g.reason, staff: g.staff, staffId: g.hq_user_id, createdAt: iso(g.created_at), expiresAt: iso(g.expires_at), revokedAt: iso(g.revoked_at),
       active: !g.revoked_at && new Date(g.expires_at).getTime() > now,
     })),
     hqEvents: hqEvents.map((e) => ({ seq: e.seq, at: iso(e.at), actor: e.actor_label, action: e.action, summary: e.summary })),
