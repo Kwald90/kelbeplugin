@@ -2,21 +2,16 @@
 // (server-sent events over fetch, since EventSource can't POST), photo downsizing and a
 // small, safe Markdown-ish renderer for replies (DOM text nodes only, never innerHTML).
 //
-// Where the API lives and how requests are signed in: the same rules as js/session.js (same
-// origin with the session cookie; the iOS shell may set globalThis.FISHTAPE_API_BASE).
-// configureAssistantApi({ base, headers }) overrides both, e.g. for a bearer token.
+// Where the API lives and how requests are signed in: js/session.js apiFetch (same origin with the
+// session cookie on the web; the API origin and the Keychain bearer token in the iOS app).
+// configureAssistantApi({ base, headers }) overrides both, e.g. to point a test at another server.
+import { apiFetch } from '../session.js';
 
 const cfg = { base: null, headers: null };
 
 export function configureAssistantApi({ base, headers } = {}) {
   if (base !== undefined) cfg.base = base;
   if (headers !== undefined) cfg.headers = headers;
-}
-
-function apiBase() {
-  if (cfg.base != null) return cfg.base;
-  if (globalThis.FISHTAPE_API_BASE) return String(globalThis.FISHTAPE_API_BASE).replace(/\/$/, '');
-  return '';
 }
 
 function authHeaders() {
@@ -36,8 +31,9 @@ export class ApiFailure extends Error {
 async function request(path, { method = 'GET', body, signal } = {}) {
   const headers = { accept: 'application/json', 'x-fishtape': '1', ...authHeaders() };
   if (body !== undefined) headers['content-type'] = 'application/json';
+  const init = { method, credentials: 'include', cache: 'no-store', headers, body: body === undefined ? undefined : JSON.stringify(body), signal };
   try {
-    return await fetch(apiBase() + path, { method, credentials: 'include', cache: 'no-store', headers, body: body === undefined ? undefined : JSON.stringify(body), signal });
+    return await (cfg.base != null ? fetch(cfg.base + path, init) : apiFetch(path, init));
   } catch (e) {
     if (e?.name === 'AbortError') throw e;
     throw new ApiFailure(0);

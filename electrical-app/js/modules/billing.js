@@ -3,6 +3,8 @@
 // (the server checks too). Prices and tiers come from plans.js; Enterprise is "Let's talk".
 // No DOM work at import time: the public pricing page imports FEATURE_LABELS from here.
 import { PLANS, PLAN_IDS, FEATURE_PLAN, EXTRA_USER_CENTS, monthlyCents, planRank } from '../plans.js';
+import { apiFetch } from '../session.js';
+import { openExternal } from '../lib/native.js';
 
 /** Plain names for plans.js feature keys (pricing page and this screen). */
 export const FEATURE_LABELS = {
@@ -21,15 +23,13 @@ export function featuresAddedBy(planId) {
   return Object.keys(FEATURE_PLAN).filter((f) => FEATURE_PLAN[f] === planId);
 }
 
-const API = '';
-
 async function call(path, { method = 'GET', body } = {}) {
   const headers = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET') headers['X-Fishtape'] = '1';
   let res;
   try {
-    res = await fetch(API + path, { method, headers, credentials: 'include', cache: 'no-store', body: body !== undefined ? JSON.stringify(body) : undefined });
+    res = await apiFetch(path, { method, headers, credentials: 'include', cache: 'no-store', body: body !== undefined ? JSON.stringify(body) : undefined });
   } catch {
     throw Object.assign(new Error('You are offline. Billing needs a connection.'), { code: 'offline', status: 0 });
   }
@@ -137,14 +137,15 @@ export default {
       }
       try {
         const r = await call('/api/v1/billing/checkout', { method: 'POST', body: { plan } });
-        if (r.url) { location.assign(r.url); return; }
+        // Stripe Checkout: this tab on the web, a Safari sheet in the iOS app.
+        if (r.url) { await openExternal(r.url, { onClose: load }); return; }
         ui.toast(`You are now on ${p.name}`, 'success');
         load();
       } catch (e) { ui.toast(e.message, 'error'); }
     }
 
     async function portal() {
-      try { const r = await call('/api/v1/billing/portal', { method: 'POST' }); location.assign(r.url); } catch (e) { ui.toast(e.message, 'error'); }
+      try { const r = await call('/api/v1/billing/portal', { method: 'POST' }); await openExternal(r.url, { onClose: load }); } catch (e) { ui.toast(e.message, 'error'); }
     }
 
     async function syncSeats() {

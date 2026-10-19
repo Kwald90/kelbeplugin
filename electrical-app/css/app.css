@@ -245,6 +245,8 @@ table.table { width: 100%; border-collapse: collapse; }
 /* print: documents only */
 .print-only { display: none; }
 @media print {
+  /* height: auto, or the iOS app's print sheet sizes the page to the screen and adds a blank page */
+  html, body { height: auto; }
   body { overflow: visible; background: #fff; color: #000; }
   .rail, .wheel-fab, .wheel, .wheel-scrim, .no-print, .toasts { display: none !important; }
   .main { position: static; overflow: visible; }

@@ -8,6 +8,8 @@ import UIKit
 class MainViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(FishtapeMeasurePlugin())
+        bridge?.registerPluginInstance(FishtapeKeychainPlugin())
+        bridge?.registerPluginInstance(FishtapePrintPlugin())
 
         // --bg in electrical-app/css/tokens.css (light #f1efea, dark #16171a)
         let background = UIColor { traits in
