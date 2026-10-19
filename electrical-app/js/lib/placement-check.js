@@ -8,8 +8,8 @@ import { RULES, ruleLabel } from './placement-rules.js';
 import { fmtLength } from './units.js';
 import {
   buildModel, usableRuns, runRel, maxDistOnSegment, perimeterPoint, featureSpan, featureDepth, subtractSpans,
-  wallLocal, wallPoint, distToFeature, featureCentre, islandCorners, samplePoints, interiorPoint, latchSwitchPoint,
-  wallReceptacles, carSpaces, pointInPoly, isRec, isSwitch, isLight, isAlarm, projectToWalls,
+  wallLocal, wallPoint, distToFeature, featureCentre, samplePoints, interiorPoint, latchSwitchPoint,
+  wallReceptacles, carSpaces, pointInPoly, isRec, isSwitch, isLight, isAlarm,
 } from './placement.js';
 
 const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 };
@@ -24,14 +24,16 @@ const isGfci = (o) => o.symbol === 'receptacle-gfci' || !!o.flags?.gfci;
 export function checkDrawing(d, { settings, codeOptions = {}, units = 'metric' } = {}) {
   const model = buildModel(d, settings);
   const fmt = (m) => fmtLength(m, { units, denom: 2 });
+  // code limits are metric; imperial users see both
+  const lim = (m) => { const si = m < 1 ? `${Math.round(m * 1000)} mm` : `${m} m`; return units === 'imperial' ? `${fmt(m)} (${si})` : si; };
   const findings = [];
   const hasBedrooms = model.rooms.some((r) => r.type.sleeping);
-  for (const rm of model.rooms) checkRoom(model, rm, findings, { fmt, codeOptions, hasBedrooms });
+  for (const rm of model.rooms) checkRoom(model, rm, findings, { fmt, lim, codeOptions, hasBedrooms });
   findings.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
   return findings;
 }
 
-function checkRoom(model, rm, findings, { fmt, codeOptions, hasBedrooms }) {
+function checkRoom(model, rm, findings, { fmt, lim, codeOptions, hasBedrooms }) {
   const { room, geo, type } = rm;
   const S = model.S;
   const ppm = geo.ppm;
@@ -61,10 +63,11 @@ function checkRoom(model, rm, findings, { fmt, codeOptions, hasBedrooms }) {
         add('usableWall', 'error', `${fmt(run.len)} of usable wall has no receptacle.`, [p.x, p.y]);
         continue;
       }
-      const g = maxDistOnSegment(run.len, rel);
+      // a room with no doors is one loop, so distance wraps round the corner where the loop starts
+      const g = maxDistOnSegment(run.len, run.closed ? rel.flatMap((r) => [r - run.len, r, r + run.len]) : rel);
       if (g.max > RULES.wallSpacing.maxM + SLACK) {
         const p = perimeterPoint(geo, run.s0 + g.at, model.inset);
-        add(type.kitchen ? 'kitchenWalls' : 'wallSpacing', 'error', `a point on the wall is ${fmt(g.max)} from the nearest receptacle, measured along the floor (limit 1.8 m).`, [p.x, p.y]);
+        add(type.kitchen ? 'kitchenWalls' : 'wallSpacing', 'error', `a point on the wall is ${fmt(g.max)} from the nearest receptacle, measured along the floor (limit ${lim(RULES.wallSpacing.maxM)}).`, [p.x, p.y]);
       }
     }
   }
@@ -82,7 +85,7 @@ function checkRoom(model, rm, findings, { fmt, codeOptions, hasBedrooms }) {
         const g = maxDistOnSegment(b - a, along.map((q) => q.u - a));
         if (g.max > RULES.counter.maxM + SLACK) {
           const at = wallPoint(geo, c.wall, a + g.at, model.inset / ppm);
-          add('counter', 'error', Number.isFinite(g.max) ? `a point on the counter wall is ${fmt(g.max)} from a receptacle (limit 900 mm).` : 'this counter has no receptacle.', at);
+          add('counter', 'error', Number.isFinite(g.max) ? `a point on the counter wall is ${fmt(g.max)} from a receptacle (limit ${lim(RULES.counter.maxM)}).` : 'this counter has no receptacle.', at);
         }
       }
       for (const s of holeFs.filter((f) => f.kind === 'sink')) {
@@ -136,8 +139,8 @@ function checkRoom(model, rm, findings, { fmt, codeOptions, hasBedrooms }) {
     const tubs = features.filter((f) => f.kind === 'tub' || f.kind === 'shower');
     for (const o of recs) {
       const dd = tubs.reduce((m, f) => Math.min(m, distToFeature(geo, f, o.x, o.y)), Infinity);
-      if (dd < RULES.tub.minM - SLACK) add('tub', 'error', `receptacle is ${fmt(dd)} from the tub or shower (never under 500 mm).`, [o.x, o.y]);
-      else if (dd < RULES.tub.preferM - SLACK) add('tub', 'warning', `receptacle is ${fmt(dd)} from the tub or shower; keep 1 m where practicable.`, [o.x, o.y]);
+      if (dd < RULES.tub.minM - SLACK) add('tub', 'error', `receptacle is ${fmt(dd)} from the tub or shower (never under ${lim(RULES.tub.minM)}).`, [o.x, o.y]);
+      else if (dd < RULES.tub.preferM - SLACK) add('tub', 'warning', `receptacle is ${fmt(dd)} from the tub or shower; keep ${lim(RULES.tub.preferM)} where practicable.`, [o.x, o.y]);
     }
   }
 
@@ -150,7 +153,7 @@ function checkRoom(model, rm, findings, { fmt, codeOptions, hasBedrooms }) {
         const dd = recs.reduce((m, o) => Math.min(m, Math.hypot(o.x - x, o.y - y)), Infinity) / ppm;
         if (!worst || dd > worst.dd) worst = { x, y, dd };
       }
-      if (worst && worst.dd > RULES.hallway.maxM + SLACK) add('hallway', 'error', `a point in the hallway is ${fmt(worst.dd)} from a receptacle (limit 4.5 m).`, [worst.x, worst.y]);
+      if (worst && worst.dd > RULES.hallway.maxM + SLACK) add('hallway', 'error', `a point in the hallway is ${fmt(worst.dd)} from a receptacle (limit ${lim(RULES.hallway.maxM)}).`, [worst.x, worst.y]);
     }
   }
 
@@ -169,7 +172,7 @@ function checkRoom(model, rm, findings, { fmt, codeOptions, hasBedrooms }) {
 
   // ----- 26-720 j): receptacles required by 26-720 not over 1.7 m -----
   if (type.bathroom || type.laundry || type.basement) {
-    for (const o of recs) if (Number(o.mountM) > RULES.maxHeight.maxM + SLACK) add('maxHeight', 'warning', `receptacle mounted at ${fmt(Number(o.mountM))}; required receptacles go no higher than 1.7 m.`, [o.x, o.y]);
+    for (const o of recs) if (Number(o.mountM) > RULES.maxHeight.maxM + SLACK) add('maxHeight', 'warning', `receptacle mounted at ${fmt(Number(o.mountM))}; required receptacles go no higher than ${lim(RULES.maxHeight.maxM)}.`, [o.x, o.y]);
   }
 
   // ----- building code: smoke and CO alarms, lighting outlets -----
@@ -227,4 +230,3 @@ export function summarize(findings) {
   return out;
 }
 
-export { projectToWalls };

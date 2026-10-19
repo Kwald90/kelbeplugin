@@ -567,9 +567,15 @@ export function proposeRoom(d, roomId, { settings, codeOptions = {}, model } = {
   if (type.wallRule) {
     const maxD = RULES.wallSpacing.maxM;
     const onWall = () => recPts.map(([x, y]) => projectToWalls(geo, x, y)).filter((p) => p && p.dist <= model.tolM);
-    for (const run of runs) {
+    for (let run of runs) {
       if (run.len < RULES.usableWall.minM - EPS) continue; // a 600 mm stub is not usable wall space
-      const rel = onWall().map((p) => runRel(run, p.s, geo.P)).filter((r) => r >= -0.05 && r <= run.len + 0.05).map((r) => Math.max(0, Math.min(run.len, r)));
+      let rel = onWall().map((p) => runRel(run, p.s, geo.P)).filter((r) => r >= -0.05 && r <= run.len + 0.05).map((r) => Math.max(0, Math.min(run.len, r)));
+      if (run.closed && rel.length) {
+        // a room with no doors is one loop: start the loop at an existing box so distance wraps round
+        const start = Math.min(...rel);
+        run = { s0: (run.s0 + start) % geo.P, len: run.len, closed: true };
+        rel = rel.map((r) => r - start).flatMap((r) => [r, r + run.len]);
+      }
       let fresh = fillCoverage(run.len, rel, maxD);
       fresh = nudgeOffCorners(run, geo, fresh, rel, maxD, S.cornerClearM);
       for (const r of fresh) {

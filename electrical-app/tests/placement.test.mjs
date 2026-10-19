@@ -152,6 +152,20 @@ test('a 600 mm wall stub between two doors gets no receptacle', () => {
   assert.deepEqual(accept(proposeRoom(drawing([r]), 'liv')).filter((o) => o.symbol.startsWith('switch')).map((o) => o.symbol), ['switch-3way', 'switch-3way']);
 });
 
+test('a room with no doors is one loop: distance wraps round', () => {
+  const r = room('loop', 'living', 4, 3.5);
+  const geo = roomGeometry(r, M);
+  const one = perimeterPoint(geo, 1, 10);
+  const d = drawing([r], [{ id: 'x', layer: 'L1', symbol: 'receptacle', x: one.x, y: one.y, flags: { tr: true, afci: true } }]);
+  const f = checkDrawing(d, { units: 'metric' }).find((x) => x.ruleId === 'wallSpacing');
+  assert.match(f.message, /7\.50 m/, 'half the 15 m loop, not 14 m');
+  // filling it keeps the existing box and wraps: a 15 m loop needs ceil(15 / 3.6) = 5, so four more
+  const props = proposeRoom(d, 'loop').filter((p) => p.group === 'receptacle');
+  assert.equal(props.length, 4);
+  d.objects.push(...accept(props));
+  assert.ok(!rules(checkDrawing(d)).includes('wallSpacing'));
+});
+
 test('existing receptacles are respected: a compliant room gets no new ones', () => {
   const r = room('bed', 'bedroom', 4, 3.5, [{ id: 'd1', kind: 'door', wall: 2, atM: 0.3, widthM: 0.81, hinge: 'start', swing: 'in' }]);
   const d = drawing([r]);
