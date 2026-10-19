@@ -23,6 +23,7 @@ import authRoutes from './routes/v1/auth.js';
 import recordRoutes from './routes/v1/records.js';
 import syncRoutes from './routes/v1/sync.js';
 import adminRoutes from './routes/v1/admin.js';
+import meRoutes from './routes/v1/me.js';
 
 const MB = 1024 * 1024;
 /** Sync pushes may carry one maximum-size record plus a normal batch. */
@@ -168,6 +169,7 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   const deps = { config, db, records, email, oidcProviders: providers, stats, bodyLimit: SYNC_BODY_LIMIT };
   await app.register(healthRoutes, deps);
   await app.register(authRoutes, deps);
+  await app.register(meRoutes, deps);
   await app.register(adminRoutes, deps);
   await app.register(recordRoutes, deps);
   await app.register(syncRoutes, deps);
