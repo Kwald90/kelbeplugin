@@ -80,21 +80,16 @@ export function normalizeDrawing(d) {
   return d;
 }
 
+// pdf.js is vendored (vendor/pdfjs-4.10.38/README.md) so it works offline and under a 'self'-only CSP.
+const PDFJS = new URL('../../vendor/pdfjs-4.10.38/', import.meta.url);
 let pdfjsPromise = null;
 function loadPdfJs() {
-  if (globalThis.pdfjsLib) return Promise.resolve(globalThis.pdfjsLib);
-  pdfjsPromise ||= new Promise((resolve, reject) => {
-    const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
-    const s = document.createElement('script');
-    s.src = base + 'pdf.min.js';
-    s.onload = () => {
-      const lib = globalThis.pdfjsLib;
-      if (!lib) { pdfjsPromise = null; s.remove(); return reject(new Error('Could not load the PDF reader. Check your connection, or import the plan as an image.')); }
-      lib.GlobalWorkerOptions.workerSrc = base + 'pdf.worker.min.js';
-      resolve(lib);
-    };
-    s.onerror = () => { pdfjsPromise = null; s.remove(); reject(new Error('Could not load the PDF reader. Check your connection, or import the plan as an image.')); };
-    document.head.append(s);
+  pdfjsPromise ||= import(new URL('pdf.min.mjs', PDFJS).href).then((lib) => {
+    lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.mjs', PDFJS).href;
+    return lib;
+  }).catch(() => {
+    pdfjsPromise = null;
+    throw new Error('Could not load the PDF reader. Reload the app, or import the plan as an image.');
   });
   return pdfjsPromise;
 }
@@ -1135,7 +1130,8 @@ export function openEditor(root, ctx, id) {
       if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
         ui.toast('Reading PDF…');
         const lib = await loadPdfJs();
-        const pdf = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+        // isEvalSupported: false keeps a crafted PDF from running script (CVE-2024-4367 class)
+        const pdf = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
         let pageNo = 1;
         if (pdf.numPages > 1) {
           const ans = await ui.promptDialog(`This PDF has ${pdf.numPages} pages. Which page is the plan?`, { title: 'Pick a page', value: '1', okLabel: 'Import' });

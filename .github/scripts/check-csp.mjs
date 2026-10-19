@@ -33,7 +33,9 @@ const decode = (s) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/
 function walk(dir, out = []) {
   if (!existsSync(dir)) return out;
   for (const name of readdirSync(dir)) {
-    if (name === 'node_modules' || name.startsWith('.')) continue;
+    // vendor/: pinned third-party bundles (see each vendor/*/README.md). Line patterns can't
+    // judge minified code; their eval paths are switched off by config (pdf.js isEvalSupported).
+    if (name === 'node_modules' || name === 'vendor' || name.startsWith('.')) continue;
     const p = join(dir, name);
     if (statSync(p).isDirectory()) walk(p, out); else out.push(p);
   }

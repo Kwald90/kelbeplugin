@@ -67,12 +67,12 @@ The policy, one directive per line (nginx sends it on one line):
 
 ```
 default-src 'self';
-script-src 'self' https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/;
+script-src 'self';
 style-src 'self';
 style-src-attr 'unsafe-hashes' 'sha256-EcJt9BR7RzlCkX1VP+89sqJ3ShKTcSMgu49NQP6XlIU=';
 img-src 'self' data: blob:;
 font-src 'self' data:;
-connect-src 'self' https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/;
+connect-src 'self';
 worker-src 'self' blob:;
 manifest-src 'self';
 media-src 'self' blob:;
@@ -87,13 +87,13 @@ upgrade-insecure-requests
 | directive | why |
 | --- | --- |
 | `default-src 'self'` | Fallback for anything not listed: our own origin only. |
-| `script-src 'self'` + pdf.js path | Our ES modules, plus one pinned cdnjs directory for pdf.js. No `'unsafe-inline'` and no `'unsafe-eval'`: inline scripts, `onclick="..."`, `javascript:` URLs, `eval` and `new Function` don't run. Only that directory is allowed, not the rest of cdnjs. |
+| `script-src 'self'` | Our ES modules and the self-hosted pdf.js. No `'unsafe-inline'` and no `'unsafe-eval'`: inline scripts, `onclick="..."`, `javascript:` URLs, `eval` and `new Function` don't run. |
 | `style-src 'self'` | Stylesheets from `css/` only; `<style>` blocks are refused. |
 | `style-src-attr 'unsafe-hashes' 'sha256-...'` | One exception for one inline `style` attribute: the `#boot` loading message in `index.html`. `'unsafe-hashes'` is the keyword that lets a hash apply to an attribute; despite its name, only that exact text is allowed. |
 | `img-src 'self' data: blob:` | Drawing thumbnails and plan underlays are `data:` URLs; photos and canvas exports are `blob:` URLs. Images from other hosts are refused, which also blocks tracking pixels and data exfiltration through image URLs in AI output. |
 | `font-src 'self' data:` | Local fonts and fonts embedded in CSS. |
 | `connect-src 'self'` + pdf.js path | `fetch` and XHR to our own API only. The pdf.js path is here because `sw.js` re-fetches the page's requests, and a service worker's fetches are connections. |
-| `worker-src 'self' blob:` | `sw.js` (service workers fall under `worker-src`) and the pdf.js worker, which pdf.js wraps in a `blob:` URL. |
+| `worker-src 'self' blob:` | `sw.js` (service workers fall under `worker-src`) and the pdf.js worker (same-origin since the self-hosting; `blob:` kept until re-tested). |
 | `manifest-src 'self'` | The web app manifest. |
 | `media-src 'self' blob:` | Media played back from `blob:` URLs. |
 | `frame-src 'none'` | No iframes at all. Stripe Elements would change this ([below](#stripe)). |
@@ -234,42 +234,22 @@ It does not stop `sw.js` from copying them into Cache Storage, which ignores `Ca
 
 ## pdf.js
 
-Today `js/canvas/editor.js` (`loadPdfJs()`) loads `pdf.min.js` from
-`https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/` when someone imports a PDF plan, and
-points `workerSrc` at `pdf.worker.min.js` in the same directory.
+pdf.js 4.10.38 (legacy build, for older iPad Safari) is self-hosted in
+`electrical-app/vendor/pdfjs-4.10.38/`, taken from the npm package `pdfjs-dist@4.10.38` (npm
+checks the package integrity on download). `js/canvas/editor.js` (`loadPdfJs()`) imports
+`pdf.min.mjs` as a module and points `workerSrc` at `pdf.worker.min.mjs` in the same folder.
 
-- The CSP names the directory, not the host, so the rest of cdnjs stays blocked. Two limits:
-  CSP path matching applies to the first request only (after a redirect browsers check just the
-  host), and the script tag has no SRI hash, so a compromised CDN could serve anything there.
-- Workers must come from our own origin, so pdf.js 3.x creates a `blob:` URL containing a small
-  script that calls `importScripts()` on the cdnjs URL. That is why `worker-src` has `blob:`; the
-  `importScripts` request is checked against `script-src`. SRI is not possible on that path.
-- `sw.js` answers the page's requests with `fetch(req)`, which is checked against `connect-src`,
-  so the pdf.js path is listed there too. These script requests are "no-cors" and come back as
-  opaque responses, which `sw.js` never caches (it only caches `res.ok`), so pdf.js is in practice
-  not available offline today.
-- `eval`: pdf.js 3.x checks whether it can compile font outlines with `new Function`. Under this
-  CSP the check fails, the browser may log one CSP violation, and pdf.js uses its slower path
-  without `eval`. That fallback is also why CVE-2024-4367 (script execution from a crafted PDF
-  font, in pdf.js before 4.2.67) can't run here. Pass `isEvalSupported: false` to `getDocument()`
-  so pdf.js skips the check and never depends on the CSP for this.
-
-Recommendation (planned; `editor.js` belongs to workstream D, the header files to F):
-
-1. Self-host the same version first: put `pdf.min.js`, `pdf.worker.min.js` and the licence in
-   `electrical-app/vendor/pdfjs-3.11.174/`, checked against the official release on GitHub.
-2. In `editor.js`: load from `vendor/pdfjs-3.11.174/`, set `s.integrity` to the file's SRI hash
-   (`openssl dgst -sha384 -binary pdf.min.js | openssl base64 -A`, prefixed with `sha384-`), and
-   pass `isEvalSupported: false`.
-3. With a same-origin worker pdf.js no longer needs the `blob:` wrapper. Test an import, then
-   remove `blob:` from `worker-src`.
-4. Remove the cdnjs path from `script-src` and `connect-src` in both header files and the cdnjs
-   case from `sw.js`. Deploy the code, then run `install-nginx.sh` on each host.
-5. Then upgrade to a maintained release (4.2.67 or later) in its own `vendor/pdfjs-<version>/`
-   folder. Newer versions ship ES modules (`pdf.mjs`), and some may use WebAssembly for certain
-   image formats; read the release notes, and if WebAssembly is needed, either add
-   `'wasm-unsafe-eval'` to `script-src` or confirm the non-WebAssembly fallback works. Test with
-   a few real plan PDFs, including scanned ones.
+- `script-src` and `connect-src` are `'self'` only; no CDN is allowed.
+- `getDocument()` is called with `isEvalSupported: false`, so pdf.js never tries
+  `new Function` for font outlines. 4.2.67 and later also fix CVE-2024-4367.
+- The folder name carries the version because `/vendor/` is cached for a year. To upgrade, add a
+  new `vendor/pdfjs-<version>/` folder, update `PDFJS` in `editor.js`, test with real plan PDFs
+  (including scanned ones), then delete the old folder. If a future version needs WebAssembly,
+  decide between `'wasm-unsafe-eval'` in `script-src` and its non-WebAssembly fallback.
+- `.github/scripts/check-csp.mjs` skips `vendor/`: its line patterns can't judge minified
+  third-party code. Vendored code is reviewed when it is added or upgraded.
+- The worker is same-origin now, so `blob:` in `worker-src` is no longer needed for pdf.js.
+  It stays until a test pass confirms nothing else creates `blob:` workers.
 
 ## Extending the CSP
 

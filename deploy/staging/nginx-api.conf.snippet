@@ -118,7 +118,7 @@ location ~* \.(?:png|jpe?g|gif|webp|avif|svg|ico|woff2?)$ {
     expires 30d;
     try_files $uri =404;
 }
-# Version-named third-party bundles (e.g. vendor/pdfjs-3.11.174/) never change.
+# Version-named third-party bundles (e.g. vendor/pdfjs-4.10.38/) never change.
 location ^~ /vendor/ {
     location ~ /\. { return 404; }
     expires 1y;

@@ -15,7 +15,7 @@ function text(x, y, s, cls = 'bd-text', anchor = 'middle', extra = '') {
 function line(x1, y1, x2, y2, cls) {
   return `<line class="${cls}" x1="${n1(x1)}" y1="${n1(y1)}" x2="${n1(x2)}" y2="${n1(y2)}"/>`;
 }
-const poly = (pts, cls, w) => `<polyline class="${cls}" points="${pts.map(([x, y]) => `${n1(x)},${n1(y)}`).join(' ')}"${w ? ` style="stroke-width:${n1(w)}px"` : ''}/>`;
+const poly = (pts, cls, w) => `<polyline class="${cls}" points="${pts.map(([x, y]) => `${n1(x)},${n1(y)}`).join(' ')}"${w ? ` stroke-width="${n1(w)}"` : ''}/>`;
 
 /** A dimension line with end ticks and a label in the middle. */
 function dim(x1, y1, x2, y2, label, side = 'right') {
