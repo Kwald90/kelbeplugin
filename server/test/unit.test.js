@@ -49,11 +49,15 @@ describe('contracts shared with the PWA', () => {
   });
 
   test('every record of the PWA demo seed passes its schema', async () => {
-    // seed.js imports only today() from ui.js (which needs a DOM); swap that one import.
-    const src = readFileSync(`${APP}js/seed.js`, 'utf8').replace(
-      /import \{ today \} from '\.\/ui\.js';/,
-      "const today = (n = 0) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };");
-    assert.ok(!/^import /m.test(src), 'seed.js gained another import; update this test');
+    // seed.js takes today() from ui.js, which needs a DOM: swap that import for a stand-in.
+    // Its other imports are DOM-free libs; point them at absolute file URLs, since a
+    // data: module can't resolve './' specifiers.
+    const base = new URL('../../electrical-app/js/', import.meta.url);
+    const src = readFileSync(`${APP}js/seed.js`, 'utf8')
+      .replace(/import \{ today \} from '\.\/ui\.js';/,
+        "const today = (n = 0) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };")
+      .replace(/from '(\.\/[^']+)'/g, (_, p) => `from '${new URL(p, base).href}'`);
+    assert.ok(!/ui\.js'/.test(src), 'seed.js imports more from ui.js; update this test');
     const { seedIfEmpty } = await import(`data:text/javascript,${encodeURIComponent(src)}`);
     const data = new Map();
     const bucket = (c) => { if (!data.has(c)) data.set(c, new Map()); return data.get(c); };
