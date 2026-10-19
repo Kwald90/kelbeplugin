@@ -1,6 +1,10 @@
 // Demo data so every screen has something real to show on first launch.
 // Runs only when the database is empty. Settings > Data can wipe it.
+// TG Electrical is a demo Ontario company: every phone number is a 555-01xx
+// number, every email ends in .example, and the addresses are placeholders.
 import { today } from './ui.js';
+import { newDocTax } from './lib/tax.js';
+import { CEC_TEMPLATES } from './lib/cec/checklists.js';
 
 // Canvas symbol ids (js/canvas/symbols.js draws them). Price book items point
 // at these so a drawing's symbol count can become an estimate.
@@ -10,92 +14,113 @@ export const SYMBOL_IDS = [
   'disconnect', 'ev-charger', 'data', 'motor', 'meter',
 ];
 
+const COMPANY = {
+  name: 'TG Electrical', phone: '(705) 555-0142', email: 'office@tgelectrical.example',
+  address: '100 Placeholder Rd, Barrie, ON', licenceNo: 'ECRA/ESA 7000000 (demo)', province: 'ON',
+  gstHstNo: '123456789 RT0001', pstNo: '',
+};
+
 export function seedIfEmpty(store) {
   if (!store.isEmpty()) return false;
   const S = { silent: true };
   const iso = (dayOffset, h = 8, m = 0) => { const d = new Date(); d.setDate(d.getDate() + dayOffset); d.setHours(h, m, 0, 0); return d.toISOString(); };
 
   store.saveSettings({
-    company: { name: 'Kelbe Electric', phone: '(555) 201-4410', email: 'office@kelbe-electric.example', address: '118 Foundry Rd, Springfield', licenceNo: 'EC-0042871' },
+    company: COMPANY, codeBook: 'CEC-2024', units: 'metric', currency: 'CAD',
+    tax: { mode: 'province', treatment: 'standard', custom: [] }, taxPct: 13,
+    labourRateCents: 11500, markupPct: 20,
   });
+  const tax = () => newDocTax(store.settings()); // Ontario: HST 13% on everything
 
   // locations
   const shop = store.add('locations', { name: 'Shop', kind: 'shop' }, S);
   const van1 = store.add('locations', { name: 'Van 1', kind: 'van' }, S);
   const van2 = store.add('locations', { name: 'Van 2', kind: 'van' }, S);
 
-  // people
+  // people (licence and certificate numbers are demo values)
   const emp = (name, role, rate, color, extra = {}) => store.add('employees', {
-    name, role, email: name.split(' ')[0].toLowerCase() + '@kelbe-electric.example', phone: '', rateCents: rate, color, active: true, pin: '',
+    name, role, email: name.split(' ')[0].toLowerCase() + '@tgelectrical.example', phone: '', rateCents: rate, color, active: true, pin: '',
     licenceNo: '', licenceExpiry: '', ...extra,
   }, S);
-  const kelvin = emp('Kelvin Waldner', 'owner', 0, '#8a5a00', { licenceNo: 'ME-11872', licenceExpiry: today(300) });
-  const dana = emp('Dana Ortiz', 'office', 3200, '#1f5fb8');
-  const marcus = emp('Marcus Lee', 'foreman', 5200, '#1d7044', { licenceNo: 'JE-55210', licenceExpiry: today(21) });
-  const priya = emp('Priya Shah', 'electrician', 4600, '#7a3fb0', { licenceNo: 'JE-60177', licenceExpiry: today(410) });
-  const tom = emp('Tom Becker', 'apprentice', 2400, '#b42318', { licenceNo: 'AP-90311', licenceExpiry: today(-5) });
+  const kelvin = emp('Kelvin Waldner', 'owner', 0, '#8a5a00', { licenceNo: 'Master Electrician ME-DEMO-01', licenceExpiry: today(300) });
+  void kelvin;
+  emp('Dana Ortiz', 'office', 3200, '#1f5fb8');
+  const marcus = emp('Marcus Lee', 'foreman', 5400, '#1d7044', { licenceNo: '309A C of Q DEMO-552', licenceExpiry: today(21) });
+  const priya = emp('Priya Shah', 'electrician', 4800, '#7a3fb0', { licenceNo: '309A C of Q DEMO-617', licenceExpiry: today(410) });
+  const tom = emp('Tom Becker', 'apprentice', 2600, '#b42318', { licenceNo: 'Apprentice reg. DEMO-311', licenceExpiry: today(-5) });
 
-  // price book
+  // price book: CAD sell prices (device and lighting lines include install labour)
   const item = (sku, name, category, unit, cost, price, labourHours, reorderPoint, stock, symbol) => store.add('items', {
     sku, name, category, unit, costCents: cost, priceCents: price, labourHours, reorderPoint,
     stock: { [shop.id]: stock[0], [van1.id]: stock[1], [van2.id]: stock[2] }, symbol: symbol || null,
   }, S);
   const items = {
-    rec: item('DEV-REC-15', 'Duplex receptacle 15A TR, installed', 'Devices', 'ea', 245, 1200, 0.45, 40, [120, 18, 12], 'receptacle'),
-    gfci: item('DEV-GFCI-20', 'GFCI receptacle 20A, installed', 'Devices', 'ea', 1890, 6500, 0.6, 12, [24, 4, 3], 'receptacle-gfci'),
-    r240: item('DEV-REC-50', 'Range/240V receptacle 50A, installed', 'Devices', 'ea', 1650, 9500, 1.2, 4, [6, 1, 0], 'receptacle-240'),
-    sw: item('DEV-SW-SP', 'Single-pole switch 15A, installed', 'Devices', 'ea', 180, 1000, 0.4, 40, [90, 15, 10], 'switch'),
-    sw3: item('DEV-SW-3W', '3-way switch 15A, installed', 'Devices', 'ea', 420, 1800, 0.6, 20, [30, 6, 4], 'switch-3way'),
-    dim: item('DEV-DIM-LED', 'LED dimmer, installed', 'Devices', 'ea', 1900, 6000, 0.5, 10, [14, 2, 2], 'switch-dimmer'),
-    can: item('LT-CAN-6', '6" LED recessed wafer, installed', 'Lighting', 'ea', 1350, 8500, 0.75, 24, [48, 6, 6], 'light-recessed'),
-    ceil: item('LT-CEIL', 'Ceiling fixture box + install (fixture by owner)', 'Lighting', 'ea', 600, 7500, 1, 10, [20, 2, 2], 'light-ceiling'),
-    wall: item('LT-WALL', 'Wall sconce install', 'Lighting', 'ea', 600, 6500, 0.8, 10, [10, 2, 1], 'light-wall'),
-    fan: item('LT-FAN', 'Ceiling fan, rated box + install', 'Lighting', 'ea', 2200, 14500, 1.5, 4, [6, 1, 1], 'fan'),
-    smoke: item('LS-SMK-CO', 'Hardwired smoke/CO combo, installed', 'Life safety', 'ea', 3400, 11000, 0.6, 12, [18, 3, 2], 'smoke'),
-    jbox: item('BX-JB-4', '4" square junction box', 'Boxes', 'ea', 210, 1500, 0.3, 50, [200, 30, 20], 'junction'),
-    data: item('LV-CAT6', 'Cat6 data drop, terminated', 'Low voltage', 'ea', 900, 9500, 1, 10, [500, 0, 0], 'data'),
-    evse: item('EV-L2-48', 'Level 2 EV charger circuit 60A (charger by owner)', 'EV', 'ea', 18500, 85000, 6, 2, [2, 0, 0], 'ev-charger'),
-    disc: item('SW-DISC-60', '60A non-fused disconnect, installed', 'Gear', 'ea', 3800, 16500, 1.5, 3, [5, 1, 0], 'disconnect'),
-    panel: item('GR-PNL-200', '200A 40-space main breaker panel', 'Gear', 'ea', 32000, 120000, 10, 1, [2, 0, 0], 'panel'),
-    nm12: item('WR-NM-12-2', 'NM-B 12/2 w/G', 'Wire', 'ft', 62, 180, 0, 1000, [2500, 250, 250]),
-    nm14: item('WR-NM-14-2', 'NM-B 14/2 w/G', 'Wire', 'ft', 45, 140, 0, 1000, [1800, 250, 0]),
-    thhn6: item('WR-THHN-6', 'THHN 6 AWG Cu', 'Wire', 'ft', 155, 420, 0, 500, [300, 0, 0]),
-    emt: item('CD-EMT-34', '3/4" EMT, 10 ft stick', 'Conduit', 'stick', 950, 2400, 0.35, 30, [80, 10, 10]),
-    br20: item('BR-20-1P', '20A 1-pole breaker', 'Breakers', 'ea', 900, 2800, 0.2, 20, [40, 6, 6]),
-    afci: item('BR-20-AFCI', '20A dual-function AFCI/GFCI breaker', 'Breakers', 'ea', 5200, 11500, 0.25, 10, [8, 2, 2]),
+    rec: item('DEV-REC-15TR', 'Duplex receptacle 15 A TR (5-15R), installed', 'Devices', 'ea', 350, 6500, 0.45, 40, [120, 18, 12], 'receptacle'),
+    split: item('DEV-REC-20T', 'Counter receptacle 20 A T-slot TR (5-20RA), installed', 'Devices', 'ea', 900, 7500, 0.5, 20, [40, 6, 4]),
+    gfci: item('DEV-GFCI-15', 'GFCI receptacle 15 A TR, Class A, installed', 'Devices', 'ea', 2400, 12500, 0.6, 12, [24, 4, 3], 'receptacle-gfci'),
+    r240: item('DEV-REC-1450', 'Range receptacle 14-50R 50 A, installed', 'Devices', 'ea', 1800, 18500, 1.2, 4, [6, 1, 0], 'receptacle-240'),
+    sw: item('DEV-SW-SP', 'Decora single-pole switch 15 A, installed', 'Devices', 'ea', 250, 6000, 0.4, 40, [90, 15, 10], 'switch'),
+    sw3: item('DEV-SW-3W', 'Decora 3-way switch 15 A, installed', 'Devices', 'ea', 500, 7500, 0.6, 20, [30, 6, 4], 'switch-3way'),
+    dim: item('DEV-DIM-LED', 'LED dimmer, installed', 'Devices', 'ea', 2600, 11000, 0.5, 10, [14, 2, 2], 'switch-dimmer'),
+    pot: item('LT-POT-4', '4 in. slim LED pot light (IC, airtight), installed', 'Lighting', 'ea', 1600, 9500, 0.75, 24, [48, 6, 6], 'light-recessed'),
+    ceil: item('LT-CEIL', 'Ceiling outlet (octagon box) + fixture install, fixture by owner', 'Lighting', 'ea', 700, 12000, 1, 10, [20, 2, 2], 'light-ceiling'),
+    wall: item('LT-WALL', 'Wall sconce install', 'Lighting', 'ea', 700, 11000, 0.8, 10, [10, 2, 1], 'light-wall'),
+    fan: item('LT-FAN', 'Ceiling fan, fan-rated box + install', 'Lighting', 'ea', 2800, 22500, 1.5, 4, [6, 1, 1], 'fan'),
+    smoke: item('LS-SMK-CO', 'Hardwired smoke/CO alarm, interconnected, installed', 'Life safety', 'ea', 4200, 16500, 0.6, 12, [18, 3, 2], 'smoke'),
+    oct: item('BX-OCT-4-150', 'Octagon box 4 in. × 1-1/2 in. with bracket', 'Boxes', 'ea', 290, 1400, 0.3, 50, [200, 30, 20], 'junction'),
+    dev: item('BX-DEV-3x2-250', 'Device box 3 × 2 × 2-1/2 in., gangable', 'Boxes', 'ea', 260, 1200, 0.25, 50, [150, 25, 25]),
+    sq: item('BX-SQ-4-218', '4 in. square box × 2-1/8 in.', 'Boxes', 'ea', 480, 1900, 0.3, 30, [80, 10, 10]),
+    data: item('LV-CAT6', 'Cat6 data drop, terminated', 'Low voltage', 'ea', 1100, 14500, 1, 10, [500, 0, 0], 'data'),
+    evse: item('EV-L2-60', 'Level 2 EV charger circuit, 60 A (charger by owner)', 'EV', 'ea', 22000, 145000, 6, 2, [2, 0, 0], 'ev-charger'),
+    disc: item('SW-DISC-60', '60 A non-fused disconnect, installed', 'Gear', 'ea', 5200, 32000, 1.5, 3, [5, 1, 0], 'disconnect'),
+    panel: item('GR-LC-200', 'Square D Homeline 200 A 40-space load centre, main breaker', 'Gear', 'ea', 42000, 78000, 10, 1, [2, 0, 0], 'panel'),
+    nmd14: item('WR-NMD90-14-2', 'NMD90 14/2 Cu', 'Wire', 'm', 115, 290, 0, 300, [750, 75, 75]),
+    nmd12: item('WR-NMD90-12-2', 'NMD90 12/2 Cu', 'Wire', 'm', 175, 420, 0, 300, [600, 75, 0]),
+    nmd143: item('WR-NMD90-14-3', 'NMD90 14/3 Cu', 'Wire', 'm', 170, 420, 0, 150, [300, 75, 0]),
+    teck: item('WR-TECK90-6-3', 'Teck90 6/3 Cu', 'Wire', 'm', 1450, 2900, 0, 50, [120, 0, 0]),
+    acwu: item('WR-ACWU90-3/0-3', 'ACWU90 3/0-3 Al service cable', 'Wire', 'm', 1700, 3400, 0, 30, [60, 0, 0]),
+    t90: item('WR-T90-6', 'T90 Nylon 6 AWG Cu', 'Wire', 'm', 380, 850, 0, 150, [300, 0, 0]),
+    emt: item('CD-EMT-21', 'EMT 21 (3/4 in.), 3.05 m length', 'Conduit', 'length', 1200, 2900, 0.35, 30, [80, 10, 10]),
+    pvc: item('CD-PVC-27', 'Rigid PVC 27 (1 in.), 3.05 m length', 'Conduit', 'length', 1100, 2600, 0.35, 20, [40, 0, 0]),
+    ent: item('CD-ENT-21', 'ENT 21 (3/4 in.)', 'Conduit', 'm', 90, 250, 0, 60, [150, 0, 0]),
+    br15: item('BR-QO-115', 'Square D QO 15 A 1-pole breaker', 'Breakers', 'ea', 1100, 3200, 0.2, 20, [40, 6, 6]),
+    cafci: item('BR-CH-CAFCI-15', 'Eaton CH 15 A combination AFCI breaker', 'Breakers', 'ea', 5800, 12500, 0.25, 10, [8, 2, 2]),
+    gfcibr: item('BR-QO-GFCI-15', 'Square D QO 15 A GFCI breaker (Class A)', 'Breakers', 'ea', 6200, 13500, 0.25, 6, [6, 1, 1]),
+    inuse: item('CV-WP-INUSE-1G', 'Weatherproof in-use cover, 1-gang, installed', 'Covers', 'ea', 1100, 4500, 0.2, 12, [24, 4, 4]),
+    dual: item('BR-SIE-DF-20', 'Siemens 20 A dual-function AFCI/GFCI breaker', 'Breakers', 'ea', 6800, 14500, 0.25, 6, [6, 1, 1]),
   };
 
-  // clients
+  // clients (fictional)
   const client = (name, type, email, phone, address, tags = []) => store.add('clients', { name, type, email, phone, address, notes: '', tags }, S);
-  const c1 = client('Harbor View Dental', 'commercial', 'ops@harborview.example', '(555) 300-1201', '42 Harbor St, Springfield', ['repeat']);
-  const c2 = client('Jenna & Rob Miller', 'residential', 'jenna.miller@example.com', '(555) 410-8821', '9 Linden Ct, Springfield', ['referral']);
-  const c3 = client('Northside Brewing Co.', 'commercial', 'gm@northsidebrew.example', '(555) 777-2300', '1500 Mill Ave, Springfield', []);
-  const c4 = client('Alvarez Residence', 'residential', 'm.alvarez@example.com', '(555) 214-0098', '77 Crescent Rd, Springfield', []);
-  const c5 = client('Ridgeway Storage', 'industrial', 'facilities@ridgeway.example', '(555) 600-4100', '3 Depot Way, Springfield', []);
+  const c1 = client('Bayview Dental Clinic', 'commercial', 'ops@bayviewdental.example', '(705) 555-0121', '42 Example St, Barrie, ON', ['repeat']);
+  const c2 = client('Jenna & Rob Miller', 'residential', 'jenna.miller@example.com', '(705) 555-0188', '9 Sample Cres, Barrie, ON', ['referral']);
+  const c3 = client('Northside Brewing Co.', 'commercial', 'gm@northsidebrew.example', '(705) 555-0130', '1500 Demo Ave, Barrie, ON', []);
+  const c4 = client('Alvarez Residence', 'residential', 'm.alvarez@example.com', '(705) 555-0109', '77 Test Rd, Innisfil, ON', []);
+  const c5 = client('Ridgeway Storage', 'industrial', 'facilities@ridgeway.example', '(705) 555-0164', '3 Placeholder Way, Barrie, ON', []);
 
   // leads (funnel)
   const lead = (title, clientId, contactName, source, stage, value, days) => store.add('leads', {
     title, clientId, contactName, email: '', phone: '', source, stage, valueCents: value, notes: '', nextActionAt: today(days),
   }, S);
-  const l1 = lead('Kitchen remodel rewire', c2.id, 'Jenna Miller', 'Referral', 'quoted', 860000, 2);
-  lead('EV charger install', c4.id, 'M. Alvarez', 'Website', 'site-visit', 165000, 1);
-  lead('Taproom lighting retrofit', c3.id, 'Sam (GM)', 'Repeat', 'contacted', 1240000, 3);
-  lead('Panel upgrade 100A → 200A', null, 'Greg Hollis', 'Google', 'new', 420000, 0);
-  lead('Warehouse LED high-bays', c5.id, 'Facilities', 'Cold call', 'new', 2800000, 5);
-  lead('Generator inlet + interlock', null, 'Ana Ruiz', 'Website', 'won', 210000, -3);
-  lead('Basement finish', null, 'Leo Park', 'Yard sign', 'lost', 540000, -10);
+  const l1 = lead('Kitchen remodel rewire', c2.id, 'Jenna Miller', 'Referral', 'quoted', 960000, 2);
+  lead('EV charger install', c4.id, 'M. Alvarez', 'Website', 'site-visit', 210000, 1);
+  lead('Taproom lighting retrofit', c3.id, 'Sam (GM)', 'Repeat', 'contacted', 1450000, 3);
+  lead('Service upgrade 100 A → 200 A', null, 'Greg Hollis', 'Google', 'new', 520000, 0);
+  lead('Warehouse LED high-bays', c5.id, 'Facilities', 'Cold call', 'new', 3200000, 5);
+  lead('Generator inlet + interlock', null, 'Ana Ruiz', 'Website', 'won', 260000, -3);
+  lead('Basement finish', null, 'Leo Park', 'Yard sign', 'lost', 640000, -10);
 
   // sequences
   const seq = store.add('sequences', {
     name: 'New lead follow-up', active: true, steps: [
-      { dayOffset: 0, channel: 'email', subject: 'Thanks for reaching out', body: 'Hi {{name}}, thanks for contacting Kelbe Electric. When suits you for a quick site visit?' },
-      { dayOffset: 2, channel: 'sms', subject: '', body: 'Hi {{name}}, Kelbe Electric here. Still keen to get your project booked in?' },
+      { dayOffset: 0, channel: 'email', subject: 'Thanks for reaching out', body: 'Hi {{name}}, thanks for contacting TG Electrical. When suits you for a quick site visit?' },
+      { dayOffset: 2, channel: 'sms', subject: '', body: 'Hi {{name}}, TG Electrical here. Still keen to get your project booked in?' },
       { dayOffset: 5, channel: 'task', subject: 'Call the lead', body: 'Phone call follow-up' },
     ],
   }, S);
   store.add('sequences', {
     name: 'Quote chaser', active: true, steps: [
-      { dayOffset: 3, channel: 'email', subject: 'Your quote from Kelbe Electric', body: 'Hi {{name}}, any questions about the quote we sent?' },
+      { dayOffset: 3, channel: 'email', subject: 'Your quote from TG Electrical', body: 'Hi {{name}}, any questions about the quote we sent?' },
       { dayOffset: 7, channel: 'task', subject: 'Call about the quote', body: 'Call and offer to walk through options' },
     ],
   }, S);
@@ -103,21 +128,23 @@ export function seedIfEmpty(store) {
 
   // estimates
   const line = (it, qty) => ({ itemId: it.id, description: it.name, qty, unitCents: it.priceCents, labourHours: it.labourHours, kind: 'material' });
+  const labour = (hours, description = 'Labour') => ({ itemId: null, description, qty: hours, unitCents: 11500, labourHours: 1, kind: 'labour' });
   const e1 = store.add('estimates', {
     number: store.nextNumber('estimate'), clientId: c2.id, jobId: null, title: 'Kitchen remodel rewire', status: 'sent',
-    lines: [line(items.rec, 14), line(items.gfci, 4), line(items.sw, 6), line(items.dim, 2), line(items.can, 12), line(items.afci, 4), line(items.r240, 1)],
-    labourRateCents: 9500, markupPct: 0, taxPct: 8, notes: 'Permit fees included. Drywall patching by others.', validUntil: today(30),
+    lines: [line(items.split, 6), line(items.rec, 8), line(items.gfci, 2), line(items.sw, 6), line(items.dim, 2), line(items.pot, 12),
+      line(items.cafci, 4), line(items.r240, 1), line(items.nmd14, 90), line(items.nmd12, 60), labour(6, 'Remove and make safe existing wiring')],
+    labourRateCents: 11500, markupPct: 0, ...tax(), notes: 'ESA notification and inspection fees included. Drywall patching by others.', validUntil: today(30),
   }, S);
 
   // jobs
   const job = (title, clientId, status, start, end, crewIds, address, description) => store.add('jobs', {
     number: store.nextNumber('job'), title, clientId, address, status, startDate: today(start), endDate: today(end), crewIds, estimateId: null, description, changeOrders: [],
   }, S);
-  const j1 = job('Operatory 3 & 4 buildout', c1.id, 'in-progress', -2, 3, [marcus.id, tom.id], c1.address, 'Two new dental operatories: dedicated circuits for chairs, task lighting, data drops.');
-  const j2 = job('Taproom service upgrade to 400A', c3.id, 'scheduled', 2, 6, [marcus.id, priya.id], c3.address, 'Replace 200A service with 400A 3-phase, new distribution panel.');
-  const j3 = job('Generator interlock', null, 'complete', -9, -8, [priya.id], '14 Elm St, Springfield', 'Interlock kit and 30A inlet.');
+  const j1 = job('Operatory 3 & 4 buildout', c1.id, 'in-progress', -2, 3, [marcus.id, tom.id], c1.address, 'Two new dental operatories: dedicated circuits for chairs, task lighting, data drops. Fed from LP-2, 120/208 V.');
+  const j2 = job('Brewhouse 347/600 V distribution', c3.id, 'scheduled', 2, 6, [marcus.id, priya.id], c3.address, 'New 225 A 347/600 V distribution panel DP-1 for the brewhouse, chiller and kettle; 45 kVA transformer to a 120/208 V panel.');
+  const j3 = job('Generator interlock', null, 'complete', -9, -8, [priya.id], '14 Elm St, Barrie, ON', 'Interlock kit and 30 A inlet.');
   const j4 = job('Miller kitchen rewire', c2.id, 'lead', 10, 14, [], c2.address, 'Pending quote acceptance.');
-  store.update('jobs', j1.id, { changeOrders: [{ id: 'co-1', title: 'Add 2 x dedicated 20A for compressors', amountCents: 78000, status: 'approved', date: today(-1) }] }, S);
+  store.update('jobs', j1.id, { changeOrders: [{ id: 'co-1', title: 'Add 2 × dedicated 20 A for compressors', amountCents: 98000, status: 'approved', date: today(-1) }] }, S);
   store.update('estimates', e1.id, { jobId: j4.id }, S);
   store.update('jobs', j4.id, { estimateId: e1.id }, S);
 
@@ -130,23 +157,26 @@ export function seedIfEmpty(store) {
     store.add('schedule', { jobId: j2.id, employeeId: priya.id, date: today(d), hours: 8, note: '' }, S);
   }
 
-  // invoices + payments
+  // invoices + payments (HST 13%: $1,850.00 -> $2,090.50; $6,400.00 -> $7,232.00)
   const inv1 = store.add('invoices', {
     number: store.nextNumber('invoice'), clientId: null, jobId: j3.id, estimateId: null, status: 'paid',
-    lines: [{ itemId: null, description: 'Generator interlock kit + 30A inlet, installed', qty: 1, unitCents: 185000, labourHours: 0, kind: 'other' }],
-    taxPct: 8, issueDate: today(-8), dueDate: today(6), notes: '',
+    lines: [{ itemId: null, description: 'Generator interlock kit + 30 A inlet, installed', qty: 1, unitCents: 185000, labourHours: 0, kind: 'other' }],
+    ...tax(), issueDate: today(-8), dueDate: today(6), notes: '',
   }, S);
-  store.add('payments', { invoiceId: inv1.id, amountCents: 199800, date: today(-4), method: 'card', reference: 'ch_demo' }, S);
+  store.add('payments', { invoiceId: inv1.id, amountCents: 209050, date: today(-4), method: 'e-transfer', reference: 'e-Transfer DEMO-4471' }, S);
   const inv2 = store.add('invoices', {
     number: store.nextNumber('invoice'), clientId: c1.id, jobId: j1.id, estimateId: null, status: 'partial',
     lines: [{ itemId: null, description: 'Progress billing 50%: operatory buildout', qty: 1, unitCents: 640000, labourHours: 0, kind: 'other' }],
-    taxPct: 8, issueDate: today(-20), dueDate: today(-6), notes: 'Net 14',
+    ...tax(), issueDate: today(-20), dueDate: today(-6), notes: 'Net 14',
   }, S);
-  store.add('payments', { invoiceId: inv2.id, amountCents: 300000, date: today(-10), method: 'transfer', reference: 'ACH 88123' }, S);
+  store.add('payments', { invoiceId: inv2.id, amountCents: 300000, date: today(-10), method: 'cheque', reference: 'Cheque 1042' }, S);
   store.add('invoices', {
     number: store.nextNumber('invoice'), clientId: c3.id, jobId: null, estimateId: null, status: 'sent',
-    lines: [{ itemId: null, description: 'Service call: tripping cooler circuit', qty: 1, unitCents: 28500, labourHours: 0, kind: 'other' }],
-    taxPct: 8, issueDate: today(-3), dueDate: today(11), notes: '',
+    lines: [
+      { itemId: null, description: 'Service call: tripping cooler circuit', qty: 1, unitCents: 14500, labourHours: 0, kind: 'other' },
+      { itemId: null, description: 'Labour', qty: 1.5, unitCents: 11500, labourHours: 1, kind: 'labour' },
+    ],
+    ...tax(), issueDate: today(-3), dueDate: today(11), notes: '',
   }, S);
 
   // time entries (yesterday + one open shift today)
@@ -156,7 +186,7 @@ export function seedIfEmpty(store) {
 
   // stock moves
   store.add('stockMoves', { itemId: items.rec.id, fromLocationId: shop.id, toLocationId: van1.id, qty: 10, jobId: null, date: today(-3), note: 'Restock van' }, S);
-  store.add('stockMoves', { itemId: items.can.id, fromLocationId: van1.id, toLocationId: null, qty: 6, jobId: j1.id, date: today(-1), note: 'Used on job' }, S);
+  store.add('stockMoves', { itemId: items.pot.id, fromLocationId: van1.id, toLocationId: null, qty: 6, jobId: j1.id, date: today(-1), note: 'Used on job' }, S);
 
   // SOPs
   store.add('sops', {
@@ -166,7 +196,7 @@ export function seedIfEmpty(store) {
       { text: 'Identify every energy source (electrical, stored, mechanical).' },
       { text: 'Switch off at the disconnect and apply your personal lock and tag.' },
       { text: 'Release stored energy (capacitors, springs).' },
-      { text: 'Test for absence of voltage with a tested meter: live-dead-live.' },
+      { text: 'Test for absence of voltage with a tested meter: live-dead-live (CSA Z462).' },
       { text: 'Only you remove your lock, after the work is complete and the area is clear.' },
     ],
     acks: [{ employeeId: marcus.id, version: 3, at: iso(-30) }, { employeeId: priya.id, version: 3, at: iso(-28) }],
@@ -183,32 +213,29 @@ export function seedIfEmpty(store) {
   store.add('sops', {
     title: 'Panel change-out checklist', category: 'Install', version: 2, requiredRoles: ['foreman', 'electrician'],
     steps: [
-      { text: 'Confirm utility disconnect/reconnect appointment and permit number.' },
+      { text: 'Confirm the ESA notification number and the utility disconnect/reconnect appointment.' },
       { text: 'Label every existing circuit before removal.' },
-      { text: 'Verify grounding electrode system and bonding per NEC 250.' },
+      { text: 'Verify grounding electrodes and bonding (CEC Section 10).' },
       { text: 'Torque all terminations to the manufacturer spec and record values.' },
-      { text: 'Update the panel schedule in the app and print the directory.' },
+      { text: 'Update the panel schedule in the app and print the directory (CEC Rule 2-100).' },
     ], acks: [],
   }, S);
 
-  // compliance
-  const p1 = store.add('permits', { jobId: j1.id, number: 'EL-2026-1182', authority: 'Springfield Building Dept', type: 'Electrical (commercial)', status: 'issued', appliedDate: today(-14), issuedDate: today(-9), expiryDate: today(170) }, S);
-  store.add('permits', { jobId: j2.id, number: 'EL-2026-1240', authority: 'Springfield Building Dept', type: 'Service upgrade', status: 'applied', appliedDate: today(-2), issuedDate: '', expiryDate: '' }, S);
-  store.add('inspections', { jobId: j1.id, permitId: p1.id, type: 'rough-in', date: today(1), result: 'scheduled', inspector: 'R. Gomez', notes: '' }, S);
-  store.add('inspections', { jobId: j3.id, permitId: null, type: 'final', date: today(-8), result: 'passed', inspector: 'R. Gomez', notes: '' }, S);
-  store.add('certifications', { employeeId: null, name: 'General liability insurance', issuer: 'Acme Mutual', number: 'GL-778812', expiry: today(45) }, S);
-  store.add('certifications', { employeeId: null, name: 'Workers comp', issuer: 'State Fund', number: 'WC-11902', expiry: today(200) }, S);
-  store.add('certifications', { employeeId: marcus.id, name: 'OSHA 30', issuer: 'OSHA', number: 'O30-55120', expiry: today(600) }, S);
-  store.add('certifications', { employeeId: tom.id, name: 'NFPA 70E arc flash training', issuer: 'NFPA', number: '70E-2210', expiry: today(12) }, S);
+  // compliance (ESA-style notifications; numbers are demo values)
+  const ESA = 'Electrical Safety Authority (ESA)';
+  const p1 = store.add('permits', { jobId: j1.id, number: 'ESA-NOT-DEMO-104821', authority: ESA, type: 'Notification of work (commercial)', status: 'issued', appliedDate: today(-14), issuedDate: today(-9), expiryDate: today(170) }, S);
+  store.add('permits', { jobId: j2.id, number: 'ESA-NOT-DEMO-105240', authority: ESA, type: 'Notification of work + plan review (600 V)', status: 'applied', appliedDate: today(-2), issuedDate: '', expiryDate: '' }, S);
+  const p3 = store.add('permits', { jobId: j3.id, number: 'ESA-NOT-DEMO-103977', authority: ESA, type: 'Notification of work (residential)', status: 'closed', appliedDate: today(-12), issuedDate: today(-12), expiryDate: '' }, S);
+  store.add('inspections', { jobId: j1.id, permitId: p1.id, type: 'rough-in', date: today(1), result: 'scheduled', inspector: 'ESA inspector (demo)', notes: '' }, S);
+  store.add('inspections', { jobId: j3.id, permitId: p3.id, type: 'final', date: today(-8), result: 'passed', inspector: 'ESA inspector (demo)', notes: 'Connection authorization sent to the utility.' }, S);
+  store.add('certifications', { employeeId: null, name: 'WSIB clearance certificate', issuer: 'WSIB Ontario', number: 'DEMO-WSIB-7781', expiry: today(45) }, S);
+  store.add('certifications', { employeeId: null, name: 'Commercial general liability, $5M', issuer: 'Demo Insurance Co.', number: 'DEMO-CGL-11902', expiry: today(200) }, S);
+  store.add('certifications', { employeeId: marcus.id, name: 'Working at Heights', issuer: 'CPO-approved provider', number: 'DEMO-WAH-55120', expiry: today(600) }, S);
+  store.add('certifications', { employeeId: tom.id, name: 'CSA Z462 arc flash training', issuer: 'Training provider (demo)', number: 'DEMO-Z462-2210', expiry: today(12) }, S);
+  const rough = CEC_TEMPLATES.find((t) => t.id === 'dwelling-rough-in') || CEC_TEMPLATES[0];
   store.add('checklists', {
-    kind: 'code', title: 'Residential rough-in (NEC 2023)', jobId: j4.id, completedAt: null, items: [
-      { text: 'Kitchen countertop receptacles: 2+ 20A small-appliance circuits', ref: '210.11(C)(1)', status: 'open', note: '' },
-      { text: 'GFCI protection on kitchen, bath, laundry, outdoor, garage receptacles', ref: '210.8(A)', status: 'open', note: '' },
-      { text: 'AFCI protection on habitable-room branch circuits', ref: '210.12', status: 'open', note: '' },
-      { text: 'Tamper-resistant receptacles throughout dwelling', ref: '406.12', status: 'open', note: '' },
-      { text: 'Box fill within limits', ref: '314.16', status: 'open', note: '' },
-      { text: 'Smoke alarms interconnected', ref: 'IRC R314', status: 'open', note: '' },
-    ],
+    kind: 'code', title: rough.title, jobId: j4.id, completedAt: null,
+    items: rough.items.map(([text, ref]) => ({ text, ref, status: 'open', note: '' })),
   }, S);
   store.add('checklists', {
     kind: 'security', title: 'Quarterly security review', jobId: null, completedAt: null, items: [
@@ -220,16 +247,26 @@ export function seedIfEmpty(store) {
     ],
   }, S);
 
-  // panel schedule
+  // panel schedules: a 120/208 V lighting panel and a 347/600 V distribution panel
   store.add('panels', {
     jobId: j1.id, name: 'Panel LP-2 (operatories)', voltage: '208/120 3ph', mainAmps: 100, busAmps: 125, circuits: [
       { slot: 1, description: 'Operatory 3 chair', amps: 20, poles: 1, loadVA: 1440, phase: 'A' },
       { slot: 3, description: 'Operatory 4 chair', amps: 20, poles: 1, loadVA: 1440, phase: 'B' },
-      { slot: 5, description: 'Task lighting', amps: 20, poles: 1, loadVA: 900, phase: 'C' },
+      { slot: 5, description: 'Task lighting', amps: 15, poles: 1, loadVA: 900, phase: 'C' },
       { slot: 7, description: 'Compressor', amps: 30, poles: 2, loadVA: 4160, phase: 'A-B' },
       { slot: 2, description: 'Receptacles op 3', amps: 20, poles: 1, loadVA: 1080, phase: 'A' },
       { slot: 4, description: 'Receptacles op 4', amps: 20, poles: 1, loadVA: 1080, phase: 'B' },
       { slot: 6, description: 'Data rack', amps: 20, poles: 1, loadVA: 800, phase: 'C' },
+    ],
+  }, S);
+  store.add('panels', {
+    jobId: j2.id, name: 'Panel DP-1 (brewhouse)', voltage: '347/600 3ph', mainAmps: 225, busAmps: 225, slots: 42, circuits: [
+      { slot: 1, description: 'Brewhouse lighting 347 V', amps: 20, poles: 1, loadVA: 3800, phase: 'A' },
+      { slot: 3, description: 'Cellar lighting 347 V', amps: 20, poles: 1, loadVA: 3100, phase: 'B' },
+      { slot: 5, description: 'Exterior lighting 347 V', amps: 15, poles: 1, loadVA: 1200, phase: 'C' },
+      { slot: 7, description: 'Glycol chiller', amps: 40, poles: 3, loadVA: 24000, phase: 'A-B-C' },
+      { slot: 2, description: 'Boil kettle element', amps: 60, poles: 3, loadVA: 45000, phase: 'A-B-C' },
+      { slot: 8, description: 'Transformer T1 45 kVA to LP-1 120/208 V', amps: 70, poles: 3, loadVA: 30000, phase: 'B-C-A' },
     ],
   }, S);
 

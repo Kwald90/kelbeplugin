@@ -46,7 +46,7 @@ let currency = 'USD';
 export function setCurrency(c) { currency = c || 'USD'; }
 export function fmtMoney(cents, opts = {}) {
   const v = (Number(cents) || 0) / 100;
-  return v.toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: opts.whole ? 0 : 2, minimumFractionDigits: opts.whole ? 0 : 2 });
+  return v.toLocaleString('en-CA', { style: 'currency', currency, maximumFractionDigits: opts.whole ? 0 : 2, minimumFractionDigits: opts.whole ? 0 : 2 });
 }
 /** '1,234.50' or '$12' -> cents (integer). */
 export function parseMoney(s) {

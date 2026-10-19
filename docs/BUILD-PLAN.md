@@ -26,6 +26,8 @@ every workstream builds against. Change it before changing a contract in code.
 | HQ | Tenants, developer health, compliance & security, billing, API keys, AI agents. |
 | AI | In-app assistant (estimates/invoices), CEC helper, agent API + MCP server, background agents. Each company brings its own keys (Anthropic etc.) with in-app setup guides. Facebook integration (Lead Ads → leads) requested; "FB Muse" meaning to confirm. |
 | Services | Stripe (invoice payments + subscriptions), Resend (email), Twilio (SMS). Per-company keys with guides; setup offered as a paid service. |
+| Plans | At most 4 tiers: 3 priced tiers plus **Enterprise ("Let's talk")**. Each module is tagged with the lowest tier that includes it. The server enforces entitlements (API, sync, AI, integrations); the PWA shows locked modules with an upgrade prompt. HQ manages plans, trials and per-tenant overrides; Stripe subscriptions map to tiers. The Enterprise button opens a contact form that creates a lead in Fishtape's own HQ sales pipeline (lead gen) and emails Kelvin. Tier contents and prices are still to be agreed. |
+| Wire runs | Uses the `drawings` permission (apprentices included). Photos move from inline data URLs to object storage once the server is live. Removing a row offers Undo. |
 | Repo | This repo, branch `claude/electrical-concept-app-h4qz12`. |
 | Mobile | iOS app via Capacitor wrapping `electrical-app/`, with a native ARKit measuring plugin. Built on Kelvin's Mac over SSH. Bundle ID proposal: `com.fishtapehq.app`. |
 
@@ -178,8 +180,14 @@ Need an icon? Inline the SVG in your module.
 | F | Platform: CI/CD, deploy, security, compliance | `.github/**`, `deploy/staging/**`, `deploy/production/**`, `server/Dockerfile`, `.dockerignore`, `SECURITY.md`, `.gitleaks.toml`, `docs/{security,compliance,runbooks}/**`, `docs/architecture/{13-layers,environments}.md`, `compliance/**` |
 
 Phase 1 (after A lands): sync + sign-in screens in the PWA, HQ console, client portal,
+plans & entitlements (tiers, locked modules, Enterprise lead form),
 integrations (Stripe, Resend, Twilio, Facebook Lead Ads, per-tenant keys + guides),
 AI (assistant, CEC helper, MCP server, background agents), iOS app + ARKit plugin, staging deploy.
+
+Data leakage rule (applies to every workstream): no secrets or customer details in response
+headers, URLs/query strings, error messages, logs or any file under the web root. `.env` files
+live outside the web root, are chmod 600 and never committed. `/api` responses carrying tenant
+data send `Cache-Control: no-store`. `deploy/check-exposure.sh` runs after every deploy.
 
 ## Definition of done (every workstream)
 

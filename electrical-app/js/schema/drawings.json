@@ -1,0 +1,263 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/drawings.json",
+  "title": "Drawing",
+  "description": "A plan or sketch on the canvas. Underlays are data URLs for now; they move to object storage later. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "jobId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "paper": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "description": "Known values: none, dots, grid, iso."
+    },
+    "scale": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Pixels per foot."
+    },
+    "layers": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 200,
+      "items": {
+        "type": "object"
+      }
+    },
+    "strokes": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 200000,
+      "items": {
+        "type": "object"
+      }
+    },
+    "objects": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 50000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 60
+          },
+          "layer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "x": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "y": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "rotation": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "scale": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "flags": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Receptacle needs.",
+            "properties": {
+              "gfci": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "afci": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "tr": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "wp": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          },
+          "mountM": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Mounting height in metres."
+          },
+          "roomId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "auto": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "rooms": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 2000,
+      "items": {
+        "type": "object"
+      }
+    },
+    "codeOptions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Code-check options for this drawing."
+    },
+    "placement": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Auto-placement settings for this drawing."
+    },
+    "texts": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 20000,
+      "items": {
+        "type": "object"
+      }
+    },
+    "underlay": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20971520,
+      "description": "Background image as a data URL (downscaled to <= 4096 px), or null."
+    },
+    "view": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "x": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "y": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "zoom": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "thumb": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2097152,
+      "description": "Thumbnail data URL."
+    }
+  },
+  "additionalProperties": true
+}

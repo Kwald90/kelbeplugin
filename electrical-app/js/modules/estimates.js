@@ -1,6 +1,7 @@
 // Estimates (S17): list, builder with price-book line editor, takeoff from drawings, print.
-import { docTotals } from '../lib/money.js';
-import { lineEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
+import { docTotals, moneyFormatter } from '../lib/money.js';
+import { newDocTax } from '../lib/tax.js';
+import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
 
 const STATUSES = ['draft', 'sent', 'accepted', 'declined'];
 
@@ -24,6 +25,7 @@ function renderList(root, ctx) {
   const { h } = ui;
   let tab = ctx.query.status || 'all';
   let q = '';
+  const money = moneyFormatter(store.settings());
   const body = h('div', { class: 'stack' });
 
   const draw = () => {
@@ -35,8 +37,8 @@ function renderList(root, ctx) {
     const decided = counts.accepted + counts.declined;
     h(body, null,
       h('div', { class: 'grid money-stats' },
-        ui.stat({ label: 'Awaiting answer', value: ui.fmtMoney(openValue, { whole: true }), hint: `${counts.sent} sent` }),
-        ui.stat({ label: 'Accepted', value: ui.fmtMoney(wonValue, { whole: true }), hint: `${counts.accepted} estimates`, tone: 'success' }),
+        ui.stat({ label: 'Awaiting answer', value: money(openValue, { whole: true }), hint: `${counts.sent} sent` }),
+        ui.stat({ label: 'Accepted', value: money(wonValue, { whole: true }), hint: `${counts.accepted} estimates`, tone: 'success' }),
         ui.stat({ label: 'Win rate', value: decided ? `${Math.round((counts.accepted / decided) * 100)}%` : '—', hint: `${decided} decided` })),
       h('div', { class: 'row' },
         ui.tabs([{ id: 'all', label: `All ${all.length}` }, ...STATUSES.map((s) => ({ id: s, label: `${cap(s)} ${counts[s]}` }))], tab, (t) => { tab = t; draw(); }),
@@ -54,7 +56,7 @@ function renderList(root, ctx) {
           { key: 'number', label: 'Number', render: (e) => h('span', { class: 'mono' }, e.number), sort: (e) => e.number },
           { key: 'client', label: 'Client', render: (e) => clientName(store, e.clientId), sort: (e) => clientName(store, e.clientId) },
           { key: 'title', label: 'Title', render: (e) => e.title || '—', sort: (e) => e.title || '' },
-          { key: 'total', label: 'Total', align: 'right', render: (e) => ui.fmtMoney(docTotals(e).totalCents), sort: (e) => docTotals(e).totalCents },
+          { key: 'total', label: 'Total', align: 'right', render: (e) => money(docTotals(e).totalCents), sort: (e) => docTotals(e).totalCents },
           { key: 'status', label: 'Status', render: (e) => ui.statusBadge(e.status), sort: (e) => e.status },
           { key: 'validUntil', label: 'Valid until', render: (e) => validCell(ui, e), sort: (e) => e.validUntil || '' },
         ],
@@ -98,7 +100,7 @@ function createNew(ctx) {
     lines: [],
     labourRateCents: s.labourRateCents ?? 9500,
     markupPct: 0,
-    taxPct: s.taxPct ?? 0,
+    ...newDocTax(s), // { taxProvince, taxTreatment, taxes, taxPct }
     notes: '',
     validUntil: ui.today(30),
   };
@@ -131,22 +133,43 @@ function createNew(ctx) {
   location.replace('#/estimates/' + created.id);
 }
 
-/** Count drawing objects by symbol and map them onto price-book items. */
+/** Price-book items that drawing flags (set by the box placement checks) map to. */
+const FLAG_ITEMS = {
+  wp: (i) => (i.category || '').toLowerCase() === 'covers' && /in-use|weatherproof/i.test(i.name),
+  afci: (i) => (i.category || '').toLowerCase() === 'breakers' && /afci/i.test(i.name) && !/gfci/i.test(i.name),
+};
+
+/**
+ * Count drawing objects by symbol and map them onto price-book items. Flags on an
+ * object add to the count: `flags.gfci` on a receptacle prices it as a GFCI
+ * receptacle, `flags.wp` adds a weatherproof in-use cover, and `flags.afci` adds
+ * an AFCI breaker per circuit (objects without a `circuit` count as one circuit).
+ */
 export function takeoff(store, drawing) {
   const counts = new Map();
+  let wp = 0, afciObjects = 0;
+  const afciCircuits = new Set();
   for (const o of drawing.objects || []) {
     if (!o.symbol) continue;
-    counts.set(o.symbol, (counts.get(o.symbol) || 0) + 1);
+    const f = o.flags || {};
+    const symbol = f.gfci && o.symbol === 'receptacle' ? 'receptacle-gfci' : o.symbol;
+    counts.set(symbol, (counts.get(symbol) || 0) + 1);
+    if (f.wp) wp++;
+    if (f.afci) { afciObjects++; afciCircuits.add(o.circuit ?? '-'); }
   }
   const items = store.list('items');
   const lines = [];
   let unmatched = 0, symbols = 0;
+  const push = (it, qty, fallback, note = '') => {
+    if (it) lines.push({ itemId: it.id, description: it.name + note, qty, unitCents: it.priceCents, labourHours: it.labourHours || 0, kind: 'material' });
+    else { unmatched++; lines.push({ itemId: null, description: `${fallback} (no price book item)${note}`, qty, unitCents: 0, labourHours: 0, kind: 'material' }); }
+  };
   for (const [symbol, qty] of counts) {
     symbols += qty;
-    const it = items.find((i) => i.symbol === symbol);
-    if (it) lines.push({ itemId: it.id, description: it.name, qty, unitCents: it.priceCents, labourHours: it.labourHours || 0, kind: 'material' });
-    else { unmatched++; lines.push({ itemId: null, description: `${symbol} (no price book item)`, qty, unitCents: 0, labourHours: 0, kind: 'material' }); }
+    push(items.find((i) => i.symbol === symbol), qty, symbol);
   }
+  if (wp) push(items.find(FLAG_ITEMS.wp), wp, 'Weatherproof in-use cover');
+  if (afciObjects) push(items.find(FLAG_ITEMS.afci), afciCircuits.size, 'AFCI breaker', ` (${afciObjects} AFCI outlets on the drawing: check the circuit count)`);
   return { lines, unmatched, symbols };
 }
 
@@ -160,6 +183,7 @@ function renderDetail(root, ctx, id) {
     return;
   }
   const doc = est;
+  const money = moneyFormatter(store.settings());
   const save = debounce(() => { store.update('estimates', id, pick(doc)); }, 450);
   const changed = () => { totals.update(doc); save(); };
 
@@ -180,11 +204,11 @@ function renderDetail(root, ctx, id) {
     fieldEl({ label: 'Valid until', name: 'validUntil', type: 'date', value: doc.validUntil }, (v) => { doc.validUntil = v; }),
     fieldEl({ label: 'Labour rate ($/h)', name: 'labourRateCents', type: 'money', value: doc.labourRateCents }, (v) => { doc.labourRateCents = v; }),
     fieldEl({ label: 'Materials markup %', name: 'markupPct', type: 'number', step: '0.1', min: '0', value: doc.markupPct ?? 0, hint: 'Extra uplift on material lines' }, (v) => { doc.markupPct = v || 0; }),
-    fieldEl({ label: 'Tax %', name: 'taxPct', type: 'number', step: '0.01', min: '0', value: doc.taxPct ?? 0 }, (v) => { doc.taxPct = v || 0; }));
+    taxEditor({ doc, store, onChange: changed }));
 
   const notes = fieldEl({ label: 'Notes shown on the estimate', name: 'notes', type: 'textarea', value: doc.notes, span: true }, (v) => { doc.notes = v; });
   const editor = lineEditor({ doc, store, onChange: changed });
-  const totals = totalsPanel(doc);
+  const totals = totalsPanel(doc, { money });
 
   const statusHost = h('div', { class: 'stack' });
   const drawStatus = () => {

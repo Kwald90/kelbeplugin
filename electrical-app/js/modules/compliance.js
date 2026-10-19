@@ -1,8 +1,13 @@
 // Compliance: permits, inspections, licences/certificates, code checklists.
+// Checklists follow the company's code book: CEC 2024 with the province's
+// amendments (js/lib/cec/checklists.js) by default, NEC 2023 when chosen.
+import { cecTemplates } from '../lib/cec/checklists.js';
+import { adoptionFor, permitAuthority, codeBookOf } from '../lib/cec/provinces.js';
+import { provinceName } from '../lib/tax.js';
 
-// Built-in code checklist templates. References are NEC 2023 article numbers;
-// local amendments may differ, so the inspector's reading wins.
-export const CODE_TEMPLATES = [
+// NEC 2023 checklist templates (article numbers); local amendments may differ,
+// so the inspector's reading wins.
+export const NEC_TEMPLATES = [
   {
     title: 'Residential rough-in (NEC 2023)', items: [
       ['Two or more 20A small-appliance branch circuits for kitchen/dining countertops', '210.11(C)(1)'],
@@ -59,6 +64,14 @@ export const CODE_TEMPLATES = [
     ],
   },
 ];
+
+/** Kept for older imports; use templatesFor(settings). */
+export const CODE_TEMPLATES = NEC_TEMPLATES;
+
+/** Checklist templates for the company's code book and province. */
+export function templatesFor(settings) {
+  return codeBookOf(settings) === 'NEC-2023' ? NEC_TEMPLATES : cecTemplates(settings?.company?.province);
+}
 
 const RESULT_TONE = { scheduled: 'info', passed: 'success', failed: 'danger', partial: 'warning' };
 
@@ -183,6 +196,10 @@ export default {
   render(root, ctx) {
     const { store, ui, query } = ctx;
     const { h } = ui;
+    const settings = store.settings();
+    const province = settings.company?.province || '';
+    const cec = codeBookOf(settings) === 'CEC-2024';
+    const adoption = cec ? adoptionFor(province) : null;
     let tab = query.tab || 'permits';
     const jobFilter = query.jobId || '';
     const statsHost = h('div', { class: 'grid stat-grid' });
@@ -214,7 +231,7 @@ export default {
       const rows = store.list('certifications').map((c) => ({ ...c, holder: c.employeeId ? name(c.employeeId) : 'Company', source: 'cert' }));
       for (const e of emps) {
         if (e.active === false || !e.licenceNo) continue;
-        rows.push({ id: 'lic-' + e.id, employeeId: e.id, holder: e.name, name: 'Electrical licence', issuer: 'State licensing board', number: e.licenceNo, expiry: e.licenceExpiry, source: 'employee' });
+        rows.push({ id: 'lic-' + e.id, employeeId: e.id, holder: e.name, name: 'Electrical licence / certificate', issuer: cec ? `${provinceName(province)} licensing` : 'State licensing board', number: e.licenceNo, expiry: e.licenceExpiry, source: 'employee' });
       }
       for (const r of rows) { r.status = certStatus(r.expiry, ui.daysUntil); r.days = r.expiry ? ui.daysUntil(r.expiry) : Infinity; }
       return rows.sort((a, b) => a.days - b.days);
@@ -225,9 +242,9 @@ export default {
         title: p ? `Permit ${p.number}` : 'New permit',
         fields: [
           { label: 'Job', name: 'jobId', type: 'select', value: p?.jobId ?? jobFilter, options: jobOpts(), span: true },
-          { label: 'Permit number', name: 'number', value: p?.number, required: true },
-          { label: 'Authority', name: 'authority', value: p?.authority ?? 'Springfield Building Dept' },
-          { label: 'Type', name: 'type', value: p?.type ?? 'Electrical' },
+          { label: cec && province === 'ON' ? 'Notification / permit number' : 'Permit number', name: 'number', value: p?.number, required: true },
+          { label: 'Authority', name: 'authority', value: p?.authority ?? (cec ? permitAuthority(province) : '') },
+          { label: 'Type', name: 'type', value: p?.type ?? (cec && province === 'ON' ? 'Notification of work' : 'Electrical permit') },
           { label: 'Status', name: 'status', type: 'select', value: p?.status ?? 'applied', options: ['applied', 'issued', 'closed'] },
           { label: 'Applied', name: 'appliedDate', type: 'date', value: p?.appliedDate ?? ui.today() },
           { label: 'Issued', name: 'issuedDate', type: 'date', value: p?.issuedDate },
@@ -261,7 +278,7 @@ export default {
       ui.formSheet({
         title: c ? c.name : 'Add certificate',
         fields: [
-          { label: 'Name', name: 'name', value: c?.name, required: true, span: true, placeholder: 'e.g. General liability insurance, OSHA 30' },
+          { label: 'Name', name: 'name', value: c?.name, required: true, span: true, placeholder: cec ? 'e.g. WSIB clearance, liability insurance, Working at Heights' : 'e.g. General liability insurance, OSHA 30' },
           { label: 'Held by', name: 'employeeId', type: 'select', value: c?.employeeId ?? '', options: ui.recordOptions(store.list('employees', (e) => e.active !== false), 'name', 'Company-wide') },
           { label: 'Issuer', name: 'issuer', value: c?.issuer },
           { label: 'Number', name: 'number', value: c?.number },
@@ -272,6 +289,18 @@ export default {
       });
     }
 
+    /** Who inspects here, and which code edition applies. */
+    function authorityCard() {
+      if (!cec) return h('p', { class: 'muted' }, 'Code book: NEC 2023. Checklists use NEC article numbers.');
+      if (!adoption) return h('div', { class: 'card', style: { marginBottom: 'var(--s4)' } }, 'Set your province in ', h('a', { href: '#/settings' }, 'Settings'), ' to get the right inspection authority and amendments.');
+      return h('div', { class: 'card row', style: { marginBottom: 'var(--s4)', alignItems: 'flex-start', flexWrap: 'nowrap' } }, ui.icon('shield-check', 18),
+        h('div', { class: 'stack', style: { gap: '2px' } },
+          h('strong', null, `${provinceName(province)}: ${adoption.inForce}`),
+          h('span', null, 'Inspections and permits: ', h('a', { href: adoption.authority.url, target: '_blank', rel: 'noopener' }, adoption.authority.name)),
+          adoption.permitNote ? h('span', { class: 'muted' }, adoption.permitNote) : null,
+          adoption.verify ? h('span', { class: 'text-danger' }, 'Edition not confirmed: check with the inspection authority.') : null));
+    }
+
     const TABS = [
       { id: 'permits', label: 'Permits' }, { id: 'inspections', label: 'Inspections' },
       { id: 'certs', label: 'Licences & certificates' }, { id: 'checklists', label: 'Code checklists' },
@@ -280,7 +309,7 @@ export default {
       permits: ['New permit', () => editPermit(null)],
       inspections: ['Schedule inspection', () => editInspection(null)],
       certs: ['Add certificate', () => editCert(null)],
-      checklists: ['New checklist', () => newChecklistFromTemplate(ctx, 'code', CODE_TEMPLATES, { jobId: jobFilter })],
+      checklists: ['New checklist', () => newChecklistFromTemplate(ctx, 'code', templatesFor(store.settings()), { jobId: jobFilter })],
     };
 
     const draw = () => {
@@ -288,6 +317,7 @@ export default {
       ui.clear(tabsHost);
       tabsHost.append(ui.tabs(TABS, tab, (t) => { tab = t; draw(); }), h('span', { class: 'grow' }), ui.button(ADD[tab][0], { variant: 'primary', icon: 'plus', onClick: ADD[tab][1] }));
       ui.clear(body);
+      if (tab === 'permits' || tab === 'checklists') body.append(authorityCard());
       if (tab === 'permits') {
         const rows = store.list('permits', inJob);
         body.append(ui.table({
@@ -340,14 +370,14 @@ export default {
         }));
       } else {
         const rows = store.list('checklists', (c) => c.kind === 'code' && inJob(c));
-        body.append(checklistCards(ctx, rows, ui.empty({ icon: 'check', title: 'No code checklists', text: 'Start one from a template: rough-in, service upgrade, fit-out, EV charger.',
+        body.append(checklistCards(ctx, rows, ui.empty({ icon: 'check', title: 'No code checklists', text: cec ? 'Start one from a template: dwelling rough-in, service, final, EV charger, commercial fit-out.' : 'Start one from a template: rough-in, service upgrade, fit-out, EV charger.',
           action: ui.button('New checklist', { variant: 'primary', icon: 'plus', onClick: ADD.checklists[1] }) })));
       }
     };
 
     root.append(ui.page({
       title: 'Compliance',
-      subtitle: job ? h('span', null, 'Filtered to ', h('a', { href: `#/jobs/${job.id}` }, `${job.number} · ${job.title}`), ' · ', h('a', { href: '#/compliance' }, 'show all')) : 'Permits, inspections, licences and code checklists',
+      subtitle: job ? h('span', null, 'Filtered to ', h('a', { href: `#/jobs/${job.id}` }, `${job.number} · ${job.title}`), ' · ', h('a', { href: '#/compliance' }, 'show all')) : `Permits, inspections, licences and ${cec ? 'CEC 2024' : 'NEC 2023'} checklists`,
     }, statsHost, tabsHost, body));
     draw();
     const offs = ['permits', 'inspections', 'certifications', 'checklists', 'employees'].map((c) => store.on(c, draw));

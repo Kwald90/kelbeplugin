@@ -1,0 +1,32 @@
+{
+  "description": "JSON Schemas (draft-07) for every collection in js/store.js. Shared by the browser and the server (ajv).",
+  "collections": {
+    "clients": "./clients.json",
+    "leads": "./leads.json",
+    "sequences": "./sequences.json",
+    "enrolments": "./enrolments.json",
+    "outbox": "./outbox.json",
+    "jobs": "./jobs.json",
+    "schedule": "./schedule.json",
+    "estimates": "./estimates.json",
+    "invoices": "./invoices.json",
+    "payments": "./payments.json",
+    "items": "./items.json",
+    "locations": "./locations.json",
+    "stockMoves": "./stockMoves.json",
+    "employees": "./employees.json",
+    "timeEntries": "./timeEntries.json",
+    "drawings": "./drawings.json",
+    "sops": "./sops.json",
+    "permits": "./permits.json",
+    "inspections": "./inspections.json",
+    "certifications": "./certifications.json",
+    "checklists": "./checklists.json",
+    "panels": "./panels.json",
+    "settings": "./settings.json",
+    "wireRuns": "./wireRuns.json",
+    "bends": "./bends.json",
+    "benderProfiles": "./benderProfiles.json",
+    "auditLog": "./auditLog.json"
+  }
+}

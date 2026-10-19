@@ -1,4 +1,6 @@
 // Plans & drawings: the gallery (S01) and the canvas editor (S02–S10).
+// A drawing may hold rooms[] (walls, doors, counters) for auto-place and the
+// code check; older drawings without it open fine (normalizeDrawing adds it).
 import { openEditor } from '../canvas/editor.js';
 
 const PAPER_LABEL = { none: 'Blank', dots: 'Dots', grid: 'Grid', iso: 'Isometric' };
@@ -10,7 +12,7 @@ function createDrawing(store, jobId) {
     name: job ? `${job.title} — plan ${n}` : `Untitled plan ${n}`,
     jobId: job ? job.id : null, paper: 'grid', scale: 24,
     layers: [{ id: 'L1', name: 'Plan', visible: true, locked: false, opacity: 1 }, { id: 'L2', name: 'Power', visible: true, locked: false, opacity: 1 }],
-    strokes: [], objects: [], texts: [], underlay: null, view: null, thumb: null,
+    strokes: [], objects: [], texts: [], rooms: [], underlay: null, view: null, thumb: null,
   });
 }
 
@@ -32,6 +34,7 @@ function gallery(root, { store, ui, nav, query }) {
   function card(d) {
     const job = d.jobId && jobById.get(d.jobId);
     const symbols = (d.objects || []).length;
+    const rooms = (d.rooms || []).length;
     return h('a', { class: 'card click dw-card', href: '#/drawings/' + d.id, 'aria-label': `Open ${d.name}` },
       h('div', { class: ['dw-thumb', `paper-${d.paper || 'grid'}`] },
         d.thumb ? h('img', { src: d.thumb, alt: '', loading: 'lazy' }) : h('span', { class: 'dw-thumb-empty' }, icon('pen', 28)),
@@ -42,6 +45,7 @@ function gallery(root, { store, ui, nav, query }) {
         h('div', { class: 'row', style: { marginTop: '6px', gap: '6px' } },
           ui.badge(PAPER_LABEL[d.paper] || 'Grid'),
           symbols ? ui.badge(`${symbols} symbol${symbols === 1 ? '' : 's'}`, 'accent') : null,
+          rooms ? ui.badge(`${rooms} room${rooms === 1 ? '' : 's'}`) : null,
           (d.layers || []).length > 1 ? ui.badge(`${d.layers.length} layers`) : null)));
   }
 
@@ -88,7 +92,7 @@ function gallery(root, { store, ui, nav, query }) {
 
   root.append(ui.page({
     title: 'Plans & drawings',
-    subtitle: 'Sketch, import plans, mark up power and lighting, then count symbols into a quote.',
+    subtitle: 'Sketch, import plans, draw rooms, auto-place boxes, check them against the CEC, then count symbols into a quote.',
     actions: [ui.button('New drawing', { variant: 'primary', icon: 'plus', onClick: newDrawing })],
   },
   h('div', { class: 'row', style: { marginBottom: '16px' } }, ui.searchBox('Search drawings', (v) => { q = v; draw(); }), jobSelect),

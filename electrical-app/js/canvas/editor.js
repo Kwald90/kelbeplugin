@@ -1,11 +1,14 @@
 // The canvas editor (S02–S10): infinite paper, pressure pens, tool wheel,
-// layers, symbols, wires, measure, import/export and takeoff.
+// layers, symbols, wires, measure, rooms, auto-place, code check,
+// import/export and takeoff.
 import { uid } from '../store.js';
 import {
   drawPaper, drawContent, drawStroke, drawObject, hitTest, hitStroke, itemBounds, textBounds,
-  contentBounds, renderToCanvas, toSVG, takeoff, fmtFeet, segLen, wireLength, FREEHAND,
+  contentBounds, renderToCanvas, toSVG, takeoff, fmtWorldLength, segLen, wireLength, FREEHAND,
 } from './engine.js';
 import { SYMBOLS, SYMBOL_ORDER, symbolPreview } from './symbols.js';
+import { createRooms, swallowNextClick, ROOM_ICON, CHECK_ICON, WAND_ICON } from './rooms.js';
+import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 
 const RAW = {
   wire: '<path d="M3 18c3 0 3-12 9-12s6 12 9 12"/><circle cx="3" cy="18" r="1.6"/><circle cx="21" cy="18" r="1.6"/>',
@@ -19,6 +22,8 @@ const RAW = {
   dash: '<path d="M3 12h4M10 12h4M17 12h4"/>',
   curve: '<path d="M3 18C6 6 18 6 21 18"/>',
   move: '<path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+  tag: '<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.3"/>',
+  room: ROOM_ICON, check: CHECK_ICON, wand: WAND_ICON,
 };
 
 const WHEEL_TOOLS = [
@@ -36,6 +41,7 @@ const SHAPE_TOOLS = [
   { id: 'rect', label: 'Rectangle', icon: 'square', key: 'r' },
   { id: 'text', label: 'Text', icon: 'type', key: 't' },
   { id: 'measure', label: 'Measure', icon: 'ruler', key: 'm' },
+  { id: 'room', label: 'Room', icon: RAW.room, key: 'o' },
 ];
 const ALL_TOOLS = [...WHEEL_TOOLS, ...SHAPE_TOOLS];
 
@@ -67,7 +73,7 @@ function saveOpts(o) { try { localStorage.setItem('kc.canvas.opts', JSON.stringi
 
 export function normalizeDrawing(d) {
   d.layers = d.layers?.length ? d.layers : [{ id: 'L1', name: 'Layer 1', visible: true, locked: false, opacity: 1 }];
-  d.strokes ||= []; d.objects ||= []; d.texts ||= [];
+  d.strokes ||= []; d.objects ||= []; d.texts ||= []; d.rooms ||= [];
   d.paper ||= 'grid';
   d.scale = Number(d.scale) > 0 ? Number(d.scale) : 24;
   if (d.underlayOpacity == null) d.underlayOpacity = 1;
@@ -129,6 +135,7 @@ export function openEditor(root, ctx, id) {
   let underImg = null;
   let dpr = 1, W = 0, H = 0;
   let baseDirty = true, rafId = 0, saveTimer = 0, contentDirty = false, destroyed = false;
+  let rooms = null; // rooms, auto-place and code check (./rooms.js), created once the DOM exists
 
   root.classList.add('full-bleed');
   document.body.classList.add('canvas-open');
@@ -155,6 +162,7 @@ export function openEditor(root, ctx, id) {
     btn('layers', 'Layers', () => layersSheet()),
     paperBtn,
     btn('upload', 'Import plan (image or PDF)', () => importUnderlay(), { class: 'wide-only' }),
+    btn(RAW.check, 'Code check (CEC)', () => rooms.openCheck()),
     btn('list', 'Takeoff', () => takeoffSheet(), { class: 'wide-only' }),
     btn('download', 'Export PNG', () => exportPNG(), { class: 'wide-only' }),
     btn('more', 'More', () => moreSheet()));
@@ -200,7 +208,8 @@ export function openEditor(root, ctx, id) {
   const toWorld = (sx, sy) => [(sx - st.view.x) / st.view.zoom, (sy - st.view.y) / st.view.zoom];
   const layerOf = (lid) => d.layers.find((l) => l.id === lid);
   const usable = (l) => l.visible !== false && !l.locked;
-  const COLL = { stroke: () => d.strokes, object: () => d.objects, text: () => d.texts };
+  const COLL = { stroke: () => d.strokes, object: () => d.objects, text: () => d.texts, room: () => d.rooms };
+  const units = () => getUnits(store.settings().units);
   const findSel = (s) => COLL[s.kind]().find((i) => i.id === s.id);
   const isDark = () => {
     const c = getComputedStyle(document.documentElement).getPropertyValue('--paper').trim();
@@ -215,7 +224,7 @@ export function openEditor(root, ctx, id) {
 
   function snapshot() {
     return {
-      json: JSON.stringify({ layers: d.layers, strokes: d.strokes, objects: d.objects, texts: d.texts, paper: d.paper, scale: d.scale,
+      json: JSON.stringify({ layers: d.layers, strokes: d.strokes, objects: d.objects, texts: d.texts, rooms: d.rooms, codeOptions: d.codeOptions ?? null, placement: d.placement ?? null, paper: d.paper, scale: d.scale,
         underlayX: d.underlayX, underlayY: d.underlayY, underlayW: d.underlayW, underlayH: d.underlayH, underlayOpacity: d.underlayOpacity, underlayLocked: d.underlayLocked }),
       underlay: d.underlay,
     };
@@ -243,7 +252,7 @@ export function openEditor(root, ctx, id) {
 
   function changed(content = true) {
     baseDirty = true;
-    if (content) { contentDirty = true; }
+    if (content) { contentDirty = true; rooms?.onChanged(); }
     scheduleSave();
     updateChrome();
     requestFrame();
@@ -260,6 +269,7 @@ export function openEditor(root, ctx, id) {
     if (!store.get('drawings', id)) return; // deleted
     const patch = {
       name: d.name, jobId: d.jobId || null, paper: d.paper, scale: d.scale, layers: d.layers, strokes: d.strokes, objects: d.objects, texts: d.texts,
+      rooms: d.rooms, codeOptions: d.codeOptions || null, placement: d.placement || null,
       underlay: d.underlay || null, underlayX: d.underlayX || 0, underlayY: d.underlayY || 0, underlayW: d.underlayW || 0, underlayH: d.underlayH || 0,
       underlayOpacity: d.underlayOpacity, underlayLocked: !!d.underlayLocked, view: st.view ? { ...st.view } : null,
     };
@@ -267,7 +277,7 @@ export function openEditor(root, ctx, id) {
       contentDirty = false;
       try {
         const has = contentBounds(d);
-        patch.thumb = has ? renderToCanvas(d, { fixed: { w: 360, h: 240 }, pad: 24, underlayImage: underImg }).toDataURL('image/jpeg', 0.72) : null;
+        patch.thumb = has ? renderToCanvas(d, { fixed: { w: 360, h: 240 }, pad: 24, underlayImage: underImg, units: units() }).toDataURL('image/jpeg', 0.72) : null;
       } catch { /* thumbnail is optional */ }
     }
     store.update('drawings', id, patch, { silent: true });
@@ -309,7 +319,7 @@ export function openEditor(root, ctx, id) {
     bg.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawPaper(bg, v, W, H, d.paper, paperColors());
     bg.setTransform(dpr * v.zoom, 0, 0, dpr * v.zoom, dpr * v.x, dpr * v.y);
-    drawContent(bg, d, { zoom: v.zoom, dark: isDark(), underlayImage: underImg });
+    drawContent(bg, d, { zoom: v.zoom, dark: isDark(), underlayImage: underImg, units: units() });
   }
 
   function frame() {
@@ -323,12 +333,12 @@ export function openEditor(root, ctx, id) {
     g.setTransform(dpr * v.zoom, 0, 0, dpr * v.zoom, dpr * v.x, dpr * v.y);
     const al = layerOf(st.activeLayer);
     g.globalAlpha = al?.opacity ?? 1;
-    if (op?.stroke) drawStroke(g, op.stroke, d, { zoom: v.zoom, dark });
+    if (op?.stroke) drawStroke(g, op.stroke, d, { zoom: v.zoom, dark, units: units() });
     if (op?.type === 'wire') {
       const pts = op.hover ? [...op.points, op.hover] : op.points;
-      if (pts.length > 1) drawStroke(g, { ...op.proto, points: pts }, d, { zoom: v.zoom, dark });
+      if (pts.length > 1) drawStroke(g, { ...op.proto, points: pts }, d, { zoom: v.zoom, dark, units: units() });
       g.globalAlpha = 1;
-      if (op.hover && d.scale > 0) label(g, op.hover, fmtFeet(wireLength(pts) / d.scale));
+      if (op.hover && d.scale > 0) label(g, op.hover, fmtWorldLength(wireLength(pts), d, units()));
     }
     g.globalAlpha = 1;
     // snap target highlight
@@ -353,6 +363,8 @@ export function openEditor(root, ctx, id) {
       g.strokeRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
     }
     g.setLineDash([]);
+    // rooms: drafts, handles, ghosts and code-check markers
+    rooms.overlay(g);
     // eraser cursor
     if (st.tool === 'eraser' && st.hover && !st.placing) {
       g.strokeStyle = dark ? '#ecebe7' : '#1c1b19'; g.lineWidth = 1 / v.zoom;
@@ -383,6 +395,12 @@ export function openEditor(root, ctx, id) {
     viewChanged();
   }
   function zoomBy(f) { zoomAt(W / 2, H / 2, f); }
+  function centerOn(x, y, zoom = z()) {
+    const nz = Math.min(24, Math.max(0.05, zoom));
+    const panelW = W > 760 ? 340 : 0, botPad = W > 760 ? 0 : H * 0.42;
+    st.view = { zoom: nz, x: (W - panelW) / 2 - x * nz, y: (H - botPad) / 2 - y * nz };
+    viewChanged();
+  }
   function zoomTo(nz) { zoomAt(W / 2, H / 2, nz / z()); }
   function fit(initial) {
     const b = contentBounds(d);
@@ -398,6 +416,7 @@ export function openEditor(root, ctx, id) {
   function setTool(t) {
     if (op?.type === 'wire') finishWire();
     st.tool = t;
+    rooms?.toolChanged();
     st.placing = null;
     st.setScale = false;
     if (t !== 'select') st.selection = [];
@@ -470,8 +489,13 @@ export function openEditor(root, ctx, id) {
       const it = findSel(s);
       if (!it) continue;
       if (s.kind === 'stroke') it.points = it.points.map((p) => [p[0] + dx, p[1] + dy, p[2]]);
+      else if (s.kind === 'room') moveRoom(it, dx, dy);
       else { it.x += dx; it.y += dy; }
     }
+  }
+  function moveRoom(r, dx, dy) {
+    r.points = r.points.map((p) => [p[0] + dx, p[1] + dy]);
+    for (const f of r.features || []) if (f.kind === 'island') { f.x += dx; f.y += dy; }
   }
 
   function inUnderlay(wx, wy) {
@@ -510,6 +534,7 @@ export function openEditor(root, ctx, id) {
     if (touches.length >= 2) {
       // second finger: abandon any stroke in progress and start a pinch
       if (op?.type !== 'wire') op = null; // moves/erases already applied stay applied
+      rooms.cancelGesture();
       startPinch(touches);
       requestFrame();
       return;
@@ -519,6 +544,7 @@ export function openEditor(root, ctx, id) {
     const panTool = e.button === 1 || st.space || st.tool === 'hand' || (e.pointerType === 'touch' && st.penSeen);
     if (panTool) { op = { type: 'pan', sx, sy, vx: st.view.x, vy: st.view.y }; wrap.classList.add('panning'); return; }
     if (e.button === 2) return;
+    if (!st.placing && rooms.down(e, wx, wy)) { op = null; updateChrome(); requestFrame(); return; }
 
     if (st.placing) {
       if (!needLayer()) return;
@@ -550,6 +576,7 @@ export function openEditor(root, ctx, id) {
       updateChrome();
     } else if (t === 'text') {
       const hit = hitTest(d, wx, wy, 4 / z(), usable);
+      swallowNextClick();
       if (hit?.kind === 'text') editText(hit.item); else addText(wx, wy);
     } else if (t === 'eraser') {
       op = { type: 'erase', cp: false };
@@ -562,7 +589,7 @@ export function openEditor(root, ctx, id) {
         if (e.shiftKey) st.selection = inSel ? st.selection.filter((s) => s.id !== key.id) : [...st.selection, key];
         else if (!inSel) st.selection = [key];
         op = { type: 'move', last: [wx, wy], cp: false };
-        if (e.detail >= 2 && hit.kind === 'text') { op = null; editText(hit.item); }
+        if (e.detail >= 2 && hit.kind === 'text') { op = null; swallowNextClick(); editText(hit.item); }
       } else if (inUnderlay(wx, wy) && !e.shiftKey && st.selection.length === 0) {
         op = { type: 'underlay', last: [wx, wy], cp: false };
       } else {
@@ -580,6 +607,7 @@ export function openEditor(root, ctx, id) {
     if (pinch) { movePinch(); return; }
     const [wx, wy] = toWorld(sx, sy);
     st.hover = [wx, wy];
+    if ((!op || op.type !== 'pan') && rooms.move(e, wx, wy, pointers.has(e.pointerId))) { requestFrame(); return; }
     if (!op) {
       if (st.tool === 'eraser' || st.placing) requestFrame();
       return;
@@ -657,6 +685,7 @@ export function openEditor(root, ctx, id) {
       return;
     }
     wrap.classList.remove('panning');
+    if (op?.type !== 'pan' && rooms.up(e)) { updateChrome(); requestFrame(); return; }
     if (!op) return;
     const cur = op;
     if (cur.type === 'wire') return; // wires are click-by-click
@@ -671,11 +700,12 @@ export function openEditor(root, ctx, id) {
       const len = segLen(s.points[0], s.points[1]);
       if (len < 3 / z()) { requestFrame(); return; }
       if (s.tool === 'measure' && st.setScale) {
-        const ans = await ui.promptDialog(`That line is ${Math.round(len)} units on the canvas. How many feet is it? (e.g. 12 or 12.5)`, { title: 'Set drawing scale', okLabel: 'Set scale' });
-        const ft = parseFloat(ans);
+        const ans = await ui.promptDialog(`How long is that line in real life? (e.g. ${units() === 'imperial' ? `12' 6"` : '3.8 m or 3800 mm'})`, { title: 'Set drawing scale', okLabel: 'Set scale' });
         st.setScale = false;
-        if (ft > 0) { checkpoint(); d.scale = len / ft; changed(); ui.toast(`Scale set: ${(d.scale).toFixed(1)} px per foot`, 'success'); }
-        else { updateChrome(); requestFrame(); }
+        let m = ans == null ? null : parseLength(ans, { units: units(), bare: units() === 'imperial' ? 'ft' : 'm' });
+        if (m != null && units() === 'metric' && /^\s*\d+(\.\d+)?\s*$/.test(ans) && m > 30) m /= 1000;
+        if (m > 0) { checkpoint(); d.scale = len / (m / M_PER_FT); changed(); ui.toast(`Scale set: ${fmtLength(m, { units: units(), denom: 4 })} = ${Math.round(len)} canvas units`, 'success'); }
+        else { if (ans != null) ui.toast('Could not read that length', 'error'); updateChrome(); requestFrame(); }
         return;
       }
       checkpoint(); d.strokes.push(s); changed();
@@ -688,6 +718,8 @@ export function openEditor(root, ctx, id) {
         for (const [kind, arr] of [['stroke', d.strokes], ['object', d.objects], ['text', d.texts]]) {
           for (const it of arr) if (ok(it.layer) && inside(itemBounds(kind, it)) && !st.selection.some((s) => s.id === it.id)) picked.push({ kind, id: it.id });
         }
+        const within = (b) => b.x0 >= x0 && b.x1 <= x1 && b.y0 >= y0 && b.y1 <= y1;
+        for (const r of d.rooms) if (ok(r.layer) && within(itemBounds('room', r)) && !st.selection.some((s) => s.id === r.id)) picked.push({ kind: 'room', id: r.id });
         st.selection = [...st.selection, ...picked];
       }
       updateChrome();
@@ -732,6 +764,7 @@ export function openEditor(root, ctx, id) {
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.querySelector('.sheet, .dialog')) return;
     const mod = e.metaKey || e.ctrlKey;
     const k = e.key.toLowerCase();
+    if (e.type === 'keydown' && !mod && rooms.key(e)) { e.preventDefault(); return; }
     if (e.type === 'keyup') { if (e.code === 'Space') { st.space = false; wrap.classList.remove('space'); } return; }
     if (e.code === 'Space' && !mod) { st.space = true; wrap.classList.add('space'); e.preventDefault(); return; }
     if (mod && k === 'z') { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); return; }
@@ -759,6 +792,7 @@ export function openEditor(root, ctx, id) {
       ...d.strokes.filter((s) => ok(s.layer)).map((s) => ({ kind: 'stroke', id: s.id })),
       ...d.objects.filter((s) => ok(s.layer)).map((s) => ({ kind: 'object', id: s.id })),
       ...d.texts.filter((s) => ok(s.layer)).map((s) => ({ kind: 'text', id: s.id })),
+      ...d.rooms.filter((s) => ok(s.layer)).map((s) => ({ kind: 'room', id: s.id })),
     ];
     updateChrome(); requestFrame();
   }
@@ -769,6 +803,7 @@ export function openEditor(root, ctx, id) {
     d.strokes = d.strokes.filter((s) => !gone.has(s.id));
     d.objects = d.objects.filter((s) => !gone.has(s.id));
     d.texts = d.texts.filter((s) => !gone.has(s.id));
+    d.rooms = d.rooms.filter((s) => !gone.has(s.id));
     st.selection = [];
     changed();
   }
@@ -783,6 +818,7 @@ export function openEditor(root, ctx, id) {
       const c = JSON.parse(JSON.stringify(it));
       c.id = uid();
       if (s.kind === 'stroke') c.points = c.points.map((p) => [p[0] + off, p[1] + off, p[2]]);
+      else if (s.kind === 'room') { moveRoom(c, off, off); c.name = `${c.name} copy`; }
       else { c.x += off; c.y += off; }
       COLL[s.kind]().push(c);
       next.push({ kind: s.kind, id: c.id });
@@ -798,7 +834,7 @@ export function openEditor(root, ctx, id) {
     changed();
   }
   function scaleSel(f) {
-    const items = st.selection.map((s) => ({ s, it: findSel(s) })).filter((x) => x.it && x.s.kind !== 'stroke');
+    const items = st.selection.map((s) => ({ s, it: findSel(s) })).filter((x) => x.it && (x.s.kind === 'object' || x.s.kind === 'text'));
     if (!items.length) return;
     checkpoint();
     for (const { s, it } of items) {
@@ -846,26 +882,32 @@ export function openEditor(root, ctx, id) {
     ui.clear(ctxBar);
     const parts = [];
     const tbtn = (ic, label, fn, pressed) => h('button', { class: 'cv-btn', type: 'button', title: label, 'aria-label': label, 'aria-pressed': pressed == null ? null : String(pressed), onClick: fn }, icon(ic, 18));
-    if (st.placing) {
+    const roomParts = st.placing ? null : rooms.ctxParts();
+    if (roomParts) {
+      parts.push(...roomParts);
+      if (st.selection.length === 1 && st.selection[0].kind === 'room' && !rooms.ghosts.length) parts.push(tbtn('copy', 'Duplicate (Ctrl+D)', duplicateSel), tbtn('trash', 'Delete room', deleteSel));
+    } else if (st.placing) {
       parts.push(symbolPreview(st.placing, isDark() ? '#ecebe7' : '#1c1b19', 28), h('span', { class: 'cv-ctx-label' }, `${SYMBOLS[st.placing].label}: tap to place`),
         tbtn(RAW.rotate, 'Rotate 90°', () => { st.placeRot = (st.placeRot + 90) % 360; requestFrame(); }),
         h('button', { class: 'cv-chip', type: 'button', onClick: () => symbolsSheet() }, 'Change'),
         h('button', { class: 'cv-chip on', type: 'button', onClick: () => { st.placing = null; updateChrome(); requestFrame(); } }, 'Done'));
     } else if (st.tool === 'wire') {
-      parts.push(h('span', { class: 'cv-ctx-label' }, op?.type === 'wire' ? `Wire: ${op.points.length} point${op.points.length === 1 ? '' : 's'}${d.scale ? ' · ' + fmtFeet(wireLength(op.points) / d.scale) : ''}` : 'Wire: tap points, tap twice to finish'),
+      parts.push(h('span', { class: 'cv-ctx-label' }, op?.type === 'wire' ? `Wire: ${op.points.length} point${op.points.length === 1 ? '' : 's'}${d.scale ? ' · ' + fmtWorldLength(wireLength(op.points), d, units()) : ''}` : 'Wire: tap points, tap twice to finish'),
         tbtn(RAW.dash, 'Dashed (low voltage)', () => { st.wireDash = !st.wireDash; if (op?.type === 'wire') op.proto.dash = st.wireDash; renderCtx(); requestFrame(); }, st.wireDash),
         tbtn(RAW.curve, 'Curved runs', () => { st.wireCurve = !st.wireCurve; if (op?.type === 'wire') op.proto.curve = st.wireCurve; renderCtx(); requestFrame(); }, st.wireCurve));
       if (op?.type === 'wire') parts.push(h('button', { class: 'cv-chip', type: 'button', onClick: () => { op = null; st.snap = null; updateChrome(); requestFrame(); } }, 'Cancel'),
         h('button', { class: 'cv-chip on', type: 'button', onClick: () => finishWire() }, 'Finish'));
     } else if (st.tool === 'measure') {
-      parts.push(h('span', { class: 'cv-ctx-label' }, st.setScale ? 'Drag along a length you know' : `Scale: 1 ft = ${d.scale.toFixed(1)} units`),
+      parts.push(h('span', { class: 'cv-ctx-label' }, st.setScale ? 'Drag along a length you know' : `Scale: ${units() === 'imperial' ? `1 ft = ${d.scale.toFixed(1)}` : `1 m = ${(d.scale / M_PER_FT).toFixed(1)}`} units`),
         h('button', { class: ['cv-chip', st.setScale ? 'on' : null], type: 'button', onClick: () => { st.setScale = !st.setScale; renderCtx(); } }, st.setScale ? 'Cancel' : 'Set scale'));
     } else if (st.selection.length) {
       const hasObj = st.selection.some((s) => s.kind === 'object');
-      const hasSized = st.selection.some((s) => s.kind !== 'stroke');
+      const hasSized = st.selection.some((s) => s.kind === 'object' || s.kind === 'text');
+      const selObjs = st.selection.filter((s) => s.kind === 'object').map(findSel).filter(Boolean);
       parts.push(h('span', { class: 'cv-ctx-label' }, `${st.selection.length} selected`),
         tbtn('copy', 'Duplicate (Ctrl+D)', duplicateSel),
         hasObj ? tbtn(RAW.rotate, 'Rotate 45°', rotateSel) : null,
+        hasObj ? tbtn(RAW.tag, 'Protection and height (GFCI, AFCI, TR)', () => rooms.deviceSheet(selObjs)) : null,
         hasSized ? tbtn(RAW.bigger, 'Bigger', () => scaleSel(1.2)) : null,
         hasSized ? tbtn(RAW.smaller, 'Smaller', () => scaleSel(1 / 1.2)) : null,
         tbtn('palette', 'Apply current colour', () => recolorSel(lastColor)),
@@ -947,7 +989,8 @@ export function openEditor(root, ctx, id) {
       // top layer first, like every layers panel
       [...d.layers].reverse().forEach((l) => {
         const idx = d.layers.indexOf(l);
-        const count = d.strokes.filter((x) => x.layer === l.id).length + d.objects.filter((x) => x.layer === l.id).length + d.texts.filter((x) => x.layer === l.id).length;
+        const count = d.strokes.filter((x) => x.layer === l.id).length + d.objects.filter((x) => x.layer === l.id).length + d.texts.filter((x) => x.layer === l.id).length
+          + d.rooms.filter((x) => x.layer === l.id).length;
         const active = l.id === st.activeLayer;
         list.append(h('div', { class: ['list-row', 'cv-layer', active ? 'active' : null] },
           h('button', { class: 'cv-btn', type: 'button', title: l.visible === false ? 'Show layer' : 'Hide layer', 'aria-label': `${l.visible === false ? 'Show' : 'Hide'} ${l.name}`, 'aria-pressed': String(l.visible !== false),
@@ -970,6 +1013,7 @@ export function openEditor(root, ctx, id) {
               checkpoint();
               d.layers = d.layers.filter((x) => x.id !== l.id);
               d.strokes = d.strokes.filter((x) => x.layer !== l.id); d.objects = d.objects.filter((x) => x.layer !== l.id); d.texts = d.texts.filter((x) => x.layer !== l.id);
+              d.rooms = d.rooms.filter((x) => x.layer !== l.id);
               if (st.activeLayer === l.id) st.activeLayer = d.layers[d.layers.length - 1].id;
               st.selection = st.selection.filter((x) => findSel(x));
               changed(); draw();
@@ -1004,7 +1048,7 @@ export function openEditor(root, ctx, id) {
     const rows = SYMBOL_ORDER.filter((sid) => counts[sid]).map((sid) => ({ sid, n: counts[sid], item: items.find((i) => i.symbol === sid) }));
     const total = rows.reduce((a, r) => a + (r.item ? r.item.priceCents * r.n : 0), 0);
     const wires = d.strokes.filter((s) => s.tool === 'wire' && layerOf(s.layer)?.visible !== false);
-    const wireFt = d.scale > 0 ? wires.reduce((a, s) => a + wireLength(s.points), 0) / d.scale : 0;
+    const wirePx = wires.reduce((a, s) => a + wireLength(s.points), 0);
     const s = ui.openSheet({
       title: 'Takeoff',
       body: h('div', { class: 'stack' },
@@ -1016,7 +1060,7 @@ export function openEditor(root, ctx, id) {
             { key: 'v', label: 'Value', align: 'right', render: (r) => r.item ? ui.fmtMoney(r.item.priceCents * r.n) : '—' },
           ], rows,
         }) : ui.empty({ icon: RAW.outlet, title: 'No symbols yet', text: 'Place receptacles, switches and lights from the Symbols library to count them here.' }),
-        wires.length ? h('p', { class: 'muted', style: { margin: 0 } }, `${wires.length} wire run${wires.length === 1 ? '' : 's'} drawn, about ${Math.round(wireFt)} ft at the drawing scale.`) : null,
+        wires.length ? h('p', { class: 'muted', style: { margin: 0 } }, `${wires.length} wire run${wires.length === 1 ? '' : 's'} drawn, about ${fmtWorldLength(wirePx, d, units())} at the drawing scale.`) : null,
         rows.length ? h('div', { class: 'row' }, h('strong', { class: 'grow' }, 'Price-book value'), h('strong', { class: 'num' }, ui.fmtMoney(total))) : null),
       actions: [
         ui.button('Close', { variant: 'ghost', onClick: () => s.close() }),
@@ -1033,7 +1077,7 @@ export function openEditor(root, ctx, id) {
         { label: 'Name', name: 'name', value: d.name, required: true, span: true },
         { label: 'Job', name: 'jobId', type: 'select', value: d.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`), span: true },
         { label: 'Paper', name: 'paper', type: 'select', value: d.paper, options: PAPERS.map((p) => ({ value: p.id, label: p.label })) },
-        { label: 'Scale (units per foot)', name: 'scale', type: 'number', step: 'any', min: 0.1, value: Math.round(d.scale * 100) / 100, hint: 'Or use Measure → Set scale on the plan.' },
+        { label: 'Scale (canvas units per foot)', name: 'scale', type: 'number', step: 'any', min: 0.1, value: Math.round(d.scale * 100) / 100, hint: `Or use Measure → Set scale on the plan. 1 m = ${(d.scale / M_PER_FT).toFixed(1)} units.` },
       ],
       onSubmit: (v) => {
         d.name = v.name.trim() || 'Untitled';
@@ -1056,7 +1100,11 @@ export function openEditor(root, ctx, id) {
           ui.tabs(PAPERS.map((p) => ({ id: p.id, label: p.label })), d.paper, (pid) => { checkpoint(); d.paper = pid; changed(); s.close(); moreSheet(); })),
         h('div', { class: 'list' },
           row('edit', 'Details', `Rename, link to a job${job ? ` (now ${job.number})` : ''}, scale`, detailsSheet),
-          row('ruler', 'Set scale', `1 ft = ${d.scale.toFixed(1)} units. Measure a known length on the plan.`, () => { setTool('measure'); st.setScale = true; updateChrome(); }),
+          row('ruler', 'Set scale', `${units() === 'imperial' ? `1 ft = ${d.scale.toFixed(1)}` : `1 m = ${(d.scale / M_PER_FT).toFixed(1)}`} units. Measure a known length on the plan.`, () => { setTool('measure'); st.setScale = true; updateChrome(); }),
+          row(RAW.room, 'Draw a room', 'Walls, doors, windows and counters for auto-place and the code check', () => setTool('room')),
+          row(RAW.wand, 'Auto-place boxes in every room', d.rooms.length ? `${d.rooms.length} room${d.rooms.length === 1 ? '' : 's'}: receptacles, switches, lights, alarms` : 'Draw a room first', () => rooms.autoPlace()),
+          row(RAW.check, 'Code check', 'CEC 2024 receptacle rules, GFCI, AFCI, alarms', () => rooms.openCheck()),
+          row('sliders', 'Placement & check settings', 'Mounting heights, alarms, live check', () => rooms.settingsSheet()),
           row('upload', 'Import plan', 'Image or PDF as an underlay', importUnderlay),
           row('list', 'Takeoff', 'Count symbols and create an estimate', takeoffSheet),
           row('image', 'Export PNG', 'High-resolution image', exportPNG),
@@ -1129,7 +1177,7 @@ export function openEditor(root, ctx, id) {
 
   const fileName = (ext) => `${(d.name || 'drawing').replace(/[^\w\- ]+/g, '').trim() || 'drawing'}.${ext}`;
   function exportPNG() {
-    const c = renderToCanvas(d, { underlayImage: underImg, scale: 2, maxW: 6000, maxH: 6000 });
+    const c = renderToCanvas(d, { underlayImage: underImg, scale: 2, maxW: 6000, maxH: 6000, units: units() });
     c.toBlob((blob) => {
       if (!blob) return ui.toast('Export failed', 'error');
       ui.download(fileName('png'), blob, 'image/png');
@@ -1137,7 +1185,7 @@ export function openEditor(root, ctx, id) {
     }, 'image/png');
   }
   function exportSVG() {
-    ui.download(fileName('svg'), toSVG(d), 'image/svg+xml');
+    ui.download(fileName('svg'), toSVG(d, { units: units() }), 'image/svg+xml');
     store.log('export', `Exported ${d.name} as SVG`, 'drawings', id);
   }
 
@@ -1164,16 +1212,21 @@ export function openEditor(root, ctx, id) {
   document.addEventListener('visibilitychange', onHide);
   addEventListener('pagehide', flushSave);
 
+  rooms = createRooms({
+    d, st, store, ui, auth: ctx.auth, wrap, z, checkpoint, changed, requestFrame, updateChrome, setTool, centerOn, label, isDark, layerOf, usable,
+  });
+
   loadUnderlay();
   resize();
   updateChrome();
 
   // exposed for tests
-  globalThis.kelbeCanvas = { d, st, setTool, fit, takeoff: () => takeoff(d), save: () => save() };
+  globalThis.kelbeCanvas = { d, st, setTool, fit, takeoff: () => takeoff(d), save: () => save(), rooms };
 
   return () => {
     destroyed = true;
     flushSave();
+    rooms.destroy();
     cancelAnimationFrame(rafId);
     ro.disconnect(); mo.disconnect();
     mq.removeEventListener?.('change', onScheme);
