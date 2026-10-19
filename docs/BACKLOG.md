@@ -14,6 +14,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **K** Buy CSA C22.1:24 to clear the `VERIFY` items (`docs/code/verify.md`, `docs/field/*.md`).
 - **K** "Ask us to set this up": real address (placeholder `setup@fishtapehq.com`) and price.
 - **K** "FB Muse": Facebook Lead Ads (built) or Meta's Muse AI model?
+- **K** AI defaults: a US$50/month cap per company, the model (Opus 5.5 now, about US$0.10–0.15 per drafted estimate, unmeasured; `AI_MODEL` can switch to a cheaper one), whether MCP agents may create and update records or only read and draft, and keeping chats (with photos) 180 days.
 - **K** GitHub: make `claude/electrical-concept-app-h4qz12` the default branch, turn on Dependabot alerts, branch protection ("CI passed"), private vulnerability reporting, and the `staging`/`production` environments with secrets (`docs/runbooks/deploy-staging.md`).
 - **K** Offsite backup target in Canada, an uptime monitor, a backup heartbeat URL.
 - **K** Move the backup private key (`C:\Users\Kelvin\.fishtape-keys\fishtape-staging-backup.key`) into the password manager and onto a USB stick.
@@ -41,6 +42,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** BC jobs with mixed tax treatment need tax per line, not per document.
 - **dev** CEC Table 14 (other occupancies) not built: no reliable source found.
 - **dev** Client portal (homeowners/GCs view, sign and pay) once integrations are live.
+- **dev** A Settings screen for company API keys (create, scope, revoke). Today it's `POST /api/v1/api-keys` only, and the MCP guide points there.
 
 ## Process
 
