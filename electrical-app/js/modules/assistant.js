@@ -428,7 +428,7 @@ function agentsTab(ui, ctx, status) {
     h('p', { class: 'muted ai-p' }, 'Outside agents can work with your company\'s data through Fishtape\'s MCP server: look up and update records, run the CEC calculators and draft estimates for you to approve here. They sign in with an API key, and the key\'s scopes decide what they can see and change. Agents can\'t delete records, record payments or send anything.'),
     status.ok && !status.features.mcp ? problemCard(ui, { title: 'Part of the Business plan', text: 'The MCP server comes with Business.', lock: true }) : null,
     h('ol', { class: 'ai-steps' },
-      h('li', null, 'An owner or admin creates an API key in Settings (API keys). Give it only the scopes the agent needs, for example ', h('code', null, 'items:read'), ', ', h('code', null, 'clients:read'), ' and ', h('code', null, 'estimates:write'), '.'),
+      h('li', null, 'An owner or admin creates an API key (POST /api/v1/api-keys until the API keys screen lands). Give it only the scopes the agent needs, for example ', h('code', null, 'items:read'), ', ', h('code', null, 'clients:read'), ' and ', h('code', null, 'estimates:write'), '.'),
       h('li', null, 'Add the server to your agent with the key, as below. Keep the key secret: anyone with it can act for your company within its scopes.'),
       h('li', null, 'Drafts the agent proposes appear under Drafts; you accept or discard them.')),
     copyRow(ui, 'Server URL', endpoint),

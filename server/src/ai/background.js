@@ -10,11 +10,10 @@
 import { tenantHas } from '../services/entitlements.js';
 import { enqueue } from '../services/queue.js';
 import { docTotals, entryHours, formatMoney } from '../../../electrical-app/js/lib/money.js';
-import { anthropicClient, requestParams, upstreamError } from './client.js';
+import { ANTHROPIC_SECRET, anthropicClient, requestParams, upstreamError } from './client.js';
 import { aiSettings, assertUnderCap, recordUsage } from './usage.js';
 import { companySettings } from './data.js';
 import { getSecret } from '../services/secrets.js';
-import { ANTHROPIC_SECRET } from './client.js';
 
 const DAY = 86_400_000;
 export const BACKGROUND_ACTOR = { type: 'agent', id: 'background', label: 'Fishtape background agent' };

@@ -3,7 +3,7 @@
 // (API keys use the MCP server at /api/mcp). Every call uses the company's own Anthropic
 // key; plan features: ai.assistant, ai.cec, ai.background (Business).
 import { PassThrough } from 'node:stream';
-import { ApiError, badRequest, conflict, forbidden, notFound } from '../../errors.js';
+import { ApiError, conflict, forbidden, notFound } from '../../errors.js';
 import { ADMIN_ROLES } from '../../auth/permissions.js';
 import { canRead } from '../../auth/access.js';
 import { appendAudit, requestFacts } from '../../services/audit.js';
@@ -14,7 +14,7 @@ import { createChat } from '../../ai/chat.js';
 import { ANTHROPIC_SECRET } from '../../ai/client.js';
 import { aiSettings, monthUsage, monthUsageByFeature } from '../../ai/usage.js';
 import { acceptDraft, discardDraft, getDraft, listDrafts } from '../../ai/drafts.js';
-import { BACKGROUND_ACTOR, backgroundPrincipal, scanTenant } from '../../ai/background.js';
+import { backgroundPrincipal, scanTenant } from '../../ai/background.js';
 import { tenantCtx, who } from '../util.js';
 
 const uuidParam = { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } };
@@ -35,7 +35,7 @@ const suggestionView = (r, outbox) => ({
 });
 
 /** @param {import('fastify').FastifyInstance} app */
-export default async function aiRoutes(app, { db, records, config }) {
+export default async function aiRoutes(app, { db, records }) {
   const aiCfg = readAiConfig();
   const chat = createChat({ db, sealer: app.sealer, records, aiCfg, log: app.log });
   const inTenant = (req, fn, opts) => db.withTenant(tenantCtx(req.principal), fn, opts);
@@ -117,7 +117,7 @@ export default async function aiRoutes(app, { db, records, config }) {
       },
     },
   }, async (req, reply) => {
-    const c = await chat.start(req.principal, req.body || {}, requestFacts(req));
+    const c = await chat.start(req.principal, req.body || {});
     reply.code(201);
     return c;
   });
@@ -252,5 +252,4 @@ export default async function aiRoutes(app, { db, records, config }) {
     return result;
   });
 
-  void badRequest; void BACKGROUND_ACTOR; void config;
 }

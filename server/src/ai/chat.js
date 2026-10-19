@@ -90,7 +90,7 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
 
   const convView = (c) => ({ id: c.id, mode: c.mode, title: c.title, context: c.context, messageCount: c.message_count, createdAt: c.created_at, updatedAt: c.updated_at });
 
-  async function start(p, { mode = 'assistant', units, screen, title }, request) {
+  async function start(p, { mode = 'assistant', units, screen, title }) {
     if (!MODES[mode]) throw badRequest('mode must be assistant or cec.');
     if (p.kind !== 'session' || !p.userId) throw forbidden('Sign in to use the assistant.');
     await assertFeature(db, p.tenantId, MODES[mode]);
@@ -105,7 +105,6 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
       const { rows } = await tx.query(
         `INSERT INTO ai_conversations (tenant_id, user_id, mode, title, context, system_context, prompt_version) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         [tx.tenantId, p.userId, mode, title ? String(title).slice(0, 200) : null, ctx, system, PROMPT_VERSION]);
-      void request;
       return convView(rows[0]);
     }, { write: true });
   }
