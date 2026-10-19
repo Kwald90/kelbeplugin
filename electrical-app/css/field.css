@@ -1,0 +1,68 @@
+/* Field & admin: SOPs, compliance, security audit, settings. Tokens only. */
+.stat-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); margin-bottom: var(--s5); }
+@media (max-width: 760px) { .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); } .stat-grid .stat .value { font-size: 24px; } }
+.nowrap { white-space: nowrap; }
+.text-danger { color: var(--danger); }
+.center { text-align: center !important; }
+
+/* SOP library */
+.sop-card { display: flex; flex-direction: column; gap: var(--s2); text-decoration: none; color: inherit; }
+.sop-card h3 { margin: var(--s1) 0 0; }
+
+/* SOP reader: big tap targets that work with gloves */
+.sop-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s3); counter-reset: none; }
+.sop-step {
+  width: 100%; min-height: 72px; display: flex; align-items: center; gap: var(--s4); text-align: left; cursor: pointer;
+  padding: var(--s4) var(--s5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card); font-size: var(--fs-base); line-height: var(--lh-base);
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+.sop-step:hover { border-color: var(--border-input); }
+.sop-num { flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; background: var(--surface-2); border: 1px solid var(--border); }
+.sop-text { flex: 1; }
+.sop-tick { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--border-input); color: transparent; }
+.sop-step[aria-pressed="true"] { background: var(--success-soft); border-color: var(--success); }
+.sop-step[aria-pressed="true"] .sop-tick { background: var(--success); border-color: var(--success); color: #fff; }
+.sop-step[aria-pressed="true"] .sop-num { background: var(--surface); }
+
+/* SOP editor */
+.sop-edit-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s3); }
+.sop-edit-step { display: grid; grid-template-columns: 40px 1fr auto; gap: var(--s3); align-items: start; }
+.sop-edit-step textarea { min-height: 56px; resize: vertical; }
+@media (max-width: 760px) {
+  .sop-edit-step { grid-template-columns: 32px 1fr; }
+  .sop-edit-step > .row { grid-column: 2; justify-content: flex-end; }
+  .sop-step { padding: var(--s3) var(--s4); gap: var(--s3); }
+}
+
+/* checklists */
+.check-items { display: flex; flex-direction: column; gap: var(--s2); }
+.check-item { display: grid; grid-template-columns: 1fr auto; gap: var(--s2) var(--s4); align-items: center; padding: var(--s3) var(--s4); border: 1px solid var(--border); border-left-width: 4px; border-radius: var(--r-md); background: var(--surface); }
+.check-item .input { grid-column: 1 / -1; min-height: 36px; }
+.check-item:has([aria-checked="true"].pass) { border-left-color: var(--success); }
+.check-item:has([aria-checked="true"].fail) { border-left-color: var(--danger); }
+.check-item:has([aria-checked="true"].na) { border-left-color: var(--border-input); }
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--border); }
+.seg-btn { min-width: 52px; height: 36px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--text-muted); font-weight: 600; font-size: var(--fs-xs); cursor: pointer; }
+.seg-btn[aria-checked="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); }
+.seg-btn.pass[aria-checked="true"] { background: var(--success); color: #fff; }
+.seg-btn.fail[aria-checked="true"] { background: var(--danger); color: #fff; }
+@media (max-width: 760px) {
+  .check-item { grid-template-columns: 1fr; }
+  .seg { justify-self: start; }
+}
+
+/* security */
+.perm-matrix td, .perm-matrix th { padding: 8px 10px; }
+.perm-matrix td svg { color: var(--success); vertical-align: middle; }
+.log-summary { display: inline-block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.log-filters .form-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+
+/* settings */
+.settings-card h3 { margin: 0; }
+.settings-grid { align-items: start; }
+
+@media print {
+  .sop-step { box-shadow: none; min-height: 0; break-inside: avoid; }
+  .sop-tick { display: none; }
+}
