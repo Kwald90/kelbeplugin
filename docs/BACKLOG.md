@@ -23,6 +23,15 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **K** Move the backup private key (`C:\Users\Kelvin\.fishtape-keys\fishtape-staging-backup.key`) into the password manager and onto a USB stick.
 - **K** Change the build Mac's password and turn on "Prevent automatic sleeping when the display is off".
 
+## Running Fishtape as a business (Kelvin)
+
+- **K** Decide which company sells Fishtape (True Collar Built's Stripe account takes the payments today), its GST/HST registration (required once taxable sales pass $30,000 in four quarters; voluntary earlier lets you claim input tax credits) and bookkeeping for SaaS revenue.
+- **K** File a CIPO trademark application for "Fishtape" (software, class 9 and 42) before spending on marketing.
+- **K** Insurance: technology errors & omissions and cyber liability before taking paying customers.
+- **K** Support: hours, response times, refund and cancellation policy (shown on pricing and in the terms).
+- **K** An external uptime monitor (the status page on the same box goes down with it).
+- **K** Hero videos (prompts in `docs/marketing/hero-video-prompts.md`) and product screenshots for the landing page.
+
 ## Needs a professional
 
 - **legal** CASL: is "reply unsubscribe" enough in follow-up emails and SMS, or do we need a one-click unsubscribe link and consent records?
