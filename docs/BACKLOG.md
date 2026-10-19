@@ -8,7 +8,9 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **K** App Store Connect Issuer ID and Apple Team ID (bundle ID `com.fishtapehq.app`, signing, TestFlight). Steps: `docs/mobile/README.md`.
 - **K** Production VPS at dotmoose: host, SSH access, OS, data-centre country, disk encryption.
 - **K** Domain: confirm the spelling registered (fishtapehq.com vs fishtapewq.com) and point DNS (`app.`, `hq.`, `status.`).
-- **K** Real tier prices (placeholders in `electrical-app/js/plans.js`) and the failed-payment grace period.
+- **K** Real tier prices (placeholders in `electrical-app/js/plans.js`), the failed-payment grace period (7 days now), the trial length (30 days now, `TRIAL_DAYS`) and the deleted-company grace (30 days now).
+- **K** When a subscription is cancelled or unpaid past grace: free Starter (current behaviour) or suspend the company?
+- **K** Charge GST/HST on Fishtape subscriptions through Stripe Tax, or another way? Needs a GST/HST registration for Fishtape itself.
 - **K** TG Electrical's province, GST/HST number and ECRA/ESA numbers.
 - **K** Which benders the crew uses (make, sizes, hydraulic shoes) and the box-offset rule used in the field.
 - **K** Buy CSA C22.1:24 to clear the `VERIFY` items (`docs/code/verify.md`, `docs/field/*.md`).
@@ -42,6 +44,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** BC jobs with mixed tax treatment need tax per line, not per document.
 - **dev** CEC Table 14 (other occupancies) not built: no reliable source found.
 - **dev** Client portal (homeowners/GCs view, sign and pay) once integrations are live.
+- **dev** Production nginx: serve `site/` (pricing, Enterprise form) on the marketing domain once it's confirmed, and the status page on `status.` (today it returns the status JSON).
 - **dev** A Settings screen for company API keys (create, scope, revoke). Today it's `POST /api/v1/api-keys` only, and the MCP guide points there.
 
 ## Process
