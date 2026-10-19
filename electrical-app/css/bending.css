@@ -1,1 +1,160 @@
 /* Pipe bending: calculators and bend diagrams. Tokens only (see tokens.css). */
+.bend-tabs { margin-bottom: var(--s3); max-width: 100%; }
+/* every kind in view (wraps) and big enough to hit with a gloved finger */
+.bend-tabs .tabs { max-width: 100%; flex-wrap: wrap; border-radius: var(--r-lg); overflow: visible; }
+.bend-tabs .tabs button { height: 44px; padding: 0 var(--s4); font-size: var(--fs-sm); }
+@media (max-width: 760px) { .bend-tabs .tabs button { flex: 1 1 auto; padding: 0 var(--s3); } }
+.bend-body { display: flex; flex-direction: column; gap: var(--s4); }
+
+/* units switch in the page header */
+.bend-units { display: inline-flex; padding: 3px; gap: 2px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-pill); }
+.bend-units button { border: 0; background: transparent; min-width: 48px; height: 34px; border-radius: var(--r-pill); font-weight: 700; color: var(--text-muted); cursor: pointer; }
+.bend-units button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); }
+
+/* pipe and bender bar */
+.bend-setup { display: flex; flex-direction: column; gap: var(--s3); }
+.bend-setup-row { display: grid; gap: var(--s3); grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr) minmax(220px, 2fr); align-items: start; }
+@media (max-width: 760px) { .bend-setup-row { grid-template-columns: 1fr 1fr; } .bend-setup-row .wide { grid-column: 1 / -1; } }
+.bend-setup-meta { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); align-items: center; font-size: var(--fs-xs); color: var(--text-muted); }
+.bend-verify { display: inline-flex; gap: 6px; align-items: center; color: var(--warning); font-size: var(--fs-xs); font-weight: 600; }
+.bend-verify svg { flex: none; }
+.bend-toggle { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; min-height: 44px; cursor: pointer; color: var(--text); font-weight: 600; }
+.bend-toggle input { width: 22px; height: 22px; accent-color: var(--accent-fill); }
+.bend-toggle .muted { font-weight: 400; }
+.bend-none { min-height: 52px; display: flex; align-items: center; color: var(--text-muted); font-size: var(--fs-sm); }
+.bend-over summary, .bend-pvc summary, .bend-ref summary { cursor: pointer; font-weight: 650; min-height: 40px; display: flex; align-items: center; gap: var(--s2); list-style: none; }
+.bend-over summary::-webkit-details-marker, .bend-pvc summary::-webkit-details-marker, .bend-ref summary::-webkit-details-marker { display: none; }
+.bend-over summary::before, .bend-pvc summary::before, .bend-ref summary::before {
+  content: ""; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg); transition: transform var(--t-fast);
+}
+.bend-over[open] summary::before, .bend-pvc[open] summary::before, .bend-ref[open] summary::before { transform: rotate(45deg); }
+.bend-over[open] summary, .bend-pvc[open] summary { margin-bottom: var(--s2); }
+.bend-pvc { background: var(--info-soft); border-radius: var(--r-md); padding: var(--s2) var(--s3); }
+.bend-pvc ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+/* fields: big, readable, touch-first */
+.bend-fields { display: grid; gap: var(--s3) var(--s4); grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.bend-fields.three { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); margin-bottom: var(--s2); }
+.bend-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.bend-field.inline { flex-direction: row; align-items: center; }
+.bend-field.inline .bend-input { min-width: 200px; }
+.bend-label { font-size: var(--fs-xs); font-weight: 650; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; }
+.bend-label em { font-style: normal; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.bend-input {
+  width: 100%; min-height: 52px; padding: 10px 14px; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border-input); border-radius: var(--r-md); background: var(--surface); color: var(--text); outline: none;
+  transition: box-shadow var(--t-fast);
+}
+select.bend-input { font-size: var(--fs-base); }
+.bend-input:focus { box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--accent); }
+.bend-echo { font-size: var(--fs-xs); color: var(--success); font-weight: 600; min-height: 16px; }
+.bend-echo.bad, .bend-bad { color: var(--danger); font-weight: 600; }
+.bend-hint { font-size: var(--fs-xs); color: var(--text-muted); }
+.bend-chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.bend-chip {
+  min-height: 48px; min-width: 60px; padding: 0 var(--s4); border-radius: var(--r-md); border: 1px solid var(--border-input);
+  background: var(--surface); color: var(--text); font-weight: 650; font-size: var(--fs-base); cursor: pointer;
+}
+.bend-chip[aria-pressed="true"] { background: var(--accent-fill); border-color: transparent; color: var(--on-accent); }
+.bend-chips.big .bend-chip { min-height: 56px; font-size: var(--fs-lg); }
+.bend-counter { display: flex; gap: var(--s2); align-items: stretch; }
+.bend-counter .bend-input { text-align: center; max-width: 110px; }
+.bend-step { min-width: 52px; min-height: 52px; border-radius: var(--r-md); border: 1px solid var(--border-input); background: var(--surface-2); color: var(--text); font-size: 24px; font-weight: 700; cursor: pointer; }
+
+/* layout: inputs left, results right; stacked on narrow screens */
+.bend-layout { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--s4); align-items: start; }
+@media (max-width: 1000px) { .bend-layout { grid-template-columns: 1fr; } }
+.bend-form { display: flex; flex-direction: column; gap: var(--s4); }
+.bend-form .bend-fields { grid-template-columns: 1fr; }
+.bend-blurb { margin: 0; color: var(--text-muted); }
+.bend-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.bend-actions .btn { height: 48px; padding: 0 var(--s5); font-size: var(--fs-base); }
+.bend-ref .calc-lines tr { color: var(--text); }
+.bend-out { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+
+/* results */
+.bend-warn { background: var(--warning-soft); border-color: transparent; display: flex; flex-direction: column; gap: var(--s2); }
+.bend-warn .row { flex-wrap: nowrap; align-items: flex-start; }
+.bend-warn svg { color: var(--warning); flex: none; margin-top: 2px; }
+.bend-tiles { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.bend-tile { background: var(--surface); border: 1px solid var(--border); border-left: 6px solid var(--accent-fill); border-radius: var(--r-md); padding: var(--s3); box-shadow: var(--shadow-card); }
+.bend-tile.ref { border-left-color: var(--border-input); }
+.bend-tile-head { display: flex; justify-content: space-between; gap: var(--s2); font-size: var(--fs-xs); font-weight: 650; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; }
+.bend-sym { text-transform: none; letter-spacing: 0; color: var(--accent); }
+.bend-tile-val { font-size: var(--fs-xl); line-height: var(--lh-xl); font-weight: 750; letter-spacing: -0.02em; margin: 4px 0 2px; }
+.bend-tile-sub { font-size: var(--fs-xs); }
+.bend-diagram-card { padding: var(--s4); overflow: hidden; }
+.bend-diagrams { display: flex; flex-direction: column; gap: var(--s2); }
+.bend-cap { font-size: var(--fs-xs); font-weight: 650; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.bend-svg-wrap { width: 100%; overflow: hidden; }
+.bend-svg-wrap.roll { max-width: 280px; }
+.bend-legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--fs-xs); color: var(--text-muted); }
+.bend-steps h3 { margin-bottom: var(--s2); }
+.bend-steps ol { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+.bend-steps li::marker { font-weight: 700; color: var(--accent); }
+.bend-filter { margin-bottom: var(--s3); gap: var(--s3); }
+.bend-row-actions { flex-wrap: nowrap; gap: 2px; justify-content: flex-end; }
+.bend-src { font-size: var(--fs-xs); }
+.bend-pull-list .title { font-size: var(--fs-lg); }
+.bend-cal-steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: var(--s3); }
+.bend-cal-steps li > .bend-field { margin-top: var(--s2); }
+.bend-cal-out .calc-mini span:last-child { font-weight: 400; }
+
+/* ---------- diagrams (SVG from js/lib/bending-svg.js) ---------- */
+.bend-svg { display: block; max-width: 100%; height: auto; font-family: var(--font-sans); }
+.bend-svg text { font-size: 12px; fill: var(--text); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+.bend-svg .bd-pipe { fill: none; stroke: var(--text-muted); stroke-linejoin: round; stroke-linecap: butt; }
+.bend-svg .bd-pipe-core { fill: none; stroke: var(--surface-2); stroke-linejoin: round; stroke-linecap: butt; }
+.bend-svg .bd-surface { stroke: var(--border-input); stroke-width: 2; stroke-dasharray: 6 4; }
+.bend-svg .bd-obst { fill: var(--danger-soft); stroke: var(--danger); stroke-width: 1.5; }
+.bend-svg .bd-end { fill: var(--accent-fill); stroke: var(--text); stroke-width: 1.5; }
+.bend-svg .bd-endtext { font-weight: 800; font-size: 11px; letter-spacing: .06em; fill: var(--text); }
+.bend-svg .bd-angle { font-weight: 750; fill: var(--accent); font-size: 13px; }
+.bend-svg .bd-dim { stroke: var(--text-muted); stroke-width: 1; }
+.bend-svg .bd-dimtext { fill: var(--text-muted); font-weight: 600; }
+.bend-svg .bd-true { stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
+.bend-svg .bd-break { stroke: var(--text-muted); stroke-width: 1.5; }
+.bend-svg .bd-gap { fill: var(--surface); }
+.bend-svg .bd-straight { fill: var(--surface-2); stroke: var(--text-muted); stroke-width: 1.5; }
+.bend-svg .bd-bendzone { fill: var(--accent-soft); }
+.bend-svg .bd-heatzone { fill: var(--danger-soft); }
+.bend-svg .bd-endcap { stroke: var(--text); stroke-width: 4; stroke-linecap: round; }
+.bend-svg .bd-markline { stroke: var(--accent); stroke-width: 2.5; }
+.bend-svg .bd-tick { stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.bend-svg .bd-sym { fill: var(--accent-fill); stroke: var(--text); stroke-width: 1; }
+.bend-svg .bd-sym.heat { fill: var(--danger); stroke: none; }
+.bend-svg .bd-marktag { font-weight: 750; font-size: 13px; }
+.bend-svg .bd-note { fill: var(--text-muted); font-size: 11px; }
+.bend-svg .bd-pos { font-weight: 700; font-variant-numeric: tabular-nums; }
+.bend-svg .bd-rowtitle { font-weight: 750; fill: var(--text-muted); }
+
+/* ---------- print / save as PDF: the bend sheet only ---------- */
+.bend-print { display: none; }
+.bend-print {
+  --text: #000; --text-muted: #444; --surface: #fff; --surface-2: #f2f2f2; --border: #bbb; --border-input: #666;
+  --accent: #000; --accent-fill: #f5b301; --accent-soft: #fdf0c8; --danger: #b42318; --danger-soft: #fde7e4; --warning: #8a5a00; --warning-soft: #fdf0c8;
+}
+@media print {
+  body.printing-bend > *:not(.bend-print) { display: none !important; }
+  body.printing-bend .bend-print { display: block; color: var(--text); background: var(--surface); }
+  .bend-sheet { font: 10pt/1.35 var(--font-sans); }
+  .bend-sheet .bend-svg-wrap { break-inside: avoid; margin: 6pt 0; }
+  .bend-sheet .bend-svg { width: 100%; }
+  .bend-sheet ol, .bend-sheet table { break-inside: avoid; }
+  @page { margin: 14mm; }
+}
+.bend-sheet h1 { font-size: 16pt; margin: 0; }
+.bend-sheet h2 { font-size: 12pt; margin: 10pt 0 4pt; }
+.bend-sheet-top { display: flex; justify-content: space-between; gap: 16pt; border-bottom: 3px solid var(--accent-fill); padding-bottom: 8pt; margin-bottom: 8pt; }
+.bend-sheet-title { text-align: right; }
+.bend-sheet-co { font-weight: 800; font-size: 13pt; }
+.bend-sheet-small { font-size: 9pt; color: var(--text-muted); }
+.bend-sheet-inputs, .bend-sheet-marks { border-collapse: collapse; width: 100%; margin: 6pt 0; }
+.bend-sheet-inputs th, .bend-sheet-inputs td, .bend-sheet-marks th, .bend-sheet-marks td { border-bottom: 1px solid var(--border); padding: 3pt 4pt; text-align: left; }
+.bend-sheet-inputs th { width: 40%; font-weight: 600; color: var(--text-muted); }
+.bend-sheet-marks .right { text-align: right; }
+.bend-sheet ol { padding-left: 18pt; margin: 0; }
+.bend-sheet-warn { border: 1px solid var(--warning); padding: 4pt 8pt; margin-top: 8pt; }
+.bend-sheet-warn p { margin: 2pt 0; }
+.bend-sheet footer { margin-top: 10pt; border-top: 1px solid var(--border); padding-top: 4pt; }

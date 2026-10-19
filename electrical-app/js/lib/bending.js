@@ -38,8 +38,35 @@ export const COMMON_ANGLES = [10, 22.5, 30, 45, 60];
 export const multiplier = (angleDeg) => 1 / sinD(angleDeg);
 /** Shrink per unit of rise for one offset (two bends of this angle). */
 export const shrinkPerUnit = (angleDeg) => tanD(angleDeg / 2);
-/** [{ angleDeg, multiplier, shrinkPerUnit }] for the common angles. */
-export const offsetTable = () => COMMON_ANGLES.map((a) => ({ angleDeg: a, multiplier: multiplier(a), shrinkPerUnit: shrinkPerUnit(a) }));
+
+// The rounded numbers printed on hand benders and in their guides (shrink in inches per inch of
+// rise, so per unit of rise in any units). Same in the Klein Conduit Bender Guide, Greenlee
+// IM 1071 and the Greenlee Site-Rite guide (2023); IDEAL ND 1534-4 matches.
+export const CHART = {
+  10: { multiplier: 6, shrink: 1 / 16 },
+  22.5: { multiplier: 2.6, shrink: 3 / 16 },
+  30: { multiplier: 2, shrink: 1 / 4 },
+  45: { multiplier: 1.4, shrink: 3 / 8 },
+  60: { multiplier: 1.2, shrink: 1 / 2 },
+};
+// 3-point saddles by centre angle: side marks per unit of height from the centre, and shrink to the
+// centre per unit of height. 45°: Klein, IDEAL and Greenlee all print 2½ and 3/16. 60°: Klein
+// prints 2 and 1/4 (IDEAL says to use 2½ and 3/16 for both; VERIFY on your bender).
+export const CHART_SADDLE = { 45: { multiplier: 2.5, shrink: 3 / 16 }, 60: { multiplier: 2, shrink: 1 / 4 } };
+
+const chartRow = (angleDeg, opts) => (opts?.chart ? CHART[angleDeg] : null);
+const mult = (a, opts) => chartRow(a, opts)?.multiplier ?? multiplier(a);
+const shrinkPer = (a, opts) => chartRow(a, opts)?.shrink ?? shrinkPerUnit(a);
+
+/** [{ angleDeg, multiplier, shrinkPerUnit, chartMultiplier, chartShrink }] for the common angles. */
+export const offsetTable = () => COMMON_ANGLES.map((a) => ({
+  angleDeg: a, multiplier: multiplier(a), shrinkPerUnit: shrinkPerUnit(a), chartMultiplier: CHART[a].multiplier, chartShrink: CHART[a].shrink,
+}));
+
+// What each brand calls its marks (Klein Conduit Bender Guide, IDEAL ND 1534-4, Greenlee Site-Rite
+// guide 2023). Calculators take these as opts.names so the steps use your bender's words.
+export const DEFAULT_MARK_NAMES = { arrow: 'arrow', star: 'star', centre: 'centre-of-bend mark (rim notch)' };
+const names = (opts) => ({ ...DEFAULT_MARK_NAMES, ...(opts?.names || {}) });
 
 /** The bend angle that puts the marks `spacingM` apart for an offset `riseM` deep. */
 export function angleForSpacing(riseM, spacingM) {
@@ -156,7 +183,7 @@ export function developedLength(segments) {
 // ---------------------------------------------------------------------------
 
 function finish(kind, r) {
-  const marks = [...(r.marks || [])].sort((a, b) => a.atM - b.atM);
+  const marks = [...(r.marks || [])].sort((a, b) => (a.pipe || 0) - (b.pipe || 0) || a.atM - b.atM);
   const degrees = r.degrees ?? marks.reduce((s, m) => s + Math.abs(m.angleDeg || 0), 0);
   const warnings = [...(r.warnings || [])];
   if (degrees > 360) warnings.push(`This piece alone has ${fmtDeg(degrees)} of bends. A run can have at most 360° between pull points (CEC Rule 12-942).`);
@@ -218,8 +245,10 @@ export function offset(input, opts = {}) {
   const { riseM, obstacleM, firstBendM, runM, radiusM } = input;
   need(isPos(riseM), 'Enter how deep the offset is (the rise).');
   const { angleDeg, solved } = resolveAngle(input);
-  const dist = riseM * multiplier(angleDeg);
-  const shrink = riseM * shrinkPerUnit(angleDeg);
+  const nm = names(opts);
+  const k = mult(angleDeg, opts);
+  const dist = riseM * k;
+  const shrink = riseM * shrinkPer(angleDeg, opts);
   const runAlong = riseM / tanD(angleDeg);
   let m1, m2, reference = 'end';
   if (isNum(obstacleM)) { m2 = obstacleM + shrink; m1 = m2 - dist; }
@@ -242,7 +271,7 @@ export function offset(input, opts = {}) {
     warnings,
     figures: [
       { label: solved ? 'Angle for that spacing' : 'Angle', deg: angleDeg },
-      { label: 'Multiplier', x: multiplier(angleDeg) },
+      { label: chartRow(angleDeg, opts) ? 'Multiplier (chart)' : 'Multiplier', x: k },
       { label: 'Between marks', m: dist },
       { label: 'Shrink', m: shrink },
       { label: 'Run of the offset', m: runAlong },
@@ -252,16 +281,16 @@ export function offset(input, opts = {}) {
       reference === 'end'
         ? `Mark 1 at ${f(m1)} and mark 2 at ${f(m2)} from the end (${f(dist)} apart).`
         : `Put mark 1 where the offset starts, then mark 2 ${f(dist)} past it.`,
-      `Bend 1: mark 1 on the arrow, bend to ${fmtDeg(angleDeg)}.`,
-      `Bend 2: slide to mark 2, roll the pipe half a turn (180°), mark 2 on the arrow, bend ${fmtDeg(angleDeg)}.`,
+      `Bend 1: mark 1 on the ${nm.arrow}, the hook facing away from mark 2, bend to ${fmtDeg(angleDeg)}.`,
+      `Bend 2: slide the bender to mark 2, roll the pipe half a turn (180°), mark 2 on the ${nm.arrow}, bend ${fmtDeg(angleDeg)}.`,
       `Check: the legs are parallel and ${f(riseM)} apart.`,
     ],
     segments: [
       { straightM: m1 }, { bendDeg: angleDeg }, { straightM: dist }, { bendDeg: -angleDeg },
       { straightM: tailFor(m2, dist, runM, shrink) },
     ],
-    dims: [{ type: 'rise', from: 0, to: 1, label: riseM }],
-    extra: { angleDeg, multiplier: multiplier(angleDeg), spacingM: dist, riseM },
+    dims: [{ type: 'rise', label: riseM, obstacle: reference === 'end' && isNum(obstacleM) }],
+    extra: { angleDeg, multiplier: k, spacingM: dist, riseM },
   });
 }
 
@@ -275,9 +304,11 @@ export function kick(input, opts = {}) {
   const { riseM } = input;
   need(isPos(riseM), 'Enter how far the end has to move (the kick).');
   const { angleDeg, solved } = resolveAngle(input);
-  const travel = riseM * multiplier(angleDeg);
+  const nm = names(opts);
+  const k = mult(angleDeg, opts);
+  const travel = riseM * k;
   const run = riseM / tanD(angleDeg);
-  const shrink = travel - run;
+  const shrink = riseM * shrinkPer(angleDeg, opts);
   return finish('kick', {
     marks: [{ label: 'Mark', atM: travel, symbol: 'arrow', angleDeg, bend: 1, dir: 'up' }],
     shrinkM: shrink,
@@ -289,8 +320,8 @@ export function kick(input, opts = {}) {
       { label: 'Shrink', m: shrink },
     ],
     steps: [
-      `Mark ${f(travel)} from the end that kicks out (${f(riseM)} × ${multiplier(angleDeg).toFixed(2)}).`,
-      `Mark on the arrow, that end toward the bender hook, bend to ${fmtDeg(angleDeg)}.`,
+      `Mark ${f(travel)} from the end that kicks out (${f(riseM)} × ${Number(k.toFixed(2))}).`,
+      `Mark on the ${nm.arrow}, that end toward the bender hook, bend to ${fmtDeg(angleDeg)}.`,
       `Check: lay the pipe on the floor; the end sits ${f(riseM)} up.`,
     ],
     start: { x: 0, y: 0, headingDeg: -angleDeg },
@@ -317,8 +348,11 @@ export function saddle3(input, opts = {}) {
   need(isPos(heightM), 'Enter the height of the obstruction (plus any clearance you want).');
   need(center > 0 && center < 180, 'The centre bend has to be under 180°.');
   const side = center / 2;
-  const sp = heightM * multiplier(side);
-  const shHalf = heightM * shrinkPerUnit(side);
+  const nm = names(opts);
+  const chart = opts.chart ? CHART_SADDLE[center] : null;
+  const exactSp = heightM * multiplier(side);
+  const sp = chart ? heightM * chart.multiplier : exactSp;
+  const shHalf = heightM * (chart ? chart.shrink : shrinkPerUnit(side));
   let c, reference = 'end';
   if (isNum(centerM)) c = centerM + shHalf;
   else { c = sp; reference = 'mark1'; }
@@ -327,13 +361,16 @@ export function saddle3(input, opts = {}) {
   const warnings = [];
   const figures = [
     { label: 'Bends', text: `${fmtDeg(center)} centre, ${fmtDeg(side)} sides` },
-    { label: 'Side marks from centre', m: sp },
+    { label: chart ? 'Side marks from centre (chart)' : 'Side marks from centre', m: sp },
     { label: 'Shrink to the centre', m: shHalf },
     { label: 'Total shrink', m: 2 * shHalf },
   ];
-  if (Math.abs(center - 45) < 1e-9) {
-    figures.push({ label: 'Chart rule (2½ × height)', m: 2.5 * heightM });
-    if (Math.abs(sp - 2.5 * heightM) > 0.003) warnings.push(`Many charts space the side marks 2½ × the height (${f(2.5 * heightM)}). The exact geometry gives ${f(sp)}; this tool uses the exact figure.`);
+  if (chart) {
+    figures.push({ label: 'Exact geometry', m: exactSp });
+  } else if (CHART_SADDLE[center]) {
+    const ch = CHART_SADDLE[center];
+    figures.push({ label: `Bender chart (${ch.multiplier === 2.5 ? '2½' : ch.multiplier} × height)`, m: ch.multiplier * heightM });
+    if (Math.abs(sp - ch.multiplier * heightM) > 0.003) warnings.push(`Bender charts space the side marks ${ch.multiplier === 2.5 ? '2½' : ch.multiplier} × the height (${f(ch.multiplier * heightM)}). The exact geometry gives ${f(sp)}; this uses the exact figure. Switch on chart numbers to match your bender.`);
   }
   const cut = isNum(runM) ? runM + 2 * shHalf : null;
   figures.push(cut != null ? { label: 'Cut length', m: cut } : { label: 'Pipe to the last mark', m: b });
@@ -352,10 +389,10 @@ export function saddle3(input, opts = {}) {
       reference === 'end'
         ? `Centre mark (mark 2) at ${f(c)}: ${f(centerM)} to the centre of the obstruction + ${f(shHalf)} shrink.`
         : `Put the centre mark (mark 2) over the centre of the obstruction, plus ${f(shHalf)} shrink measured toward the far end.`,
-      `Side marks ${f(sp)} each side of it: mark 1 at ${f(a)}, mark 3 at ${f(b)}.`,
-      `Bend 1 (centre): mark 2 on the centre-of-bend mark (rim notch or teardrop, see your bender), bend ${fmtDeg(center)}.`,
-      `Bend 2: roll the pipe half a turn (180°), mark 1 on the arrow, bend ${fmtDeg(side)}.`,
-      `Bend 3: turn the pipe end for end, mark 3 on the arrow, bend ${fmtDeg(side)} the same way as bend 2.`,
+      reference === 'end' ? `Side marks ${f(sp)} each side of it: mark 1 at ${f(a)}, mark 3 at ${f(b)}.` : `Side marks ${f(sp)} each side of the centre mark.`,
+      `Bend 1 (centre): mark 2 on the ${nm.centre}, bend ${fmtDeg(center)}.`,
+      `Bend 2: roll the pipe half a turn (180°), mark 1 on the ${nm.arrow}, bend ${fmtDeg(side)}.`,
+      `Bend 3: turn the pipe end for end, mark 3 on the ${nm.arrow}, bend ${fmtDeg(side)} the same way as bend 2.`,
       `Check: the saddle clears ${f(heightM)} and both ends lie flat.`,
     ],
     segments: [
@@ -379,8 +416,10 @@ export function saddle4(input, opts = {}) {
   need(isPos(heightM), 'Enter the height of the obstruction (plus clearance).');
   need(isPos(widthM), 'Enter the width of the obstruction (plus clearance).');
   need(angleDeg < 90, 'The bend angle has to be under 90°.');
-  const dist = heightM * multiplier(angleDeg);
-  const sh = heightM * shrinkPerUnit(angleDeg);
+  const nm = names(opts);
+  const k = mult(angleDeg, opts);
+  const dist = heightM * k;
+  const sh = heightM * shrinkPer(angleDeg, opts);
   let m2, reference = 'end';
   if (isNum(obstacleM)) m2 = obstacleM + sh;
   else { m2 = dist; reference = 'mark1'; }
@@ -399,7 +438,7 @@ export function saddle4(input, opts = {}) {
     developedLengthM: cut ?? m4,
     figures: [
       { label: 'Angle', deg: angleDeg },
-      { label: 'Multiplier', x: multiplier(angleDeg) },
+      { label: chartRow(angleDeg, opts) ? 'Multiplier (chart)' : 'Multiplier', x: k },
       { label: 'Marks 1–2 and 3–4', m: dist },
       { label: 'Marks 2–3 (width)', m: widthM },
       { label: 'Shrink per offset', m: sh },
@@ -410,11 +449,13 @@ export function saddle4(input, opts = {}) {
       reference === 'end'
         ? `Mark 2 at ${f(m2)}: ${f(obstacleM)} to the near edge + ${f(sh)} shrink.`
         : `Put mark 2 at the near edge of the obstruction plus ${f(sh)} shrink.`,
-      `Mark 1 at ${f(m1)} (${f(dist)} back), mark 3 at ${f(m3)} (the width past mark 2), mark 4 at ${f(m4)}.`,
-      `Bend 1: mark 1 on the arrow, bend ${fmtDeg(angleDeg)}.`,
-      `Bend 2: roll the pipe half a turn, mark 2 on the arrow, bend ${fmtDeg(angleDeg)}. That is the first offset.`,
-      `Bend 3: no roll from bend 2; mark 3 on the arrow, bend ${fmtDeg(angleDeg)} so the pipe heads back down.`,
-      `Bend 4: roll half a turn, mark 4 on the arrow, bend ${fmtDeg(angleDeg)}. Check both ends lie flat.`,
+      reference === 'end'
+        ? `Mark 1 at ${f(m1)} (${f(dist)} back), mark 3 at ${f(m3)} (the width past mark 2), mark 4 at ${f(m4)}.`
+        : `Mark 1 ${f(dist)} before mark 2, mark 3 ${f(widthM)} past mark 2, mark 4 ${f(dist)} past mark 3.`,
+      `Bend 1: mark 1 on the ${nm.arrow}, the hook facing away from mark 2, bend ${fmtDeg(angleDeg)}.`,
+      `Bend 2: roll the pipe half a turn, mark 2 on the ${nm.arrow}, bend ${fmtDeg(angleDeg)}. That is the first offset.`,
+      `Bend 3: no roll from bend 2; mark 3 on the ${nm.arrow}, bend ${fmtDeg(angleDeg)} so the pipe heads back down.`,
+      `Bend 4: roll half a turn, mark 4 on the ${nm.arrow}, bend ${fmtDeg(angleDeg)}. Check both ends lie flat.`,
     ],
     segments: [
       { straightM: m1 }, { bendDeg: angleDeg }, { straightM: dist }, { bendDeg: -angleDeg }, { straightM: widthM },
@@ -441,6 +482,7 @@ export function stub90(input, opts = {}) {
   const f = opts.fmt || mmFmt;
   const { stubM, takeUpM, radiusM, otherLegM, heat } = input;
   const odM = input.odM || 0;
+  const nm = names(opts);
   need(isPos(stubM), 'Enter the stub height (end of pipe to the back of the 90).');
   need(isPos(takeUpM) || isPos(radiusM), 'Pick a bender (take-up) or enter the bend radius.');
   const warnings = [];
@@ -475,7 +517,7 @@ export function stub90(input, opts = {}) {
     startM = m;
     figures.push({ label: 'Mark from the end', m }, { label: 'Take-up', m: takeUpM });
     steps.push(`Mark ${f(m)} from the end (${f(stubM)} − ${f(takeUpM)} take-up).`);
-    steps.push('Mark on the arrow, the stub end toward the bender hook. Bend until the stub is plumb (90°); check it with a level.');
+    steps.push(`Mark on the ${nm.arrow}, the hook pointed toward the free end (the stub). Bend until the stub is plumb (90°); check it with a level.`);
   }
   let cut = null;
   if (isPos(otherLegM)) {
@@ -510,6 +552,7 @@ export function backToBack(input, opts = {}) {
   const f = opts.fmt || mmFmt;
   const { stubM, backToBackM, secondStubM, takeUpM, radiusM, heat } = input;
   const odM = input.odM || 0;
+  const nm = names(opts);
   need(isPos(stubM), 'Enter the first stub height (end to the back of the first 90).');
   need(isPos(backToBackM), 'Enter the distance between the backs of the two 90s.');
   need(isPos(takeUpM) || isPos(radiusM), 'Pick a bender (take-up) or enter the bend radius.');
@@ -530,10 +573,10 @@ export function backToBack(input, opts = {}) {
   const cut = isPos(secondStubM) ? stubM + backToBackM + secondStubM - 2 * gainM : null;
   const steps = [
     cut != null ? `Cut the pipe to ${f(cut)} (${f(stubM)} + ${f(backToBackM)} + ${f(secondStubM)} − 2 × ${f(gainM)} gain).` : null,
-    `Bend 1: mark ${f(m1)} from the end, mark on the arrow, stub end toward the hook, bend 90°.`,
+    `Bend 1: mark ${f(m1)} from the end, mark on the ${nm.arrow}, hook toward the free end (the stub), bend 90°.`,
     `Mark 2: measure ${f(backToBackM)} from the back of the first 90 along the pipe (on the straight pipe that is ${f(m2)} from the end).`,
     isPos(takeUpM)
-      ? 'Bend 2: turn the bender around so the hook faces the free end (the first stub behind it), mark 2 on the star (back-of-90 mark), bend 90° the same way as the first.'
+      ? `Bend 2: turn the bender around so the hook faces the other free end, away from the first stub; mark 2 on the ${nm.star} (back-of-90 mark), bend 90° the same way as the first.`
       : `Bend 2: the back of this 90 lands on mark 2; start the bend ${f(r + odM / 2)} before it.`,
     `Check: ${f(backToBackM)} across the backs of the two stubs.`,
   ].filter(Boolean);
@@ -588,8 +631,9 @@ export function boxOffset(input, opts = {}) {
   const straightM = isNum(input.straightM) ? input.straightM : 0.038;
   need(isPos(riseM), 'Enter the offset: how far the knockout sits off the line of the pipe.');
   need(angleDeg < 90, 'The bend angle has to be under 90°.');
-  const dist = riseM * multiplier(angleDeg);
-  const sh = riseM * shrinkPerUnit(angleDeg);
+  const nm = names(opts);
+  const dist = riseM * mult(angleDeg, opts);
+  const sh = riseM * shrinkPer(angleDeg, opts);
   const m1 = straightM, m2 = straightM + dist;
   const warnings = [];
   if (riseM > 0.05) warnings.push(`${f(riseM)} is deep for a box offset; treat it as a regular offset with a steeper angle.`);
@@ -610,8 +654,8 @@ export function boxOffset(input, opts = {}) {
     ],
     steps: [
       `From the end that goes into the box: mark 1 at ${f(m1)}, mark 2 at ${f(m2)}.`,
-      `Bend 1: mark 1 on the arrow, bend ${fmtDeg(angleDeg)}.`,
-      `Bend 2: roll the pipe half a turn, mark 2 on the arrow, bend ${fmtDeg(angleDeg)}.`,
+      `Bend 1: mark 1 on the ${nm.arrow}, bend ${fmtDeg(angleDeg)}.`,
+      `Bend 2: roll the pipe half a turn, mark 2 on the ${nm.arrow}, bend ${fmtDeg(angleDeg)}.`,
       `Check: lay it on the wall; the end sits ${f(riseM)} off the wall line and lines up with the knockout. Many crews make these with a box-offset bender or by eye; check yours on a scrap first.`,
     ],
     segments: [{ straightM: m1 }, { bendDeg: -angleDeg }, { straightM: dist }, { bendDeg: angleDeg }, { straightM: Math.max(dist, 0.1) }],
@@ -638,7 +682,7 @@ export function rollingOffset(input, opts = {}) {
   const steps = [
     `True offset = √(${f(riseM)}² + ${f(rollM)}²) = ${f(trueM)}.`,
     base.steps[0],
-    `Bend 1: before bending, turn the pipe ${fmtDeg(rollDeg)} from straight up toward the roll side. Mark 1 on the arrow, bend ${fmtDeg(base.angleDeg)}.`,
+    `Bend 1: before bending, turn the pipe ${fmtDeg(rollDeg)} from straight up toward the roll side. Mark 1 on the ${names(opts).arrow}, bend ${fmtDeg(base.angleDeg)}.`,
     `Bend 2: slide to mark 2, roll half a turn from where bend 1 was made, bend ${fmtDeg(base.angleDeg)}.`,
     `Check: the end is ${f(riseM)} up and ${f(rollM)} over.`,
   ];
@@ -733,7 +777,7 @@ export function segmentBend(input, opts = {}) {
   need(startM >= 0, `The stub is too short for a ${f(radiusM)} radius: the bend would start ${f(-startM)} past the end.`);
   const { arc, sp, per, at } = shotLayout(radiusM, angleDeg, shots, startM);
   const warnings = [];
-  if (isPos(minRadiusM) && radiusM < minRadiusM - 1e-6) warnings.push(`The radius is under the code minimum for this size (${f(minRadiusM)}, CEC Table 7).`);
+  if (isPos(minRadiusM) && radiusM < minRadiusM - 1e-6) warnings.push(`The radius is under the code minimum for this size (${f(minRadiusM)}, CEC Rule 12-924 and Table 7).`);
   if (per > 15) warnings.push(`${fmtDeg(per)} a shot is a lot; more, smaller shots make a smoother bend.`);
   const marks = [
     { label: 'Start of bend', atM: startM, symbol: 'tick' },
@@ -761,7 +805,7 @@ export function segmentBend(input, opts = {}) {
         ? `Start of bend at ${f(startM)} from the end (${f(stubM)} stub − ${f(radiusM)} radius${odM ? ` − ${f(odM / 2)} half OD` : ''}).`
         : `Start of bend at ${f(startM)} from the end.`,
       `The bend uses ${f(arc)} of pipe (${f(radiusM)} × ${(angleDeg * RAD).toFixed(4)} rad). Split it into ${shots} spaces of ${f(sp)}.`,
-      `Mark the middle of each space: first shot ${f(at[0])}, then every ${f(sp)}.`,
+      `Mark the middle of each space: first shot ${f(at[0])}, then every ${f(sp)}. Measure each mark from the end so the rounding doesn't add up.`,
       `Bend ${fmtDeg(per)} at each shot mark, all in the same plane and direction. Sight down the pipe between shots to keep it flat.`,
       `Check the finished angle with a level or protractor; add or take out a little on the last shot.`,
     ],
@@ -793,7 +837,7 @@ export function concentric90(input, opts = {}) {
   need(startM >= 0, 'The start of the bend has to be on the pipe.');
   const warnings = [];
   if (isPos(input.odM) && centersM < input.odM) warnings.push(`The centre spacing (${f(centersM)}) is less than the pipe OD (${f(input.odM)}).`);
-  if (isPos(minRadiusM) && innerRadiusM < minRadiusM - 1e-6) warnings.push(`The inside radius is under the code minimum for this size (${f(minRadiusM)}, CEC Table 7).`);
+  if (isPos(minRadiusM) && innerRadiusM < minRadiusM - 1e-6) warnings.push(`The inside radius is under the code minimum for this size (${f(minRadiusM)}, CEC Rule 12-924 and Table 7).`);
   if (isPos(topM) && topM < innerRadiusM) warnings.push('The top is lower than the end of the inside bend.');
   const pipes = Array.from({ length: count }, (_, i) => {
     const radiusM = innerRadiusM + i * centersM;

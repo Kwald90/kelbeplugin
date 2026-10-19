@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as B from '../js/lib/bending.js';
+import * as P from '../js/lib/bending-profiles.js';
 import { inToM, mToIn } from '../js/lib/units.js';
 
 const near = (actual, expected, tol = 1e-3, msg = '') =>
@@ -313,7 +314,111 @@ test('every kind computes through the dispatcher with a formatter', () => {
     assert.ok(r.marks.every((m) => Number.isFinite(m.atM) && m.atM >= 0), `${kind} marks on the pipe`);
     assert.ok(r.steps.length > 0 && r.steps.every((s) => typeof s === 'string'), `${kind} steps`);
     assert.ok(r.steps.join(' ').includes('in'), `${kind} steps use the formatter`);
-    for (let i = 1; i < r.marks.length; i++) assert.ok(r.marks[i].atM >= r.marks[i - 1].atM, `${kind} marks sorted`);
+    for (let i = 1; i < r.marks.length; i++) {
+      const [a, b] = [r.marks[i - 1], r.marks[i]];
+      assert.ok((b.pipe || 0) > (a.pipe || 0) || b.atM >= a.atM, `${kind} marks sorted by pipe, then along the pipe`);
+    }
   }
   assert.throws(() => B.compute('nope', {}), B.BendError);
+});
+
+// ---------------------------------------------------------------------------
+// Bender chart numbers, profiles and calibration
+// ---------------------------------------------------------------------------
+
+test('chart numbers match what is printed on the bender', () => {
+  // 6" at 30°: 2 × 6 = 12, shrink 1/4 per inch = 1.5
+  const r = B.offset({ riseM: inToM(6), angleDeg: 30 }, { chart: true });
+  near(inch(r.spacingM), 12, 1e-9);
+  near(inch(r.shrinkM), 1.5, 1e-9);
+  // 2" at 10°: 6 × 2 = 12, shrink 1/16 × 2 = 1/8
+  const t = B.offset({ riseM: inToM(2), angleDeg: 10 }, { chart: true });
+  near(inch(t.spacingM), 12, 1e-9);
+  near(inch(t.shrinkM), 0.125, 1e-9);
+  // an angle not on the chart falls back to the exact figure
+  near(B.offset({ riseM: 1, angleDeg: 15 }, { chart: true }).spacingM, B.multiplier(15), 1e-12);
+  // 3-point saddle 2" at 45: side marks 2½ × 2 = 5, centre shrink 3/16 × 2 = 3/8
+  const s = B.saddle3({ heightM: inToM(2), centerAngleDeg: 45, centerM: inToM(24) }, { chart: true });
+  near(inch(s.spacingM), 5, 1e-9);
+  near(inch(at(s, 'Mark 2')), 24.375, 1e-9);
+  assert.ok(!s.warnings.some((w) => /2½/.test(w)));
+  assert.ok(s.figures.some((f) => f.label === 'Exact geometry'));
+  const table = B.offsetTable();
+  assert.equal(table.find((x) => x.angleDeg === 60).chartMultiplier, 1.2);
+});
+
+test('mark names from the bender go into the steps', () => {
+  const r = B.saddle3({ heightM: inToM(2), centerM: inToM(24) }, { names: { centre: 'rim notch' } });
+  assert.ok(r.steps.some((s) => s.includes('on the rim notch')));
+  const b = B.backToBack({ stubM: inToM(10), backToBackM: inToM(30), takeUpM: inToM(5), gainM: inToM(2.5) }, { names: { star: 'star point' } });
+  assert.ok(b.steps.some((s) => s.includes('on the star point')));
+});
+
+test('hand bender defaults: published take-up and radius', () => {
+  // take-up 5, 6, 8, 11 for 16-35 EMT; rigid 16 shares the 21 EMT shoe (6")
+  const tu = (type, size) => inch(P.DEFAULT_PROFILES.find((p) => p.conduitType === type && p.tradeSize === size && p.brand === 'Klein').takeUpM);
+  near(tu('EMT', '16'), 5, 1e-9);
+  near(tu('EMT', '21'), 6, 1e-9);
+  near(tu('EMT', '27'), 8, 1e-9);
+  near(tu('EMT', '35'), 11, 1e-9);
+  near(tu('RMC', '16'), 6, 1e-9);
+  near(tu('IMC', '27'), 11, 1e-9);
+  // 16 EMT radius 4 3/16; gain = 4.1875 × (2 − π/2) + 0.706 = 2.5033
+  const g = P.DEFAULT_PROFILES.find((p) => p.id === 'std:greenlee:EMT:16');
+  near(inch(g.minRadiusM), 4.1875, 1e-9);
+  near(inch(g.gainM), 2.5033, 1e-4);
+  assert.equal(g.backToBackMark, 'star mark');
+  assert.ok(g.notes.includes('own bender'));
+  // every built-in has a unique id and the contract fields
+  const ids = new Set(P.DEFAULT_PROFILES.map((p) => p.id));
+  assert.equal(ids.size, P.DEFAULT_PROFILES.length);
+  for (const p of P.DEFAULT_PROFILES) {
+    for (const k of ['name', 'brand', 'model', 'conduitType', 'tradeSize', 'takeUpM', 'gainM', 'backToBackMark', 'centreMark', 'minRadiusM', 'isDefault', 'notes']) assert.ok(k in p, `${p.id} has ${k}`);
+    assert.ok(p.takeUpM != null || p.minRadiusM != null, `${p.id} can lay out a 90`);
+  }
+});
+
+test('larger benders: published deducts, one-shot shoes by radius', () => {
+  const p = P.findProfile('std:greenlee-555c:EMT:53');
+  near(inch(p.takeUpM), 15.375, 1e-9);
+  near(inch(p.minRadiusM), 9.25, 1e-9);
+  const shoe = P.findProfile('std:greenlee-881ct:RMC:103');
+  assert.equal(shoe.takeUpM, null);
+  // a 90 on it is laid out from the radius: 60" stub, R 20 7/8, OD 4.5 -> start 36.875
+  const r = B.stub90({ stubM: inToM(60), radiusM: shoe.minRadiusM, odM: B.conduitOD('RMC', '103') });
+  near(inch(at(r, 'Start of bend')), 60 - 20.875 - 2.25, 1e-9);
+});
+
+test('profiles for a pipe: the user first, their default wins', () => {
+  const mine = [
+    { id: 'u1', conduitType: 'EMT', tradeSize: '21', takeUpM: 0.15, isDefault: false },
+    { id: 'u2', conduitType: 'EMT', tradeSize: '21', takeUpM: 0.152, isDefault: true },
+    { id: 'u3', conduitType: 'EMT', tradeSize: '16', takeUpM: 0.127, isDefault: true },
+  ];
+  const list = P.profilesFor('EMT', '21', mine);
+  assert.deepEqual(list.slice(0, 2).map((p) => p.id), ['u1', 'u2']);
+  assert.ok(list.length > 2);
+  assert.equal(P.pickProfile('EMT', '21', mine).id, 'u2');
+  assert.equal(P.pickProfile('EMT', '21', mine, 'std:ideal:EMT:21').id, 'std:ideal:EMT:21');
+  assert.equal(P.pickProfile('EMT', '21', []).builtIn, true);
+  assert.equal(P.pickProfile('EMT', '103', []), null, 'no hand bender for 4" EMT');
+});
+
+test('code minimum radius', () => {
+  near(P.minBendRadius('EMT', '16'), 0.102, 1e-12); // CEC Table 7
+  near(P.minBendRadius('RMC', '103'), 0.406, 1e-12);
+  near(inch(P.minBendRadius('PVC', '53')), 12, 1e-9); // PVC field bends: 6 × trade size
+  assert.equal(P.minBendRadius('EMT', '12'), null);
+});
+
+test('calibrate: take-up and gain from one test 90', () => {
+  // marked at 12" and 30"; stub measured 17 1/8", other leg (back of 90 to the 30" mark) 15 3/8"
+  // take-up = 17.125 − 12 = 5.125; gain = 17.125 + 15.375 − 30 = 2.5
+  const c = P.calibrate({ markM: inToM(12), stubM: inToM(17.125), mark2M: inToM(30), legM: inToM(15.375) });
+  near(inch(c.takeUpM), 5.125, 1e-9);
+  near(inch(c.gainM), 2.5, 1e-9);
+  assert.deepEqual(c.warnings, []);
+  assert.equal(P.calibrate({ markM: inToM(12), stubM: inToM(17) }).gainM, null);
+  assert.throws(() => P.calibrate({ markM: inToM(12), stubM: inToM(10) }), /back of the bend/);
+  assert.ok(P.calibrate({ markM: inToM(12), stubM: inToM(17), mark2M: inToM(30), legM: inToM(10) }).warnings.length);
 });
