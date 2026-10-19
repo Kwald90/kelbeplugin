@@ -6,6 +6,7 @@ import sequences from './sequences.js';
 import jobs from './jobs.js';
 import schedule from './schedule.js';
 import drawings from './drawings.js';
+import wireruns from './wireruns.js';
 import estimates from './estimates.js';
 import invoices from './invoices.js';
 import inventory from './inventory.js';
@@ -15,6 +16,7 @@ import sops from './sops.js';
 import compliance from './compliance.js';
 import security from './security.js';
 import calcs from './calcs.js';
+import bending from './bending.js';
 import panels from './panels.js';
 import settings from './settings.js';
 
@@ -23,6 +25,6 @@ export const GROUPS = {
 };
 
 export const MODULES = [
-  dashboard, clients, leads, sequences, jobs, schedule, drawings, estimates, invoices, inventory,
-  employees, time, sops, compliance, security, calcs, panels, settings,
+  dashboard, clients, leads, sequences, jobs, schedule, drawings, wireruns, estimates, invoices, inventory,
+  employees, time, sops, compliance, security, calcs, bending, panels, settings,
 ];

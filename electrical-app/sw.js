@@ -1,5 +1,5 @@
 // Offline cache: app shell is cached on install, everything else on first use.
-const CACHE = 'kelbe-circuit-v1';
+const CACHE = 'fishtape-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './css/tokens.css', './css/app.css', './css/canvas.css', './icons/icon.svg', './js/app.js'];
 
 self.addEventListener('install', (e) => {

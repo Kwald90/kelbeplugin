@@ -1,6 +1,9 @@
 // Local-first data layer. Every record lives in memory and is persisted to
 // IndexedDB. The function signatures match what a remote (e.g. Supabase) data
 // layer would expose, so screens never touch storage directly.
+import { BRAND } from './brand.js';
+
+export const isBackupTag = (tag) => tag === BRAND.backupTag || BRAND.legacyBackupTags.includes(tag);
 
 const DB_NAME = 'kelbe-circuit';
 const DB_VERSION = 1;
@@ -12,6 +15,7 @@ export const COLLECTIONS = [
   'estimates', 'invoices', 'payments', 'items', 'locations', 'stockMoves',
   'employees', 'timeEntries', 'drawings', 'sops', 'permits', 'inspections',
   'certifications', 'checklists', 'panels', 'auditLog', 'settings',
+  'wireRuns', 'bends', 'benderProfiles',
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -225,13 +229,13 @@ export const store = {
   },
 
   exportAll() {
-    const out = { app: 'kelbe-circuit', version: DB_VERSION, exportedAt: new Date().toISOString(), data: {} };
+    const out = { app: BRAND.backupTag, version: DB_VERSION, exportedAt: new Date().toISOString(), data: {} };
     for (const c of COLLECTIONS) out.data[c] = [...bucket(c).values()].map(clone);
     return out;
   },
 
   async importAll(dump) {
-    if (!dump || dump.app !== 'kelbe-circuit' || !dump.data) throw new Error('Not a Kelbe Circuit backup file');
+    if (!dump || !isBackupTag(dump.app) || !dump.data) throw new Error(`Not a ${BRAND.name} backup file`);
     await this.clearAll();
     for (const c of Object.keys(dump.data)) {
       for (const r of dump.data[c]) { bucket(c).set(r.id, r); persist(c, r.id, r); }

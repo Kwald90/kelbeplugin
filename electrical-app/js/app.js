@@ -4,6 +4,7 @@ import { auth, ROLES } from './auth.js';
 import * as ui from './ui.js';
 import { MODULES, GROUPS } from './modules/index.js';
 import { seedIfEmpty } from './seed.js';
+import { BRAND } from './brand.js';
 
 const { h, icon } = ui;
 let main, rail, cleanup = null;
@@ -28,7 +29,7 @@ function route() {
   ui.clear(main);
   main.className = 'main' + (mod.fullBleed ? ' full-bleed' : '');
   main.scrollTop = 0;
-  document.title = `${mod.title} · Kelbe Circuit`;
+  document.title = `${mod.title} · ${BRAND.name}`;
   for (const a of rail.querySelectorAll('[data-mod]')) {
     if (a.dataset.mod === mod.id) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   }
@@ -46,7 +47,7 @@ function route() {
 
 function buildRail() {
   rail = h('nav', { class: 'rail', 'aria-label': 'Main' });
-  rail.append(h('a', { class: 'rail-logo', href: '#/dashboard', title: 'Kelbe Circuit' }, icon('zap', 22)));
+  rail.append(h('a', { class: 'rail-logo', href: '#/dashboard', title: BRAND.name }, icon('zap', 22)));
   let lastGroup = null;
   for (const m of MODULES) {
     if (m.hidden || !auth.can(m.perm)) continue;

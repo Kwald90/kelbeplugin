@@ -1,5 +1,8 @@
 // Settings: company, defaults, numbering, theme, data backup/restore, about.
-export const APP_VERSION = '0.1.0';
+import { BRAND } from '../brand.js';
+import { isBackupTag } from '../store.js';
+
+export const APP_VERSION = '0.2.0';
 
 const CURRENCIES = ['USD', 'CAD', 'AUD', 'GBP', 'EUR', 'NZD'];
 
@@ -91,7 +94,7 @@ export default {
       if (!file) return;
       let dump;
       try { dump = JSON.parse(await file.text()); } catch { return ui.toast('That file is not valid JSON', 'error'); }
-      if (dump?.app !== 'kelbe-circuit') return ui.toast('Not a Kelbe Circuit backup file', 'error');
+      if (!isBackupTag(dump?.app)) return ui.toast(`Not a ${BRAND.name} backup file`, 'error');
       const ok = await ui.confirmDialog(`Replace everything on this device with the backup from ${ui.fmtDateTime(dump.exportedAt)}? Current data will be lost unless you exported it.`, { title: 'Restore backup', okLabel: 'Restore' });
       if (!ok) return;
       try {
@@ -128,7 +131,7 @@ export default {
           h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', null, 'Wipe all data'), h('div', { class: 'muted' }, 'Clears this device and reloads the demo data.')),
             ui.button('Wipe…', { variant: 'danger', icon: 'trash', onClick: wipe }))),
         card('About', null,
-          h('div', null, h('strong', null, 'Kelbe Circuit'), ` v${APP_VERSION}`),
+          h('div', null, h('strong', null, BRAND.name), ` v${APP_VERSION}`),
           h('p', { class: 'muted', style: { margin: 0 } }, 'An electrical CRM/ERP with an infinite-canvas plan workspace. Built with the replica skill workflow: recon, architecture, design tokens, then a screen-by-screen build.'),
           h('p', { class: 'muted', style: { margin: 0 } }, 'Calculators and code checklists are estimating aids. Always verify against the code in force where you work and the authority having jurisdiction.')),
       )));

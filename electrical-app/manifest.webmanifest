@@ -1,7 +1,7 @@
 {
-  "name": "Kelbe Circuit",
-  "short_name": "Circuit",
-  "description": "Electrical contractor CRM/ERP with an infinite-canvas plan and markup workspace.",
+  "name": "Fishtape",
+  "short_name": "Fishtape",
+  "description": "Electrical contractor CRM/ERP built for the Canadian Electrical Code, with an infinite-canvas plan and markup workspace.",
   "start_url": "./#/dashboard",
   "scope": "./",
   "display": "standalone",
