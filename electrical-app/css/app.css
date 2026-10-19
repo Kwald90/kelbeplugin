@@ -73,6 +73,8 @@ h2.section { font-size: var(--fs-base); line-height: var(--lh-base); margin: var
   .main.full-bleed { padding-bottom: 0; }
   .content { padding: var(--s4) var(--s4) 160px; }
   .page-head h1 { font-size: 24px; line-height: 30px; }
+  .stat .value { font-size: 22px; line-height: 28px; }
+  .grid { gap: var(--s3); }
 }
 
 /* ---------- the wheel (radial quick menu, after Concepts' tool wheel) ---------- */
