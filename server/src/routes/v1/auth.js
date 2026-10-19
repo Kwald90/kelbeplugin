@@ -152,7 +152,7 @@ export default async function authRoutes(app, { config, db, email: mailer, oidcP
     reply.code(204);
   });
 
-  app.get('/api/v1/me', { config: { auth: 'session' }, schema: { tags: ['auth'], summary: 'The signed-in user, active company, role and permissions' } }, async (req) => meBody(req.auth.session));
+  // GET /api/v1/me lives in me.js (adds plan entitlements and preferences).
 
   app.post('/api/v1/auth/switch-tenant', {
     config: { auth: 'user' },
