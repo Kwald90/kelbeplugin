@@ -127,7 +127,7 @@ export function taxEditor({ doc, store, onChange, readOnly = false, dateKey = nu
     clear(summary);
     const hint = treatmentHint(doc.taxTreatment, doc.taxProvince);
     const pst = (doc.taxes || []).some((x) => ['PST', 'RST'].includes(x.id));
-    summary.append(
+    h(summary, null,
       h('span', null, h('strong', null, describeTaxes(docTaxesOf(doc))), doc.taxProvince ? ` · ${provinceName(doc.taxProvince)}` : ''),
       hint ? h('span', { class: 'hint' }, hint) : null,
       pst ? h('span', { class: 'hint' }, icon('info', 14), ' PST/RST on contracting work depends on the job and the customer. Check with your accountant.') : null);

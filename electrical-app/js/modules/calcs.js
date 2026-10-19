@@ -156,7 +156,7 @@ function cecVoltageDrop() {
         label: 'Voltage drop', value: num(r.percent, 2), unit: '%', tone: ok ? 'pass' : 'fail', badge: ok ? `Within ${max}%` : `Over ${max}%`,
         sub: `${num(r.volts, 2)} V drop · ${num(r.endVolts, 1)} V at the load`,
         lines: [
-          `Current ${num(I.amps, 1)} A: ${I.basis} (Rule 8-102(2)).`,
+          `Current ${num(I.amps, 1)} A: ${I.basis} (Rule 8-102).`,
           `VD = ${k} × I × R × L = ${k} × ${num(I.amps, 1)} A × ${r.ohmsPerKm} Ω/km × ${num(L / 1000, 4)} km = ${num(r.volts, 2)} V.`,
           `R: DC resistance at 75 °C, ${x.material === 'cu' ? 'copper' : 'aluminum'} ${CEC.sizeLabel(x.size)}.`,
         ],
@@ -337,7 +337,7 @@ function cecLoad(rerender) {
           h('td', null, l.label, h('span', { class: 'muted' }, ` · ${l.rule}`)), h('td', { class: 'right num' }, ui.fmtNum(Math.round(l.w))))))),
       }),
       h('div', { class: 'calc-minis' },
-        mini('Minimum service', r.minimumRule),
+        mini('Minimum, Rule 8-200(1)(b)', `${Math.round(r.minimumAmps)} A (${ui.fmtNum(r.minimumW)} W)`),
         mini(`Conductors for ${r.service} A at 75 °C (Tables 2, 4)`, `${cu ? CEC.sizeLabel(cu) + ' Cu' : '—'} / ${al ? CEC.sizeLabel(al) + ' Al' : '—'}`),
         t39 ? mini(`${province} Table 39, 90 °C conductors`, `${CEC.sizeLabel(t39.cu)} Cu (to ${t39.maxCu} A) / ${CEC.sizeLabel(t39.al)} Al (to ${t39.maxAl} A)`) : null),
       refs('Rules 8-200, 8-110, 8-106', 'Rule 62-118 for heating', t39 ? 'Ontario Rule 4-004(26) and Table 39' : 'Conductors from Tables 2 and 4 (Table 39 was deleted in 2021 outside Ontario)', 'not a continuous load (8-200(3))'),

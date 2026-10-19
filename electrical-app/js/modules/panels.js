@@ -7,7 +7,7 @@ import * as S from '../lib/cec/systems.js';
 import * as CEC from '../lib/cec/index.js';
 
 const BREAKERS = CEC.STANDARD_RATINGS.filter((a) => a <= 400);
-const SLOT_COUNTS = [12, 16, 18, 24, 30, 32, 40, 42, 54, 60, 66, 72, 84];
+const SLOT_COUNTS = [12, 16, 20, 24, 30, 32, 40, 42, 54, 60, 66, 72, 84];
 
 let ui, h, store;
 const bookOf = () => (store.settings().codeBook === 'NEC-2023' ? 'NEC-2023' : 'CEC-2024');

@@ -85,6 +85,8 @@ export function seedIfEmpty(store) {
     ent: item('CD-ENT-21', 'ENT 21 (3/4 in.)', 'Conduit', 'm', 90, 250, 0, 60, [150, 0, 0]),
     br15: item('BR-QO-115', 'Square D QO 15 A 1-pole breaker', 'Breakers', 'ea', 1100, 3200, 0.2, 20, [40, 6, 6]),
     cafci: item('BR-CH-CAFCI-15', 'Eaton CH 15 A combination AFCI breaker', 'Breakers', 'ea', 5800, 12500, 0.25, 10, [8, 2, 2]),
+    gfcibr: item('BR-QO-GFCI-15', 'Square D QO 15 A GFCI breaker (Class A)', 'Breakers', 'ea', 6200, 13500, 0.25, 6, [6, 1, 1]),
+    inuse: item('CV-WP-INUSE-1G', 'Weatherproof in-use cover, 1-gang, installed', 'Covers', 'ea', 1100, 4500, 0.2, 12, [24, 4, 4]),
     dual: item('BR-SIE-DF-20', 'Siemens 20 A dual-function AFCI/GFCI breaker', 'Breakers', 'ea', 6800, 14500, 0.25, 6, [6, 1, 1]),
   };
 

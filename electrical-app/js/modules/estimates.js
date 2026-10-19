@@ -133,22 +133,43 @@ function createNew(ctx) {
   location.replace('#/estimates/' + created.id);
 }
 
-/** Count drawing objects by symbol and map them onto price-book items. */
+/** Price-book items that drawing flags (set by the box placement checks) map to. */
+const FLAG_ITEMS = {
+  wp: (i) => (i.category || '').toLowerCase() === 'covers' && /in-use|weatherproof/i.test(i.name),
+  afci: (i) => (i.category || '').toLowerCase() === 'breakers' && /afci/i.test(i.name) && !/gfci/i.test(i.name),
+};
+
+/**
+ * Count drawing objects by symbol and map them onto price-book items. Flags on an
+ * object add to the count: `flags.gfci` on a receptacle prices it as a GFCI
+ * receptacle, `flags.wp` adds a weatherproof in-use cover, and `flags.afci` adds
+ * an AFCI breaker per circuit (objects without a `circuit` count as one circuit).
+ */
 export function takeoff(store, drawing) {
   const counts = new Map();
+  let wp = 0, afciObjects = 0;
+  const afciCircuits = new Set();
   for (const o of drawing.objects || []) {
     if (!o.symbol) continue;
-    counts.set(o.symbol, (counts.get(o.symbol) || 0) + 1);
+    const f = o.flags || {};
+    const symbol = f.gfci && o.symbol === 'receptacle' ? 'receptacle-gfci' : o.symbol;
+    counts.set(symbol, (counts.get(symbol) || 0) + 1);
+    if (f.wp) wp++;
+    if (f.afci) { afciObjects++; afciCircuits.add(o.circuit ?? '-'); }
   }
   const items = store.list('items');
   const lines = [];
   let unmatched = 0, symbols = 0;
+  const push = (it, qty, fallback, note = '') => {
+    if (it) lines.push({ itemId: it.id, description: it.name + note, qty, unitCents: it.priceCents, labourHours: it.labourHours || 0, kind: 'material' });
+    else { unmatched++; lines.push({ itemId: null, description: `${fallback} (no price book item)${note}`, qty, unitCents: 0, labourHours: 0, kind: 'material' }); }
+  };
   for (const [symbol, qty] of counts) {
     symbols += qty;
-    const it = items.find((i) => i.symbol === symbol);
-    if (it) lines.push({ itemId: it.id, description: it.name, qty, unitCents: it.priceCents, labourHours: it.labourHours || 0, kind: 'material' });
-    else { unmatched++; lines.push({ itemId: null, description: `${symbol} (no price book item)`, qty, unitCents: 0, labourHours: 0, kind: 'material' }); }
+    push(items.find((i) => i.symbol === symbol), qty, symbol);
   }
+  if (wp) push(items.find(FLAG_ITEMS.wp), wp, 'Weatherproof in-use cover');
+  if (afciObjects) push(items.find(FLAG_ITEMS.afci), afciCircuits.size, 'AFCI breaker', ` (${afciObjects} AFCI outlets on the drawing: check the circuit count)`);
   return { lines, unmatched, symbols };
 }
 

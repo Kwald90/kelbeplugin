@@ -2,13 +2,17 @@
 // theme, data backup/restore, about.
 import { BRAND } from '../brand.js';
 import { isBackupTag } from '../store.js';
-import { getUnits, setUnits } from '../lib/units.js';
+import { getUnits, setUnits, parseLength, fmtLength } from '../lib/units.js';
 import { PROVINCES, TREATMENTS, treatmentsFor, treatmentHint, taxSetup, newDocTax, describeTaxes, ratesOn, provinceName, isGstHstNumber } from '../lib/tax.js';
 import { adoptionFor, CODE_BOOKS } from '../lib/cec/provinces.js';
 
 export const APP_VERSION = '0.3.0';
 
 const CURRENCIES = ['CAD', 'USD'];
+
+// Box placement defaults. The placement workstream exports DEFAULT_PLACEMENT from
+// js/lib/placement-rules.js; this fallback stands in until that import is wired.
+const PLACEMENT_FALLBACK = { switchHeightM: 1.2, switchLatchSide: true, alarms: true };
 const KIND_LABEL = { material: 'Materials', labour: 'Labour', other: 'Other' };
 
 export default {
@@ -127,6 +131,29 @@ export default {
         saveRow('Save tax set-up', save));
     };
 
+    // box placement on drawings (settings.placement)
+    const placementHost = h('div', { class: 'stack' });
+    const drawPlacement = () => {
+      ui.clear(placementHost);
+      const cur = store.settings();
+      const units = getUnits(cur.units);
+      const pl = { ...PLACEMENT_FALLBACK, ...(cur.placement || {}) };
+      const form = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
+        { label: `Switch height (${units === 'imperial' ? 'ft-in' : 'm'})`, name: 'switchHeight', value: units === 'imperial' ? fmtLength(pl.switchHeightM, { units, denom: 8 }) : String(pl.switchHeightM), hint: 'Centre of the switch box above the finished floor' },
+        { label: 'Switches on the latch side of doors', name: 'switchLatchSide', type: 'checkbox', value: pl.switchLatchSide },
+        { label: 'Place smoke and CO alarms', name: 'alarms', type: 'checkbox', value: pl.alarms },
+      ]));
+      const save = () => {
+        const v = ui.readForm(form);
+        const m = parseLength(v.switchHeight, { units, bare: units === 'imperial' ? 'in' : 'm' });
+        if (m == null || m <= 0 || m > 3) { ui.toast(`Enter a switch height like ${units === 'imperial' ? `48" or 4'` : '1.2 or 1200 mm'}`, 'error'); return; }
+        store.saveSettings({ placement: { ...(store.settings().placement || {}), switchHeightM: Math.round(m * 1000) / 1000, switchLatchSide: !!v.switchLatchSide, alarms: !!v.alarms } });
+        ui.toast('Placement defaults saved', 'success');
+        drawPlacement();
+      };
+      placementHost.append(form, saveRow('Save placement', save));
+    };
+
     // defaults
     const defaults = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
       { label: 'Labour rate (per hour)', name: 'labourRateCents', type: 'money', value: s.labourRateCents },
@@ -207,7 +234,7 @@ export default {
       ? ui.badge('Memory only: data is lost on reload', 'danger')
       : store.persistent ? ui.badge('Persistent storage', 'success') : ui.badge('Browser may clear data when low on space', 'warning');
 
-    drawCode(); drawTax();
+    drawCode(); drawTax(); drawPlacement();
     root.append(ui.page({ title: 'Settings', subtitle: s.company?.name },
       h('div', { class: 'grid-2 settings-grid' },
         card('Company', 'Shown on estimates, invoices and printouts', company, saveRow('Save company', saveCompany)),
@@ -215,6 +242,7 @@ export default {
         card('Sales tax', 'GST/HST and PST/RST for new estimates and invoices', taxHost),
         card('Defaults', 'Applied to new estimates and invoices', defaults, saveRow('Save defaults', saveDefaults)),
         card('Document numbering', 'The next number each new document gets', numbering, saveRow('Save numbering', saveNumbering)),
+        card('Box placement', 'Used when placing boxes on drawings', placementHost),
         card('Appearance', null, themeHost),
         card('Data', 'Everything lives on this device. Export a backup regularly.',
           h('div', { class: 'row' }, storageStatus), h('div', { class: 'muted' }, counts),
