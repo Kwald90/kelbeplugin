@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/bends.json",
+  "title": "Bend",
+  "description": "A saved conduit bend with its marks. Lengths in metres. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200
+    },
+    "jobId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "kind": {
+      "enum": [
+        "offset",
+        "kick",
+        "saddle3",
+        "saddle4",
+        "stub90",
+        "backToBack",
+        "boxOffset",
+        "rolling",
+        "parallel",
+        "segment",
+        "concentric",
+        null
+      ]
+    },
+    "conduit": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "EMT",
+            "RMC",
+            "IMC",
+            "PVC",
+            "AL",
+            null
+          ]
+        },
+        "tradeSize": {
+          "enum": [
+            "16",
+            "21",
+            "27",
+            "35",
+            "41",
+            "53",
+            "63",
+            "78",
+            "91",
+            "103",
+            16,
+            21,
+            27,
+            35,
+            41,
+            53,
+            63,
+            78,
+            91,
+            103,
+            null
+          ],
+          "description": "Metric trade designator (string; numbers accepted)."
+        }
+      }
+    },
+    "benderProfileId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "inputs": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Kind-specific inputs in metres/degrees, plus the form state.",
+      "properties": {
+        "units": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 20
+        },
+        "form": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "chart": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "result": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "marks": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 200
+              },
+              "atM": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "shrinkM": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "developedLengthM": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "warnings": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 50,
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          }
+        }
+      }
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20000
+    }
+  },
+  "additionalProperties": true
+}

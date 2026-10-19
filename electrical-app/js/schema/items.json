@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/items.json",
+  "title": "Price book item",
+  "description": "A material or assembly in the price book, with stock per location. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "sku": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 80
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "category": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 100
+    },
+    "unit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20
+    },
+    "costCents": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Money in integer cents (CAD)."
+    },
+    "priceCents": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Money in integer cents (CAD)."
+    },
+    "labourHours": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "reorderPoint": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "stock": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "maxProperties": 500,
+      "description": "Quantity on hand by locations id."
+    },
+    "symbol": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 60,
+      "description": "Canvas symbol id for drawing takeoff."
+    }
+  },
+  "additionalProperties": true
+}
