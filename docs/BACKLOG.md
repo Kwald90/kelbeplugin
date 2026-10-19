@@ -9,6 +9,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **K** Production VPS at dotmoose: host, SSH access, OS, data-centre country, disk encryption.
 - **K** Domain: confirm the spelling registered (fishtapehq.com vs fishtapewq.com) and point DNS (`app.`, `hq.`, `status.`).
 - **K** Real tier prices (placeholders in `electrical-app/js/plans.js`), the failed-payment grace period (7 days now), the trial length (30 days now, `TRIAL_DAYS`) and the deleted-company grace (30 days now).
+- **K** App Store guideline 3.1: selling Fishtape plans through Stripe inside the iOS app risks rejection. Recommended: in the app, Billing shows the plan and says "manage your plan at fishtapehq.com" with no buy buttons; purchases happen on the web. Options in `docs/mobile/README.md`.
 - **K** When a subscription is cancelled or unpaid past grace: free Starter (current behaviour) or suspend the company?
 - **K** Charge GST/HST on Fishtape subscriptions through Stripe Tax, or another way? Needs a GST/HST registration for Fishtape itself.
 - **K** TG Electrical's province, GST/HST number and ECRA/ESA numbers.
@@ -45,6 +46,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** CEC Table 14 (other occupancies) not built: no reliable source found.
 - **dev** Client portal (homeowners/GCs view, sign and pay) once integrations are live.
 - **dev** Production nginx: serve `site/` (pricing, Enterprise form) on the marketing domain once it's confirmed, and the status page on `status.` (today it returns the status JSON).
+- **dev** Google/Microsoft sign-in in the iOS app (hidden there today): native OIDC through `ASWebAuthenticationSession` with PKCE, and a server endpoint that returns a bearer session instead of a cookie.
 - **dev** A Settings screen for company API keys (create, scope, revoke). Today it's `POST /api/v1/api-keys` only, and the MCP guide points there.
 
 ## Process
