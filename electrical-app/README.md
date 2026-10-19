@@ -56,7 +56,7 @@ plan for cloud sync, real logins, and email/SMS/payments is in
 ## Tests
 
 ```bash
-node --test electrical-app/tests/
+node --test 'electrical-app/tests/*.test.mjs'
 ```
 
 ## Safety note
