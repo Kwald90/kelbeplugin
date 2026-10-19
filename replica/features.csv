@@ -1,54 +1,54 @@
 feature,area,priority,original,clone,notes
-Gallery of drawings grouped by job,canvas,must,yes,no,
-Infinite canvas with pan and pinch zoom,canvas,must,yes,no,
-Pressure-sensitive pen pencil marker brush,canvas,must,yes,no,
-Highlighter and eraser,canvas,must,yes,no,
-Floating radial tool wheel,canvas,must,yes,no,
-Undo and redo,canvas,must,yes,no,
-Layers with hide lock opacity reorder,canvas,must,yes,no,
-Color swatches and custom color,canvas,must,yes,no,
-Paper types none dots grid isometric,canvas,must,yes,no,
-Straight line and shape guides,canvas,should,yes,no,
-Select move delete strokes and objects,canvas,must,yes,no,
-Object library drag onto canvas,canvas,must,yes,no,electrical symbol set drawn fresh
-Import image or PDF as underlay,canvas,must,yes,no,
-Measure with drawing scale,canvas,should,yes,no,
-Text labels on canvas,canvas,should,yes,no,
-Export PNG,canvas,must,yes,no,
-Export SVG,canvas,could,yes,no,
-Symbol count takeoff to estimate,canvas,must,no,no,added for electrical
-Dashboard with today and alerts,dashboard,must,no,no,added
-Clients with sites and contacts,crm,must,no,no,added
-Lead pipeline kanban with stage conversion,crm,must,no,no,added
-Follow-up sequences with steps and enrolments,crm,should,no,no,added; sends go to outbox
-Jobs with status crew schedule drawings materials,jobs,must,no,no,added
-Change orders on jobs,jobs,should,no,no,added
-Weekly crew schedule board,jobs,must,no,no,added
-Estimates from price book with labour and markup,money,must,no,no,added
-Estimate to invoice,money,must,no,no,added
-Record payments and invoice ageing,money,must,no,no,added
-Printable estimate and invoice,money,should,no,no,added
-Price book and stock by location,inventory,must,no,no,added
-Stock moves and reorder alerts,inventory,should,no,no,added
-Employees with roles licences rates,people,must,no,no,added
-Time clock in out against job,people,must,no,no,added
-Timesheet approval,people,should,no,no,added
-SOP library with steps and acknowledgements,sops,must,no,no,added
-Permits and inspections per job,compliance,must,no,no,added
-Licence and certificate expiry tracking,compliance,must,no,no,added
-Code compliance checklists,compliance,should,no,no,added
-Role based permissions,security,must,no,no,added
-Activity audit log,security,must,no,no,added
-Security audit checklists with findings,security,should,no,no,added
-Load calculation,calcs,must,no,no,added
-Voltage drop,calcs,must,no,no,added
-Conductor ampacity sizing,calcs,must,no,no,added
-Conduit fill,calcs,should,no,no,added
-Ohms law,calcs,could,no,no,added
-Panel schedules with phase balance,calcs,should,no,no,added
-Works offline installable on iPad,platform,must,yes,no,PWA
-Backup and restore data,platform,must,no,no,added
-Dark mode,platform,should,yes,no,
+Gallery of drawings grouped by job,canvas,must,yes,yes,
+Infinite canvas with pan and pinch zoom,canvas,must,yes,yes,
+Pressure-sensitive pen pencil marker brush,canvas,must,yes,yes,
+Highlighter and eraser,canvas,must,yes,yes,
+Floating radial tool wheel,canvas,must,yes,yes,
+Undo and redo,canvas,must,yes,yes,
+Layers with hide lock opacity reorder,canvas,must,yes,yes,
+Color swatches and custom color,canvas,must,yes,yes,
+Paper types none dots grid isometric,canvas,must,yes,yes,
+Straight line and shape guides,canvas,should,yes,yes,
+Select move delete strokes and objects,canvas,must,yes,yes,
+Object library drag onto canvas,canvas,must,yes,yes,electrical symbol set drawn fresh
+Import image or PDF as underlay,canvas,must,yes,partial,image import tested; PDF via pdf.js from cdnjs untested (CDN blocked in build sandbox)
+Measure with drawing scale,canvas,should,yes,yes,
+Text labels on canvas,canvas,should,yes,yes,
+Export PNG,canvas,must,yes,yes,
+Export SVG,canvas,could,yes,yes,
+Symbol count takeoff to estimate,canvas,must,no,yes,added for electrical
+Dashboard with today and alerts,dashboard,must,no,yes,added
+Clients with sites and contacts,crm,must,no,yes,added
+Lead pipeline kanban with stage conversion,crm,must,no,yes,added
+Follow-up sequences with steps and enrolments,crm,should,no,partial,added; sends go to outbox
+Jobs with status crew schedule drawings materials,jobs,must,no,yes,added
+Change orders on jobs,jobs,should,no,yes,added
+Weekly crew schedule board,jobs,must,no,yes,added
+Estimates from price book with labour and markup,money,must,no,yes,added
+Estimate to invoice,money,must,no,yes,added
+Record payments and invoice ageing,money,must,no,yes,added
+Printable estimate and invoice,money,should,no,yes,added
+Price book and stock by location,inventory,must,no,yes,added
+Stock moves and reorder alerts,inventory,should,no,yes,added
+Employees with roles licences rates,people,must,no,yes,added
+Time clock in out against job,people,must,no,yes,added
+Timesheet approval,people,should,no,yes,added
+SOP library with steps and acknowledgements,sops,must,no,yes,added
+Permits and inspections per job,compliance,must,no,yes,added
+Licence and certificate expiry tracking,compliance,must,no,yes,added
+Code compliance checklists,compliance,should,no,yes,added
+Role based permissions,security,must,no,yes,added
+Activity audit log,security,must,no,yes,added
+Security audit checklists with findings,security,should,no,yes,added
+Load calculation,calcs,must,no,yes,added
+Voltage drop,calcs,must,no,yes,added
+Conductor ampacity sizing,calcs,must,no,yes,added
+Conduit fill,calcs,should,no,yes,added
+Ohms law,calcs,could,no,yes,added
+Panel schedules with phase balance,calcs,should,no,yes,added
+Works offline installable on iPad,platform,must,yes,yes,PWA
+Backup and restore data,platform,must,no,yes,added
+Dark mode,platform,should,yes,yes,
 Concepts brush textures,canvas,skip,yes,skip,their brush engine
 COPIC color library,canvas,skip,yes,skip,licensed
 Concepts object library content,canvas,skip,yes,skip,their content
