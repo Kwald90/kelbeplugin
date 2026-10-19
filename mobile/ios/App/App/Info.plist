@@ -47,6 +47,9 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<!-- ARKit is deliberately not listed in UIRequiredDeviceCapabilities: devices without AR can still
+	     install Fishtape. FishtapeMeasure.isAvailable() checks ARWorldTrackingConfiguration.isSupported at
+	     run time, and the Wire Runs screen falls back to tracing on a plan or typing a length. -->
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>armv7</string>
@@ -65,6 +68,13 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Fishtape uses the camera to measure wire runs along walls and conduit, and to take photos for your jobs.</string>
+	<!-- Saved PDFs and CSVs go to the app's Documents folder, shown in the Files app under Fishtape. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 </dict>
 </plist>
