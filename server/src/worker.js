@@ -3,7 +3,10 @@
 import { hostname } from 'node:os';
 import { loadEnvFile, readConfig } from './config.js';
 import { createDb, createPool } from './db.js';
-import { reclaimStuck, runOnce, scheduleRecurring } from './services/queue.js';
+import { HANDLERS, reclaimStuck, runOnce, scheduleRecurring } from './services/queue.js';
+import { HQ_HANDLERS } from './services/hq-jobs.js';
+
+const handlers = { ...HANDLERS, ...HQ_HANDLERS };
 
 const HOUR = 3600_000;
 
@@ -25,7 +28,7 @@ async function main() {
           if (n) log('warn', 'requeued stuck jobs', { count: n });
           await scheduleRecurring(db);
         }
-        const r = await runOnce(db, { workerId, log: { info: (m) => log('info', m), error: (m) => log('error', m) } });
+        const r = await runOnce(db, { workerId, handlers, log: { info: (m) => log('info', m), error: (m) => log('error', m) } });
         if (r) { log(r.outcome === 'done' ? 'info' : 'warn', `job ${r.kind} ${r.outcome}`, { jobId: r.id, ...(r.error ? { error: r.error } : {}) }); continue; }
       } catch (e) {
         log('error', 'worker loop error', { error: e.message });

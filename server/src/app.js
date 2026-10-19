@@ -19,6 +19,11 @@ import { installAuth } from './auth/guard.js';
 import { looksLikeApiKey } from './auth/apikeys.js';
 import healthRoutes from './routes/health.js';
 import hqRoutes from './routes/hq.js';
+import hqHealthRoutes from './routes/hq-health.js';
+import hqTenantRoutes from './routes/hq-tenants.js';
+import hqComplianceRoutes from './routes/hq-compliance.js';
+import hqBillingRoutes from './routes/hq-billing.js';
+import hqLeadRoutes from './routes/hq-leads.js';
 import authRoutes from './routes/v1/auth.js';
 import recordRoutes from './routes/v1/records.js';
 import syncRoutes from './routes/v1/sync.js';
@@ -166,12 +171,17 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   installAuth(app, { db, config });
 
   const deps = { config, db, records, email, oidcProviders: providers, stats, bodyLimit: SYNC_BODY_LIMIT };
+  await app.register(hqHealthRoutes, deps);
   await app.register(healthRoutes, deps);
   await app.register(authRoutes, deps);
   await app.register(adminRoutes, deps);
   await app.register(recordRoutes, deps);
   await app.register(syncRoutes, deps);
   await app.register(hqRoutes, deps);
+  await app.register(hqTenantRoutes, deps);
+  await app.register(hqComplianceRoutes, deps);
+  await app.register(hqBillingRoutes, deps);
+  await app.register(hqLeadRoutes, deps);
 
   app.get('/api/v1/openapi.json', { config: { auth: 'public' }, schema: { hide: true } }, async () => app.swagger());
 

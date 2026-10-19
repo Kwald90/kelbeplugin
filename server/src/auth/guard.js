@@ -10,6 +10,7 @@
 //   device   a registered shared device token (crew list and PIN sign-in)
 //   hq       HQ staff: platform role + TOTP verified on this session
 // config.apiKey === false keeps API keys out of a tenant route.
+// config.csrf === false (public routes only) skips the CSRF check for signed webhooks.
 import { ApiError, forbidden, unauthenticated } from '../errors.js';
 import { ADMIN_ROLES, capCrewRole, isManagerRole, permsForRole } from './permissions.js';
 import { looksLikeApiKey, lookupApiKey } from './apikeys.js';
@@ -140,7 +141,8 @@ export function installAuth(app, deps) {
   app.addHook('onRequest', async (req) => {
     const cfg = req.routeOptions?.config || {};
     const mode = cfg.auth || 'public';
-    csrfGuard(req, deps.config);
+    // Server-to-server webhooks (config.csrf === false, public routes only) verify their own signature instead.
+    if (!(cfg.csrf === false && mode === 'public')) csrfGuard(req, deps.config);
     req.auth = await readCredentials(req, deps, mode === 'device');
     req.principal = authorize(req.auth, mode, cfg);
   });
