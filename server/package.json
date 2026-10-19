@@ -13,7 +13,7 @@
     "migrate": "node src/migrate.js",
     "seed": "node src/seed.js",
     "tenant:create": "node src/cli/create-tenant.js",
-    "test": "node --test --test-concurrency=1 test/",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
     "test:embedded": "node scripts/with-embedded-pg.js",
     "lint": "node scripts/lint.js",
     "gen:collections-sql": "node scripts/gen-collections-sql.js"

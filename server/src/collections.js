@@ -46,17 +46,20 @@ const EMPLOYEE = g('employee_id', 'employeeId');
  * @property {string[]} [readAll] true when every member may read (settings)
  */
 
+// Every role has "dashboard", so it only grants reads the dashboard shows to everyone
+// (jobs, schedule, own time, crew, stock alerts, expiring certifications); money and
+// sales data need their own permission, as the dashboard module itself checks.
 /** @type {Record<string, Omit<CollectionDef, 'name'>>} */
 const DEFS = {
   clients: { table: 'clients', gen: [], read: ['clients', 'leads', 'jobs', 'estimates', 'invoices', 'schedule', 'compliance', 'panels', 'drawings', 'dashboard'], write: ['clients', 'leads'], portal: 'self' },
-  leads: { table: 'leads', gen: [CLIENT, g('status', 'stage')], read: ['leads', 'sequences', 'estimates', 'clients', 'dashboard'], write: ['leads', 'estimates', 'sequences'], portal: 'client' },
+  leads: { table: 'leads', gen: [CLIENT, g('status', 'stage')], read: ['leads', 'sequences', 'estimates', 'clients'], write: ['leads', 'estimates', 'sequences'], portal: 'client' },
   sequences: { table: 'sequences', gen: [], read: ['sequences', 'leads'], write: ['sequences'], portal: null },
   enrolments: { table: 'enrolments', gen: [g('lead_id', 'leadId'), g('sequence_id', 'sequenceId'), STATUS], read: ['sequences', 'leads'], write: ['sequences', 'leads'], portal: null },
-  outbox: { table: 'outbox', gen: [STATUS, g('related_id', 'relatedId')], read: ['sequences', 'leads', 'estimates', 'invoices', 'dashboard'], write: ['sequences', 'leads', 'estimates', 'invoices'], portal: null },
+  outbox: { table: 'outbox', gen: [STATUS, g('related_id', 'relatedId')], read: ['sequences', 'leads', 'estimates', 'invoices'], write: ['sequences', 'leads', 'estimates', 'invoices'], portal: null },
   jobs: { table: 'jobs', gen: [CLIENT, STATUS, NUMBER], read: ['jobs', 'schedule', 'time', 'drawings', 'estimates', 'invoices', 'compliance', 'panels', 'inventory', 'clients', 'calcs', 'dashboard'], write: ['jobs', 'estimates', 'leads', 'schedule'], managerWrite: true, portal: 'client' },
   schedule: { table: 'schedule', gen: [JOB, EMPLOYEE, g('day', 'date')], read: ['schedule', 'jobs', 'time', 'employees', 'dashboard'], write: ['schedule', 'jobs'], managerWrite: true, portal: null },
   estimates: { table: 'estimates', gen: [CLIENT, JOB, STATUS, NUMBER], read: ['estimates', 'invoices', 'leads', 'clients'], write: ['estimates'], portal: 'client' },
-  invoices: { table: 'invoices', gen: [CLIENT, JOB, STATUS, NUMBER], read: ['invoices', 'estimates', 'clients', 'dashboard'], write: ['invoices'], portal: 'client' },
+  invoices: { table: 'invoices', gen: [CLIENT, JOB, STATUS, NUMBER], read: ['invoices', 'estimates', 'clients'], write: ['invoices'], portal: 'client' },
   payments: { table: 'payments', gen: [g('invoice_id', 'invoiceId')], read: ['invoices'], write: ['invoices'], portal: null },
   items: { table: 'items', gen: [g('sku', 'sku')], read: ['inventory', 'estimates', 'invoices', 'drawings', 'jobs', 'dashboard'], write: ['inventory'], portal: null },
   locations: { table: 'locations', gen: [], read: ['inventory', 'jobs'], write: ['inventory'], portal: null },

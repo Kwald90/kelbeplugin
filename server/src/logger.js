@@ -10,7 +10,7 @@ export const REDACT_PATHS = [
   'headers.cookie',
   '*.password', '*.currentPassword', '*.newPassword',
   '*.token', '*.accessToken', '*.refreshToken', '*.idToken',
-  '*.pin', '*.code', '*.recoveryCode', '*.secret', '*.apiKey', '*.key',
+  '*.pin', '*.recoveryCode', '*.totp', '*.secret', '*.apiKey', '*.key',
   '*.password_hash', '*.pin_hash', '*.secret_enc', '*.value',
 ];
 
@@ -35,6 +35,10 @@ export function loggerOptions(config, stream) {
       },
       res(res) {
         return { statusCode: res.statusCode };
+      },
+      err(e) {
+        if (!e || typeof e !== 'object') return e;
+        return { type: e.constructor?.name, message: e.message, code: e.code, statusCode: e.statusCode, stack: e.stack };
       },
     },
   };

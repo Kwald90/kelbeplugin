@@ -23,7 +23,7 @@ export function testConfig(env = {}) {
 /** Capture structured log lines in memory. */
 export function logCapture() {
   const lines = [];
-  const stream = new Writable({ write(chunk, enc, cb) { lines.push(chunk.toString()); cb(); } });
+  const stream = new Writable({ write(chunk, enc, cb) { lines.push(chunk.toString()); if (process.env.DEBUG_TEST_LOGS) process.stderr.write(chunk); cb(); } });
   return { stream, lines, text: () => lines.join('') };
 }
 

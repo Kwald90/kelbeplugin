@@ -60,28 +60,35 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   // extra record fields are never dropped by a schema-driven serializer.
   app.setSerializerCompiler(() => (data) => JSON.stringify(data));
 
+  // Error bodies never echo what was sent, SQL or stack traces: ApiError messages are
+  // written to be safe, validation details name fields (not values), and everything
+  // else gets a fixed message. APP_ENV=local adds the raw message for debugging.
   app.setErrorHandler((err, req, reply) => {
-    let status = err.statusCode && err.statusCode >= 400 ? err.statusCode : 500;
-    let code = typeof err.code === 'string' && err instanceof ApiError ? err.code : null;
-    let message = err.message;
+    let status = err.statusCode && err.statusCode >= 400 && err.statusCode < 600 ? err.statusCode : 500;
+    let code = err instanceof ApiError ? err.code : null;
+    let message = err instanceof ApiError ? err.message : null;
     let details = err instanceof ApiError ? err.details : undefined;
     if (err.validation) {
       status = 400; code = 'validation_failed'; message = 'The request is not valid.';
-      details = { errors: err.validation.slice(0, 20).map((v) => ({ path: v.instancePath || '/', message: v.message })) };
+      details = { errors: err.validation.slice(0, 20).map((v) => ({ path: v.instancePath || `/${v.params?.missingProperty || ''}`, message: v.message })) };
     } else if (!code && status === 429) {
-      code = 'rate_limited';
-    } else if (!code && err.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+      code = 'rate_limited'; message = 'Too many requests. Try again shortly.';
+    } else if (!code && status === 413) {
       code = 'too_large'; message = 'The request body is too large.';
-    } else if (!code && (err.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE')) {
+    } else if (!code && status === 415) {
       code = 'unsupported_media_type'; message = 'Send JSON (Content-Type: application/json).';
+    } else if (!code && status === 400 && /JSON|FST_ERR_CTP/.test(`${err.code} ${err.name}`)) {
+      code = 'bad_json'; message = 'The request body is not valid JSON.';
     } else if (!code && status < 500) {
-      code = 'bad_request';
+      code = 'bad_request'; message = 'The request could not be processed.';
     } else if (!code && ['ECONNREFUSED', '57P01', '57P03', '53300'].includes(err.code)) {
-      status = 503; code = 'unavailable'; message = 'The database is unavailable. Try again shortly.';
+      status = 503; code = 'unavailable'; message = 'The service is unavailable. Try again shortly.';
     } else if (!code) {
       status = 500; code = 'internal'; message = 'Something went wrong. It has been logged.';
     }
     if (status >= 500) req.log.error({ err }, 'request failed');
+    else if (!(err instanceof ApiError) && !err.validation) req.log.info({ err: { message: err.message, code: err.code } }, 'request refused');
+    if (config.appEnv === 'local' && !(err instanceof ApiError)) details = { ...(details || {}), debug: String(err.message).slice(0, 500) };
     reply.code(status).send({ error: { code, message, requestId: req.id, ...(details ? { details } : {}) } });
   });
 

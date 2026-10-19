@@ -86,8 +86,125 @@
       ],
       "maxItems": 50000,
       "items": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 60
+          },
+          "layer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "x": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "y": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "rotation": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "scale": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "flags": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Receptacle needs.",
+            "properties": {
+              "gfci": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "afci": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "tr": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "wp": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          },
+          "mountM": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Mounting height in metres."
+          },
+          "roomId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "auto": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "rooms": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 2000,
+      "items": {
         "type": "object"
       }
+    },
+    "codeOptions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Code-check options for this drawing."
+    },
+    "placement": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Auto-placement settings for this drawing."
     },
     "texts": {
       "type": [

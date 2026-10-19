@@ -28,7 +28,7 @@ const pw = () => randomBytes(18).toString('base64url');
 
 async function main() {
   const args = process.argv.slice(2);
-  const cmd = args.length ? args : [process.execPath, '--test', '--test-concurrency=1', 'test/'];
+  const cmd = args.length ? args : [process.execPath, '--test', '--test-concurrency=1', 'test/*.test.js'];
   const dir = mkdtempSync(join(tmpdir(), 'fishtape-pg-'));
   const port = await freePort();
   const superPassword = pw();

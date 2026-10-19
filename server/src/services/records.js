@@ -19,7 +19,7 @@ export const MAX_LIST_LIMIT = 500;
 const actorString = (actor) => `${actor.type}:${actor.id ?? ''}`;
 
 function assertCollection(coll) {
-  if (!isCollection(coll)) throw notFound(`Unknown collection ${coll}.`);
+  if (!isCollection(coll)) throw notFound('Unknown collection.');
 }
 
 function assertId(id) {
@@ -224,7 +224,7 @@ export function createRecords({ validator }) {
     const def = collectionDef(coll);
     const id = body?.id ?? randomUUID();
     assertId(id);
-    if (await lockRow(tx, def, id)) throw conflict(`A ${coll} record with id ${id} already exists.`);
+    if (await lockRow(tx, def, id)) throw conflict('A record with this id already exists.');
     const data = prepare(coll, id, body, null, Date.now());
     checkRules(p, coll, null, data);
     const row = await insertRow(tx, def, id, data, who);
@@ -273,7 +273,7 @@ export function createRecords({ validator }) {
   function checkMutationShape(m) {
     if (!m || typeof m !== 'object') return 'A mutation must be an object.';
     if (typeof m.mid !== 'string' || m.mid.length < 1 || m.mid.length > 128) return 'mid must be a string of 1-128 characters.';
-    if (!isCollection(m.collection)) return `Unknown collection ${m.collection}.`;
+    if (!isCollection(m.collection)) return 'Unknown collection.';
     if (m.op !== 'upsert' && m.op !== 'delete') return "op must be 'upsert' or 'delete'.";
     if (typeof m.id !== 'string' || !ID_RE.test(m.id)) return 'id must be 1-128 characters: letters, digits, . _ : -';
     if (m.baseVersion != null && !(Number.isInteger(m.baseVersion) && m.baseVersion >= 0)) return 'baseVersion must be a non-negative integer or null.';
@@ -402,7 +402,7 @@ export function createRecords({ validator }) {
                   ORDER BY change_seq LIMIT $3)`);
     }
     if (!parts.length) return { changes: [], cursor: String(since), more: false };
-    const { rows } = await tx.query(`${parts.join(' UNION ALL ')} ORDER BY change_seq LIMIT $3`, params);
+    const { rows } = await tx.query(`SELECT * FROM (${parts.join(' UNION ALL ')}) AS changes ORDER BY change_seq LIMIT $3`, params);
 
     const picked = [];
     let bytes = 0;

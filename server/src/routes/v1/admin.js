@@ -266,7 +266,7 @@ export default async function adminRoutes(app, { config, db, email }) {
     },
   }, async (req, reply) => {
     const bad = req.body.scopes.filter((s) => !SCOPES.has(s));
-    if (bad.length) throw badRequest(`Unknown scopes: ${bad.join(', ')}`);
+    if (bad.length) throw badRequest('Unknown scope. Use <collection>:read, <collection>:write, *:read or *:write.');
     if (req.body.expiresAt && Date.parse(req.body.expiresAt) <= Date.now()) throw badRequest('expiresAt must be in the future.');
     const out = await audited(req, (tx) => createApiKey(tx, config, {
       tenantId: tx.tenantId, name: req.body.name, scopes: [...new Set(req.body.scopes)], createdBy: req.principal.userId, expiresAt: req.body.expiresAt,

@@ -90,7 +90,7 @@ export function createDb(pools) {
      *   write: take the tenant write lock up front (avoids lock-order deadlocks with row locks).
      * @returns {Promise<T>}
      */
-    withTenant(ctx, fn, opts = {}) {
+    async withTenant(ctx, fn, opts = {}) {
       if (!isUuid(ctx?.tenantId)) throw new Error('withTenant: a tenant id (uuid) is required');
       const begin = opts.isolation ? `BEGIN ISOLATION LEVEL ${opts.isolation === 'SERIALIZABLE' ? 'SERIALIZABLE' : 'REPEATABLE READ'}` : 'BEGIN';
       return inTransaction(app, begin, async (client) => {

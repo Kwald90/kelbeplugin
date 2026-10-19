@@ -88,9 +88,19 @@
             "78",
             "91",
             "103",
+            16,
+            21,
+            27,
+            35,
+            41,
+            53,
+            63,
+            78,
+            91,
+            103,
             null
           ],
-          "description": "Metric trade designator."
+          "description": "Metric trade designator (string; numbers accepted)."
         }
       }
     },
@@ -105,7 +115,29 @@
       "type": [
         "object",
         "null"
-      ]
+      ],
+      "description": "Kind-specific inputs in metres/degrees, plus the form state.",
+      "properties": {
+        "units": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 20
+        },
+        "form": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "chart": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
     },
     "result": {
       "type": [
