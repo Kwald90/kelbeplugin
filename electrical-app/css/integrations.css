@@ -1,0 +1,57 @@
+/* Integrations screen, setup guides and the invoice pay/email tools. Tokens only. */
+.int-intro { display: flex; gap: var(--s3); align-items: flex-start; margin-bottom: var(--s4); color: var(--text-muted); }
+.int-intro p { margin: 0; }
+.int-intro svg { flex: none; color: var(--success); margin-top: 2px; }
+
+.int-grid { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); align-items: start; }
+.int-card { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+.int-head { display: flex; align-items: flex-start; gap: var(--s3); }
+.int-head h3 { margin: 0; }
+.int-sub { font-size: var(--fs-xs); line-height: var(--lh-xs); overflow-wrap: anywhere; }
+.int-logo { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-md); background: var(--accent-soft); color: var(--accent); }
+.int-blurb { margin: 0; color: var(--text-muted); }
+.int-form { gap: var(--s3); }
+.int-form input { font-family: var(--font-mono); }
+.int-form select, .int-form input[type="email"] { font-family: inherit; }
+.int-inline { display: flex; gap: var(--s2); align-items: center; min-width: 0; }
+.int-inline input { flex: 1; min-width: 0; }
+.int-webhook { display: flex; flex-direction: column; gap: var(--s1); padding: var(--s3); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); }
+.int-webhook .hint { font-size: var(--fs-xs); line-height: var(--lh-xs); }
+.int-label { font-size: var(--fs-sm); font-weight: 600; }
+.int-bad { color: var(--danger); }
+.int-result:empty { display: none; }
+.int-result { display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s2) var(--s3); border-radius: var(--r-sm); font-size: var(--fs-sm); line-height: var(--lh-sm); background: var(--surface-2); }
+.int-result svg { flex: none; margin-top: 2px; }
+.int-result.ok { background: var(--success-soft); color: var(--success); }
+.int-result.warning, .int-result.unknown { background: var(--warning-soft); color: var(--warning); }
+.int-result.error { background: var(--danger-soft); color: var(--danger); }
+.int-foot { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; padding-top: var(--s2); border-top: 1px solid var(--border); }
+.int-busy { opacity: .6; pointer-events: none; }
+.int-locked .int-logo { background: var(--surface-2); color: var(--text-muted); }
+.int-lock-note { display: flex; gap: var(--s2); align-items: flex-start; color: var(--text-muted); font-size: var(--fs-sm); }
+.int-lock-note svg { flex: none; margin-top: 2px; }
+.int-guides { gap: var(--s2); }
+
+/* setup guide (rendered by js/lib/markdown.js) */
+.int-guide { max-width: 72ch; line-height: var(--lh-base); overflow-wrap: anywhere; }
+.int-guide h2, .int-guide h3, .int-guide h4 { margin: var(--s5) 0 var(--s2); line-height: 1.25; }
+.int-guide h2:first-child { margin-top: 0; }
+.int-guide p, .int-guide ul, .int-guide ol, .int-guide blockquote, .int-guide pre, .int-guide .md-table { margin: 0 0 var(--s3); }
+.int-guide li { margin: var(--s1) 0; }
+.int-guide code { font-family: var(--font-mono); font-size: .9em; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--border); }
+.int-guide pre { padding: var(--s3); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); overflow-x: auto; }
+.int-guide pre code { padding: 0; border: 0; background: none; }
+.int-guide blockquote { padding: var(--s3) var(--s4); border-left: 4px solid var(--accent-fill); background: var(--accent-soft); border-radius: var(--r-sm); }
+.int-guide blockquote p:last-child { margin-bottom: 0; }
+.int-guide a { color: var(--accent); font-weight: 600; }
+.int-guide img { max-width: 100%; border-radius: var(--r-md); border: 1px solid var(--border); }
+.int-guide hr { border: 0; border-top: 1px solid var(--border); margin: var(--s5) 0; }
+.int-guide .md-table { overflow-x: auto; }
+.int-guide table { border-collapse: collapse; width: 100%; font-size: var(--fs-sm); }
+.int-guide th, .int-guide td { text-align: left; padding: var(--s2); border-bottom: 1px solid var(--border); vertical-align: top; }
+
+/* invoice tools */
+.int-doc-tools { display: flex; flex-direction: column; gap: var(--s2); }
+.int-doc-tools:empty { display: none; }
+.int-doc-action:empty { display: none; }
+.int-paylink a { color: inherit; overflow-wrap: anywhere; }

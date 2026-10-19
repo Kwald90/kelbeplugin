@@ -27,6 +27,9 @@ const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export function csrfGuard(req, config) {
   if (!UNSAFE.has(req.method)) return;
   if (req.headers.authorization) return;
+  // Signed provider webhooks (routes/v1/webhooks.js): public, no cookies used, signature checked instead.
+  const cfg = req.routeOptions?.config;
+  if (cfg?.csrf === false && cfg.auth === 'public') return;
   if (req.headers['x-fishtape'] !== '1') throw new ApiError(403, 'csrf_failed', 'Missing X-Fishtape: 1 header.');
   const origin = req.headers.origin;
   if (origin !== undefined && !config.corsOrigins.includes(origin)) throw new ApiError(403, 'csrf_failed', 'This origin may not call the API.');

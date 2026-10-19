@@ -2,6 +2,7 @@
 import { docTotals, invoicePaidCents, invoiceBalanceCents, invoiceStatus, moneyFormatter, combinedPct } from '../lib/money.js';
 import { newDocTax, taxComponents, TREATMENTS } from '../lib/tax.js';
 import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
+import { invoiceOnlineTools, payLinkBlock } from './integrations.js';
 
 const METHODS = ['e-transfer', 'cheque', 'card', 'cash', 'transfer'];
 
@@ -230,6 +231,7 @@ function renderDetail(root, ctx, id) {
         cur.status === 'draft' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: () => setStatus('sent') }) : null,
         cur.status !== 'void' && bal > 0 ? ui.button('Record payment', { size: 'sm', variant: 'primary', icon: 'dollar', onClick: recordPayment }) : null,
         cur.status !== 'void' ? ui.button('Void', { size: 'sm', variant: 'ghost danger', onClick: voidIt }) : ui.button('Restore', { size: 'sm', onClick: () => { setStatus('draft'); syncInvoiceStatus(store, id); nav('#/invoices/' + id); } })),
+      invoiceOnlineTools(ctx, cur, bal),
       cur.estimateId ? ui.button('Source estimate', { size: 'sm', variant: 'ghost', icon: 'file-text', href: '#/estimates/' + cur.estimateId }) : null,
       cur.jobId ? ui.button('Open job', { size: 'sm', variant: 'ghost', icon: 'briefcase', href: '#/jobs/' + cur.jobId }) : null);
   };
@@ -286,7 +288,8 @@ function renderDetail(root, ctx, id) {
     title: doc.number,
     subtitle: h('span', null, h('a', { href: '#/invoices' }, 'Invoices'), ' / ', clientOrJob(store, doc)),
     actions: [
-      ui.button('Print / PDF', { icon: 'printer', onClick: () => { save.flush(); previewDocument({ kind: 'Invoice', doc, store, paidCents: paid() }); } }),
+      // `extra` is a getter so the preview and the printout each get their own pay-link node.
+      ui.button('Print / PDF', { icon: 'printer', onClick: () => { save.flush(); previewDocument({ kind: 'Invoice', doc, store, paidCents: paid(), get extra() { return payLinkBlock(store, id, docTotals(doc).totalCents - paid()); } }); } }),
       ui.button('', { icon: 'trash', variant: 'ghost danger', title: 'Delete invoice', onClick: remove }),
     ],
   },
