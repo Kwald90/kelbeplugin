@@ -189,6 +189,35 @@ headers, URLs/query strings, error messages, logs or any file under the web root
 live outside the web root, are chmod 600 and never committed. `/api` responses carrying tenant
 data send `Cache-Control: no-store`. `deploy/check-exposure.sh` runs after every deploy.
 
+## Phase 1 (backend merged 2026-10-19)
+
+Shared pieces already in the base branch, use them, don't fork them:
+- `electrical-app/js/plans.js`: tiers (starter, pro, business, enterprise), `FEATURE_PLAN`, `hasFeature(plan, feature, overrides)`,
+  `entitlements()`, `monthlyCents()`. Server imports it like the schemas (`../electrical-app/js/plans.js`).
+  Downgrades never delete data: a company keeps **reading** everything, while writes, AI calls and integrations check the feature.
+- `server/src/services/secrets.js`: per-company keys (`setSecret/getSecret/listSecrets/deleteSecret`, names in `SECRETS`).
+  Plaintext never goes to the browser; `listSecrets` returns hints only.
+- `server/src/db.js` `withTenant` / `TenantTx`, `server/src/services/audit.js`, `server/src/services/queue.js` (worker jobs).
+
+Conventions:
+- **Migrations:** each workstream uses its own number range so files never collide: G 0010–0019, H 0020–0029,
+  I 0040–0049, J 0050–0059, portal 0060–0069. Platform tables get RLS like the rest if they hold tenant data.
+- **Routes:** add your own Fastify plugin file and one `app.register(...)` line in `server/src/app.js` (the lead resolves the
+  one-line merge conflicts). **Modules:** add your module file and one line in `electrical-app/js/modules/index.js`.
+- Every new endpoint: permission check, entitlement check where gated, audit event on writes, `Cache-Control: no-store`,
+  tests including a cross-tenant attempt. Server tests run with `cd server && npm run test:embedded`.
+- Platform keys (Fishtape's own Stripe account for subscriptions, Fishtape's own Resend key for system email) come from
+  env vars, never `tenant_secrets`. Company keys come from `tenant_secrets` only.
+
+| | workstream | owns |
+| --- | --- | --- |
+| G | PWA accounts & sync | `electrical-app/js/{store,sync,session,auth,app}.js`, new `modules/account.js` (sign-in, MFA, password reset, company switcher, shared-iPad PIN mode), `css/account.css`, rail locking for features not in the plan, `GET /api/v1/me` (session user, memberships, role perms, plan, entitlements) in `server/src/routes/v1/me.js`, tests |
+| H | HQ, plans & billing | `hq/**` (console at `/hq/`, may import `/js/ui.js` and `/css/*` from the app), `server/src/routes/hq*.js`, `server/src/services/{entitlements,billing,hq-*}.js`, `site/**` (public pricing page + Enterprise "Let's talk" form), migrations 0020–0029. Tenants (create, suspend, delete with export, plan/trial/overrides, audited support access), **developer health page**, compliance & security page (controls from `compliance/controls.yaml`, access review with MFA status, incidents, vendors), billing with Fishtape's Stripe (checkout, customer portal, webhooks set the plan), HQ sales leads from the Enterprise form, server-side entitlement middleware `requireFeature()` |
+| I | Integrations | `server/src/integrations/**`, `server/src/routes/v1/{integrations,webhooks}.js`, worker jobs for email/SMS, migrations 0040–0049, `electrical-app/js/modules/integrations.js` + `css/integrations.css`, `electrical-app/guides/*.md` (setup guides shown in the app) + a small safe Markdown renderer in `electrical-app/js/lib/markdown.js`. Stripe invoice payments (company's key; pay link on invoices; signed webhook records the payment), Resend (outbox and sequences), Twilio SMS, Facebook Lead Ads (webhook → `leads`), connection tests |
+| J | AI | `server/src/ai/**`, `server/src/routes/v1/ai.js`, `server/src/routes/mcp.js`, migrations 0050–0059, `electrical-app/js/modules/assistant.js` (+ any `js/lib/assistant*.js`), `css/assistant.css`, `docs/ai/**`. Claude through each company's own Anthropic key: estimate/invoice drafting (human approves), CEC helper using the calculators as tools, background agents that draft suggestions, an MCP server on scoped API keys, token usage per company |
+
+Client portal (homeowners/GCs see estimates, sign, pay invoices) starts after I lands, since it needs email and payments.
+
 ## Definition of done (every workstream)
 
 - Tests with `node:test` next to the existing ones; run `node --test electrical-app/tests/*.test.mjs` (and `server` tests for A) and they pass.
