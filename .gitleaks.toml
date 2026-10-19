@@ -33,9 +33,9 @@ description = "Postgres connection URL with an inline password"
 regex = '''postgres(?:ql)?://[A-Za-z0-9_.-]+:([^@\s'"<>${}]{8,})@'''
 secretGroup = 1
 keywords = ["postgres://", "postgresql://"]
-  # Throwaway CI credentials and documentation placeholders.
+  # Throwaway credentials of the CI Postgres service (.github/workflows/ci.yml) only.
   [[rules.allowlists]]
-  regexes = ['''^ci_(?:app|owner|hq)$''']
+  regexes = ['''^(?:ci_(?:app|owner|hq)|postgres)$''']
 
 # age private keys (the backup identities) are covered by the built-in "age-secret-key" rule.
 
@@ -45,6 +45,14 @@ description = "Fishtape session cookie value"
 regex = '''ft_session=([A-Za-z0-9_-]{24,})'''
 secretGroup = 1
 keywords = ["ft_session="]
+
+[[allowlists]]
+description = "Obviously fake Stripe test keys (sk_test_1234...) in the server's test fixtures"
+targetRules = ["stripe-access-token", "generic-api-key"]
+condition = "AND"
+paths = ['''(?:^|/)server/test/''']
+regexTarget = "line"
+regexes = ['''['"]sk_test_1234''']
 
 [[allowlists]]
 description = "Example env files hold empty values; generated evidence and dependencies are never committed"
