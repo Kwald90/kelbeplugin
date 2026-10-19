@@ -72,7 +72,8 @@ export async function tenantDetail(c, id) {
     `SELECT g.id, g.reason, g.created_at, g.expires_at, g.revoked_at, g.hq_user_id, u.display_name AS staff
        FROM support_grants g JOIN users u ON u.id = g.hq_user_id WHERE g.tenant_id = $1 ORDER BY g.created_at DESC LIMIT 20`, [id])).rows;
   const hqEvents = (await c.query(
-    `SELECT seq, at, actor_label, action, summary FROM audit_events WHERE tenant_id = $1 AND actor_type IN ('hq', 'system')
+    `SELECT seq, at, actor_label, action, summary FROM audit_events
+      WHERE tenant_id = $1 AND (actor_type = 'hq' OR action LIKE 'billing.%' OR action LIKE 'tenant.%')
       ORDER BY seq DESC LIMIT 30`, [id])).rows;
   const counts = await recordCounts(c, id);
   const devices = (await c.query('SELECT count(*) FILTER (WHERE revoked_at IS NULL)::int AS n FROM devices WHERE tenant_id = $1', [id])).rows[0].n;

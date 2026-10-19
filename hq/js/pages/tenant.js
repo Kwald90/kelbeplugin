@@ -51,7 +51,7 @@ export default {
       host.append(h('div', { class: 'grid hq-stats' },
         ui.stat({ label: 'Plan in force', value: planName(t.effectivePlan), hint: t.plan === 'trial' ? `Trial · ${t.trialEndsAt ? (trialLeft >= 0 ? `${trialLeft} days left` : 'ended') : 'no end date'}` : `Set to ${planName(t.plan)}` }),
         ui.stat({ label: 'Seats', value: `${t.seats.used} / ${t.seats.included ?? '∞'}`, hint: t.seats.extra ? `${t.seats.extra} extra user(s) billed` : 'within the plan', tone: t.seats.extra ? 'accent' : null }),
-        ui.stat({ label: 'Billing', value: t.billing.status.replace(/_/g, ' '), hint: t.billing.currentPeriodEnd ? `Renews ${ui.fmtDate(t.billing.currentPeriodEnd)}${t.billing.cancelAtPeriodEnd ? ' (cancels)' : ''}` : t.billing.hasCustomer ? 'Customer, no subscription' : 'No Stripe customer' }),
+        ui.stat({ label: 'Billing', value: t.billing.status === 'none' ? 'Not subscribed' : t.billing.status.replace(/_/g, ' '), hint: t.billing.currentPeriodEnd ? `Renews ${ui.fmtDate(t.billing.currentPeriodEnd)}${t.billing.cancelAtPeriodEnd ? ' (cancels)' : ''}` : t.billing.hasCustomer ? 'Customer, no subscription' : 'No Stripe customer' }),
         ui.stat({ label: 'Records', value: ui.fmtNum(Object.values(t.recordCounts).reduce((a, b) => a + b, 0)), hint: `${t.devices} devices · ${t.apiKeys} API keys` })));
 
       host.append(...ui.section('Members', ui.table({

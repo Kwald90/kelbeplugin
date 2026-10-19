@@ -21,7 +21,7 @@ export default {
     let serverHits = null;
     const tableHost = h('div');
     const tabsHost = h('div');
-    const search = ui.searchBox('Filter by name, or press Enter to search member emails', (v) => { term = v; serverHits = null; draw(); });
+    const search = ui.searchBox('Name, or Enter for member email', (v) => { term = v; serverHits = null; draw(); });
     search.querySelector('input').addEventListener('keydown', async (e) => {
       if (e.key !== 'Enter' || term.trim().length < 2) return;
       try { serverHits = new Set((await post('/api/hq/tenants/search', { q: term.trim() })).data.map((t) => t.id)); draw(); } catch (err) { ui.toast(err.message, 'error'); }
@@ -53,7 +53,7 @@ export default {
           { key: 'status', label: 'Status', render: (t) => ui.badge(t.status === 'closed' ? 'closing' : t.status, TONE[t.status]), sort: (t) => t.status },
           { key: 'plan', label: 'Plan', render: (t) => h('div', null, planName(t.effectivePlan), t.plan === 'trial' ? h('div', { class: 'muted hq-small' }, t.trialEndsAt ? `trial ends ${ui.fmtDate(t.trialEndsAt)}` : 'trial, no end set') : null), sort: (t) => t.effectivePlan },
           { key: 'seats', label: 'Seats', align: 'right', render: (t) => `${t.seats.used} / ${t.seats.included ?? '∞'}${t.seats.extra ? ` (+${t.seats.extra})` : ''}`, sort: (t) => t.seats.used },
-          { key: 'billing', label: 'Billing', render: (t) => ui.badge(t.billing.status.replace(/_/g, ' '), TONE[t.billing.status]), sort: (t) => t.billing.status },
+          { key: 'billing', label: 'Billing', render: (t) => (t.billing.status === 'none' ? h('span', { class: 'muted' }, '—') : ui.badge(t.billing.status.replace(/_/g, ' '), TONE[t.billing.status])), sort: (t) => t.billing.status },
           { key: 'active', label: 'Last active', render: (t) => (t.lastActiveAt ? ago(t.lastActiveAt) : '—'), sort: (t) => t.lastActiveAt || '' },
           { key: 'created', label: 'Created', render: (t) => ui.fmtDate(t.createdAt), sort: (t) => t.createdAt },
         ],

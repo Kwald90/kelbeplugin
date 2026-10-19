@@ -72,7 +72,7 @@ export default {
           { key: 'ms', label: 'Response', align: 'right', render: (e) => (e.self ? `DB ${ms(e.ms)}` : ms(e.ms)) },
         ],
         rows: envRows,
-      }), d.environments.length ? null : h('p', { class: 'muted hq-small' }, 'Set HQ_ENVIRONMENTS (name=https://origin, comma separated) to see the other environments here.')));
+      }), d.environments.length ? null : h('p', { class: 'muted hq-small' }, 'Set HQ_ENVIRONMENTS (name=https://origin, comma separated) to see the other environments here.')).filter(Boolean));
 
       const q = d.queue;
       const e = d.errors;

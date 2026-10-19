@@ -1,7 +1,7 @@
 /* Fishtape HQ console. Builds on /css/tokens.css and /css/app.css; tokens only. */
 .hq-boot { position: fixed; inset: 0; display: grid; place-items: center; font-weight: 600; color: var(--text-muted); }
 
-.hq-logo { width: auto; min-width: 40px; padding: 0 6px; gap: 2px; display: flex; font-size: 11px; font-weight: 800; letter-spacing: .04em; }
+.hq-logo { width: auto; min-width: 40px; padding: 0 6px; gap: 2px; display: flex; font-size: 11px; font-weight: 800; letter-spacing: .04em; text-decoration: none; }
 .hq-avatar { background: var(--text); color: var(--surface); }
 
 /* sign-in */
