@@ -8,6 +8,7 @@ import {
 } from './engine.js';
 import { SYMBOLS, SYMBOL_ORDER, symbolPreview } from './symbols.js';
 import { createRooms, swallowNextClick, ROOM_ICON, CHECK_ICON, WAND_ICON } from './rooms.js';
+import { addInkPoint, endInk } from './ink.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 import {
   makePlanSet, sheetRecord, sheetName, sheetLabel, isDefaultDrawingName, sortSheets, neighbours, scaleTargets, hasOwnScale,
@@ -329,7 +330,7 @@ export function openEditor(root, ctx, id) {
     g.setTransform(dpr * v.zoom, 0, 0, dpr * v.zoom, dpr * v.x, dpr * v.y);
     const al = layerOf(st.activeLayer);
     g.globalAlpha = al?.opacity ?? 1;
-    if (op?.stroke) drawStroke(g, op.stroke, d, { zoom: v.zoom, dark, units: units() });
+    if (op?.stroke) drawStroke(g, op.pred ? { ...op.stroke, points: [...op.stroke.points, ...op.pred] } : op.stroke, d, { zoom: v.zoom, dark, units: units() });
     if (op?.type === 'wire') {
       const pts = op.hover ? [...op.points, op.hover] : op.points;
       if (pts.length > 1) drawStroke(g, { ...op.proto, points: pts }, d, { zoom: v.zoom, dark, units: units() });
@@ -518,10 +519,36 @@ export function openEditor(root, ctx, id) {
   }
 
   // ---------- pointer input ----------
+  // Every op except a wire belongs to the pointer that started it (op.pid): another pointer
+  // moving or lifting (a resting palm, a second finger) never adds to it or ends it.
+  // Palm rejection: while the Pencil is on the glass, and for a moment after it lifts between
+  // letters, a new touch is a resting hand. It is ignored until it lifts; the pen never is.
+  const PALM_MS = 350;
+  let penDown = null; // pointerId of the Pencil while it touches
+  let penUpAt = -Infinity;
+  const palms = new Set();
   function local(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+  const owns = (e) => !op || op.pid == null || op.pid === e.pointerId;
 
   function onDown(e) {
-    if (e.pointerType === 'pen') st.penSeen = true;
+    const pen = e.pointerType === 'pen', touch = e.pointerType === 'touch';
+    if (touch && (penDown != null || (st.penSeen && performance.now() - penUpAt < PALM_MS))) { palms.add(e.pointerId); return; }
+    if (e.isPrimary) {
+      // first contact of its kind: anything of that kind still listed lost its pointerup
+      for (const [pid, p] of pointers) if (p.type === e.pointerType) pointers.delete(pid);
+      if (touch) { pinch = null; palms.clear(); }
+    }
+    if (pen) {
+      st.penSeen = true;
+      penDown = e.pointerId;
+      // the pen wins: end a pinch, and fingers already down become palms
+      pinch = null;
+      for (const [pid, p] of pointers) if (p.type === 'touch') { pointers.delete(pid); palms.add(pid); }
+      if (op && op.type !== 'wire' && op.pid !== e.pointerId) { op = null; wrap.classList.remove('panning'); }
+      // a focused text field would let iPadOS Scribble take the Pencil's handwriting
+      const ae = document.activeElement;
+      if (ae && ae !== document.body && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) ae.blur();
+    }
     pop.hidden = true;
     const [sx, sy] = local(e);
     pointers.set(e.pointerId, { x: sx, y: sy, type: e.pointerType });
@@ -537,8 +564,8 @@ export function openEditor(root, ctx, id) {
     }
     if (pinch) return;
     const [wx, wy] = toWorld(sx, sy);
-    const panTool = e.button === 1 || st.space || st.tool === 'hand' || (e.pointerType === 'touch' && st.penSeen);
-    if (panTool) { op = { type: 'pan', sx, sy, vx: st.view.x, vy: st.view.y }; wrap.classList.add('panning'); return; }
+    const panTool = e.button === 1 || st.space || st.tool === 'hand' || (touch && st.penSeen);
+    if (panTool) { op = { type: 'pan', pid: e.pointerId, sx, sy, vx: st.view.x, vy: st.view.y }; wrap.classList.add('panning'); return; }
     if (e.button === 2) return;
     if (!st.placing && rooms.down(e, wx, wy)) { op = null; updateChrome(); requestFrame(); return; }
 
@@ -554,12 +581,12 @@ export function openEditor(root, ctx, id) {
     if (FREEHAND.has(t)) {
       if (!needLayer()) return;
       const o = opts[t];
-      const p = e.pointerType === 'pen' ? (e.pressure || 0.5) : 0.5;
-      op = { type: 'draw', start: [wx, wy], stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: [[wx, wy, p]] } };
+      const p = pen ? (e.pressure || 0.5) : 0.5;
+      op = { type: 'draw', pid: e.pointerId, start: [wx, wy], last: [wx, wy, p], stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: [[wx, wy, p]] } };
     } else if (t === 'line' || t === 'rect' || t === 'measure') {
       if (!st.setScale && !needLayer()) return;
       const o = opts[t];
-      op = { type: 'shape', stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: [[wx, wy, 0.5], [wx, wy, 0.5]] } };
+      op = { type: 'shape', pid: e.pointerId, stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: [[wx, wy, 0.5], [wx, wy, 0.5]] } };
     } else if (t === 'wire') {
       if (!needLayer()) return;
       const sp = snapPoint(wx, wy) || [wx, wy];
@@ -575,7 +602,7 @@ export function openEditor(root, ctx, id) {
       swallowNextClick();
       if (hit?.kind === 'text') editText(hit.item); else addText(wx, wy);
     } else if (t === 'eraser') {
-      op = { type: 'erase', cp: false };
+      op = { type: 'erase', pid: e.pointerId, cp: false, lastW: [wx, wy] };
       eraseAt(wx, wy);
     } else if (t === 'select') {
       const hit = hitTest(d, wx, wy, 6 / z(), usable);
@@ -584,13 +611,13 @@ export function openEditor(root, ctx, id) {
         const inSel = st.selection.some((s) => s.id === key.id);
         if (e.shiftKey) st.selection = inSel ? st.selection.filter((s) => s.id !== key.id) : [...st.selection, key];
         else if (!inSel) st.selection = [key];
-        op = { type: 'move', last: [wx, wy], cp: false };
+        op = { type: 'move', pid: e.pointerId, last: [wx, wy], cp: false };
         if (e.detail >= 2 && hit.kind === 'text') { op = null; swallowNextClick(); editText(hit.item); }
       } else if (inUnderlay(wx, wy) && !e.shiftKey && st.selection.length === 0) {
-        op = { type: 'underlay', last: [wx, wy], cp: false };
+        op = { type: 'underlay', pid: e.pointerId, last: [wx, wy], cp: false };
       } else {
         if (!e.shiftKey) st.selection = [];
-        op = { type: 'box', a: [wx, wy], b: [wx, wy], add: e.shiftKey };
+        op = { type: 'box', pid: e.pointerId, a: [wx, wy], b: [wx, wy], add: e.shiftKey };
       }
       updateChrome();
     }
@@ -598,9 +625,11 @@ export function openEditor(root, ctx, id) {
   }
 
   function onMove(e) {
+    if (palms.has(e.pointerId)) return;
     const [sx, sy] = local(e);
     if (pointers.has(e.pointerId)) { const p = pointers.get(e.pointerId); p.x = sx; p.y = sy; }
     if (pinch) { movePinch(); return; }
+    if (!owns(e)) return;
     const [wx, wy] = toWorld(sx, sy);
     st.hover = [wx, wy];
     if ((!op || op.type !== 'pan') && rooms.move(e, wx, wy, pointers.has(e.pointerId))) { requestFrame(); return; }
@@ -616,18 +645,19 @@ export function openEditor(root, ctx, id) {
       case 'draw': {
         const pts = op.stroke.points;
         if (e.shiftKey) { op.stroke.points = [pts[0], [wx, wy, pts[0][2]]]; op.straight = true; break; }
+        // every sample since the last frame (a fast V can be only a few events apart otherwise),
+        // kept as sampled so its tip isn't smoothed away (./ink.js)
         let evs = e.getCoalescedEvents?.();
         if (!evs?.length) evs = [e];
-        const minD = 0.8 / z();
+        const minDist = 0.8 / z();
         for (const ev of evs) {
-          const [cx, cy] = local(ev);
-          const [qx, qy] = toWorld(cx, cy);
-          const last = pts[pts.length - 1];
-          if (Math.hypot(qx - last[0], qy - last[1]) < minD) continue;
-          const p = ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5;
-          // light smoothing toward the previous point
-          pts.push([last[0] * 0.25 + qx * 0.75, last[1] * 0.25 + qy * 0.75, last[2] * 0.4 + p * 0.6]);
+          const [qx, qy] = toWorld(...local(ev));
+          op.last = [qx, qy, ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5];
+          addInkPoint(pts, op.last, { minDist });
         }
+        // where the pen is heading, drawn this frame only
+        const pred = e.getPredictedEvents?.() || [];
+        op.pred = pred.length ? pred.map((ev) => [...toWorld(...local(ev)), op.last[2]]) : null;
         break;
       }
       case 'shape': {
@@ -650,7 +680,16 @@ export function openEditor(root, ctx, id) {
         op.hover = sp || [wx, wy];
         break;
       }
-      case 'erase': eraseAt(wx, wy); break;
+      case 'erase': {
+        // sweep the path between samples so a quick swipe doesn't skip strokes it crossed
+        const step = Math.max(1, opts.eraser.size / 2) / z();
+        const [lx, ly] = op.lastW || [wx, wy];
+        const n = Math.min(64, Math.ceil(Math.hypot(wx - lx, wy - ly) / step));
+        for (let i = 1; i <= n; i++) eraseAt(lx + ((wx - lx) * i) / n, ly + ((wy - ly) * i) / n);
+        if (!n) eraseAt(wx, wy);
+        op.lastW = [wx, wy];
+        break;
+      }
       case 'move': {
         const dx = wx - op.last[0], dy = wy - op.last[1];
         if (!dx && !dy) break;
@@ -675,20 +714,27 @@ export function openEditor(root, ctx, id) {
   }
 
   async function onUp(e) {
+    if (palms.delete(e.pointerId)) return;
+    if (e.pointerId === penDown) { penDown = null; penUpAt = performance.now(); }
     pointers.delete(e.pointerId);
     if (pinch) {
       if ([...pointers.values()].filter((p) => p.type === 'touch').length < 2) pinch = null;
       return;
     }
+    if (!owns(e)) return; // another pointer's lift doesn't end this op
     wrap.classList.remove('panning');
     if (op?.type !== 'pan' && rooms.up(e)) { updateChrome(); requestFrame(); return; }
     if (!op) return;
     const cur = op;
     if (cur.type === 'wire') return; // wires are click-by-click
     op = null;
-    if (e.type === 'pointercancel' && (cur.type === 'draw' || cur.type === 'shape')) { requestFrame(); return; }
+    // A cancelled finger stroke is usually a gesture starting; drop it. A cancelled Pencil or
+    // mouse stroke (iPadOS taking the stroke for Scribble or a system gesture) keeps what was drawn.
+    const cancelled = e.type === 'pointercancel';
+    if (cancelled && (cur.type === 'shape' || (cur.type === 'draw' && e.pointerType === 'touch'))) { requestFrame(); return; }
     if (cur.type === 'draw') {
       const s = cur.stroke;
+      if (!cur.straight) endInk(s.points, cur.last); // the last sample, not e: a cancel's coordinates can be 0,0
       if (s.points.length === 1) s.points.push([s.points[0][0] + 0.01, s.points[0][1], s.points[0][2]]);
       checkpoint(); d.strokes.push(s); changed();
     } else if (cur.type === 'shape') {
@@ -753,10 +799,21 @@ export function openEditor(root, ctx, id) {
 
   function onLeave() { st.hover = null; requestFrame(); }
 
-  // Safari pinch on trackpads
+  // Safari pinch on trackpads. On an iPad, Safari also sends these for any two touches, the
+  // Pencil plus a resting palm included: pointers handle touch there, so with anything on the
+  // glass they only get their default (zoom) cancelled.
   let gestureZ = 1;
+  const touching = () => pointers.size > 0 || palms.size > 0;
   const onGestureStart = (e) => { e.preventDefault(); gestureZ = 1; };
-  const onGestureChange = (e) => { e.preventDefault(); const [sx, sy] = local(e); zoomAt(sx, sy, e.scale / gestureZ); gestureZ = e.scale; };
+  const onGestureChange = (e) => {
+    e.preventDefault();
+    if (touching()) { gestureZ = e.scale; return; }
+    const [sx, sy] = local(e); zoomAt(sx, sy, e.scale / gestureZ); gestureZ = e.scale;
+  };
+  // iPadOS Scribble and the system's swipe gestures can claim a fast Pencil stroke and cancel
+  // it; refusing the touches' default action keeps the stroke on the canvas. Pointer events
+  // still arrive (Excalidraw and tldraw do the same).
+  const noTouchDefault = (e) => { if (e.cancelable) e.preventDefault(); };
 
   // ---------- keyboard ----------
   function onKey(e) {
@@ -1342,6 +1399,8 @@ export function openEditor(root, ctx, id) {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('gesturestart', onGestureStart);
   canvas.addEventListener('gesturechange', onGestureChange);
+  canvas.addEventListener('touchstart', noTouchDefault, { passive: false });
+  canvas.addEventListener('touchmove', noTouchDefault, { passive: false });
   addEventListener('keydown', onKey);
   addEventListener('keyup', onKey);
   const ro = new ResizeObserver(resize);
