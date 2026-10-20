@@ -12,6 +12,23 @@
   <meta name="fishtape-api" content="">
   <!-- Where "Sign in" goes. Empty = worked out by site/app-link.js (app.fishtapehq.com from the apex, else this host). -->
   <meta name="fishtape-app" content="">
+  <!-- @site:meta (tools/site/build.mjs) -->
+  <link rel="canonical" href="https://fishtapehq.com/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Fishtape">
+  <meta property="og:locale" content="en_CA">
+  <meta property="og:title" content="Fishtape · Software for Canadian electrical contractors">
+  <meta property="og:description" content="Quotes, jobs, drawings, crew time and invoices in one app, built for Canadian electricians with CEC 2024 checks, AR wire runs and conduit bending. Start a 14-day free trial.">
+  <meta property="og:url" content="https://fishtapehq.com/">
+  <meta property="og:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Fishtape: software for Canadian electrical contractors">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Fishtape · Software for Canadian electrical contractors">
+  <meta name="twitter:description" content="Quotes, jobs, drawings, crew time and invoices in one app, built for Canadian electricians with CEC 2024 checks, AR wire runs and conduit bending. Start a 14-day free trial.">
+  <meta name="twitter:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <!-- /@site:meta -->
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="preload" as="image" href="/site/img/hero/default-1.svg" fetchpriority="high">
   <link rel="stylesheet" href="/css/tokens.css">
@@ -19,16 +36,37 @@
   <link rel="stylesheet" href="/site/hero.css">
 </head>
 <body class="landing-page">
+  <!-- @site:header -->
   <a class="site-skip" href="#main">Skip to content</a>
   <header class="site-head">
-    <a class="site-brand" href="/site/index.html"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
-    <nav aria-label="Site">
-      <a class="hide-sm" href="#features">Features</a>
-      <a href="/site/pricing.html">Pricing</a>
-      <a data-app-link href="/">Sign in</a>
-      <a class="site-btn" href="/site/signup.html?plan=pro">Start free trial</a>
-    </nav>
+    <div class="site-head-in">
+      <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="/features">Features</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/services">Services</a>
+        <a href="/about">About</a>
+        <a href="/status">Status</a>
+      </nav>
+      <div class="site-head-actions">
+        <a class="site-signin" data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+        <a class="site-btn" href="/signup?plan=pro">Start free trial</a>
+        <details class="site-menu">
+          <summary><span class="site-burger" aria-hidden="true"></span><span class="sr-only">Menu</span></summary>
+          <nav class="site-menu-panel" aria-label="Main (menu)">
+            <a href="/features">Features</a>
+            <a href="/pricing">Pricing</a>
+            <a href="/services">Services</a>
+            <a href="/about">About</a>
+            <a href="/status">Status</a>
+            <span class="site-menu-sep" aria-hidden="true"></span>
+            <a data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+          </nav>
+        </details>
+      </div>
+    </div>
   </header>
+  <!-- /@site:header -->
 
   <main id="main" class="landing">
     <!-- The hero. Text below is the built-in default; landing.js swaps in the live promotion
@@ -44,8 +82,8 @@
           <h1 class="hero-headline">Built for Canadian electricians</h1>
           <p class="hero-sub">Quotes, jobs, drawings, crew time and invoices in one app, checked against the Canadian Electrical Code.</p>
           <div class="hero-ctas">
-            <a class="site-btn hero-primary" href="/site/signup.html?plan=pro">Start your 14-day free trial</a>
-            <a class="site-btn hero-secondary" href="/site/pricing.html">See pricing</a>
+            <a class="site-btn hero-primary" href="/signup?plan=pro">Start your 14-day free trial</a>
+            <a class="site-btn hero-secondary" href="/pricing">See pricing</a>
           </div>
           <p class="hero-note">$1 deposit, credited to your first month.</p>
         </div>
@@ -71,7 +109,7 @@
           </li>
           <li class="land-value">
             <h3>Crew and time</h3>
-            <p>Schedule the crew, clock in on a shared iPad with a PIN, and see hours by job before payroll.</p>
+            <p>Plan the crew's day, clock in on a shared iPad with a PIN, and see hours by job before payroll.</p>
           </li>
           <li class="land-value">
             <h3>AI that drafts, you approve</h3>
@@ -82,61 +120,119 @@
 
       <section class="site-section" id="features" aria-labelledby="features-title">
         <h2 id="features-title">See it at work</h2>
+        <!-- @site:shots -->
         <div class="land-features">
-          <figure class="land-feature">
-            <img src="/site/img/shots/plan-canvas.svg" alt="A floor plan in Fishtape with receptacle boxes placed along the walls and a CEC spacing check marked" width="1200" height="750" loading="lazy" decoding="async">
-            <figcaption><strong>Plans and box placement.</strong> Draw a room and Fishtape places the receptacles, then flags CEC spacing and circuit issues on the drawing.</figcaption>
-          </figure>
-          <figure class="land-feature">
-            <img src="/site/img/shots/wire-runs.svg" alt="A wire run traced on a plan with segment lengths and a total in metres" width="1200" height="750" loading="lazy" decoding="async">
-            <figcaption><strong>Wire runs with AR.</strong> Measure along the wall with your phone, trace on the plan or type it in. Allowances included, pushed straight to the estimate.</figcaption>
-          </figure>
-          <figure class="land-feature">
-            <img src="/site/img/shots/bending.svg" alt="A conduit offset bend diagram with the marks to make on the pipe" width="1200" height="750" loading="lazy" decoding="async">
-            <figcaption><strong>Pipe bending.</strong> Offsets, saddles, kicks and 90s for EMT, rigid and PVC, with a diagram and every mark.</figcaption>
-          </figure>
-          <figure class="land-feature">
-            <img src="/site/img/shots/estimate.svg" alt="An estimate with line items, taxes for Ontario and a total in Canadian dollars" width="1200" height="750" loading="lazy" decoding="async">
-            <figcaption><strong>Estimates and invoices.</strong> Quotes from your price book and takeoff, provincial taxes worked out, paid online.</figcaption>
-          </figure>
-          <figure class="land-feature">
-            <img src="/site/img/shots/time-clock.svg" alt="The crew time clock on a shared iPad showing who is clocked in on which job" width="1200" height="750" loading="lazy" decoding="async">
-            <figcaption><strong>Crew time.</strong> A shared iPad in the van, PIN sign-in, hours by job and by person.</figcaption>
-          </figure>
-          <figure class="land-feature">
-            <img src="/site/img/shots/calculators.svg" alt="A CEC conductor sizing calculator with the rule references shown" width="1200" height="750" loading="lazy" decoding="async">
-            <figcaption><strong>CEC calculators.</strong> Conductor sizing, voltage drop, box fill and demand loads, with the rule numbers alongside.</figcaption>
-          </figure>
+          <figure class="land-feature"><a href="/features/plans-takeoff"><picture><source type="image/webp" srcset="/site/img/shots/plan-canvas-sm.webp 683w, /site/img/shots/plan-canvas.webp 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw"><img src="/site/img/shots/plan-canvas-sm.jpg" srcset="/site/img/shots/plan-canvas-sm.jpg 683w, /site/img/shots/plan-canvas.jpg 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw" width="683" height="512" alt="A floor plan open in Fishtape with receptacles, switches and lights placed on the drawing" loading="lazy" decoding="async"></picture><figcaption><strong>Plans and takeoff.</strong> Bring in the whole PDF plan set, mark it up and count devices straight into the estimate.</figcaption></a></figure>
+          <figure class="land-feature"><a href="/features/box-placement"><picture><source type="image/webp" srcset="/site/img/shots/cec-check-sm.webp 683w, /site/img/shots/cec-check.webp 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw"><img src="/site/img/shots/cec-check-sm.jpg" srcset="/site/img/shots/cec-check-sm.jpg 683w, /site/img/shots/cec-check.jpg 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw" width="683" height="512" alt="A drawing with numbered CEC findings on the plan and a findings panel explaining each one" loading="lazy" decoding="async"></picture><figcaption><strong>Box auto-placement and CEC checks.</strong> Draw a room and Fishtape places the boxes, then checks spacing, GFCI, AFCI and TR on the drawing.</figcaption></a></figure>
+          <figure class="land-feature"><a href="/features/wire-runs"><picture><source type="image/webp" srcset="/site/img/shots/wire-runs-sm.webp 683w, /site/img/shots/wire-runs.webp 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw"><img src="/site/img/shots/wire-runs-sm.jpg" srcset="/site/img/shots/wire-runs-sm.jpg 683w, /site/img/shots/wire-runs.jpg 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw" width="683" height="512" alt="A wire run with its segments, allowances, conductors and the total length to pull" loading="lazy" decoding="async"></picture><figcaption><strong>Wire runs and AR measuring.</strong> Measure along the wall with the camera, trace on the plan or type it. Allowances and rolls worked out.</figcaption></a></figure>
+          <figure class="land-feature"><a href="/features/pipe-bending"><picture><source type="image/webp" srcset="/site/img/shots/bending-sm.webp 683w, /site/img/shots/bending.webp 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw"><img src="/site/img/shots/bending-sm.jpg" srcset="/site/img/shots/bending-sm.jpg 683w, /site/img/shots/bending.jpg 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw" width="683" height="512" alt="An EMT offset in the bending tool with a diagram of the pipe and the list of marks" loading="lazy" decoding="async"></picture><figcaption><strong>Pipe bending.</strong> Offsets, saddles, kicks, 90s and more for EMT, rigid and PVC, with a diagram and every mark.</figcaption></a></figure>
+          <figure class="land-feature"><a href="/features/estimating-invoicing"><picture><source type="image/webp" srcset="/site/img/shots/estimate-sm.webp 683w, /site/img/shots/estimate.webp 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw"><img src="/site/img/shots/estimate-sm.jpg" srcset="/site/img/shots/estimate-sm.jpg 683w, /site/img/shots/estimate.jpg 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw" width="683" height="512" alt="An estimate with material and labour lines, Ontario HST and the total in Canadian dollars" loading="lazy" decoding="async"></picture><figcaption><strong>Estimates to invoices.</strong> Quote from your price book and takeoff, then invoice with the right GST, HST or PST and get paid online.</figcaption></a></figure>
+          <figure class="land-feature"><a href="/features/safety"><picture><source type="image/webp" srcset="/site/img/shots/safety-flha-sm.webp 683w, /site/img/shots/safety-flha.webp 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw"><img src="/site/img/shots/safety-flha-sm.jpg" srcset="/site/img/shots/safety-flha-sm.jpg 683w, /site/img/shots/safety-flha.jpg 1366w" sizes="(min-width: 1120px) 350px, (min-width: 700px) 45vw, 100vw" width="683" height="512" alt="A field level hazard assessment with hazards, controls, PPE and the worker's signature" loading="lazy" decoding="async"></picture><figcaption><strong>Safety.</strong> FLHAs, toolbox talks, incidents and near misses, inspections and training, signed on the iPad.</figcaption></a></figure>
         </div>
+        <!-- /@site:shots -->
+        <p class="land-more"><a href="/features">See every feature</a></p>
       </section>
+
+      <!-- @site:limits -->
+      <section class="site-section mk-limits" aria-labelledby="limits-title">
+        <h2 id="limits-title">No caps on your work</h2>
+        <p>Every plan, trial included, lets you make as many as you need of:</p>
+        <ul>
+          <li>Invoices</li>
+          <li>Estimates and quotes</li>
+          <li>Jobs</li>
+          <li>Clients and leads</li>
+          <li>Drawings and plan sheets</li>
+        </ul>
+        <p class="site-fine">Plans differ by features and by how many users are included, nothing else. Downgrading never deletes anything: you keep reading everything you made.</p>
+      </section>
+      <!-- /@site:limits -->
 
       <section class="site-section" id="pricing" aria-labelledby="pricing-title">
         <h2 id="pricing-title">Simple monthly plans</h2>
         <p class="site-muted land-lede">Every plan starts with a 14-day free trial. A $1 deposit confirms your card and comes off your first month. Prices in Canadian dollars, before tax.</p>
-        <div class="land-plans" id="land-plans"></div>
-        <p class="land-more"><a href="/site/pricing.html">Compare every feature by plan</a></p>
+        <div class="land-plans" id="land-plans">
+          <!-- @site:teaser -->
+          <article class="site-plan"><h3>Starter</h3><p class="site-price">$49<small> /month</small></p><p class="site-muted">For a solo electrician or a two-person crew</p><p class="site-users">2 users included</p><a class="site-btn" href="/signup?plan=starter">Start free trial</a></article>
+          <article class="site-plan"><h3>Pro</h3><p class="site-price">$129<small> /month</small></p><p class="site-muted">Plans, takeoff and permits for a growing crew</p><p class="site-users">10 users included</p><a class="site-btn" href="/signup?plan=pro">Start free trial</a></article>
+          <article class="site-plan"><h3>Business</h3><p class="site-price">$279<small> /month</small></p><p class="site-muted">AI, automation and integrations for a busy shop</p><p class="site-users">25 users included</p><a class="site-btn" href="/signup?plan=business">Start free trial</a></article>
+          <article class="site-plan"><h3>Enterprise</h3><p class="site-price">Custom</p><p class="site-muted">Custom limits, SSO and setup done for you. Let's talk.</p><p class="site-users">Users to suit you</p><a class="site-btn ghost" href="/pricing#talk">Let's talk</a></article>
+          <!-- /@site:teaser -->
+        </div>
+        <p class="land-more"><a href="/pricing">Compare every feature by plan</a></p>
       </section>
 
       <section class="site-section land-talk" aria-labelledby="talk-title">
         <div>
-          <h2 id="talk-title">A bigger shop? Let's talk.</h2>
-          <p class="site-muted">Custom user counts, single sign-on, and setup done for you: we connect Stripe, email and SMS and bring your data across.</p>
+          <h2 id="talk-title">Want it set up for you?</h2>
+          <p class="site-muted">We connect Stripe, email and SMS, bring your data across from your old software and train the crew. Bigger shops: custom user counts and single sign-on on Enterprise.</p>
         </div>
-        <a class="site-btn ghost" href="/site/pricing.html#talk">Talk to us about Enterprise</a>
+        <a class="site-btn ghost" href="/services">See services</a>
       </section>
     </div>
   </main>
 
+  <!-- @site:footer -->
   <footer class="site-foot">
-    <span>© <span id="year">2026</span> <span data-brand>Fishtape</span></span>
-    <nav class="site-foot-links" aria-label="Footer">
-      <a href="/site/pricing.html">Pricing</a>
-      <a href="/site/status.html">Service status</a>
-      <a href="/site/privacy.html">Privacy</a>
-      <a href="/site/terms.html">Terms</a>
-    </nav>
+    <div class="site-foot-in">
+      <div class="site-foot-brand">
+        <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+        <p>Jobs, quotes, drawings, crew time and invoices for Canadian electrical contractors. Built by a working electrical contractor.</p>
+      </div>
+      <div class="site-foot-cols">
+        <nav aria-label="Product">
+          <h2>Product</h2>
+          <ul>
+            <li><a href="/features">Features</a></li>
+            <li><a href="/pricing">Pricing</a></li>
+            <li><a href="/services">Services</a></li>
+            <li><a href="/features/ios-app">iPad and iPhone</a></li>
+            <li><a href="/features/security-privacy">Security</a></li>
+            <li><a href="/status">Service status</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Who it's for">
+          <h2>Who it's for</h2>
+          <ul>
+            <li><a href="/for/residential-electricians">Residential electricians</a></li>
+            <li><a href="/for/commercial-industrial">Commercial and industrial</a></li>
+            <li><a href="/for/solo-electricians">Solo electricians</a></li>
+            <li><a href="/for/switching-from-jobber">Switching from Jobber</a></li>
+            <li><a href="/for/switching-from-housecall-pro">Switching from Housecall Pro</a></li>
+            <li><a href="/for/switching-from-quickbooks">Switching from QuickBooks</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="By province">
+          <h2>By province</h2>
+          <ul>
+            <li><a href="/for/ontario">Ontario</a></li>
+            <li><a href="/for/british-columbia">British Columbia</a></li>
+            <li><a href="/for/alberta">Alberta</a></li>
+            <li><a href="/for/saskatchewan">Saskatchewan</a></li>
+            <li><a href="/for/manitoba">Manitoba</a></li>
+            <li><a href="/for/atlantic-canada">Atlantic Canada</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Company">
+          <h2>Company</h2>
+          <ul>
+            <li><a href="/about">About</a></li>
+            <li><a href="/about#contact">Contact</a></li>
+            <li><a href="/terms">Terms</a></li>
+            <li><a href="/privacy">Privacy</a></li>
+            <li><a href="/.well-known/security.txt">security.txt</a></li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+    <div class="site-foot-base">
+      <span>© <span id="year" data-year>2026</span> <span data-brand>Fishtape</span>. Prices in Canadian dollars.</span>
+      <span>Built for the Canadian electrical trade.</span>
+    </div>
   </footer>
+  <!-- /@site:footer -->
 
+  <script type="module" src="/site/site.js"></script>
   <script type="module" src="/site/landing.js"></script>
 </body>
 </html>

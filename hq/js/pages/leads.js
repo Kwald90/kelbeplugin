@@ -1,16 +1,28 @@
-// Enterprise pipeline: leads from the pricing page's "Let's talk" form, by stage.
+// Sales pipeline: leads from the pricing page's "Let's talk" form, the services page and the
+// contact form, by stage.
 // #/leads/<id> opens one lead.
 import { get, patch } from '../api.js';
 import { ago } from '../fmt.js';
 
 const STAGE_LABEL = { new: 'New', contacted: 'Contacted', qualified: 'Qualified', proposal: 'Proposal', won: 'Won', lost: 'Lost' };
+// Where a lead came from (hq_leads.source): the pricing page, a services-page card (svc-<id>) or the contact form.
+const SERVICE_LABEL = {
+  'setup-integrations': 'Setup and integrations', 'data-import': 'Data import', 'price-book': 'Price book', 'crew-training': 'Crew training',
+  'plan-templates': 'Plan templates', enterprise: 'Enterprise',
+};
+export function sourceLabel(source) {
+  if (!source || source === 'pricing') return 'Pricing page';
+  if (source === 'svc-contact') return 'Contact form';
+  if (source.startsWith('svc-')) return `Services: ${SERVICE_LABEL[source.slice(4)] || source.slice(4)}`;
+  return source;
+}
 
 export default {
   render(root, { ui, params, nav }) {
     const { h } = ui;
     let data = null;
     const board = h('div', null, h('p', { class: 'muted' }, 'Loading…'));
-    root.append(ui.page({ title: 'Leads', subtitle: 'Enterprise enquiries from the pricing page' }, board));
+    root.append(ui.page({ title: 'Leads', subtitle: 'Enquiries from the pricing page, the services page and the contact form' }, board));
 
     async function load() {
       try { data = await get('/api/hq/leads'); } catch (e) { ui.clear(board); board.append(ui.empty({ icon: 'alert', title: 'Could not load', text: e.message })); return; }
@@ -31,6 +43,7 @@ export default {
           items.map((l) => h('div', { class: 'kanban-card hq-lead-card', tabindex: 0, onClick: () => nav(`leads/${l.id}`), onKeydown: (e) => { if (e.key === 'Enter') nav(`leads/${l.id}`); } },
             h('div', { class: 'title' }, l.company),
             h('div', { class: 'meta' }, [l.teamSize ? `${l.teamSize} people` : null, l.province, ago(l.createdAt)].filter(Boolean).join(' · ')),
+            h('div', { class: 'meta' }, sourceLabel(l.source)),
             l.nextStepAt ? h('div', { class: 'meta' }, `Next: ${ui.fmtDate(l.nextStepAt)}`) : null,
             l.valueCents ? h('div', { class: 'meta' }, ui.fmtMoney(l.valueCents, { whole: true })) : null)));
       })));
@@ -46,6 +59,7 @@ export default {
         h('dt', null, 'Company'), h('dd', null, l.company),
         h('dt', null, 'Team size'), h('dd', null, l.teamSize || '—'),
         h('dt', null, 'Province'), h('dd', null, l.province || '—'),
+        h('dt', null, 'Source'), h('dd', null, sourceLabel(l.source)),
         h('dt', null, 'Received'), h('dd', null, ui.fmtDateTime(l.createdAt)),
         h('dt', null, 'Owner'), h('dd', null, l.ownerName || 'Unassigned'));
       ui.formSheet({

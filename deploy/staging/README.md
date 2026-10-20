@@ -18,7 +18,7 @@ Other sites share this box. **Don't touch** the host's Postgres on 127.0.0.1:543
 | `update.sh` | deploy: fetch, build, back up, migrate, switch, health-check, roll back on failure |
 | `backup.sh` | encrypted `pg_dump`, 14 daily / 8 weekly, optional offsite, writes `last-backup.json` |
 | `restore-test.sh` | restores a backup into a throwaway container and checks it |
-| `host-status.sh` | disk, certificate expiry and load for the HQ health page |
+| `host-status.sh` | disk, certificate expiry and load for the HQ health page, plus `probes`: the HTTP code of the public URLs (`/`, `/api/readyz`, `/site/index.html`) as the outside sees them, which the worker folds into the public status page (a failing probe marks that component down for that run; see `docs/runbooks/status-page.md`) |
 | `security-headers.conf` | HSTS, CSP, Permissions-Policy and friends |
 | `nginx-api.conf.snippet` | everything Fishtape needs inside the vhost (static app, `/api/`, `/hq/`, caching) |
 | `nginx-http.conf` | http-level part: a log format that drops query strings |

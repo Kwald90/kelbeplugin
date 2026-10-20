@@ -44,6 +44,8 @@ x-server: &server
     COMPLIANCE_CONTROLS_FILE: /app/compliance/controls.yaml
     # Public certificate chain copied by host-status.sh (never the key), for HQ health.
     TLS_CERT_FILE: /run/fishtape/status/tls-cert.pem
+    # host-status.sh's public-URL probes; the worker folds them into the public status page.
+    HOST_STATUS_FILE: /run/fishtape/status/host-status.json
     # HQ Mail attachments and original messages (docs/email/README.md). Written by the api
     # (Inbound Parse), read by hq-api (downloads) and the worker (sending attachments).
     MAIL_DIR: /var/lib/fishtape/mail

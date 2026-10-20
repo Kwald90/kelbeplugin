@@ -15,6 +15,7 @@ commands, how to check it worked, and what to record. Policies (the "why" and "h
 | [onboard-tenant.md](onboard-tenant.md) | a new electrical company signs up |
 | [offboard-tenant.md](offboard-tenant.md) | a company leaves, or asks for its data or for deletion |
 | [on-call.md](on-call.md) | how one person stays on call: alerts, daily and weekly checks |
+| [status-page.md](status-page.md) | telling customers about an outage or maintenance on the public status page |
 
 Conventions:
 

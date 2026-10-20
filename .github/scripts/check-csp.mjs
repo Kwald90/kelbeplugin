@@ -19,7 +19,8 @@ import { join, relative } from 'node:path';
 
 const root = new URL('../../', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const HEADER_FILES = ['deploy/staging/security-headers.conf', 'deploy/production/nginx/security-headers.conf'];
-const APP_DIRS = ['electrical-app', 'hq'];
+// site/: the public marketing pages (fishtapehq.com) are served with the same CSP.
+const APP_DIRS = ['electrical-app', 'hq', 'site'];
 let errors = 0;
 let warnings = 0;
 

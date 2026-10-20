@@ -3,34 +3,192 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Status · Fishtape</title>
-  <meta name="description" content="Is Fishtape up? Live service status.">
+  <title>Service status · Fishtape</title>
+  <meta name="description" content="Is Fishtape up? Live status of the app, API, sign-in, email and payments, 90 days of uptime, and incident and maintenance notices.">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="theme-color" content="#16171a">
   <meta name="fishtape-api" content="">
+  <meta name="fishtape-app" content="">
+  <!-- @site:meta (tools/site/build.mjs) -->
+  <link rel="canonical" href="https://fishtapehq.com/status">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Fishtape">
+  <meta property="og:locale" content="en_CA">
+  <meta property="og:title" content="Service status · Fishtape">
+  <meta property="og:description" content="Is Fishtape up? Live status of the app, API, sign-in, email and payments, 90 days of uptime, and incident and maintenance notices.">
+  <meta property="og:url" content="https://fishtapehq.com/status">
+  <meta property="og:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Fishtape: software for Canadian electrical contractors">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Service status · Fishtape">
+  <meta name="twitter:description" content="Is Fishtape up? Live status of the app, API, sign-in, email and payments, 90 days of uptime, and incident and maintenance notices.">
+  <meta name="twitter:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <!-- /@site:meta -->
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/site/site.css">
 </head>
 <body>
+  <!-- @site:header -->
+  <a class="site-skip" href="#main">Skip to content</a>
   <header class="site-head">
-    <a class="site-brand" href="/site/index.html"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span> status</a>
-    <nav><a class="site-btn ghost" data-app-link href="/">Open the app</a></nav>
+    <div class="site-head-in">
+      <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="/features">Features</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/services">Services</a>
+        <a href="/about">About</a>
+        <a href="/status" aria-current="page">Status</a>
+      </nav>
+      <div class="site-head-actions">
+        <a class="site-signin" data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+        <a class="site-btn" href="/signup?plan=pro">Start free trial</a>
+        <details class="site-menu">
+          <summary><span class="site-burger" aria-hidden="true"></span><span class="sr-only">Menu</span></summary>
+          <nav class="site-menu-panel" aria-label="Main (menu)">
+            <a href="/features">Features</a>
+            <a href="/pricing">Pricing</a>
+            <a href="/services">Services</a>
+            <a href="/about">About</a>
+            <a href="/status" aria-current="page">Status</a>
+            <span class="site-menu-sep" aria-hidden="true"></span>
+            <a data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+          </nav>
+        </details>
+      </div>
+    </div>
   </header>
-  <main class="site-status">
+  <!-- /@site:header -->
+
+  <!-- Served at fishtapehq.com/status and status.fishtapehq.com. Reads only public endpoints:
+       /api/v1/public/status (components, 90-day uptime, notices HQ admins post), falling back to
+       /api/v1/status and /api/readyz. Nothing here is about any customer. -->
+  <main id="main" class="site-status">
     <section id="overall" class="site-overall checking" role="status" aria-live="polite">
       <span class="dot" aria-hidden="true"></span>
       <div><h1 id="overall-title">Checking…</h1><p id="overall-sub" class="site-muted">Asking the service how it is doing.</p></div>
     </section>
-    <section class="site-section">
-      <h2>Components</h2>
-      <ul class="site-components" id="components"></ul>
+
+    <noscript><p class="st-empty">The status page needs JavaScript to ask the service how it is doing.</p></noscript>
+    <!-- Hidden (visibility) until the first answer, so sections appearing don't push each other around. -->
+    <div id="status-body" class="st-body st-loading">
+    <section class="site-section" id="active-section" aria-labelledby="active-title" hidden>
+      <h2 id="active-title">Happening now</h2>
+      <div class="st-notices" id="notices-active"></div>
     </section>
-    <section class="site-section">
-      <h2>Details</h2>
+
+    <section class="site-section" aria-labelledby="components-title">
+      <h2 id="components-title">Components</h2>
+      <ul class="site-components" id="components">
+        <li class="unknown"><div class="st-row"><span>Web app</span><strong class="st-state">Checking…</strong></div></li>
+        <li class="unknown"><div class="st-row"><span>API and sync</span><strong class="st-state">Checking…</strong></div></li>
+        <li class="unknown"><div class="st-row"><span>HQ console</span><strong class="st-state">Checking…</strong></div></li>
+        <li class="unknown"><div class="st-row"><span>Sign-in</span><strong class="st-state">Checking…</strong></div></li>
+        <li class="unknown"><div class="st-row"><span>Email</span><strong class="st-state">Checking…</strong></div></li>
+        <li class="unknown"><div class="st-row"><span>Payments</span><strong class="st-state">Checking…</strong></div></li>
+      </ul>
+      <ul class="st-legend" aria-label="Legend for the uptime bars">
+        <li><span class="st-day up"></span>No problems</li>
+        <li><span class="st-day minor"></span>Some failed checks</li>
+        <li><span class="st-day down"></span>Outage (under 99 %)</li>
+        <li><span class="st-day"></span>No data</li>
+      </ul>
+    </section>
+
+    <section class="site-section" id="upcoming-section" aria-labelledby="upcoming-title" hidden>
+      <h2 id="upcoming-title">Planned maintenance</h2>
+      <div class="st-notices" id="notices-upcoming"></div>
+    </section>
+
+    <section class="site-section" aria-labelledby="recent-title">
+      <h2 id="recent-title">Past 30 days</h2>
+      <div class="st-notices" id="notices-recent"><p class="st-empty">No incidents or maintenance in the past 30 days.</p></div>
+    </section>
+
+    <section class="site-section" id="subscribe" aria-labelledby="subscribe-title" hidden>
+      <h2 id="subscribe-title">Get notices by email</h2>
+      <p class="site-muted">We email you when we post an incident or planned maintenance, and nothing else. Every email has a one-click unsubscribe.</p>
+      <form id="subscribe-form" class="st-sub" novalidate>
+        <label>Email <input name="email" type="email" autocomplete="email" required maxlength="254"></label>
+        <div class="site-hp" aria-hidden="true"><label>Website <input name="website" tabindex="-1" autocomplete="off"></label></div>
+        <button class="site-btn" type="submit">Subscribe</button>
+      </form>
+      <p class="site-fine" id="subscribe-msg" role="status" hidden></p>
+    </section>
+    <p class="site-fine" id="fragment-msg" role="status" hidden></p>
+
+    <section class="site-section" aria-labelledby="details-title">
+      <h2 id="details-title">Details</h2>
       <dl class="site-kv" id="details"></dl>
-      <p class="site-fine">Checked every 30 seconds while this page is open. Nothing here is about any customer.</p>
+      <p class="site-fine">Checked every 60 seconds while this page is open. Uptime comes from checks every 5 minutes. Status notices are written by the Fishtape team. Nothing here is about any customer.</p>
     </section>
+    </div>
   </main>
-  <footer class="site-foot"><span>© <span id="year"></span> <span data-brand>Fishtape</span></span><a href="/site/pricing.html">Pricing</a></footer>
+
+  <!-- @site:footer -->
+  <footer class="site-foot">
+    <div class="site-foot-in">
+      <div class="site-foot-brand">
+        <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+        <p>Jobs, quotes, drawings, crew time and invoices for Canadian electrical contractors. Built by a working electrical contractor.</p>
+      </div>
+      <div class="site-foot-cols">
+        <nav aria-label="Product">
+          <h2>Product</h2>
+          <ul>
+            <li><a href="/features">Features</a></li>
+            <li><a href="/pricing">Pricing</a></li>
+            <li><a href="/services">Services</a></li>
+            <li><a href="/features/ios-app">iPad and iPhone</a></li>
+            <li><a href="/features/security-privacy">Security</a></li>
+            <li><a href="/status">Service status</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Who it's for">
+          <h2>Who it's for</h2>
+          <ul>
+            <li><a href="/for/residential-electricians">Residential electricians</a></li>
+            <li><a href="/for/commercial-industrial">Commercial and industrial</a></li>
+            <li><a href="/for/solo-electricians">Solo electricians</a></li>
+            <li><a href="/for/switching-from-jobber">Switching from Jobber</a></li>
+            <li><a href="/for/switching-from-housecall-pro">Switching from Housecall Pro</a></li>
+            <li><a href="/for/switching-from-quickbooks">Switching from QuickBooks</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="By province">
+          <h2>By province</h2>
+          <ul>
+            <li><a href="/for/ontario">Ontario</a></li>
+            <li><a href="/for/british-columbia">British Columbia</a></li>
+            <li><a href="/for/alberta">Alberta</a></li>
+            <li><a href="/for/saskatchewan">Saskatchewan</a></li>
+            <li><a href="/for/manitoba">Manitoba</a></li>
+            <li><a href="/for/atlantic-canada">Atlantic Canada</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Company">
+          <h2>Company</h2>
+          <ul>
+            <li><a href="/about">About</a></li>
+            <li><a href="/about#contact">Contact</a></li>
+            <li><a href="/terms">Terms</a></li>
+            <li><a href="/privacy">Privacy</a></li>
+            <li><a href="/.well-known/security.txt">security.txt</a></li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+    <div class="site-foot-base">
+      <span>© <span id="year" data-year>2026</span> <span data-brand>Fishtape</span>. Prices in Canadian dollars.</span>
+      <span>Built for the Canadian electrical trade.</span>
+    </div>
+  </footer>
+  <!-- /@site:footer -->
+
+  <script type="module" src="/site/site.js"></script>
   <script type="module" src="/site/status.js"></script>
 </body>
 </html>

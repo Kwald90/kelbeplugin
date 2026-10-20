@@ -13,6 +13,11 @@ import { BRAND } from '../brand.js';
 
 export const TEAM_SIZES = ['1-5', '6-15', '16-50', '51-200', '200+'];
 export const LEAD_STAGES = ['new', 'contacted', 'qualified', 'proposal', 'won', 'lost'];
+/** Services-page enquiries (site/services.html) and the About page's contact form; stored as source 'svc-<id>'. */
+export const LEAD_SERVICES = {
+  'setup-integrations': 'Setup and integrations', 'data-import': 'Data import', 'price-book': 'Price book', 'crew-training': 'Crew training',
+  'plan-templates': 'Plan templates', enterprise: 'Enterprise', contact: 'Contact form',
+};
 const HOUR = 3_600_000;
 
 /** Sliding one-hour window per key, plus a global cap. In memory, per process. */
@@ -62,6 +67,8 @@ export default async function hqLeadRoutes(app, { config, db, email }) {
           province: { type: 'string', enum: ['', ...PROVINCES] },
           teamSize: { type: 'string', enum: ['', ...TEAM_SIZES] },
           message: { type: 'string', maxLength: 4000 },
+          // Which services-page card (or the contact form) sent it; empty: the pricing page.
+          service: { type: 'string', enum: ['', ...Object.keys(LEAD_SERVICES)] },
           // Honeypot: hidden from people, so anything in it came from a bot.
           website: { type: 'string', maxLength: 500 },
         },
@@ -75,20 +82,23 @@ export default async function hqLeadRoutes(app, { config, db, email }) {
     const lead = {
       id: randomUUID(), name: str(b.name), email: normaliseEmail(b.email), company: str(b.company),
       phone: str(b.phone) || null, province: b.province || null, teamSize: b.teamSize || null, message: str(b.message) || null,
+      service: b.service || null,
     };
+    const source = lead.service ? `svc-${lead.service}` : 'pricing';
+    const what = lead.service ? (lead.service === 'contact' ? 'the contact form' : `${LEAD_SERVICES[lead.service]} (services)`) : `${BRAND.name} Enterprise`;
     if (!lead.name || !lead.company || !EMAIL_RE.test(lead.email)) {
       throw new ApiError(400, 'validation_failed', 'Check your name, email and company.', { errors: [{ path: '/email', message: 'must be a valid email address' }] });
     }
     await db.tx(async (c) => {
       await c.query(
-        `INSERT INTO hq_leads (id, name, email, company, phone, province, team_size, message, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pricing')`,
-        [lead.id, lead.name, lead.email, lead.company, lead.phone, lead.province, lead.teamSize, lead.message]);
-      await appendAudit(c, null, { actor: { type: 'system', id: 'public-form', label: 'Pricing page' }, action: 'lead.create', collection: 'hq_leads', recordId: lead.id, summary: 'Enterprise lead received' });
+        `INSERT INTO hq_leads (id, name, email, company, phone, province, team_size, message, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [lead.id, lead.name, lead.email, lead.company, lead.phone, lead.province, lead.teamSize, lead.message, source]);
+      await appendAudit(c, null, { actor: { type: 'system', id: 'public-form', label: !lead.service ? 'Pricing page' : lead.service === 'contact' ? 'Contact form' : 'Services page' }, action: 'lead.create', collection: 'hq_leads', recordId: lead.id, summary: lead.service ? `Lead received (${source})` : 'Enterprise lead received' });
       if (settings.notifyEmail) {
         await email.send(c, {
           to: settings.notifyEmail, template: 'hq-lead',
-          subject: `New Enterprise lead: ${lead.company.slice(0, 80)}`,
-          text: `${lead.company} asked about ${BRAND.name} Enterprise${lead.teamSize ? ` (team of ${lead.teamSize})` : ''}${lead.province ? `, ${lead.province}` : ''}.\n\n`
+          subject: lead.service ? `New lead (${LEAD_SERVICES[lead.service]}): ${lead.company.slice(0, 80)}` : `New Enterprise lead: ${lead.company.slice(0, 80)}`,
+          text: `${lead.company} ${lead.service === 'contact' ? 'wrote in through' : 'asked about'} ${what}${lead.teamSize ? ` (team of ${lead.teamSize})` : ''}${lead.province ? `, ${lead.province}` : ''}.\n\n`
             + `Contact details and message are in HQ: ${settings.publicUrl}#/leads/${lead.id}\n`,
         });
       }

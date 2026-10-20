@@ -4,42 +4,117 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pricing · Fishtape</title>
-  <meta name="description" content="Fishtape plans for Canadian electrical contractors: Starter, Pro, Business and Enterprise. Prices in CAD.">
+  <meta name="description" content="Fishtape plans for Canadian electrical contractors: Starter, Pro, Business and Enterprise, in CAD. No caps on invoices, estimates, jobs, clients or drawings; plans differ by features and users.">
   <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="theme-color" content="#16171a">
   <!-- Where the API lives. Empty = this origin. On a separate marketing domain, set the app origin
        and add this site's origin to CORS_ORIGINS on the API. -->
   <meta name="fishtape-api" content="">
+  <meta name="fishtape-app" content="">
+  <!-- @site:meta (tools/site/build.mjs) -->
+  <link rel="canonical" href="https://fishtapehq.com/pricing">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Fishtape">
+  <meta property="og:locale" content="en_CA">
+  <meta property="og:title" content="Pricing · Fishtape">
+  <meta property="og:description" content="Fishtape plans for Canadian electrical contractors: Starter, Pro, Business and Enterprise, in CAD. No caps on invoices, estimates, jobs, clients or drawings; plans differ by features and users.">
+  <meta property="og:url" content="https://fishtapehq.com/pricing">
+  <meta property="og:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Fishtape: software for Canadian electrical contractors">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Pricing · Fishtape">
+  <meta name="twitter:description" content="Fishtape plans for Canadian electrical contractors: Starter, Pro, Business and Enterprise, in CAD. No caps on invoices, estimates, jobs, clients or drawings; plans differ by features and users.">
+  <meta name="twitter:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <!-- /@site:meta -->
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/site/site.css">
 </head>
 <body>
+  <!-- @site:header -->
+  <a class="site-skip" href="#main">Skip to content</a>
   <header class="site-head">
-    <a class="site-brand" href="/site/index.html"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
-    <nav><a href="#features">Features</a> <a href="#talk">Contact sales</a> <a class="site-btn ghost" data-app-link href="/">Sign in</a> <a class="site-btn" href="/site/signup.html">Start free trial</a></nav>
+    <div class="site-head-in">
+      <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="/features">Features</a>
+        <a href="/pricing" aria-current="page">Pricing</a>
+        <a href="/services">Services</a>
+        <a href="/about">About</a>
+        <a href="/status">Status</a>
+      </nav>
+      <div class="site-head-actions">
+        <a class="site-signin" data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+        <a class="site-btn" href="/signup?plan=pro">Start free trial</a>
+        <details class="site-menu">
+          <summary><span class="site-burger" aria-hidden="true"></span><span class="sr-only">Menu</span></summary>
+          <nav class="site-menu-panel" aria-label="Main (menu)">
+            <a href="/features">Features</a>
+            <a href="/pricing" aria-current="page">Pricing</a>
+            <a href="/services">Services</a>
+            <a href="/about">About</a>
+            <a href="/status">Status</a>
+            <span class="site-menu-sep" aria-hidden="true"></span>
+            <a data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+          </nav>
+        </details>
+      </div>
+    </div>
   </header>
+  <!-- /@site:header -->
 
-  <main>
+  <main id="main">
     <section class="site-hero">
       <h1>Pricing</h1>
       <p>Jobs, quotes, drawings, crew time and CEC tools in one app. Every plan starts with a free trial. Prices are per month in Canadian dollars, before GST/HST/PST.</p>
     </section>
 
     <section class="site-plans" id="plans" aria-label="Plans">
-      <p class="site-muted">Loading plans…</p>
+      <!-- @site:plans -->
+      <article class="site-plan"><h2>Starter</h2><p class="site-price">$49<small> /month</small></p><p class="site-muted">For a solo electrician or a two-person crew</p><p class="site-users">2 users included</p><ul><li>Dashboard</li><li>Clients</li><li>Leads pipeline</li><li>Jobs</li><li>Schedule</li><li>Estimates</li><li>Invoices</li></ul><a class="site-btn" href="/signup?plan=starter">Start a free trial</a></article>
+      <article class="site-plan"><h2>Pro</h2><p class="site-price">$129<small> /month</small></p><p class="site-muted">Plans, takeoff and permits for a growing crew</p><p class="site-users">10 users included</p><ul><li class="site-muted">Everything in Starter, plus:</li><li>Drawings and takeoff</li><li>Panel schedules</li><li>Inventory</li><li>Permits and inspections</li><li>Follow-up sequences</li><li>Security audit</li><li>Auto-place boxes in rooms</li></ul><a class="site-btn" href="/signup?plan=pro">Start a free trial</a></article>
+      <article class="site-plan"><h2>Business</h2><p class="site-price">$279<small> /month</small></p><p class="site-muted">AI, automation and integrations for a busy shop</p><p class="site-users">25 users included</p><ul><li class="site-muted">Everything in Pro, plus:</li><li>AI assistant</li><li>AI code helper</li><li>Background AI agents</li><li>API access</li><li>MCP server for AI tools</li><li>SMS (Twilio)</li><li>Facebook Lead Ads</li></ul><a class="site-btn" href="/signup?plan=business">Start a free trial</a></article>
+      <article class="site-plan"><h2>Enterprise</h2><p class="site-price">Custom</p><p class="site-muted">Custom limits, SSO and setup done for you. Let's talk.</p><p class="site-users">Users to suit you</p><ul><li class="site-muted">Everything in Business, plus:</li><li>Single sign-on</li><li>Setup done for you</li></ul><a class="site-btn ghost" href="#talk">Let's talk</a></article>
+      <!-- /@site:plans -->
     </section>
-    <p class="site-fine" id="extra-users"></p>
+    <p class="site-fine" id="extra-users">
+      <!-- @site:extra-users -->
+      More users than your plan includes? Each extra user is $15/month. Taxes are added at checkout for your province.
+      <!-- /@site:extra-users -->
+    </p>
+
+    <!-- @site:limits -->
+      <section class="site-section mk-limits" aria-labelledby="limits-title">
+        <h2 id="limits-title">No caps on your work</h2>
+        <p>Every plan, trial included, lets you make as many as you need of:</p>
+        <ul>
+          <li>Invoices</li>
+          <li>Estimates and quotes</li>
+          <li>Jobs</li>
+          <li>Clients and leads</li>
+          <li>Drawings and plan sheets</li>
+        </ul>
+        <p class="site-fine">Plans differ by features and by how many users are included, nothing else. Downgrading never deletes anything: you keep reading everything you made.</p>
+      </section>
+    <!-- /@site:limits -->
 
     <section id="features" class="site-section">
       <h2>What each plan includes</h2>
-      <div class="site-table-wrap"><table class="site-table" id="feature-table"><caption class="sr-only">Features by plan</caption></table></div>
-      <p class="site-fine">Downgrading never deletes data: you keep reading everything you made. Features above your plan are locked until you upgrade.</p>
+      <div class="site-table-wrap"><table class="site-table" id="feature-table"><caption class="sr-only">Features by plan</caption>
+<!-- @site:feature-table -->
+<thead><tr><th scope="col">Feature</th><th scope="col" class="c">Starter</th><th scope="col" class="c">Pro</th><th scope="col" class="c">Business</th><th scope="col" class="c">Enterprise</th></tr></thead><tbody><tr><th scope="row">Dashboard</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Clients</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Leads pipeline</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Jobs</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Schedule</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Estimates</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Invoices</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Employees</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Time clock</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">SOPs</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">CEC calculators</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Pipe bending</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Wire runs</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Settings</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Billing</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Help center and support</th><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Drawings and takeoff</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Panel schedules</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Inventory</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Permits and inspections</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Follow-up sequences</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Security audit</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Auto-place boxes in rooms</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Trace wire runs on drawings</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Client portal</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Online invoice payments</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Email (Resend)</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">AI assistant</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">AI code helper</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Background AI agents</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">API access</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">MCP server for AI tools</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">SMS (Twilio)</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Facebook Lead Ads</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Multiple stock locations</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Single sign-on</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr><tr><th scope="row">Setup done for you</th><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c no"><span aria-hidden="true">—</span><span class="sr-only">Not included</span></td><td class="c yes"><span aria-hidden="true">✓</span><span class="sr-only">Included</span></td></tr></tbody>
+<!-- /@site:feature-table -->
+</table></div>
+      <p class="site-fine">Downgrading never deletes data: you keep reading everything you made. Features above your plan are locked until you upgrade. <a href="/features">See what each feature does</a>.</p>
     </section>
 
     <section id="talk" class="site-section site-talk">
       <div>
         <h2>Enterprise: let's talk</h2>
         <p>For larger shops: custom user counts, single sign-on, and setup done for you (we connect Stripe, email and SMS, and import your data). Tell us a little about your company and we will reply within one business day.</p>
+        <p>Just want help setting up? See <a href="/services">services</a>.</p>
       </div>
       <form id="talk-form" class="site-form" novalidate>
         <label>Your name <input name="name" autocomplete="name" required maxlength="120"></label>
@@ -72,11 +147,67 @@
     </section>
   </main>
 
+  <!-- @site:footer -->
   <footer class="site-foot">
-    <span>© <span id="year"></span> <span data-brand>Fishtape</span></span>
-    <a href="/site/status.html">Service status</a>
+    <div class="site-foot-in">
+      <div class="site-foot-brand">
+        <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+        <p>Jobs, quotes, drawings, crew time and invoices for Canadian electrical contractors. Built by a working electrical contractor.</p>
+      </div>
+      <div class="site-foot-cols">
+        <nav aria-label="Product">
+          <h2>Product</h2>
+          <ul>
+            <li><a href="/features">Features</a></li>
+            <li><a href="/pricing">Pricing</a></li>
+            <li><a href="/services">Services</a></li>
+            <li><a href="/features/ios-app">iPad and iPhone</a></li>
+            <li><a href="/features/security-privacy">Security</a></li>
+            <li><a href="/status">Service status</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Who it's for">
+          <h2>Who it's for</h2>
+          <ul>
+            <li><a href="/for/residential-electricians">Residential electricians</a></li>
+            <li><a href="/for/commercial-industrial">Commercial and industrial</a></li>
+            <li><a href="/for/solo-electricians">Solo electricians</a></li>
+            <li><a href="/for/switching-from-jobber">Switching from Jobber</a></li>
+            <li><a href="/for/switching-from-housecall-pro">Switching from Housecall Pro</a></li>
+            <li><a href="/for/switching-from-quickbooks">Switching from QuickBooks</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="By province">
+          <h2>By province</h2>
+          <ul>
+            <li><a href="/for/ontario">Ontario</a></li>
+            <li><a href="/for/british-columbia">British Columbia</a></li>
+            <li><a href="/for/alberta">Alberta</a></li>
+            <li><a href="/for/saskatchewan">Saskatchewan</a></li>
+            <li><a href="/for/manitoba">Manitoba</a></li>
+            <li><a href="/for/atlantic-canada">Atlantic Canada</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Company">
+          <h2>Company</h2>
+          <ul>
+            <li><a href="/about">About</a></li>
+            <li><a href="/about#contact">Contact</a></li>
+            <li><a href="/terms">Terms</a></li>
+            <li><a href="/privacy">Privacy</a></li>
+            <li><a href="/.well-known/security.txt">security.txt</a></li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+    <div class="site-foot-base">
+      <span>© <span id="year" data-year>2026</span> <span data-brand>Fishtape</span>. Prices in Canadian dollars.</span>
+      <span>Built for the Canadian electrical trade.</span>
+    </div>
   </footer>
+  <!-- /@site:footer -->
 
+  <script type="module" src="/site/site.js"></script>
   <script type="module" src="/site/pricing.js"></script>
 </body>
 </html>
