@@ -4,9 +4,10 @@
 import { randomUUID } from 'node:crypto';
 import { AUDIT_COLLECTION, TABLE_COLLECTIONS, collectionDef, isCollection } from '../collections.js';
 import { ApiError, badRequest, conflict, forbidden, notFound, tooLarge, validationFailed } from '../errors.js';
-import { canRead, canWrite, checkWriteRules, redactForReader, rowFilter, sanitizeForStorage } from '../auth/access.js';
+import { canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, restoreHiddenFields, rowFilter, rowVisible, sanitizeForStorage } from '../auth/access.js';
 import { appendAudit, auditRowToRecord, describeRecord } from './audit.js';
 import { assertCollectionWritable, loadTenantPlan } from './entitlements.js';
+import { afterTaskWrite } from './workplan-events.js';
 
 export const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const META_KEYS = ['id', 'version', 'changeSeq', 'deleted', 'tenantId'];
@@ -18,6 +19,15 @@ export const MAX_PULL_LIMIT = 1000;
 export const MAX_LIST_LIMIT = 500;
 
 const actorString = (actor) => `${actor.type}:${actor.id ?? ''}`;
+
+/** Key-order-independent JSON, to tell whether a merged write stored what the device sent. */
+const canon = (v) => (Array.isArray(v) ? `[${v.map(canon).join(',')}]`
+  : v && typeof v === 'object' ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}` : JSON.stringify(v ?? null));
+
+/** Per-collection follow-ups after a write, in the same transaction (notification hooks). */
+async function afterWrite(tx, coll, id, before, after, who) {
+  if (coll === 'workTasks') await afterTaskWrite(tx, { id, before, after, who });
+}
 
 function assertCollection(coll) {
   if (!isCollection(coll)) throw notFound('Unknown collection.');
@@ -129,11 +139,14 @@ export function createRecords({ validator }) {
 
   /** Is this existing row visible to the principal? (own-rows filter) */
   function visible(p, coll, row) {
-    const f = rowFilter(p, coll);
-    if (!f) return true;
-    const def = collectionDef(coll);
-    const field = def.gen.find((x) => x.col === f.column)?.field;
-    return f.value != null && row.data?.[field] === f.value;
+    return rowVisible(rowFilter(p, coll), row.data, collectionDef(coll));
+  }
+
+  /** SQL for a row filter's hidden values (e.g. a worker's draft tasks); pushes its parameter. */
+  function excludeSql(f, params) {
+    if (!f?.exclude) return '';
+    params.push(f.exclude.values);
+    return ` AND (${f.exclude.column} IS NULL OR ${f.exclude.column} <> ALL($${params.length}::text[]))`;
   }
 
   // ---- reads ---------------------------------------------------------------
@@ -184,7 +197,7 @@ export function createRecords({ validator }) {
     const f = rowFilter(p, coll);
     if (f) {
       if (f.value == null) return { data: [], cursor: null, more: false };
-      params.push(f.value); where.push(`${f.column} = $${params.length}`);
+      params.push(f.value); where.push(`${f.column} = $${params.length}${excludeSql(f, params)}`);
     }
     const cur = decodeCursor(q.cursor);
     if (cur) {
@@ -236,10 +249,11 @@ export function createRecords({ validator }) {
     const id = body?.id ?? randomUUID();
     assertId(id);
     if (await lockRow(tx, def, id)) throw conflict('A record with this id already exists.');
-    const data = prepare(coll, id, body, null, Date.now());
+    const data = restoreHiddenFields(p, coll, null, prepare(coll, id, body, null, Date.now()));
     checkRules(p, coll, null, data);
     const row = await insertRow(tx, def, id, data, who);
     await audit(tx, who, 'record.create', coll, id, data, { via: 'rest' });
+    await afterWrite(tx, coll, id, null, data, who);
     return view(p, coll, row);
   }
 
@@ -257,10 +271,11 @@ export function createRecords({ validator }) {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw validationFailed('The patch must be a JSON object.');
     const merged = { ...cur.data, ...patch };
     if (patch.updatedAt === undefined) delete merged.updatedAt;
-    const data = prepare(coll, id, merged, cur.data, Date.now());
+    const data = restoreHiddenFields(p, coll, cur.data, prepare(coll, id, merged, cur.data, Date.now()));
     checkRules(p, coll, cur.data, data);
     const row = await updateRow(tx, def, id, data, who);
     await audit(tx, who, 'record.update', coll, id, data, { via: 'rest', fields: Object.keys(patch).slice(0, 30) });
+    await afterWrite(tx, coll, id, cur.data, data, who);
     return view(p, coll, row);
   }
 
@@ -323,11 +338,28 @@ export function createRecords({ validator }) {
     const cur = await lockRow(tx, def, m.id);
 
     if (m.op === 'upsert') {
-      const data = prepare(coll, m.id, m.data, cur && !cur.deleted_at ? cur.data : null, now);
+      const data = restoreHiddenFields(p, coll, cur && !cur.deleted_at ? cur.data : null, prepare(coll, m.id, m.data, cur && !cur.deleted_at ? cur.data : null, now));
       if (!cur) {
         checkRules(p, coll, null, data);
         const row = await insertRow(tx, def, m.id, data, who);
         await audit(tx, who, 'record.create', coll, m.id, data, meta);
+        await afterWrite(tx, coll, m.id, null, data, who);
+        return { mid: m.mid, status: 'ok', version: row.version, changeSeq: row.change_seq };
+      }
+      // Collections that merge (work tasks): field groups resolve on their own, so an offline
+      // completion and a foreman's edit made meanwhile both survive. Never a whole-record loss.
+      const mergedData = !cur.deleted_at ? mergeWrite(p, coll, cur.data, data) : null;
+      if (mergedData) {
+        const stored = prepare(coll, m.id, mergedData, cur.data, now);
+        checkRules(p, coll, cur.data, stored);
+        const fresh = m.baseVersion === cur.version;
+        if (!fresh) await keepHistory(tx, coll, m.id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, m.mid);
+        const row = await updateRow(tx, def, m.id, stored, who);
+        await audit(tx, who, 'record.update', coll, m.id, stored, fresh ? meta : { ...meta, conflict: 'merged' });
+        await afterWrite(tx, coll, m.id, cur.data, stored, who);
+        // The device's copy differs from what is stored now: answer as a conflict so it takes
+        // the stored copy (with nothing lost: its own changes are in it).
+        if (canon(stored) !== canon(data)) return { mid: m.mid, status: 'conflict', server: serverView(p, coll, row) };
         return { mid: m.mid, status: 'ok', version: row.version, changeSeq: row.change_seq };
       }
       checkRules(p, coll, cur.deleted_at ? null : cur.data, data);
@@ -340,6 +372,7 @@ export function createRecords({ validator }) {
       if (!fresh) await keepHistory(tx, coll, m.id, { version: cur.version, deleted: Boolean(cur.deleted_at), data: cur.data }, 'overwritten', who, m.mid);
       const row = await updateRow(tx, def, m.id, data, who);
       await audit(tx, who, cur.deleted_at ? 'record.restore' : 'record.update', coll, m.id, data, fresh ? meta : { ...meta, conflict: 'client-won' });
+      await afterWrite(tx, coll, m.id, cur.deleted_at ? null : cur.data, data, who);
       return { mid: m.mid, status: 'ok', version: row.version, changeSeq: row.change_seq };
     }
 
@@ -410,6 +443,7 @@ export function createRecords({ validator }) {
         if (f.value == null) continue;
         params.push(f.value);
         extra = ` AND ${f.column} = $${params.length}`;
+        extra += excludeSql(f, params);
       }
       parts.push(`(SELECT '${coll}'::text AS collection, id, change_seq, pg_column_size(data) AS size
                    FROM ${def.table} WHERE tenant_id = $1 AND change_seq > $2${extra}

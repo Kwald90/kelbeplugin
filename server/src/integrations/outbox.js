@@ -1,15 +1,16 @@
 // Sends queued outbox records (channel email or sms, dueAt <= now) with the company's own
-// Resend or Twilio account, and marks each one sent or failed through the records service
+// SendGrid or Resend (email) or Twilio (texts) account, and marks each one sent or failed through the records service
 // so the change syncs to every device. Three steps per batch: claim (mark 'sending' and
 // commit), call the provider outside any transaction, then record the result.
 //
-// Email retries are safe (Resend idempotency key per outbox id). A text that was being
-// sent when a worker died is marked failed rather than resent: Twilio has no idempotency
-// key, and a duplicate text is worse than asking someone to check.
+// Resend retries are safe (idempotency key per outbox id). A text, or a SendGrid email, that
+// was being sent when a worker died is marked failed rather than resent: Twilio and SendGrid
+// have no idempotency key, and a duplicate is worse than asking someone to check.
 import { loadTenantPlan, tenantHas } from '../services/entitlements.js';
 import { ProviderError, label } from './http.js';
 import { EMAIL_RE } from './providers.js';
 import { sendEmail } from './resend.js';
+import { sendEmail as sendgridEmail } from './sendgrid.js';
 import { sendSms, toE164 } from './twilio.js';
 import { companySettings } from './payments.js';
 import { getSettings, hasRequired, isOptedOut, optOut, providerSecrets, setStatus, systemPrincipal, systemWho } from './state.js';
@@ -17,6 +18,9 @@ import { getSettings, hasRequired, isOptedOut, optOut, providerSecrets, setStatu
 export const MAX_ATTEMPTS = 5;
 const STUCK_MS = 15 * 60 * 1000;
 const CHANNEL_PROVIDER = { email: 'resend', sms: 'twilio' };
+/** Email goes through SendGrid when the company connected it, otherwise Resend. */
+const EMAIL_PROVIDERS = ['sendgrid', 'resend'];
+const EMAIL_SENDERS = { sendgrid: sendgridEmail, resend: sendEmail };
 
 const backoffMs = (attempts) => Math.min(60 * 60 * 1000, 60 * 1000 * 2 ** Math.max(0, attempts - 1));
 
@@ -55,12 +59,12 @@ export function smsBody(item) {
 
 class Permanent extends Error {}
 
-function buildEmail(item, secrets, cfg, company) {
+function buildEmail(item, secrets, cfg, company, provider = 'resend') {
   const to = String(item.to || '').trim();
   if (!EMAIL_RE.test(to)) throw new Permanent('There is no valid email address on this message.');
   const text = `${String(item.body || '').trim()}${isMarketing(item) ? emailFooter(company) : ''}`;
   return {
-    apiKey: secrets['resend.api_key'], from: secrets['resend.from'], to,
+    apiKey: secrets[`${provider}.api_key`], from: secrets[`${provider}.from`], to,
     subject: String(item.subject || '').trim() || `Message from ${company?.name || 'your contractor'}`,
     text, html: textToHtml(text),
     replyTo: cfg.replyTo || (company?.email && EMAIL_RE.test(company.email) ? company.email : undefined),
@@ -86,11 +90,17 @@ export async function dispatchTenant({ db, records, sealer, tenantId, outboxId =
   const batch = await db.withTenant({ tenantId }, async (tx) => {
     const secrets = {};
     const channels = [];
-    for (const ch of ['email', 'sms']) {
-      if (!allowed[ch]) continue;
-      const prov = CHANNEL_PROVIDER[ch];
-      secrets[prov] = await providerSecrets(tx, sealer, prov);
-      if (hasRequired(prov, secrets[prov])) channels.push(ch);
+    let emailProvider = null;
+    if (allowed.email) {
+      for (const prov of EMAIL_PROVIDERS) {
+        secrets[prov] = await providerSecrets(tx, sealer, prov);
+        if (hasRequired(prov, secrets[prov])) { emailProvider = prov; break; }
+      }
+      if (emailProvider) channels.push('email');
+    }
+    if (allowed.sms) {
+      secrets.twilio = await providerSecrets(tx, sealer, 'twilio');
+      if (hasRequired('twilio', secrets.twilio)) channels.push('sms');
     }
     if (!channels.length) return null;
     const params = [tx.tenantId, channels];
@@ -101,7 +111,7 @@ export async function dispatchTenant({ db, records, sealer, tenantId, outboxId =
     const picked = rows.filter((r) => due(r.data, now)).slice(0, limit);
     if (!picked.length) return null;
     const settings = await companySettings(tx);
-    const resendCfg = (await getSettings(tx, 'resend')).config || {};
+    const emailCfg = emailProvider ? (await getSettings(tx, emailProvider)).config || {} : {};
     const items = [];
     for (const r of picked) {
       const attempts = (Number(r.data.attempts) || 0) + 1;
@@ -117,23 +127,23 @@ export async function dispatchTenant({ db, records, sealer, tenantId, outboxId =
         if (await patch({ status: 'failed', error: problem, failedAt: now.toISOString(), attempts })) result.failed++;
         continue;
       }
-      const rec = await patch({ status: 'sending', sendingAt: now.toISOString(), attempts, error: null });
+      const rec = await patch({ status: 'sending', sendingAt: now.toISOString(), attempts, error: null, provider: r.data.channel === 'email' ? emailProvider : 'twilio' });
       if (rec) items.push(rec);
     }
-    return { items, secrets, company: settings.company || {}, resendCfg };
+    return { items, secrets, company: settings.company || {}, emailCfg, emailProvider };
   }, { write: true });
   if (!batch) return result;
 
   // 2. send, 3. record
   const statusFixed = new Set();
   for (const item of batch.items) {
-    const provider = CHANNEL_PROVIDER[item.channel];
+    const provider = item.channel === 'email' ? batch.emailProvider : CHANNEL_PROVIDER[item.channel];
     let patch;
     let providerProblem = null;
     let optedOut = null;
     try {
       if (item.channel === 'email') {
-        const sent = await sendEmail(buildEmail(item, batch.secrets.resend, batch.resendCfg, batch.company));
+        const sent = await EMAIL_SENDERS[provider](buildEmail(item, batch.secrets[provider], batch.emailCfg, batch.company, provider));
         patch = { status: 'sent', sentAt: new Date().toISOString(), provider, providerMessageId: sent.id, error: null, retryAt: null, sendingAt: null };
       } else {
         const s = batch.secrets.twilio;
@@ -165,7 +175,7 @@ export async function dispatchTenant({ db, records, sealer, tenantId, outboxId =
   return result;
 }
 
-/** Outbox rows left in 'sending' by a worker that died: email goes back to the queue, a text is marked failed. */
+/** Outbox rows left in 'sending' by a worker that died: Resend email goes back to the queue; a text or SendGrid email is marked failed. */
 export async function recoverStuck({ db, records, tenantId, now = new Date() }) {
   const p = systemPrincipal(tenantId, 'outbox-sender', 'Outbox sender');
   const who = systemWho(p);
@@ -175,9 +185,11 @@ export async function recoverStuck({ db, records, tenantId, now = new Date() }) 
     for (const r of rows) {
       const since = Date.parse(r.data.sendingAt);
       if (Number.isFinite(since) && now.getTime() - since < STUCK_MS) continue;
-      const patch = r.data.channel === 'email'
+      const patch = r.data.channel === 'email' && r.data.provider !== 'sendgrid'
         ? { status: 'queued', sendingAt: null }
-        : { status: 'failed', sendingAt: null, failedAt: now.toISOString(), error: 'Sending was interrupted. Check your Twilio message log before sending it again.' };
+        : { status: 'failed', sendingAt: null, failedAt: now.toISOString(), error: r.data.channel === 'email'
+          ? 'Sending was interrupted. Check SendGrid > Activity before sending it again.'
+          : 'Sending was interrupted. Check your Twilio message log before sending it again.' };
       await records.patchRecord(tx, p, 'outbox', r.id, patch, {}, who);
       n++;
     }

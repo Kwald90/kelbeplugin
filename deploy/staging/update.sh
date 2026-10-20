@@ -52,6 +52,10 @@ done
 [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
 
 mkdir -p "$STATE_DIR/status"
+# HQ Mail files: only the containers' user (uid 1000) may read them.
+install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/mail"
+# Hero videos and posters: uploaded by hq-api (uid 1000), served read-only by nginx at /media/.
+install -d -o 1000 -g 1000 -m 755 "$STATE_DIR/media"
 chmod 755 "$STATE_DIR" "$STATE_DIR/status"
 exec 9>"$STATE_DIR/deploy.lock"
 flock -n 9 || { echo "another deploy is running" >&2; exit 1; }

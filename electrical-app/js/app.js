@@ -17,6 +17,7 @@ import { hasUnitsChoice, setUnits, getUnits } from './lib/units.js';
 import { session, api, syncPrefs } from './session.js';
 import { createSync } from './sync.js';
 import { FEATURE_PLAN, hasFeature } from './plans.js';
+import { notifyBell } from './modules/notifications.js';
 
 const { h, icon } = ui;
 const put = (el, ...kids) => h(ui.clear(el), null, ...kids);
@@ -27,7 +28,11 @@ const MODULE_COLLECTIONS = {
   drawings: ['drawings'], panels: ['panels'], inventory: ['items', 'locations', 'stockMoves'],
   compliance: ['permits', 'inspections', 'certifications', 'checklists'], sequences: ['sequences', 'enrolments', 'outbox'],
   security: ['checklists'], wireruns: ['wireRuns'], bending: ['bends', 'benderProfiles'],
+  workplan: ['workPlans', 'workTasks', 'taskTemplates', 'huddles'],
 };
+// Electricians and apprentices land on My day (their task list) instead of the dashboard.
+const FIELD_ROLES = ['electrician', 'apprentice'];
+let landed = false;
 
 let main, rail, cleanup = null;
 let mode = null; // 'synced' | 'demo'
@@ -97,6 +102,10 @@ function route() {
   if (!main) return;
   const { id, params, query } = parseHash();
   if (['sign-in', 'reset-password', 'forgot-password', 'welcome'].includes(id)) { nav('dashboard'); return; }
+  if (!landed) {
+    landed = true;
+    if (id === 'dashboard' && FIELD_ROLES.includes(auth.role()) && auth.can('today') && moduleUnlocked('today')) { nav('today'); return; }
+  }
   const mod = ALL.find((m) => m.id === id) || MODULES[0];
   if (typeof cleanup === 'function') { try { cleanup(); } catch (e) { console.error(e); } }
   cleanup = null;
@@ -145,6 +154,7 @@ function buildRail() {
   }
   const u = auth.current();
   rail.append(h('div', { class: 'rail-bottom' },
+    notifyBell(ui),
     mode === 'synced' ? syncButton() : demoButton(),
     h('button', { class: 'rail-btn', 'aria-label': 'Toggle dark mode', onClick: toggleTheme }, icon(isDark() ? 'sun' : 'moon', 20), h('span', { class: 'tip' }, 'Theme')),
     mode === 'synced'

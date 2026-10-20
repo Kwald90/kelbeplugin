@@ -103,6 +103,18 @@ export const COLLECTION_FEATURES = {
   wireRuns: ['wireruns'],
   bends: ['bending', 'calcs'],
   benderProfiles: ['bending', 'calcs'],
+  flhas: ['safety'],
+  toolboxTalks: ['safety'],
+  incidents: ['safety'],
+  correctiveActions: ['safety'],
+  safetyInspections: ['safety'],
+  siteOrientations: ['safety'],
+  jobSafety: ['safety'],
+  // Workers record progress on any plan ("My day" is Starter); planning needs Pro.
+  workTasks: ['today', 'workplan'],
+  workPlans: ['workplan'],
+  taskTemplates: ['workplan'],
+  huddles: ['workplan'],
 };
 
 /**

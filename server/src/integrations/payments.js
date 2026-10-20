@@ -2,6 +2,7 @@
 // maths (electrical-app/js/lib/money.js) so the server and the app always agree.
 import { docTotals } from '../../../electrical-app/js/lib/money.js';
 import { ID_RE } from '../services/records.js';
+import { notify } from '../services/notify.js';
 
 /** Company time zone by province, for the payment's date (YYYY-MM-DD). */
 const ZONES = {
@@ -73,5 +74,6 @@ export async function recordStripePayment(tx, records, p, who, session, eventId)
     stripe: { checkoutSessionId: String(session.id || '').slice(0, 200), paymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : null, eventId: String(eventId || '').slice(0, 200), livemode: Boolean(session.livemode) },
   }, who);
   await refreshInvoiceStatus(tx, records, p, who, invoiceId);
+  await notify(tx, { perm: 'invoices', kind: 'payment', title: `Card payment of $${(amountCents / 100).toFixed(2)} received online`, link: `#/invoices/${invoiceId}`, ref: `payment:${paymentId}` });
   return { recorded: true, paymentId };
 }

@@ -46,6 +46,10 @@ full ISO for timestamps). IDs come from `store.add`.
 | `certifications` | employeeId?, name, issuer, number, expiry (company-wide if no employeeId) |
 | `checklists` | kind (code/security), title, jobId?, items[{ text, ref, status (open/pass/fail/na), note }], completedAt |
 | `panels` | jobId?, name, voltage (120/240 1ph, 208/120 3ph, 480/277 3ph), mainAmps, busAmps, circuits[{ slot, description, amps, poles, loadVA, phase }] |
+| `workPlans` | jobId, name, startDate, endDate, skipWeekends, holidays[], dayHours, crewIds[], phases[{ id, name, order }], published{ [day]: { at, by } }, status (active/paused/complete/archived) |
+| `workTasks` | one worker, one day: planId?, jobId?, phaseId, phaseName, groupId, title, description, taskType, date, employeeId, estHours, qty, unit, priority, requiresPhoto, minPhotos, dependsOn[], link?, status (draft/todo/in-progress/blocked/done), publishedAt, ackAt, startedAt, completedAt, actualHours, qtyDone, note, blocks[], photos[], reopens[], evidenceWaived?, progressAt (full list in docs/BUILD-PLAN.md) |
+| `taskTemplates` | name, title, description, taskType, unit, qty, estHours, ratePerHour, requiresPhoto, minPhotos, priority |
+| `huddles` | date, planIds[], jobIds[], startedAt, endedAt, ledBy, attendees[{ employeeId, ackAt, by }] |
 | `auditLog` | at, userId, action, collection, recordId, summary (written by `store` automatically) |
 | `settings` | single record id `settings`: company{ name, phone, email, address, licenceNo }, taxPct, labourRateCents, markupPct, units, currency, nextNumbers{ job, estimate, invoice } |
 
@@ -72,9 +76,9 @@ Modules only talk to data through `store` and to each other through routes
 
 Roles to permission keys (`js/auth.js`): owner and admin have everything;
 office has everything except `security` and `settings`; foreman has jobs,
-schedule, drawings, time, sops, compliance, inventory, calcs; electrician and
-apprentice have drawings, time (own), sops, calcs, jobs (read). Every write
-goes to `auditLog` with the current user.
+schedule, drawings, time, sops, compliance, inventory, calcs, workplan, kpis; electrician and
+apprentice have drawings, time (own), sops, calcs, jobs (read), today (own published
+tasks, progress only). Every write goes to `auditLog` with the current user.
 
 ## The parts that bite
 

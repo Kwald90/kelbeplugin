@@ -4,9 +4,11 @@
 // Tiers and prices come from the app's plans.js, the trial length and deposit from the API.
 import { PLANS, EXTRA_USER_CENTS, CURRENCY, monthlyCents } from '/js/plans.js';
 import { BRAND } from '/js/brand.js';
+import { appOrigin } from '/site/app-link.js';
 
 const API = document.querySelector('meta[name="fishtape-api"]')?.content.replace(/\/$/, '') || '';
-const APP = document.querySelector('meta[name="fishtape-app"]')?.content.replace(/\/$/, '') || '';
+// The app's origin: '' on one-host setups, app.fishtapehq.com from the apex (site/app-link.js).
+const APP = appOrigin();
 const SELF_SERVE = ['starter', 'pro', 'business'];
 const DRAFT_KEY = 'ft.signup.draft';
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,253}\.[^\s@]{2,63}$/;

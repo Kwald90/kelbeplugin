@@ -1,0 +1,272 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/flhas.json",
+  "title": "Field level hazard assessment",
+  "description": "One worker's FLHA for one job on one day (docs/safety/README.md). Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "employeeId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "jobId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "task": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "location": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 500
+    },
+    "hazards": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 60,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 60
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "present": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "controls": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        }
+      },
+      "description": "Hazard ids from js/lib/safety.js HAZARDS; custom ones carry a label."
+    },
+    "ppe": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 40,
+      "items": {
+        "type": "string",
+        "maxLength": 60
+      }
+    },
+    "stopWork": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "stopWorkReason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2000
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 5000
+    },
+    "signature": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "dataUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80000,
+          "description": "Small JPEG data URL of the finger/Pencil signature (white background, ~480x160, capped at ~60 KB)."
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "employeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        }
+      },
+      "description": "The worker's signature."
+    },
+    "review": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "signature": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "dataUrl": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 80000,
+              "description": "Small JPEG data URL of the finger/Pencil signature (white background, ~480x160, capped at ~60 KB)."
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 200
+            },
+            "employeeId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 128
+            },
+            "at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 40,
+              "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+            }
+          }
+        }
+      },
+      "description": "The foreman's review sign-off (managers only)."
+    },
+    "copiedFrom": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "The FLHA this one was copied from (\"same as yesterday, re-checked\")."
+    },
+    "recheckedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    }
+  },
+  "additionalProperties": true
+}

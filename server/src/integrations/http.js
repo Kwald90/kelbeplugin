@@ -35,6 +35,7 @@ export function scrub(text, max = 200) {
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
     .replace(/\+?\d[\d\s().-]{7,}\d/g, '[number]')
     .replace(/\b(sk|rk|pk|whsec|re|AC|SK|EAA)[_A-Za-z0-9-]{8,}/g, '[key]')
+    .replace(/\bSG\.[A-Za-z0-9_.-]{8,}/g, '[key]')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, max);
@@ -65,10 +66,10 @@ export async function request(provider, url, opts = {}) {
   const text = await res.text().catch(() => '');
   let json = null;
   try { json = text ? JSON.parse(text) : null; } catch { json = null; }
-  return { status: res.status, ok: res.ok, json, text };
+  return { status: res.status, ok: res.ok, json, text, headers: res.headers };
 }
 
-const LABELS = { stripe: 'Stripe', resend: 'Resend', twilio: 'Twilio', facebook: 'Facebook', anthropic: 'Anthropic' };
+const LABELS = { stripe: 'Stripe', resend: 'Resend', sendgrid: 'SendGrid', twilio: 'Twilio', facebook: 'Facebook', anthropic: 'Anthropic' };
 export const label = (p) => LABELS[p] || p;
 
 /** Default classification of an HTTP failure. Providers refine it with their own codes. */

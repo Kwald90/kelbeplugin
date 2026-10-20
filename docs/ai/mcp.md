@@ -14,8 +14,10 @@ agents (Claude Desktop, Claude Code, other MCP clients) can work with **one comp
 
 ## 1. Create an API key
 
-An owner or admin creates the key with `POST /api/v1/api-keys` `{ name, scopes }` (an API keys
-screen in Settings is still to come). The key is shown once. Give it **only the scopes the agent needs**:
+An owner or admin creates the key in the app: **Settings → Developer & API keys** (`#/developer`, Business
+plan), with a name, scopes (the "AI agent that drafts estimates" preset, read-only, or custom per area)
+and an optional expiry. Scripts can use `POST /api/v1/api-keys` `{ name, scopes, expiresAt? }`. The key is
+shown once, with a copy button and this guide filled in. Give it **only the scopes the agent needs**:
 
 | the agent should | scopes |
 | --- | --- |
@@ -24,8 +26,9 @@ screen in Settings is still to come). The key is shown once. Give it **only the 
 | create or update leads or clients | `leads:write`, `clients:write` |
 | everything it is allowed to touch | `*:write` (not recommended) |
 
-Anyone with the key can act for the company within its scopes. Revoke it in Settings when it is
-no longer needed (`DELETE /api/v1/api-keys/{id}`); revocation is immediate.
+Anyone with the key can act for the company within its scopes. The key list shows when each key was
+last used. Revoke it on the same screen when it is no longer needed (or `DELETE /api/v1/api-keys/{id}`);
+revocation is immediate.
 
 ## 2. Add the server to your client
 

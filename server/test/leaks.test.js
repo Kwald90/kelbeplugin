@@ -145,7 +145,13 @@ describe('public endpoints and URLs', { skip }, () => {
       'clientId', 'jobId', 'status', 'stage', 'number', 'employeeId', 'leadId', 'sequenceId', 'relatedId', 'invoiceId', 'sku',
       'itemId', 'permitId', 'result', 'date', 'drawingId',
       // HQ console: periods, export kinds, a company id, dates, a help category id, a check toggle.
-      'days', 'months', 'kind', 'tenantId', 'from', 'to', 'category', 'live']);
+      'days', 'months', 'tenantId', 'category', 'live',
+      // safety: an incident kind code and employee / record ids
+      'kind', 'ownerId', 'sourceId',
+      // work plans: GET /api/v1/workTasks?planId=, GET /api/v1/kpis?from=&to= (ids and YYYY-MM-DD only)
+      'planId', 'from', 'to',
+      // HQ Mail: "Show images" for one message (0|1), not data.
+      'images']);
     for (const [path, ops] of Object.entries(spec.paths)) {
       for (const op of Object.values(ops)) {
         for (const p of op.parameters || []) {

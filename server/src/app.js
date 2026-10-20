@@ -32,6 +32,9 @@ import hqSettingsRoutes from './routes/hq-settings.js';
 import hqUserRoutes from './routes/hq-users.js';
 import hqAnnouncementRoutes from './routes/hq-announcements.js';
 import hqHelpRoutes from './routes/hq-help.js';
+import hqMailRoutes from './routes/hq-mail.js';
+import mailWebhookRoutes from './routes/mail-webhooks.js';
+import promotionRoutes from './routes/promotions.js';
 import authRoutes from './routes/v1/auth.js';
 import recordRoutes from './routes/v1/records.js';
 import syncRoutes from './routes/v1/sync.js';
@@ -41,6 +44,8 @@ import integrationRoutes from './routes/v1/integrations.js';
 import webhookRoutes from './routes/v1/webhooks.js';
 import aiRoutes from './routes/v1/ai.js';
 import mcpRoutes from './routes/mcp.js';
+import notificationRoutes from './routes/v1/notifications.js';
+import kpiRoutes from './routes/v1/kpis.js';
 
 const MB = 1024 * 1024;
 /** Sync pushes may carry one maximum-size record plus a normal batch. */
@@ -199,6 +204,8 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(webhookRoutes, deps);
   await app.register(aiRoutes, deps);
   await app.register(mcpRoutes, deps);
+  await app.register(notificationRoutes, deps);
+  await app.register(kpiRoutes, deps);
   await app.register(hqTenantRoutes, deps);
   await app.register(hqComplianceRoutes, deps);
   await app.register(hqBillingRoutes, deps);
@@ -209,6 +216,9 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(hqUserRoutes, deps);
   await app.register(hqAnnouncementRoutes, deps);
   await app.register(hqHelpRoutes, deps);
+  await app.register(hqMailRoutes, deps);
+  await app.register(mailWebhookRoutes, deps);
+  await app.register(promotionRoutes, deps);
 
   app.get('/api/v1/openapi.json', { config: { auth: 'public' }, schema: { hide: true } }, async () => app.swagger());
 

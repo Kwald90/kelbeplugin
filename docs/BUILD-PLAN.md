@@ -204,7 +204,7 @@ Shared pieces already in the base branch, use them, don't fork them:
 
 Conventions:
 - **Migrations:** each workstream uses its own number range so files never collide: G 0010–0019, H 0020–0029,
-  I 0040–0049, J 0050–0059, portal 0060–0069. Platform tables get RLS like the rest if they hold tenant data.
+  I 0040–0049, J 0050–0059, portal 0060–0069, onboarding/import/notifications 0090–0099. Platform tables get RLS like the rest if they hold tenant data.
 - **Routes:** add your own Fastify plugin file and one `app.register(...)` line in `server/src/app.js` (the lead resolves the
   one-line merge conflicts). **Modules:** add your module file and one line in `electrical-app/js/modules/index.js`.
 - Every new endpoint: permission check, entitlement check where gated, audit event on writes, `Cache-Control: no-store`,
@@ -220,6 +220,33 @@ Conventions:
 | J | AI | `server/src/ai/**`, `server/src/routes/v1/ai.js`, `server/src/routes/mcp.js`, migrations 0050–0059, `electrical-app/js/modules/assistant.js` (+ any `js/lib/assistant*.js`), `css/assistant.css`, `docs/ai/**`. Claude through each company's own Anthropic key: estimate/invoice drafting (human approves), CEC helper using the calculators as tools, background agents that draft suggestions, an MCP server on scoped API keys, token usage per company |
 
 Client portal (homeowners/GCs see estimates, sign, pay invoices) starts after I lands, since it needs email and payments.
+
+### Work plans, My day and crew KPIs (migrations 0100–0109)
+
+Modules `today` ("My day", every role, Starter; the landing screen for electricians and apprentices) and `workplan`
+(planner, meeting mode, KPIs; Pro). Permission keys `today` (all roles), `workplan` and `kpis` (owner, admin, office,
+foreman). Plan features `today: starter`, `workplan: pro`, `kpis: pro`.
+
+- `workPlans`: `jobId, name, startDate, endDate, skipWeekends, holidays[] (YYYY-MM-DD), province, dayHours, crewIds[],
+  phases[{ id, name, order }], published { 'YYYY-MM-DD': { at, by } }, status ('active'|'paused'|'complete'|'archived'), notes`
+- `workTasks`: one task for **one** worker on **one** day (several assignees = several tasks sharing `groupId`):
+  `planId, jobId, phaseId, phaseName, groupId, title, description, taskType, date, baselineDate, employeeId, order, estHours,
+  qty, unit, priority, requiresPhoto, minPhotos, dependsOn[], link { kind ('drawing'|'wireRun'|'url'), id, label, url },
+  status ('draft'|'todo'|'in-progress'|'blocked'|'done'), publishedAt, publishedBy, lateAdd, seenAt, ackAt, ackVia,
+  startedAt, completedAt, actualHours, qtyDone, note, blocks[{ reason, note, at, resolvedAt, by }], photos[{ id, dataUrl,
+  takenAt, width, height }] (≤ 6 downscaled JPEGs ≤ 300 KB each until object storage), reopens[{ at, by, reason }],
+  evidenceWaived { by, at, reason }, progressAt, progressBy`
+- `taskTemplates`: `name, title, description, phaseName, taskType, unit, qty, estHours, ratePerHour, requiresPhoto, minPhotos, priority`
+- `huddles`: `date, planIds[], jobIds[], startedAt, endedAt, ledBy, attendees[{ employeeId, ackAt, by }], notes`
+
+Rules (`electrical-app/js/lib/workplan.js`, imported by `server/src/auth/access.js`): tasks are drafts until their day
+is published and never go back to draft; non-managers read only their own published tasks (row filter on
+`employee_id` and `status`) and may change only the progress fields; a photo-required task can't become `done` without
+its photos (any writer; a foreman may record a waiver). Work-task writes merge by field group (the foreman's fields,
+progress by `progressAt`, seen/"Got it" kept once set) instead of whole-record last-writer-wins, so an offline
+completion survives a foreman's edit; the device gets the merged copy back as a sync conflict. KPIs
+(`electrical-app/js/lib/kpis.js`) are shared with `GET /api/v1/kpis`. Notifications: a marked hook in
+`server/src/services/workplan-events.js` until a server `notify()` exists. Tables: `server/migrations/0100_workplan.sql`, generated with `node scripts/gen-collections-sql.js --migration 0100` (the registry entries carry `migration: '0100'`; `--all` rewrites every generated file).
 
 ## Definition of done (every workstream)
 

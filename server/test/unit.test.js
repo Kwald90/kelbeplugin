@@ -7,13 +7,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { COLLECTIONS, TABLE_COLLECTIONS, collectionDef } from '../src/collections.js';
 import { PERMS, ROLES, permsForRole } from '../src/auth/permissions.js';
-import { canRead, canWrite, checkWriteRules, redactForReader, rowFilter, sanitizeForStorage } from '../src/auth/access.js';
+import { canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, rowFilter, rowVisible, sanitizeForStorage } from '../src/auth/access.js';
 import { createValidator, schemaDir } from '../src/schemas.js';
 import { createSealer, normaliseRecoveryCode, recoveryCode } from '../src/lib/crypto.js';
 import { readConfig } from '../src/config.js';
 import { redactUrl } from '../src/logger.js';
 import { passwordProblem, pinProblem } from '../src/auth/passwords.js';
-import { OUT, generate } from '../scripts/gen-collections-sql.js';
+import { OUT, generate, outputs } from '../scripts/gen-collections-sql.js';
 import { COLLECTIONS as PWA_COLLECTIONS } from '../../electrical-app/js/store.js';
 import { PERMS as PWA_PERMS, ROLES as PWA_ROLES } from '../../electrical-app/js/auth.js';
 
@@ -43,9 +43,41 @@ describe('contracts shared with the PWA', () => {
     }
   });
 
-  test('the committed collections migration matches its generator', () => {
+  test('the committed collections migrations match their generator', () => {
     const norm = (s) => s.replace(/\r\n/g, '\n');
     assert.equal(norm(readFileSync(OUT, 'utf8')), norm(generate()));
+    const all = outputs();
+    assert.ok(all.length >= 2, 'later collections get their own migration');
+    for (const o of all) assert.equal(norm(readFileSync(o.file, 'utf8')), norm(o.sql), o.name);
+    const tables = all.flatMap((o) => [...o.sql.matchAll(/^CREATE TABLE (\w+) \(/gm)].map((m) => m[1]));
+    for (const c of TABLE_COLLECTIONS) assert.equal(tables.filter((x) => x === collectionDef(c).table).length, 1, `${c} created exactly once`);
+  });
+
+  test('work tasks as the planner and My day store them', () => {
+    const task = {
+      id: 't1', planId: 'p1', jobId: 'j1', phaseId: 'ph1', phaseName: 'Rough-in', groupId: 'g1', title: 'Mount boxes', description: '', taskType: 'Boxes',
+      date: '2026-10-20', baselineDate: '2026-10-20', employeeId: 'e1', order: 0, estHours: 1.25, qty: 10, unit: 'boxes', priority: 'normal',
+      requiresPhoto: true, minPhotos: 1, dependsOn: [], link: { kind: 'drawing', id: 'd1', label: 'L2 power', url: '' },
+      status: 'done', publishedAt: '2026-10-19T21:00:00.000Z', publishedBy: 'f1', lateAdd: false, seenAt: null, ackAt: '2026-10-20T13:00:00.000Z', ackVia: 'meeting',
+      startedAt: '2026-10-20T14:00:00.000Z', completedAt: '2026-10-20T20:00:00.000Z', actualHours: 1.5, qtyDone: 10, note: '',
+      blocks: [{ reason: 'Waiting on material', note: '', at: '2026-10-20T15:00:00.000Z', resolvedAt: '2026-10-20T16:00:00.000Z', by: 'e1' }],
+      photos: [{ id: 'p', dataUrl: 'data:image/jpeg;base64,' + 'A'.repeat(400_000), takenAt: '2026-10-20T20:00:00.000Z', width: 1280, height: 960 }],
+      reopens: [], evidenceWaived: null, progressAt: '2026-10-20T20:00:00.000Z', progressBy: 'e1',
+    };
+    assert.equal(validator.validate('workTasks', task), null);
+    const six = { ...task, photos: Array.from({ length: 6 }, () => task.photos[0]) };
+    assert.equal(validator.validate('workTasks', six), null);
+    assert.ok(Buffer.byteLength(JSON.stringify(six)) < collectionDef('workTasks').maxBytes);
+    assert.notEqual(validator.validate('workTasks', { ...task, photos: Array.from({ length: 7 }, () => task.photos[0]) }), null, 'six photos at most');
+    assert.notEqual(validator.validate('workTasks', { ...task, status: 'finished' }), null);
+    assert.notEqual(validator.validate('workTasks', { ...task, link: { kind: 'url', url: 'javascript:alert(1)' } }), null);
+    assert.notEqual(validator.validate('workTasks', { ...task, photos: [{ id: 'p', dataUrl: 'https://example.com/x.jpg' }] }), null);
+    assert.equal(validator.validate('workPlans', {
+      id: 'p1', jobId: 'j1', name: 'Main', startDate: '2026-10-19', endDate: '2026-12-04', skipWeekends: true, holidays: ['2026-11-11'], dayHours: 8, crewIds: ['e1'],
+      phases: [{ id: 'ph1', name: 'Rough-in', order: 0 }], published: { '2026-10-19': { at: '2026-10-18T21:00:00.000Z', by: 'f1' } }, status: 'active', notes: '',
+    }), null);
+    assert.equal(validator.validate('huddles', { id: 'h1', date: '2026-10-20', planIds: ['p1'], startedAt: '2026-10-20T13:00:00.000Z', ledBy: 'f1', attendees: [{ employeeId: 'e1', ackAt: '2026-10-20T13:05:00.000Z' }] }), null);
+    assert.equal(validator.validate('taskTemplates', { id: 'tt1', name: 'Mount boxes', unit: 'boxes', ratePerHour: 8, requiresPhoto: true, minPhotos: 1 }), null);
   });
 
   test('every record of the PWA demo seed passes its schema', async () => {
@@ -171,6 +203,31 @@ describe('access rules', () => {
     assert.equal(checkWriteRules(p('office'), 'settings', s, { ...s, nextNumbers: { job: 2 } }), null);
     assert.ok(checkWriteRules(p('office'), 'settings', s, { ...s, taxPct: 0 }));
     assert.equal(checkWriteRules(p('admin'), 'settings', s, { ...s, taxPct: 0 }), null);
+  });
+
+  test('work tasks: own published rows for workers; progress only; evidence for everyone', () => {
+    const el = p('electrician');
+    const f = rowFilter(el, 'workTasks');
+    assert.deepEqual(f, { column: 'employee_id', value: 'e1', exclude: { column: 'status', field: 'status', values: ['draft'] } });
+    assert.equal(rowFilter(p('foreman'), 'workTasks'), null);
+    const def = collectionDef('workTasks');
+    assert.ok(rowVisible(f, { employeeId: 'e1', status: 'todo' }, def));
+    assert.ok(!rowVisible(f, { employeeId: 'e1', status: 'draft' }, def));
+    assert.ok(!rowVisible(f, { employeeId: 'e2', status: 'todo' }, def));
+    assert.ok(canRead(el, 'workTasks') && canWrite(el, 'workTasks'));
+    assert.ok(!canRead(el, 'workPlans') && !canWrite(el, 'workPlans') && !canWrite(p('apprentice'), 'taskTemplates'));
+    assert.ok(canWrite(p('foreman'), 'workPlans') && canWrite(p('office'), 'huddles'));
+    const stored = { employeeId: 'e1', status: 'todo', title: 'Boxes', requiresPhoto: true };
+    assert.equal(checkWriteRules(el, 'workTasks', stored, { ...stored, status: 'in-progress' }), null);
+    assert.ok(checkWriteRules(el, 'workTasks', stored, { ...stored, title: 'x' }));
+    assert.ok(checkWriteRules(el, 'workTasks', null, stored));
+    assert.ok(checkWriteRules(el, 'workTasks', stored, { ...stored, status: 'done' }));
+    assert.ok(checkWriteRules(p('foreman'), 'workTasks', stored, { ...stored, status: 'done' }));
+    assert.ok(checkWriteRules({ kind: 'api_key', perms: new Set(), scopes: ['*:write'] }, 'workTasks', stored, { ...stored, status: 'done' }));
+    const merged = mergeWrite(el, 'workTasks', stored, { ...stored, title: 'x', status: 'in-progress', progressAt: 'z' });
+    assert.equal(merged.title, 'Boxes');
+    assert.equal(merged.status, 'in-progress');
+    assert.equal(mergeWrite(el, 'timeEntries', stored, stored), null);
   });
 
   test('pay rates hidden, PINs never stored', () => {
