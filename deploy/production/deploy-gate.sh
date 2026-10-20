@@ -4,10 +4,10 @@
 # The key can deploy a release tag (checked again by update.sh) or read the public status.
 # Install (README.md, "Automatic deploys from CI"):
 #   sudo install -o root -g root -m 0755 deploy-gate.sh /usr/local/sbin/fishtape-production-deploy-gate
-#   /home/fishtape-deploy/.ssh/authorized_keys:
+#   /home/fishtape-prod-deploy/.ssh/authorized_keys (a separate user from staging's fishtape-deploy):
 #     restrict,command="/usr/local/sbin/fishtape-production-deploy-gate" ssh-ed25519 AAAA... github-actions-production
 #   /etc/sudoers.d/fishtape-production-deploy (mode 0440, check with visudo -cf):
-#     fishtape-deploy ALL=(root) NOPASSWD: /srv/fishtape/repo/deploy/production/update.sh
+#     fishtape-prod-deploy ALL=(root) NOPASSWD: /srv/fishtape/repo/deploy/production/update.sh
 #
 # Allowed commands (from SSH_ORIGINAL_COMMAND):
 #   deploy <vX.Y.Z> <40-hex commit> [github run id]

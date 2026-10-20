@@ -6,12 +6,12 @@ then production (a `v*` tag, CI again, and Kelvin's approval).
 
 | | local | staging | production |
 | --- | --- | --- | --- |
-| URL | http://localhost:8080 (+ API on :3410) | https://tgelectrical.truecollarbuilt.com | https://app.fishtapehq.com, https://hq.fishtapehq.com, https://status.fishtapehq.com |
-| Host | Kelvin's PC (or any dev machine) | shared VPS 208.113.210.97 (Ubuntu 24.04, CloudPanel nginx, Docker) | dedicated VPS at dotmoose (to be confirmed: OS, location, disk encryption) |
+| URL | http://localhost:8080 (+ API on :3410) | https://tgelectrical.truecollarbuilt.com | https://app.fishtapehq.com, https://hq.fishtapehq.com, https://status.fishtapehq.com, public site https://fishtapehq.com (www redirects) |
+| Host | Kelvin's PC (or any dev machine) | shared VPS 208.113.210.97 (Ubuntu 24.04, CloudPanel nginx, Docker) | the same shared VPS, kept separate (own compose project, ports, paths, secrets, backup key, certificate); a dedicated host later |
 | Code | working tree | branch `claude/electrical-concept-app-h4qz12`, any commit on it | `v*` tags on the release branch only |
 | Deploy | none | `deploy/staging/update.sh` (by CI or by hand) | `deploy/production/update.sh --tag` (by CI after approval) |
 | PWA served from | `python -m http.server` in `electrical-app/` | the git checkout's `electrical-app/` | a copied release folder, `/srv/fishtape/www/current` |
-| API | `node server/src/index.js` (`HOST=127.0.0.1`) | compose `fishtape-staging`: `api` 127.0.0.1:3410, `hq-api` 127.0.0.1:3411, `worker` | compose `fishtape-production`: same ports, own host |
+| API | `node server/src/index.js` (`HOST=127.0.0.1`) | compose `fishtape-staging`: `api` 127.0.0.1:3410, `hq-api` 127.0.0.1:3411, `worker` | compose `fishtape-production`: `api` 127.0.0.1:3420, `hq-api` 127.0.0.1:3421, `worker` |
 | HQ | `/api/hq/` on the local API | `/hq/` and `/api/hq/` on the staging host | its own host, `hq.fishtapehq.com` |
 | Postgres | `deploy/local`, 127.0.0.1:5433 | container, 127.0.0.1:5433 (the host's own Postgres on 5432 belongs to other sites) | container, no host port |
 | Data | seeds | seeded test companies + TG Electrical (test data only) | real customer data |
@@ -24,6 +24,9 @@ then production (a `v*` tag, CI again, and Kelvin's approval).
 
 - Nothing real in staging: no production data, no real customer details, no production secrets.
   Staging shares a box with unrelated sites and is treated as untrusted.
+- Production currently shares that box too (deploy/production/README.md, "Risks of sharing the
+  box"): root on the box reaches both, and staging deploys branch code as root. Keep the branch
+  limited to Kelvin and the lead until production moves to its own host.
 - Each environment has its own `SECRETS_MASTER_KEY`, database passwords, OAuth clients, age backup
   key, and CI deploy key. Generating them is `init-env.sh` plus the READMEs.
 - `.env` files live outside every web root, root-owned, mode 600, and never in git (CI fails if

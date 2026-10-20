@@ -8,7 +8,7 @@
 #    now points anywhere other than the commit CI tested
 #
 # Off until you set the repository variable PRODUCTION_DEPLOY_ENABLED=true. Environment
-# "production" (deploy/production/README.md, step 7): required reviewer Kelvin, deployment
+# "production" (deploy/production/README.md, step 11): required reviewer Kelvin, deployment
 # tags matching v* only, and these secrets:
 #   PRODUCTION_SSH_KEY, PRODUCTION_HOST, PRODUCTION_USER, PRODUCTION_KNOWN_HOSTS
 # Optional variables: RELEASE_BRANCH (default claude/electrical-concept-app-h4qz12), PRODUCTION_URL,
@@ -96,7 +96,7 @@ jobs:
           [ -n "$DEPLOY_USER" ] || missing="$missing PRODUCTION_USER"
           [ -n "$KNOWN_HOSTS" ] || missing="$missing PRODUCTION_KNOWN_HOSTS"
           if [ -n "$missing" ]; then
-            echo "::error::Missing secrets in the 'production' environment:$missing. See deploy/production/README.md step 7."
+            echo "::error::Missing secrets in the 'production' environment:$missing. See deploy/production/README.md step 11."
             exit 1
           fi
 

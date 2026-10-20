@@ -812,7 +812,7 @@ controls:
 
   - id: OPS-06
     title: Network boundary protection
-    description: "ufw denies inbound traffic except 22, 80 and 443, and every container port is bound to 127.0.0.1. nginx drops unknown host names, rate-limits /api/ (20 r/s) and auth routes (10 r/min), blocks the API docs UI and serves HQ only on its own host name."
+    description: "ufw denies inbound traffic except 22, 80 and 443, and every container port is bound to 127.0.0.1. nginx serves only the Fishtape host names (no default_server of its own on the shared box, so unknown names never reach Fishtape), rate-limits /api/ (20 r/s), auth routes (10 r/min) and public forms (30 r/min), blocks the API docs UI and serves HQ only on its own host name."
     tsc: [CC6.6]
     owner: Kelvin Waldner
     frequency: continuous

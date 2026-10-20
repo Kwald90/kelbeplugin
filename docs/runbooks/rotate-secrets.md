@@ -23,7 +23,8 @@ sudo docker compose exec -T postgres psql -U postgres -d postgres \
 sudo sed -i "s/^FISHTAPE_APP_PASSWORD=.*/FISHTAPE_APP_PASSWORD=$NEW/" .env    # matching variable
 unset NEW
 sudo docker compose up -d api hq-api worker                     # recreated with the new URL
-curl -fsS http://127.0.0.1:3410/api/readyz && curl -fsS http://127.0.0.1:3411/api/readyz
+curl -fsS http://127.0.0.1:3410/api/readyz && curl -fsS http://127.0.0.1:3411/api/readyz   # staging
+curl -fsS http://127.0.0.1:3420/api/readyz && curl -fsS http://127.0.0.1:3421/api/readyz   # production
 ```
 
 For the owner role, nothing restarts: the next `migrate` run uses it. Old connections keep working

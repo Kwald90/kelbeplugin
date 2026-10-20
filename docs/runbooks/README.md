@@ -18,8 +18,9 @@ commands, how to check it worked, and what to record. Policies (the "why" and "h
 
 Conventions:
 
-- Hosts: staging is the shared VPS (checkout `/var/www/tgelectrical/current`), production is the
-  dotmoose host (checkout `/srv/fishtape/repo`). `<env>` is `staging` or `production`.
+- Hosts: both run on the shared VPS 208.113.210.97. Staging: checkout `/var/www/tgelectrical/current`,
+  API ports 3410/3411. Production: checkout `/srv/fishtape/repo`, API ports 3420/3421.
+  `<env>` is `staging` or `production`.
 - `dc` below means `sudo docker compose` run from `deploy/<env>/` in that checkout.
 - Every deploy, backup and restore test writes a JSON line under `/var/lib/fishtape-<env>/`.
   Incidents and reviews go in the encrypted evidence store, never in git (this repo is public).
