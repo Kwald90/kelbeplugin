@@ -10,8 +10,8 @@
 .hq-wrap { overflow-wrap: anywhere; }
 
 /* revenue chart: one series in the validated health-chart blue */
-.hq-rev { height: 150px; }
-.hq-axis { fill: var(--text-muted); font-size: 11px; }
+.hq-rev { height: 140px; }
+.hq-rev-axis { display: grid; grid-template-columns: repeat(12, 1fr); text-align: center; font-size: var(--fs-xs); color: var(--text-muted); margin-top: 4px; }
 .hq-rev g:hover .req { opacity: .8; }
 
 .hq-bar-inline { grid-template-columns: 1fr 48px; min-width: 140px; }

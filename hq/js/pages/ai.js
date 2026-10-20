@@ -38,8 +38,8 @@ export default {
     function draw(d) {
       ui.clear(body);
       body.append(h('div', { class: 'grid hq-stats' },
-        ui.stat({ label: 'Spend this month (estimate)', value: usd(d.monthTotal.costCents), hint: `${ui.fmtNum(d.monthTotal.calls)} model calls` }),
-        ...d.monthTotal.byFeature.map((f) => ui.stat({ label: f.feature, value: usd(f.costCents), hint: `${ui.fmtNum(f.calls)} calls` })),
+        ui.stat({ label: 'Spend this month (estimate)', value: usd(d.monthTotal.costCents), hint: `${ui.fmtNum(d.monthTotal.calls)} model call${d.monthTotal.calls === 1 ? '' : 's'}` }),
+        ...d.monthTotal.byFeature.map((f) => ui.stat({ label: f.feature, value: usd(f.costCents), hint: `${ui.fmtNum(f.calls)} call${f.calls === 1 ? '' : 's'}` })),
         ui.stat({ label: 'Near or at cap', value: d.nearCap.length, hint: '80% or more of their cap', tone: d.nearCap.length ? 'warning' : null }),
         ui.stat({ label: 'Errors (7 d)', value: d.errorCounts.reduce((a, e) => a + e.count, 0), tone: d.errorCounts.length ? 'danger' : null })));
 

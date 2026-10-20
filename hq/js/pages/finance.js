@@ -16,9 +16,9 @@ const svg = (tag, attrs = {}, ...kids) => {
 
 /** Net revenue per month: one series, bars from the baseline, a tooltip per bar. */
 function revenueChart(ui, months) {
-  const W = 600, H = 120, pad = 18, n = months.length, slot = W / n, barW = Math.max(4, slot - 8);
+  const W = 600, H = 120, n = months.length, slot = W / n, barW = Math.max(4, slot - 8);
   const max = Math.max(1, ...months.map((m) => m.netCents));
-  const chart = svg('svg', { class: 'hq-spark hq-rev', viewBox: `0 0 ${W} ${H + pad}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': `Net revenue by month, last 12 months. Highest ${ui.fmtMoney(max, { whole: true })}.` });
+  const chart = svg('svg', { class: 'hq-spark hq-rev', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': `Net revenue by month, last 12 months. Highest ${ui.fmtMoney(max, { whole: true })}.` });
   chart.append(svg('line', { class: 'base', x1: 0, x2: W, y1: H - 0.5, y2: H - 0.5 }));
   months.forEach((m, i) => {
     const hgt = Math.max(0, (m.netCents / max) * (H - 6));
@@ -26,12 +26,12 @@ function revenueChart(ui, months) {
     g.append(svg('title', {}, `${m.month}: net ${ui.fmtMoney(m.netCents)} (gross ${ui.fmtMoney(m.grossCents)}, refunds ${ui.fmtMoney(m.refundsCents)})`));
     g.append(svg('rect', { class: 'hit', x: i * slot, y: 0, width: slot, height: H }));
     if (hgt > 0) g.append(svg('rect', { class: 'req', x: i * slot + (slot - barW) / 2, y: H - hgt, width: barW, height: hgt, rx: 3 }));
-    const label = svg('text', { class: 'hq-axis', x: i * slot + slot / 2, y: H + 13, 'text-anchor': 'middle' });
-    label.textContent = new Date(`${m.month}-01T00:00:00`).toLocaleDateString(undefined, { month: 'short' });
-    g.append(label);
     chart.append(g);
   });
-  return chart;
+  // Month names in HTML below the bars, so they keep their shape when the chart stretches.
+  const axis = ui.h('div', { class: 'hq-rev-axis', 'aria-hidden': 'true' },
+    months.map((m) => ui.h('span', null, new Date(`${m.month}-01T00:00:00`).toLocaleDateString(undefined, { month: 'short' }))));
+  return ui.h('div', null, chart, axis);
 }
 
 export default {

@@ -32,11 +32,18 @@ export function startAnnouncements({ ui, api }) {
   let host = null;
   let last = 0;
   let legalOpen = false;
+  let legalWait = null;
+
+  /** Banners sit at the top of the page, in the flow (never over content or dialogs). */
+  function place() {
+    const main = document.getElementById('main');
+    if (!host || !main) return;
+    if (main.classList.contains('full-bleed') || !host.children.length) { host.remove(); return; }
+    if (host.parentElement !== main) main.prepend(host);
+  }
 
   function ensureHost() {
-    if (host?.isConnected) return host;
-    host = h('div', { class: 'ann-host no-print', role: 'region', 'aria-label': 'Announcements' });
-    document.body.append(host);
+    host ||= h('div', { class: 'ann-host no-print', role: 'region', 'aria-label': 'Announcements' });
     return host;
   }
 
@@ -55,12 +62,18 @@ export function startAnnouncements({ ui, api }) {
   async function dismiss(a, el, { quiet = false } = {}) {
     hidden.add(a.id);
     el.remove();
+    place();
     if (!a.dismissible) return;
     try { await api.post(`/api/v1/announcements/${a.id}/dismiss`); } catch (e) { if (!quiet && e.status !== 404) ui.toast("Couldn't save that; it may show again.", 'error'); }
   }
 
   function legal(docs) {
     if (legalOpen || !docs?.length) return;
+    // Wait for another dialog (e.g. the first-launch units question) to close first.
+    if (document.querySelector('.dialog')) {
+      legalWait ||= setTimeout(() => { legalWait = null; legal(docs); }, 1500);
+      return;
+    }
     legalOpen = true;
     let accepted = false;
     const list = h('ul', { class: 'ann-legal-list' }, docs.map((d) => {
@@ -100,9 +113,14 @@ export function startAnnouncements({ ui, api }) {
       el.dataset.ann = a.id;
       root.append(el);
     }
+    place();
     legal(r?.legal);
   }
 
+  // The shell clears #main on every route and builds a new one on a theme change: put the banners back.
+  addEventListener('hashchange', () => setTimeout(place, 0));
+  // Screens may also redraw themselves (ui.clear(root)); watch for the banners being dropped.
+  new MutationObserver(() => { if (host && host.children.length && !host.isConnected) place(); }).observe(document.body, { childList: true, subtree: true });
   refresh(true);
   addEventListener('focus', () => { refresh(); });
   setInterval(() => { if (!document.hidden) refresh(true); }, EVERY_MS);

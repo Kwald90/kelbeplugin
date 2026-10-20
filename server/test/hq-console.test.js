@@ -11,6 +11,8 @@ import { hqUser, startHqApp } from './support/hq.js';
 import { financeStripe, invoice, sub, subItem } from './support/fake-stripe-finance.js';
 import { HANDLERS, runOnce } from '../src/services/queue.js';
 import { createFinanceHandlers, scheduleFinanceJobs } from '../src/services/hq-finance.js';
+import { authError, mockAnthropic, restoreAnthropic, sse, text, toolUse, turn } from './support/anthropic-mock.js';
+import { setSecret } from '../src/services/secrets.js';
 
 // Secrets that must never show up in a response.
 const SECRETS = { STRIPE_SECRET_KEY: 'sk_test_SUPERSECRETkey123', STRIPE_WEBHOOK_SECRET_ENV: 'whsec_SUPERSECRET', RESEND_API_KEY: 're_SUPERSECRETresend' };
@@ -438,12 +440,26 @@ describe('developer, AI and the audit log', { skip }, () => {
     const conv = await call(app, { method: 'POST', url: '/api/v1/ai/conversations', token: A.token, body: { mode: 'assistant', units: 'metric' } });
     const say = await call(app, { method: 'POST', url: `/api/v1/ai/conversations/${conv.body.id}/messages`, token: A.token, body: { text: 'hi' } });
     assert.equal(say.body.error.code, 'ai_not_connected');
+    // Streamed replies pass through untouched while tool calls and mid-stream errors are counted.
+    await t.db.withTenant({ tenantId: A.tenantId }, (tx) => setSecret(tx, app.sealer, 'anthropic.api_key', 'sk-ant-api03-hqconsoletestkey'));
+    mockAnthropic([turn([text('Looking.'), toolUse('search_price_book', { query: 'receptacle' })]), turn([text('Found two receptacles.')]), authError()]);
+    const stream = await app.inject({ method: 'POST', url: `/api/v1/ai/conversations/${conv.body.id}/messages`, headers: { authorization: `Bearer ${A.token}`, 'content-type': 'application/json' }, payload: { text: 'price of a receptacle?' } });
+    const evs = sse(stream.body);
+    assert.ok(evs.some((e) => e.event === 'tool' && e.data.name === 'search_price_book' && e.data.status === 'done'));
+    assert.match(evs.filter((e) => e.event === 'text').map((e) => e.data.delta).join(''), /Found two receptacles/);
+    assert.equal(evs.at(-1).event, 'done');
+    const bad = await app.inject({ method: 'POST', url: `/api/v1/ai/conversations/${conv.body.id}/messages`, headers: { authorization: `Bearer ${A.token}`, 'content-type': 'application/json' }, payload: { text: 'again' } });
+    assert.ok(sse(bad.body).some((e) => e.event === 'error' && e.data.code === 'ai_key_rejected'));
+    restoreAnthropic();
     const r = await hq(staff.token, '/api/hq/ai');
+    assert.ok(r.body.tools.some((x) => x.tool === 'search_price_book' && x.via === 'assistant' && x.calls === 1));
+    assert.ok(r.body.errors.some((e) => e.code === 'ai_key_rejected' && e.feature === 'chat'));
+    assert.ok(!JSON.stringify(r.body).includes('receptacle'), 'no prompt or reply text in HQ');
     assert.equal(r.body.config.model, 'claude-opus-5-5');
     assert.ok(['low', 'medium', 'high', 'xhigh', 'max'].includes(r.body.config.effort));
     const alpha = r.body.usage.find((u) => u.tenantId === A.tenantId);
-    assert.equal(alpha.costCents, 4500);
-    assert.ok(r.body.nearCap.some((c) => c.tenantId === A.tenantId && c.pct === 90), 'US$45 of the US$50 default');
+    assert.ok(alpha.costCents >= 4500 && alpha.costCents < 4600, String(alpha.costCents));
+    assert.ok(r.body.nearCap.some((c) => c.tenantId === A.tenantId && c.pct >= 90), 'about US$45 of the US$50 default');
     assert.ok(r.body.errors.some((e) => e.code === 'ai_not_connected' && e.tenantName === 'Alpha Wiring'));
 
     assert.equal((await hq(admin.token, `/api/hq/ai/caps/${A.tenantId}`, { method: 'PUT', body: { monthlyCapCents: 20000 } })).status, 400, 'reason required');
