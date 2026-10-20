@@ -30,7 +30,7 @@ case "${ARGS[0]:-}" in
     exec sudo -n "$UPDATE" --tag "$tag" --sha "$sha" --actor "github-actions:${run:-manual}"
     ;;
   status)
-    exec curl -fsS -m 10 http://127.0.0.1:3410/api/v1/status
+    exec curl -fsS -m 10 http://127.0.0.1:3420/api/v1/status    # production api port (staging uses 3410)
     ;;
   *)
     echo "allowed: 'deploy <tag> <sha> [run-id]' or 'status'" >&2

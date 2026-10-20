@@ -4,6 +4,8 @@
 #   deploy/check-exposure.sh https://tgelectrical.truecollarbuilt.com
 #   deploy/check-exposure.sh https://app.fishtapehq.com --production
 #   deploy/check-exposure.sh https://hq.fishtapehq.com --hq
+#   deploy/check-exposure.sh https://fishtapehq.com --marketing
+#   deploy/check-exposure.sh https://status.fishtapehq.com --status
 #
 # Fails (exit 1) when:
 #   - any sensitive path (.env, .git, deploy scripts, dumps, keys, repo docs, traversal variants...)
@@ -18,23 +20,35 @@
 # Options:
 #   --production        also require /api/hq/, /hq/ and the API docs UI to be 404 (app host)
 #   --hq                HQ host: skip the PWA checks, require X-Robots-Tag noindex
+#   --marketing         public site on the apex: no PWA (/sw.js 404, /index.html redirects to the
+#                       app host), /pricing served, only /api/v1/status and /api/v1/public/ proxied
+#   --status            status host: the status page, /api/v1/status and /api/readyz; no PWA,
+#                       no other API route
 #   --no-api            skip API checks (staging before server/ exists)
 #   --resolve H:P:ADDR  passed to curl, e.g. run on the box itself:
 #                       --resolve tgelectrical.truecollarbuilt.com:443:127.0.0.1
+#                       (the http:// redirect check then goes to ADDR as well)
 set -uo pipefail
 
 BASE="${1:-}"
-[[ "$BASE" =~ ^https?://[^/]+$ ]] || { echo "usage: $0 https://host [--production|--hq] [--no-api] [--resolve host:port:addr]" >&2; exit 2; }
+[[ "$BASE" =~ ^https?://[^/]+$ ]] || { echo "usage: $0 https://host [--production|--hq|--marketing|--status] [--no-api] [--resolve host:port:addr]" >&2; exit 2; }
 shift
 MODE=app
 API=1
 CURL_EXTRA=()
+HTTP_EXTRA=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --production) MODE=production; shift ;;
     --hq) MODE=hq; shift ;;
+    --marketing) MODE=marketing; shift ;;
+    --status) MODE=status; shift ;;
     --no-api) API=0; shift ;;
-    --resolve) CURL_EXTRA+=(--resolve "${2:-}"); shift 2 ;;
+    --resolve)
+      CURL_EXTRA+=(--resolve "${2:-}")
+      # The plain-HTTP redirect check goes to the same address on port 80.
+      [[ "${2:-}" =~ ^([^:]+):[0-9]+:(.+)$ ]] && HTTP_EXTRA+=(--resolve "${BASH_REMATCH[1]}:80:${BASH_REMATCH[2]}")
+      shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -83,6 +97,8 @@ SENSITIVE=(
   /%2e%2e/.env /..%2f.env /%2e%2e%2fdeploy/staging/.env /js/../../deploy/staging/.env /js/..%2f..%2fdeploy/staging/.env
   /hq/../.env /site/../.env /site/..%2f..%2fdeploy/staging/.env /hq/../deploy/staging/.env /hq/..%2f..%2fdeploy/staging/.env /api/../.env /vendor/../.env /.well-known/../.env
   /index.html.bak /index.html~ /sw.js.bak
+  /deploy-log.jsonl /status/last-deploy.json /media/../deploy-log.jsonl /media/..%2fdeploy-log.jsonl /media/%2e%2e/status/last-deploy.json
+  /media/.env /media/.hidden.mp4 /media/x.sh /media/dump.sql /site/.env /site/../deploy/production/.env
 )
 exposed=0
 for p in "${SENSITIVE[@]}"; do
@@ -141,7 +157,27 @@ if [ "$MODE" = hq ]; then
 fi
 
 # ---- 3. PWA files and caching ----
-if [ "$MODE" != hq ]; then
+if [ "$MODE" = marketing ] || [ "$MODE" = status ]; then
+  check "/ is revalidated (Cache-Control: $(hdr cache-control))" "/ should be Cache-Control: no-cache, got '$(hdr cache-control)'" grep -qi '^cache-control:.*no-cache' "$TMP/h"
+  fetch /sw.js
+  check "/sw.js -> $CODE (the PWA is not served on this host)" "/sw.js answered $CODE on the $MODE host (want 404)" [ "$CODE" = 404 ]
+  fetch /manifest.webmanifest
+  check "/manifest.webmanifest -> $CODE" "/manifest.webmanifest answered $CODE on the $MODE host (want 404)" [ "$CODE" = 404 ]
+  fetch /hq/
+  check "/hq/ -> $CODE" "/hq/ answered $CODE on the $MODE host (want 404)" [ "$CODE" = 404 ]
+  if [ "$MODE" = marketing ]; then
+    fetch /index.html
+    loc="$(hdr location)"
+    if [[ "$CODE" =~ ^30[178]$ ]] && [[ "$loc" == https://app.* ]]; then ok "/index.html -> $CODE $loc"
+    else bad "/index.html should redirect to the app host, got $CODE '${loc}'"; fi
+    fetch /pricing
+    check "/pricing 200" "/pricing answered $CODE" [ "$CODE" = 200 ]
+    fetch /js/plans.js
+    check "/js/plans.js 200 (app assets the site imports)" "/js/plans.js answered $CODE" [ "$CODE" = 200 ]
+  fi
+  fetch /.well-known/security.txt
+  if [ "$CODE" = 200 ] && grep -q '^Contact:' "$TMP/b"; then ok "security.txt"; else bad "/.well-known/security.txt answered $CODE or has no Contact"; fi
+elif [ "$MODE" != hq ]; then
   check "/ is revalidated (Cache-Control: $(hdr cache-control))" "/ should be Cache-Control: no-cache, got '$(hdr cache-control)'" grep -qi '^cache-control:.*no-cache' "$TMP/h"
   fetch /sw.js
   if [ "$CODE" = 200 ] && [[ "$(hdr cache-control)" == *no-cache* ]] && [ -n "$(hdr content-security-policy)" ]; then
@@ -167,14 +203,19 @@ fi
 # ---- 4. HTTP -> HTTPS ----
 if [[ "$BASE" == https://* ]]; then
   host="${BASE#https://}"
-  loc="$(curl -sS -m 10 -o /dev/null -w '%{http_code} %{redirect_url}' "http://$host/" 2>/dev/null || true)"
+  loc="$(curl -sS -m 10 "${HTTP_EXTRA[@]}" -o /dev/null -w '%{http_code} %{redirect_url}' "http://$host/" 2>/dev/null || true)"
   if [[ "$loc" =~ ^30[178]\ https:// ]]; then ok "http:// redirects to https:// ($loc)"; else note "http:// did not redirect to https:// ('$loc'); fine if run against a local --resolve"; fi
 fi
 
 # ---- 5. API ----
 if [ "$API" -eq 1 ]; then
   api_leak() { grep -aqiE "$SECRET_RE|\"(password|secret|token|apiKey|privateKey)\"[[:space:]]*:|\"stack\"[[:space:]]*:|node_modules/|/app/server/|[[:space:]]at [A-Za-z_.<>]+ \(|\b(10\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\.[0-9]+\.[0-9]+\b" "$TMP/b"; }
-  for p in /api/healthz /api/v1/status; do
+  case "$MODE" in
+    marketing) health=(/api/v1/status) ;;
+    status) health=(/api/healthz /api/v1/status /api/readyz) ;;
+    *) health=(/api/healthz /api/v1/status) ;;
+  esac
+  for p in "${health[@]}"; do
     fetch "$p"
     if [ "$CODE" != 200 ]; then bad "$p answered $CODE"; continue; fi
     problems=""
@@ -198,6 +239,13 @@ if [ "$MODE" = production ]; then
   for p in /api/hq/health /api/hq/tenants /hq/ /api/docs /api/documentation; do
     fetch "$p"
     check "$p is 404 on the app host" "$p answered $CODE on the app host (want 404)" [ "$CODE" = 404 ]
+  done
+fi
+if [ "$MODE" = marketing ] || [ "$MODE" = status ]; then
+  # Only the routes these pages call are proxied; the rest of the API is not reachable here.
+  for p in /api/v1/me /api/v1/clients /api/v1/openapi.json /api/hq/health /api/docs; do
+    fetch "$p"
+    check "$p is 404 on the $MODE host" "$p answered $CODE on the $MODE host (want 404: not proxied)" [ "$CODE" = 404 ]
   done
 fi
 
