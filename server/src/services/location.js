@@ -75,21 +75,47 @@ export function scheduleLocationJobs(db) {
 }
 
 /**
+ * Does this employee record hold location points recorded by an account other than `userId`?
+ * Raw points are readable by whoever's membership links to the employee id (the RLS policy keys on
+ * that link), so linking someone else to it would hand them the person's location history: the
+ * members routes refuse it. Read under the read-only 'crew' scope, reset straight after.
+ */
+export async function pointsRecordedByOthers(tx, employeeId, userId) {
+  await setLocationScope(tx, 'crew');
+  const { rows } = await tx.query(
+    'SELECT 1 FROM location_points WHERE tenant_id = $1 AND employee_id = $2 AND deleted_at IS NULL AND created_by IS DISTINCT FROM $3 LIMIT 1',
+    [tx.tenantId, employeeId, `user:${userId}`]);
+  await setLocationScope(tx, '');
+  return rows.length > 0;
+}
+
+/**
  * Latest point per person clocked in now (live crew map). Caller checks the role and the setting.
+ * Only people whose answer to the current notice (policyVersion: turning the map on raises it) is
+ * 'granted', and only points recorded after that answer: a point taken under a notice that said
+ * "no live map", or before someone declined, never shows on the map.
+ * @param {{ policyVersion: number }} settings  the company's location settings (tenantLocationSettings)
  * @returns {Promise<{ employeeId: string, at: string, lat: number, lng: number, accuracyM: number|null, timeEntryId: string|null, jobId: string|null, kind: string }[]>}
  */
-export async function liveCrew(tx) {
+export async function liveCrew(tx, { policyVersion }) {
   await setLocationScope(tx, 'crew');
   const { rows } = await tx.query(
     `SELECT DISTINCT ON (p.employee_id) p.employee_id, p.data, e.data AS entry, e.id AS entry_id
        FROM location_points p
        JOIN time_entries e ON e.tenant_id = p.tenant_id AND e.employee_id = p.employee_id AND e.deleted_at IS NULL
                           AND COALESCE(e.data->>'clockOut', '') = '' AND COALESCE(e.data->>'clockIn', '') <> ''
+       JOIN LATERAL (
+         SELECT c.data FROM location_consents c
+          WHERE c.tenant_id = p.tenant_id AND c.employee_id = p.employee_id AND c.deleted_at IS NULL
+            AND c.data->'policyVersion' = to_jsonb($3::int)
+          ORDER BY c.data->>'at' DESC NULLS LAST, c.updated_at DESC LIMIT 1
+       ) consent ON consent.data->>'choice' = 'granted'
       WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
         AND (p.data->>'at')::timestamptz > now() - make_interval(hours => $2)
         AND (p.data->>'at')::timestamptz >= NULLIF(e.data->>'clockIn', '')::timestamptz - interval '5 minutes'
+        AND (p.data->>'at')::timestamptz >= COALESCE(NULLIF(consent.data->>'at', '')::timestamptz, '-infinity')
       ORDER BY p.employee_id, (p.data->>'at')::timestamptz DESC`,
-    [tx.tenantId, LIVE_MAX_AGE_HOURS]);
+    [tx.tenantId, LIVE_MAX_AGE_HOURS, policyVersion]);
   // Back to the member's own scope for anything else in this transaction.
   await setLocationScope(tx, '');
   return rows.map((r) => ({

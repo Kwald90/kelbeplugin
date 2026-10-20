@@ -98,13 +98,33 @@ export function mergeWrite(p, coll, existing, next) {
 // background agents. Readers without money get records without these fields, and their
 // writes cannot change them (restoreHiddenFields puts the stored values back).
 
-/** Price fields hidden from readers without money, per collection. */
+/**
+ * Price fields hidden from readers without money, per collection ('a.b' is field b of object a).
+ * Job change orders are handled per change order (amountCents, line unitCents).
+ */
 export const MONEY_FIELDS = {
   items: ['priceCents', 'costCents'],
-  settings: ['labourRateCents', 'markupPct'],
+  // the company's bill rates (lib/tm.js jobRates)
+  settings: ['labourRateCents', 'markupPct', 'billing.travelRateCents'],
+  // a T&M job's own bill rates (lib/tm.js jobRates)
+  jobs: ['labourRateCents', 'travelRateCents', 'markupPct'],
   // the office's cost on a material request (crew file requests, never with prices)
   materialRequests: ['costCents'],
 };
+
+const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+function hasField(data, k) {
+  const [a, b] = k.split('.');
+  return b ? isObj(data?.[a]) && b in data[a] : Boolean(data) && a in data;
+}
+const getField = (data, k) => { const [a, b] = k.split('.'); return b ? data[a][b] : data[a]; };
+/** Set or (value undefined) remove a field on `out`, a copy of the record; nested objects are copied too. */
+function putField(out, k, value) {
+  const [a, b] = k.split('.');
+  if (!b) { if (value === undefined) delete out[a]; else out[a] = value; return; }
+  if (!isObj(out[a])) { if (value === undefined) return; out[a] = {}; } else out[a] = { ...out[a] };
+  if (value === undefined) delete out[a][b]; else out[a][b] = value;
+}
 
 /** Can this principal see prices and costs? */
 export function seesMoney(p) {
@@ -126,16 +146,14 @@ function coWithoutMoney(co) {
 
 function stripMoney(coll, data) {
   if (!data) return data;
-  if (MONEY_FIELDS[coll] && MONEY_FIELDS[coll].some((k) => k in data)) {
-    const rest = { ...data };
-    for (const k of MONEY_FIELDS[coll]) delete rest[k];
-    rest.pricesHidden = true;
-    return rest;
-  }
-  if (coll === 'jobs' && Array.isArray(data.changeOrders) && data.changeOrders.length) {
-    return { ...data, changeOrders: data.changeOrders.map(coWithoutMoney), pricesHidden: true };
-  }
-  return data;
+  const found = (MONEY_FIELDS[coll] || []).filter((k) => hasField(data, k));
+  const cos = coll === 'jobs' && Array.isArray(data.changeOrders) && data.changeOrders.length > 0;
+  if (!found.length && !cos) return data;
+  const rest = { ...data };
+  for (const k of found) putField(rest, k, undefined);
+  if (cos) rest.changeOrders = data.changeOrders.map(coWithoutMoney);
+  rest.pricesHidden = true;
+  return rest;
 }
 
 /** Put back the money a reader without it could not see (or change). */
@@ -145,7 +163,7 @@ function restoreMoney(coll, existing, next) {
   if (MONEY_FIELDS[coll]) {
     for (const k of MONEY_FIELDS[coll]) {
       // A new record from a reader without money carries none either (a crew member's material request).
-      if (existing && k in existing) out[k] = existing[k]; else if (existing || coll === 'materialRequests') delete out[k];
+      if (hasField(existing, k)) putField(out, k, getField(existing, k)); else if (existing || coll === 'materialRequests') putField(out, k, undefined);
     }
   }
   if (coll === 'jobs' && Array.isArray(out.changeOrders)) {
@@ -156,6 +174,34 @@ function restoreMoney(coll, existing, next) {
       const keep = { ...co };
       if ('amountCents' in old) keep.amountCents = old.amountCents; else delete keep.amountCents;
       if ('lines' in old) keep.lines = old.lines; else delete keep.lines;
+      return keep;
+    });
+  }
+  return out;
+}
+
+const coHasMoney = (co) => 'amountCents' in co || (Array.isArray(co.lines) && co.lines.some((l) => l && typeof l === 'object' && 'unitCents' in l));
+
+/**
+ * A money reader writing a copy they were sent without prices (pricesHidden: they could not see
+ * money when their device pulled it, and the record has not changed since). The fields that were
+ * stripped from that copy come back from the stored record; anything money they set stays.
+ */
+function fillStrippedMoney(coll, existing, next) {
+  const out = { ...next };
+  delete out.pricesHidden;
+  if (!existing) return out;
+  for (const k of MONEY_FIELDS[coll] || []) {
+    if (!hasField(out, k) && hasField(existing, k)) putField(out, k, getField(existing, k));
+  }
+  if (coll === 'jobs' && Array.isArray(out.changeOrders)) {
+    const before = new Map((existing.changeOrders || []).filter((c) => c?.id).map((c) => [c.id, c]));
+    out.changeOrders = out.changeOrders.map((co) => {
+      const old = isObj(co) && co.id && before.get(co.id);
+      if (!old || coHasMoney(co)) return co;
+      const keep = { ...co };
+      if ('amountCents' in old) keep.amountCents = old.amountCents;
+      if ('lines' in old) keep.lines = old.lines;
       return keep;
     });
   }
@@ -316,6 +362,9 @@ function safetyWriteRule(p, coll, existing, next) {
   return null;
 }
 
+/** The manager's review of an off-site flag (time entries). */
+const FLAG_REVIEW = ['reviewedAt', 'reviewedBy', 'reviewNote'];
+
 /**
  * Hidden fields a reader could not see cannot be changed by their write either: put the
  * stored values back (a worker editing their own report never wipes the medical details).
@@ -328,9 +377,17 @@ export function restoreHiddenFields(p, coll, existing, next) {
     for (const k of ENTRY_COORDS) { if (existing && k in existing) out[k] = existing[k]; else delete out[k]; }
     return out;
   }
-  if (next && (MONEY_FIELDS[coll] || coll === 'jobs')) {
+  if (coll === 'timeEntries' && next && !p.isManager && isObj(next.flag) && existing?.flag?.reviewedAt) {
+    // A manager reviewed the off-site flag after the worker's device last pulled the entry: the
+    // worker's write (an offline clock-out) keeps the stored review instead of being refused for
+    // undoing it. Setting a review the server doesn't have is still refused (checkWriteRules).
+    const out = { ...next, flag: { ...next.flag } };
+    for (const k of FLAG_REVIEW) { if (k in existing.flag) out.flag[k] = existing.flag[k]; else delete out.flag[k]; }
+    return out;
+  }
+  if (next && MONEY_FIELDS[coll]) {
     if (!seesMoney(p)) return restoreMoney(coll, existing, next);
-    if ('pricesHidden' in next) { const out = { ...next }; delete out.pricesHidden; return out; }
+    if ('pricesHidden' in next) return fillStrippedMoney(coll, existing, next);
     return next;
   }
   if (coll !== 'incidents' || !next) return next;
@@ -353,9 +410,11 @@ export function redactForReader(p, coll, data) {
     for (const k of ENTRY_COORDS) delete rest[k];
     return rest;
   }
-  if (data && (MONEY_FIELDS[coll] || coll === 'jobs') && !seesMoney(p)) return stripMoney(coll, data);
-  if (coll === 'employees' && data && p.kind !== 'api_key' && !p.perms.has('employees') && 'rateCents' in data) {
-    const { rateCents, ...rest } = data;
+  if (data && MONEY_FIELDS[coll] && !seesMoney(p)) return stripMoney(coll, data);
+  // Pay rate and bill rate (lib/tm.js) stay with whoever manages employees.
+  if (coll === 'employees' && data && p.kind !== 'api_key' && !p.perms.has('employees') && ('rateCents' in data || 'billRateCents' in data)) {
+    const { rateCents, billRateCents, ...rest } = data;
+    void rateCents; void billRateCents;
     return rest;
   }
   if (coll === 'incidents' && data && !seesMedical(p) && MEDICAL_FIELDS.some((k) => k in data)) {

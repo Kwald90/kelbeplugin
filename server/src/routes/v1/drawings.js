@@ -3,9 +3,9 @@
 // Computed with the PWA's own lib/drawing-costs.js, so the editor's Changes panel and the API
 // agree. Read-only: no audit event.
 //
-// Money roles (owner, admin, office, foremen when the company allows it, API keys) get the
-// prices; anyone else who may read the drawing gets only what changed and who changed it,
-// never a price, cost, rate or hour (redactCostImpact). Another company's drawing is a 404.
+// Money roles (owner, admin, office, foremen when the company allows it, API keys whose scopes
+// cover items, estimates, jobs and settings) get the prices; anyone else who may read the
+// drawing gets only what changed and who changed it, never a price, cost, rate or hour (redactCostImpact). Another company's drawing is a 404.
 import { notFound, forbidden } from '../../errors.js';
 import { canRead, seesMoney, redactForReader } from '../../auth/access.js';
 import { loadMoneyAccess } from '../../services/records.js';
@@ -13,6 +13,8 @@ import { jobCostImpact, publicCostImpact, redactCostImpact } from '../../../../e
 import { errorResponses, tenantCtx } from '../util.js';
 
 const idParam = { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' } } };
+/** Collections the priced comparison reads money from. */
+const PRICE_SOURCES = ['items', 'estimates', 'jobs', 'settings'];
 /** Most drawings of one job read for a comparison (objects and history only). */
 const MAX_JOB_DRAWINGS = 500;
 
@@ -36,7 +38,9 @@ export default async function drawingRoutes(app, { db }) {
       const one = await tx.query("SELECT id, data->>'jobId' AS job_id FROM drawings WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL", [tx.tenantId, req.params.id]);
       if (!one.rows[0]) throw notFound();
       const jobId = one.rows[0].job_id;
-      const money = seesMoney(p);
+      // An API key gets prices only when its scopes also cover where they come from (the price
+      // book, the estimate, the job and the company rates), as they would through /records.
+      const money = seesMoney(p) && (p.kind !== 'api_key' || PRICE_SOURCES.every((c) => canRead(p, c)));
       if (!jobId) return { drawingId: req.params.id, ...(money ? publicCostImpact({ ready: false, reason: 'no-job' }) : redactCostImpact({ ready: false, reason: 'no-job' })) };
 
       const jobRow = await tx.query('SELECT id, data FROM jobs WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL', [tx.tenantId, jobId]);

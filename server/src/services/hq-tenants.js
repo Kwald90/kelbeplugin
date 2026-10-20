@@ -5,6 +5,7 @@ import { PLANS } from '../../../electrical-app/js/plans.js';
 import { effectivePlan, onTrial, tenantEntitlements } from './entitlements.js';
 import { extraSeats } from './billing.js';
 import { clipDeep, iso } from './hq-common.js';
+import { ENTRY_COORDS } from '../auth/access.js';
 
 const TENANT_COLS = `t.id, t.slug, t.name, t.status, t.status_reason, t.status_changed_at, t.province, t.plan, t.plan_overrides,
   t.trial_ends_at, t.grace_ends_at, t.past_due_since, t.billing_status, t.billing_plan, t.billed_seats, t.current_period_end,
@@ -149,7 +150,18 @@ export async function exportTenant(c, tenantId) {
 }
 
 /** Read-only support view of one collection: newest first, long strings shortened. */
+/**
+ * Can support staff read this collection? Never a person's own location data (raw points and
+ * consent answers: the RLS policy that keeps them per person does not bind the BYPASSRLS HQ role,
+ * threat model TM-LOC-01), the same collections API keys never reach.
+ */
+export function supportReadable(coll) {
+  const def = collectionDef(coll);
+  return coll === 'auditLog' || Boolean(def && def.rls !== 'employee' && !def.noApiKeys);
+}
+
 export async function supportRecords(c, tenantId, coll, limit) {
+  if (!supportReadable(coll)) throw new Error(`support view refuses ${coll}`);
   if (coll === 'auditLog') {
     const { rows } = await c.query(
       `SELECT seq, at, actor_type, actor_label, action, collection, record_id, summary FROM audit_events WHERE tenant_id = $1 ORDER BY seq DESC LIMIT $2`,
@@ -159,5 +171,10 @@ export async function supportRecords(c, tenantId, coll, limit) {
   const { rows } = await c.query(
     `SELECT id, data, version, updated_at FROM ${collectionDef(coll).table} WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY updated_at DESC, id LIMIT $2`,
     [tenantId, limit]);
-  return rows.map((r) => clipDeep({ ...r.data, id: r.id, version: r.version }));
+  return rows.map((r) => {
+    const data = { ...r.data, id: r.id, version: r.version };
+    // Clock-in/out coordinates stay with the company (API keys don't get them either).
+    if (coll === 'timeEntries') for (const k of ENTRY_COORDS) delete data[k];
+    return clipDeep(data);
+  });
 }

@@ -251,6 +251,30 @@ describe('support access', { skip }, () => {
     assert.match(reads.body.data[0].summary, /clients/);
   });
 
+  test('support access never includes location: raw points, consent answers or clock-in coordinates', async () => {
+    await t.superPool.query(
+      `INSERT INTO location_points (tenant_id, id, data) VALUES ($1, 'p-1', $2)`,
+      [A.tenantId, { employeeId: 'emp-1', timeEntryId: 'te-1', at: new Date().toISOString(), lat: 49.89, lng: -97.13, accuracyM: 10 }]);
+    await t.superPool.query(
+      `INSERT INTO location_consents (tenant_id, id, data) VALUES ($1, 'lc-1', $2)`,
+      [A.tenantId, { employeeId: 'emp-1', policyVersion: 1, choice: 'granted', at: new Date().toISOString() }]);
+    const loc = { lat: 49.89, lng: -97.13, accuracyM: 10, distanceM: 2400 };
+    const te = await call(app, { method: 'POST', url: '/api/v1/timeEntries', token: A.token, body: { id: 'te-1', employeeId: 'emp-1', date: '2026-10-19', clockIn: '2026-10-19T07:00:00Z', clockInLoc: loc, clockOutLoc: loc, flag: { text: 'off site' } } });
+    assert.equal(te.status, 201, JSON.stringify(te.body));
+    for (const coll of ['locationPoints', 'locationConsents']) {
+      const r = await hq(staff.token, `/api/hq/tenants/${A.tenantId}/support/${coll}?limit=200`);
+      assert.equal(r.status, 403, coll);
+      assert.doesNotMatch(JSON.stringify(r.body), /49\.89/);
+    }
+    const r = await hq(staff.token, `/api/hq/tenants/${A.tenantId}/support/timeEntries`);
+    assert.equal(r.status, 200);
+    const row = r.body.data.find((x) => x.id === 'te-1');
+    assert.ok(row);
+    assert.equal(row.flag.text, 'off site', 'the flag and the rest of the entry are there');
+    assert.ok(!('clockInLoc' in row) && !('clockOutLoc' in row));
+    assert.doesNotMatch(JSON.stringify(r.body), /49\.89/);
+  });
+
   test('a grant covers one company and one staff member, and only for reading', async () => {
     assert.equal((await hq(admin.token, `/api/hq/tenants/${A.tenantId}/support/clients`)).status, 403, 'another staff member');
     const other = await ownerTenant(t, app, 'Delta Lighting');

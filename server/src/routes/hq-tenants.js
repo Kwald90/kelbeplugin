@@ -11,7 +11,7 @@ import { issuePasswordLink } from '../services/resets.js';
 import { createBilling } from '../services/billing.js';
 import { enqueuePurge } from '../services/hq-jobs.js';
 import { hqActor, hqAudit, hqSettings, iso, requireHqAdmin, uuidParams } from '../services/hq-common.js';
-import { activeGrant, exportTenant, listTenants, loadTenant, searchTenants, supportRecords, tenantDetail, tenantView } from '../services/hq-tenants.js';
+import { activeGrant, exportTenant, listTenants, loadTenant, searchTenants, supportReadable, supportRecords, tenantDetail, tenantView } from '../services/hq-tenants.js';
 import { requestFacts } from '../services/audit.js';
 
 const PLAN_VALUES = ['trial', ...PLAN_IDS];
@@ -273,6 +273,7 @@ export default async function hqTenantRoutes(app, { config, db, email }) {
   }, async (req) => {
     const { id, collection } = req.params;
     if (!isCollection(collection)) throw notFound('Unknown collection.');
+    if (!supportReadable(collection)) throw forbidden('Location data belongs to each worker; support access does not include it.');
     return db.withHq(async (c) => {
       await mustExist(c, id);
       const grant = await activeGrant(c, id, req.principal.userId);
