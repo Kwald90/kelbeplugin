@@ -13,6 +13,7 @@ export const COLLECTIONS = [
   'workPlans', 'workTasks', 'taskTemplates', 'huddles',
   'materialRequests',
   'locationPoints', 'locationConsents',
+  'vendors', 'bills', 'purchaseOrders',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -130,6 +131,19 @@ const DEFS = {
   },
   // A worker's answer to the location notice. Only the worker records it; managers read them (evidence).
   locationConsents: { table: 'location_consents', gen: [EMPLOYEE], read: ['time'], write: ['time'], ownRows: true, noApiKeys: true, portal: null, maxBytes: 4 * KB, migration: '0141' },
+  // Purchasing (migration 0151, docs/integrations/quickbooks.md 3.5): suppliers, supplier bills and
+  // paid receipts, purchase orders. Office only: every field is money or supplier terms, so read and
+  // write need the invoices permission (owner, admin, office); field crews never receive them.
+  // Receipt photos and PDFs are data URLs for now (up to 2.5 MB of text; object storage later).
+  vendors: { table: 'vendors', gen: [], read: ['invoices'], write: ['invoices'], portal: null, maxBytes: 16 * KB, migration: '0151' },
+  bills: {
+    table: 'bills', gen: [g('vendor_id', 'vendorId'), JOB, STATUS, g('day', 'date'), g('purchase_order_id', 'purchaseOrderId')],
+    read: ['invoices'], write: ['invoices'], portal: null, maxBytes: 3 * MB, migration: '0151',
+  },
+  purchaseOrders: {
+    table: 'purchase_orders', gen: [g('vendor_id', 'vendorId'), JOB, STATUS, NUMBER],
+    read: ['invoices'], write: ['invoices'], portal: null, maxBytes: 64 * KB, migration: '0151',
+  },
 };
 
 /** @type {Map<string, CollectionDef>} */

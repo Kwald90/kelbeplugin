@@ -35,6 +35,7 @@ export const SWITCHES = [
   { id: 'invoices', group: 'money', label: 'Invoices', desc: 'Billing, payments and what is owed.', modules: ['invoices'], core: true },
   { id: 'pricebook', group: 'money', label: 'Price book', desc: 'Your items with cost and sell prices.', modules: [], core: true },
   { id: 'inventory', group: 'money', label: 'Stock', desc: 'Stock in the shop and vans, and what moved where.', modules: [] },
+  { id: 'purchasing', group: 'money', label: 'Purchasing', desc: 'Suppliers, bills, receipts and purchase orders.', modules: ['purchasing'] },
   { id: 'time', group: 'people', label: 'Time clock', desc: 'Clock in and out against jobs; weekly timesheets.', modules: ['time'], core: true },
   { id: 'employees', group: 'people', label: 'Employees', desc: 'Crew records, licences and pay rates.', modules: ['employees'], core: true },
   { id: 'safety', group: 'people', label: 'Safety', desc: 'Hazard assessments, toolbox talks and incidents.', modules: ['safety'], core: true },
@@ -157,6 +158,9 @@ export const COLLECTION_SWITCHES = {
   materialRequests: ['materials'],
   locationPoints: ['time'],
   locationConsents: ['time'],
+  vendors: ['purchasing'],
+  bills: ['purchasing'],
+  purchaseOrders: ['purchasing'],
 };
 
 /** The switch that blocks a write to `coll`, or null when the write is allowed. */

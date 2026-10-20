@@ -4,10 +4,12 @@
 // office once a day at the company's time (the server worker, services/materials.js) or straight
 // away with "Send now", as one list grouped by job: in the bell, by email and on this page.
 // The office marks them ordered or fulfilled, takes them from stock (a stock move onto the job),
-// rolls them into a purchase list, and sees what is already in the vans. Crew never see prices.
+// rolls them into a purchase list or a purchase order (modules/purchasing.js), and sees what is
+// already in the vans. Crew never see prices.
 import { STATUS_LABEL, requestSettings, nextSendAt, fmtSendAt, groupByJob, purchaseList, stockByLocation, stockHint, matchItems, requestName, qtyText } from '../lib/materials.js';
 import { switchOn } from '../lib/modules.js';
 import { applyMove } from './inventory.js';
+import { canPurchase, purchaseOrderSheet, requestOrders } from './purchasing.js';
 import { uid } from '../store.js';
 
 const TABS = [
@@ -32,6 +34,8 @@ export default {
     // Office and managers with money permissions see costs; the crew never do.
     const money = auth.seesMoney?.() ?? (auth.can('invoices') || auth.can('estimates'));
     const stock = () => switchOn(store.settings(), 'inventory') && auth.can('inventory');
+    // Purchase orders: office roles with Purchasing on and in the plan (never foremen or crew).
+    const purchasing = () => canPurchase(ctx);
     let tab = ctx.query.batch ? 'sent' : 'requested';
     let batch = ctx.query.batch || null;
     const selected = new Set();
@@ -196,7 +200,7 @@ export default {
         btn));
     };
 
-    const row = (r, { office }) => {
+    const row = (r, { office, orders }) => {
       const it = r.itemId ? items().get(r.itemId) : null;
       const who = employees().get(r.employeeId)?.name;
       const hint = office && stock() && it ? stockHint(it, store.list('locations')) : null;
@@ -218,7 +222,7 @@ export default {
         h('span', { class: 'qty num' }, qtyText(r)),
         h('div', { class: 'grow' },
           h('div', { class: 'title' }, requestName(r, items()), r.urgent ? h('span', { class: 'mr-urgent' }, ' · urgent') : null),
-          h('div', { class: 'meta' }, [who, r.note ? `“${r.note}”` : null, ui.fmtDateTime(r.createdAt), office ? null : STATUS_LABEL[st]].filter(Boolean).join(' · ')),
+          h('div', { class: 'meta' }, [who, r.note ? `“${r.note}”` : null, ui.fmtDateTime(r.createdAt), office ? null : STATUS_LABEL[st], orders?.get(r.id) ? `on ${orders.get(r.id)}` : null].filter(Boolean).join(' · ')),
           hint ? h('div', { class: 'mr-stock' }, hint) : null,
           office && money && it?.costCents != null ? h('div', { class: 'meta' }, `${ui.fmtMoney(it.costCents)} each at cost`) : null),
         h('div', { class: 'mr-actions' }, actions));
@@ -234,7 +238,8 @@ export default {
         h('span', { class: 'muted grow' }, selected.size ? `${list.length} selected` : `All ${list.length} in this list`),
         tab !== 'ordered' ? ui.button('Mark ordered', { size: 'sm', icon: 'check', onClick: () => { markOrdered(list); selected.clear(); } }) : null,
         ui.button('Mark fulfilled', { size: 'sm', onClick: () => { markFulfilled(list); selected.clear(); } }),
-        ui.button('Purchase list', { size: 'sm', icon: 'list', onClick: () => openPurchaseList(list) })));
+        ui.button('Purchase list', { size: 'sm', icon: 'list', onClick: () => openPurchaseList(list) }),
+        purchasing() && ['requested', 'sent'].includes(tab) ? ui.button('Create purchase order', { size: 'sm', icon: 'file-text', onClick: () => purchaseOrderSheet(ctx, list, { onDone: () => { selected.clear(); draw(); } }) }) : null));
     };
 
     const draw = () => {
@@ -261,11 +266,12 @@ export default {
           text: tab === 'requested' ? 'Requests from the crew collect here until the daily send.' : 'Requests move here as the office handles them.' }));
         return;
       }
+      const orders = purchasing() ? requestOrders(store) : null;
       for (const g of groupByJob(current, jobs())) {
         host.append(h('section', { class: 'mr-job', dataset: { job: g.jobId || '' } },
           h('div', { class: 'mr-job-head' }, h('h3', null, g.jobId ? h('a', { href: `#/jobs/${g.jobId}` }, g.label) : g.label), g.address ? h('span', { class: 'muted' }, g.address) : null,
             h('span', { class: 'grow' }), h('span', { class: 'muted' }, `${g.requests.length} item${g.requests.length === 1 ? '' : 's'}`)),
-          h('div', { class: 'list card flat', style: { padding: 0 } }, g.requests.map((r) => row(r, { office: true })))));
+          h('div', { class: 'list card flat', style: { padding: 0 } }, g.requests.map((r) => row(r, { office: true, orders })))));
       }
     };
 
@@ -279,7 +285,7 @@ export default {
     // Redraw on changes, but not under an open sheet or while typing in the form.
     let t = null;
     const off = store.on('*', (e) => {
-      if (!['materialRequests', 'items', 'jobs', 'locations', 'settings'].includes(e.coll)) return;
+      if (!['materialRequests', 'items', 'jobs', 'locations', 'settings', 'purchaseOrders'].includes(e.coll)) return;
       clearTimeout(t);
       t = setTimeout(() => { if (!document.querySelector('.sheet, .dialog')) draw(); }, 120);
     });
