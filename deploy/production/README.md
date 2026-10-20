@@ -212,6 +212,13 @@ sudo systemctl start fishtape-production-host-status.service fishtape-production
 cat /var/lib/fishtape-production/status/last-backup.json
 ```
 
+`host-status.sh` (every 15 minutes) also records `probes` in `host-status.json`: the HTTP code (0 = no
+answer in 5 s) of https://app.fishtapehq.com/, …/api/readyz, https://hq.fishtapehq.com/api/healthz,
+https://fishtapehq.com/ and https://status.fishtapehq.com/. The worker's 5-minute status job reads the
+file (`HOST_STATUS_FILE`, through the read-only status mount) and, while it is under 20 minutes old, a
+failing app / api / hq probe marks that component down on the public status page for that run
+(`docs/runbooks/status-page.md`). Codes only: no bodies, headers or secrets are stored.
+
 The backup runs nightly at 02:47 (staging's at 03:17). Then prove a restore from your computer:
 
 ```bash

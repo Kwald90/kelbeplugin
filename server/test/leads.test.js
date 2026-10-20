@@ -69,6 +69,28 @@ describe('Enterprise lead form', { skip }, () => {
     assert.equal(JSON.parse(limited.body).error.code, 'rate_limited');
   });
 
+  test('services-page and contact-form leads store their source and name the service in the email', async () => {
+    const r = await post({ ...PII, email: 'svc@shop.example', service: 'data-import' }, '203.0.113.60');
+    assert.equal(r.statusCode, 202, r.body);
+    const lead = (await t.superPool.query("SELECT id, source FROM hq_leads WHERE email = 'svc@shop.example'")).rows[0];
+    assert.equal(lead.source, 'svc-data-import');
+    const mail = (await t.superPool.query('SELECT subject, text_body FROM email_outbox WHERE text_body LIKE $1', [`%${lead.id}%`])).rows[0];
+    assert.match(mail.subject, /^New lead \(Data import\): Big Shop Electric/);
+    assert.match(mail.text_body, /asked about Data import \(services\)/);
+    for (const s of [PII.phone, PII.name]) assert.ok(!mail.text_body.includes(s));
+
+    assert.equal((await post({ ...PII, email: 'contact@shop.example', service: 'contact' }, '203.0.113.61')).statusCode, 202);
+    assert.equal((await t.superPool.query("SELECT source FROM hq_leads WHERE email = 'contact@shop.example'")).rows[0].source, 'svc-contact');
+    assert.equal((await post({ ...PII, email: 'plain@shop.example', service: '' }, '203.0.113.62')).statusCode, 202);
+    assert.equal((await t.superPool.query("SELECT source FROM hq_leads WHERE email = 'plain@shop.example'")).rows[0].source, 'pricing');
+
+    const bad = await post({ ...PII, email: 'bad@shop.example', service: 'free-pizza' }, '203.0.113.63');
+    assert.equal(bad.statusCode, 400);
+    assert.equal(JSON.parse(bad.body).error.code, 'validation_failed');
+    assert.ok(!bad.body.includes('free-pizza'));
+    assert.equal((await t.superPool.query("SELECT count(*)::int AS n FROM hq_leads WHERE email = 'bad@shop.example'")).rows[0].n, 0);
+  });
+
   test('browsers need the CSRF header', async () => {
     const r = await app.inject({ method: 'POST', url: URL, headers: { 'content-type': 'application/json' }, payload: JSON.stringify(PII), remoteAddress: '192.0.2.50' });
     assert.equal(r.statusCode, 403);

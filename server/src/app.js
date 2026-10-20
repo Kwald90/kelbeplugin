@@ -35,6 +35,7 @@ import hqHelpRoutes from './routes/hq-help.js';
 import hqMailRoutes from './routes/hq-mail.js';
 import mailWebhookRoutes from './routes/mail-webhooks.js';
 import promotionRoutes from './routes/promotions.js';
+import hqStatusRoutes from './routes/hq-status.js';
 import authRoutes from './routes/v1/auth.js';
 import recordRoutes from './routes/v1/records.js';
 import syncRoutes from './routes/v1/sync.js';
@@ -219,6 +220,7 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(hqMailRoutes, deps);
   await app.register(mailWebhookRoutes, deps);
   await app.register(promotionRoutes, deps);
+  await app.register(hqStatusRoutes, deps);
 
   app.get('/api/v1/openapi.json', { config: { auth: 'public' }, schema: { hide: true } }, async () => app.swagger());
 

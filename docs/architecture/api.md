@@ -224,3 +224,27 @@ hold fewer than `limit` changes.
 | `GET /api/hq/tenants/{id}/audit/verify` | HQ staff | checks that company's audit hash chain; writes an `hq.audit_verify` event into it |
 
 None of the public endpoints say anything about tenants or users.
+
+## Public service status
+
+The status page (status.fishtapehq.com, `site/status.html`) reads these. They are part of the
+status site, not the developer API, so they are left out of `openapi.json`. Routes:
+`server/src/routes/hq-status.js`; rules: `server/src/services/status-page.js`; operations:
+[docs/runbooks/status-page.md](../runbooks/status-page.md).
+
+| path | auth | answer |
+| --- | --- | --- |
+| `GET /api/v1/public/status` | public; `Cache-Control: public, max-age=30`, ETag (304) | `{ generatedAt, overall: operational\|degraded\|outage\|maintenance\|unknown, components: [{ id, name, status, checkedAt }], uptime: { days: 90, from, to, byComponent: { <id>: [90 × { date, pct, checks, outages, degraded }] }, pct: { <id> } }, notices: { active, upcoming, recent }, subscribe: { enabled } }`. Component ids: `app`, `api`, `hq`, `signin`, `email`, `payments`. A component not checked in the last 20 minutes is `unknown`. Notices are published ones only: `{ id, kind, title, impact, status, components, startsAt, endsAt, resolvedAt, createdAt, updatedAt, updates: [{ status, body, at }] }` (newest update first). |
+| `POST /api/v1/public/status/subscribe` | public; `X-Fishtape: 1`; 5 per IP per hour | `{ email, website? }` → always 202 (`website` is a honeypot). 404 `subscriptions_off` until HQ turns subscriptions on. Emails a confirm link `STATUS_PUBLIC_URL#confirm=<token>` (7 days). |
+| `POST /api/v1/public/status/confirm` | public; `X-Fishtape: 1` | `{ token }` → 200 `{ ok: true }` or 400 `invalid_token` |
+| `POST /api/v1/public/status/unsubscribe` | public; `X-Fishtape: 1` | `{ token }` from a notice email's `#unsubscribe=` link → always 200 |
+| `GET /api/hq/status-notices` | HQ staff | every notice (drafts too) with its timeline, the components now, 90-day uptime per component, subscriber counts, `settings.subscribeEnabled` |
+| `POST /api/hq/status-notices` | HQ admin; audited | `{ kind, title, impact?, components?, status?, published?, startsAt?, endsAt?, update?, notify? }` → 201 |
+| `PATCH /api/hq/status-notices/{id}` | HQ admin; audited | any of `title, impact, components, status, published, startsAt, endsAt, notify` (resolved / completed sets `resolvedAt`; `notify` emails subscribers when this publishes it) |
+| `POST /api/hq/status-notices/{id}/updates` | HQ admin; audited | `{ status, body, notify? }` → 201; adds a timeline entry and sets the notice status |
+| `DELETE /api/hq/status-notices/{id}` | HQ admin; audited | 204 |
+| `PUT /api/hq/status-settings` | HQ admin; audited | `{ subscribeEnabled }` (off by default) |
+
+`POST /api/v1/public/enterprise-leads` also takes an optional `service`
+(`setup-integrations`, `data-import`, `price-book`, `crew-training`, `plan-templates`, `enterprise`,
+`contact`): the lead is stored with source `svc-<service>` instead of `pricing`.

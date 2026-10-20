@@ -78,6 +78,12 @@
 .hq-lead-card .title { font-weight: 650; }
 .hq-lead-card .meta { color: var(--text-muted); font-size: var(--fs-xs); }
 
+/* status notices (public status page) */
+.hq-status-grid { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.hq-status-item { padding: var(--s3); border: 1px solid var(--border); border-radius: var(--r-md); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.hq-timeline { list-style: none; margin: 0; padding: 0 0 0 var(--s3); border-left: 2px solid var(--border); display: flex; flex-direction: column; gap: var(--s3); }
+.hq-timeline-body { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 @media (max-width: 760px) {
   .hq-logo span { display: none; }
   .hq-kv { grid-template-columns: 1fr; }

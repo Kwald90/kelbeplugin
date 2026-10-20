@@ -21,6 +21,7 @@ const PAGES = [
   { id: 'invoices', title: 'Invoices', icon: 'receipt', load: () => import('./pages/invoices.js') },
   { id: 'users', title: 'Users', icon: 'id-card', load: () => import('./pages/users.js') },
   { id: 'announcements', title: 'Announcements', icon: 'send', load: () => import('./pages/announcements.js') },
+  { id: 'status-notices', title: 'Status notices', icon: 'alert', load: () => import('./pages/status-notices.js') },
   { id: 'help', title: 'Help center', icon: 'book', load: () => import('./pages/help.js') },
   { id: 'developer', title: 'Developer', icon: 'wrench', load: () => import('./pages/developer.js') },
   { id: 'ai', title: 'AI', icon: 'star', load: () => import('./pages/ai.js') },
