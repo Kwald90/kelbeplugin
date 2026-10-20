@@ -10,7 +10,10 @@
 // The word "QBO" never reaches a screen; screens say "QuickBooks" (Intuit's branding rules).
 import { qboApi, QBO_COLLECTIONS } from './qbo-api.js';
 import { lineTaxIds, taxKey } from './qbo-export.js';
-import { KINDS } from './money.js';
+import { KINDS, keepsServerPaid, taxRoundingCents } from './money.js';
+
+// The tax-rounding rule lives in lib/money.js so every screen shows the same status (invoiceShown).
+export { keepsServerPaid, taxRoundingCents };
 import { TAX_NONE_REASONS, ratesOn, provinceName, taxComponents, treatmentsFor, fmtPct } from './tax.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -153,6 +156,11 @@ export const recordHref = (collection, id) => (COLLECTION_ROUTE[collection] ? CO
 /** Settlement payments (4.9): written only by the QuickBooks sync, shown read-only. */
 export const SETTLEMENT_LABEL = 'Credited or paid in QuickBooks';
 export const isSettlementPayment = (p) => Boolean(p) && p.method === 'credit' && p.source === 'quickbooks';
+export const DEPOSIT_LABEL = 'Deposit in QuickBooks';
+/** A QuickBooks deposit on the invoice (payment 'deposit-<invoiceId>', 4.7): also written only by the sync. */
+export const isDepositPayment = (p) => Boolean(p) && String(p.id || '').startsWith('deposit-') && (p.source === 'quickbooks' || p.reference === DEPOSIT_LABEL);
+/** Payments only the QuickBooks sync writes: shown read-only, never deleted here. */
+export const isQuickBooksPayment = (p) => isSettlementPayment(p) || isDepositPayment(p);
 
 // ---------------------------------------------------------------------------------------------
 // Who sees QuickBooks
@@ -209,6 +217,13 @@ export function errorText(e) {
   if (code === 'qbo_not_connected') return 'QuickBooks is not connected.';
   if (code === 'qbo_reconnect_needed') return 'Reconnect to QuickBooks first.';
   if (code === 'qbo_not_ready') return 'Finish setting up QuickBooks first.';
+  // 409 qbo_paused from resolve, Send now and Retry: the pause reason, and what still works.
+  if (code === 'qbo_paused') return `${PAUSE_REASON[e?.details?.pauseReason] || 'QuickBooks sync is paused.'} Sending waits until it resumes; Unlink still works.`;
+  if (code === 'qbo_pause_locked') {
+    const reason = e?.details?.pauseReason;
+    return `${PAUSE_REASON[reason] || "This pause can't be lifted here."}${reason === 'hq' ? ' Only Fishtape support can resume it.' : ''}`;
+  }
+  if (code === 'qbo_reconnect_not_allowed') return 'QuickBooks is connected and being set up; there is nothing to reconnect.';
   if (code === 'qbo_busy') return 'QuickBooks sync is busy; try again in a minute.';
   if (code === 'lookup_budget') return "Look-ups are off for the rest of the month: your company used most of this month's QuickBooks reads.";
   if (code === 'qbo_throttled') {
@@ -553,26 +568,6 @@ export const staleNoTaxReason = (doc) => Boolean(doc?.taxNoneReason) && !needsNo
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Cents of QuickBooks' own tax rounding a 'paid' set by the server may leave on this device (4.8):
- * 2 per charged rate, the sync's tolerance. The server marks such an invoice paid at the
- * QuickBooks total (meta.taxDeltaCents, which devices never see).
- */
-export function taxRoundingCents(inv) {
-  const n = (Array.isArray(inv?.taxes) ? inv.taxes : []).filter((t) => (Number(t.pct) || 0) > 0).length;
-  return 2 * Math.max(1, n);
-}
-
-/**
- * A stored 'paid' this device keeps although a cent or two is left: only the QuickBooks tax
- * rounding remains. Never promotes another status, and never counts an overpayment.
- */
-export function keepsServerPaid(inv, paidCents, totalCents) {
-  if (inv?.status !== 'paid' || !(paidCents > 0)) return false;
-  const left = totalCents - paidCents;
-  return left > 0 && left <= taxRoundingCents(inv);
-}
-
-/**
  * The status to store after payments or an edit (void is never touched). Plain arithmetic, except
  * that a 'paid' within the tax rounding is kept when this device changed no money: no payment
  * added or deleted and no change to the total (`moneyChanged` false). An edit that moves the
@@ -844,7 +839,7 @@ export function trademarkLine(ui) {
   return ui.h('p', { class: 'qbo-tm muted' }, TRADEMARK);
 }
 
-/** Load css/quickbooks.css once (index.html does not list it yet). */
+/** Make sure css/quickbooks.css is loaded (index.html links it; this covers a page cached before it did). */
 export function ensureQboStyles() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/quickbooks.css"]')) return;
   const link = document.createElement('link');

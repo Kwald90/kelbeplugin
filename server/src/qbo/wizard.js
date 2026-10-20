@@ -15,7 +15,7 @@ import { QBO_RANK, upsertOutbox } from './hooks.js';
 import { enqueueSync, loadConnection } from './connection.js';
 import { assertEpoch } from './lease.js';
 import {
-  makeRun, txWrite, getLink, insertLink, updateLink, loadRecord, ctxFor, optionOf, taxFiledThrough, monthStart, timeUp, zoneOf, loadMappings,
+  makeRun, stampPush, txWrite, getLink, insertLink, updateLink, loadRecord, ctxFor, optionOf, taxFiledThrough, monthStart, timeUp, zoneOf, loadMappings,
 } from './engine.js';
 import { processRecord, createBatch } from './push.js';
 import { createFromRemote, settle } from './pull.js';
@@ -413,6 +413,14 @@ const PHASES = [
 export async function apply(deps, tenantId, { epoch, budgetMs } = {}) {
   const run = await makeRun(deps, tenantId, { epoch, purpose: 'sync', ignoreBrake: true, budgetMs });
   if (!run) throw new ApiError(409, 'qbo_not_connected', 'QuickBooks is not connected.');
+  try {
+    return await applyChunk(run, tenantId);
+  } finally {
+    await stampPush(run);
+  }
+}
+
+async function applyChunk(run, tenantId) {
   const setup = run.conn.setup || {};
   if (setup.cancelRequested) { await setupProgress(run, { phase: 'cancelled', cancelRequested: false, finishedAt: new Date().toISOString() }); return { phase: 'cancelled', finished: true }; }
   const shadowLinked = setup.phase === 'shadow_linked';

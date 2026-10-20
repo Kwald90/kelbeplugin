@@ -4,7 +4,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isNativeApp, safeFileName, toBase64, isShareCancel, saveAndShare, getSecret, setSecret, removeSecret, nativePrint, installNativePrint, openExternal,
+  isNativeApp, safeFileName, toBase64, isShareCancel, saveAndShare, getSecret, setSecret, removeSecret, nativePrint, installNativePrint, openExternal, closeExternal,
 } from '../js/lib/native.js';
 
 afterEach(() => { delete globalThis.Capacitor; });
@@ -103,6 +103,17 @@ test('openExternal: this tab on the web, a Safari sheet in the app (https only)'
   assert.equal(removed, 1);
   await assert.rejects(openExternal('http://example.com/pay', { win }), /Only https/);
   await assert.rejects(openExternal('javascript:alert(1)', { win }), /Only https/);
+});
+
+test('closeExternal closes the Safari sheet in the app, and does nothing on the web or when it is gone', async () => {
+  globalThis.Capacitor = undefined;
+  assert.equal(await closeExternal(), false, 'web: nothing to close');
+  let closed = 0;
+  globalThis.Capacitor = { isNativePlatform: () => true, Plugins: { Browser: { close: async () => { closed++; } } } };
+  assert.equal(await closeExternal(), true);
+  assert.equal(closed, 1);
+  globalThis.Capacitor = { isNativePlatform: () => true, Plugins: { Browser: { close: async () => { throw new Error('No active window to close'); } } } };
+  assert.equal(await closeExternal(), false, 'already closed: no error');
 });
 
 test('Keychain helpers call the FishtapeKeychain plugin', async () => {

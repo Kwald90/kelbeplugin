@@ -13,7 +13,7 @@ import { qboApi, query } from '../js/lib/qbo-api.js';
 import { taxComponents } from '../js/lib/tax.js';
 import { store } from '../js/store.js';
 import { enqueue } from '../js/sync.js';
-import { docTotals } from '../js/lib/money.js';
+import { docTotals, invoiceShown } from '../js/lib/money.js';
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 const ENT = (features) => ({ plan: 'pro', features });
@@ -341,6 +341,15 @@ describe('tax situations, code fits and "Why no tax?" (4.8, 8.4, 8.5)', () => {
     assert.equal(Q.isSettlementPayment({ method: 'cheque' }), false);
     assert.equal(Q.SETTLEMENT_LABEL, 'Credited or paid in QuickBooks');
   });
+
+  test('a QuickBooks deposit (payment deposit-<invoiceId>) is read-only too; a payment typed here is not', () => {
+    const dep = { id: 'deposit-inv-3001', invoiceId: 'inv-3001', method: 'transfer', source: 'quickbooks', reference: 'Deposit in QuickBooks', amountCents: 20000 };
+    assert.equal(Q.isDepositPayment(dep), true);
+    assert.equal(Q.isQuickBooksPayment(dep), true);
+    assert.equal(Q.isQuickBooksPayment({ id: 'credit-inv-3001', method: 'credit', source: 'quickbooks' }), true);
+    assert.equal(Q.isQuickBooksPayment({ id: 'pay-1', method: 'transfer', reference: 'Deposit' }), false);
+    assert.equal(Q.isDepositPayment({ id: 'deposit-x', method: 'cheque' }), false, 'the id alone is not enough');
+  });
 });
 
 describe('wizard and mappings helpers (6, 8.3, 8.4)', () => {
@@ -510,6 +519,26 @@ describe('invoice status with QuickBooks\' tax rounding (4.8, 4.9)', () => {
     assert.equal(Q.keepsServerPaid(mb({ status: 'paid' }), 0, 2), false, 'nothing paid: never kept');
     assert.equal(Q.keepsServerPaid(mb({ status: 'paid' }), 112001, 112000), false, 'overpaid is plain paid');
     assert.equal(Q.nextInvoiceStatus(null, 0, 0), null);
+  });
+
+  test('every screen shows the same status and balance: a server-paid invoice with a cent left is paid at $0.00', () => {
+    // INV-3001 is past due; the server marked it paid at the QuickBooks total, $0.01 under Fishtape's.
+    const payments = [{ id: 'credit-inv-1', invoiceId: 'inv-1', amountCents: 111999, method: 'credit', source: 'quickbooks' }];
+    const fake = { list: (c, f = () => true) => (c === 'payments' ? payments.filter(f) : []) };
+    const past = { dueDate: '2026-01-31' };
+    assert.deepEqual(invoiceShown(fake, mb({ status: 'paid', ...past })), { status: 'paid', balanceCents: 0 });
+    assert.deepEqual(invoiceShown(fake, mb({ status: 'sent', ...past })), { status: 'overdue', balanceCents: 1 }, 'not marked paid: the cent is owed');
+    assert.deepEqual(invoiceShown(fake, mb({ status: 'void' })), { status: 'void', balanceCents: 0 });
+    payments[0].amountCents = 50000;
+    assert.deepEqual(invoiceShown(fake, mb({ status: 'paid', ...past })), { status: 'overdue', balanceCents: 62000 }, 'more than the rounding is money owed');
+  });
+
+  test('the dashboard, client, job and invoice screens use invoiceShown, never the raw arithmetic', () => {
+    for (const f of ['dashboard', 'clients', 'jobs', 'invoices']) {
+      const src = read(`../js/modules/${f}.js`);
+      assert.doesNotMatch(src, /\binvoice(Status|BalanceCents)\s*\(/, `${f}.js shows the raw invoiceStatus / invoiceBalanceCents`);
+      assert.match(src, /\binvoiceShown\b/, `${f}.js uses invoiceShown`);
+    }
   });
 });
 

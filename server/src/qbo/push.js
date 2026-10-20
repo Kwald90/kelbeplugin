@@ -52,9 +52,14 @@ async function claimRows(run) {
       RETURNING o.*`, [tx.tenantId, run.epoch, BATCH])).rows.sort((a, b) => a.rank - b.rank || new Date(a.enqueued_at) - new Date(b.enqueued_at)));
 }
 
+/** How long a row shadow mode has looked at waits before the next look (the dispatcher runs every minute). */
+const SHADOW_RECHECK = '1 hour';
+
 /**
  * Work the outbox until it is empty or the pass is out of time. Returns true when work is left.
- * Shadow mode looks at one batch (the rows stay for when the company goes live).
+ * Shadow mode looks at one batch (the rows stay for when the company goes live) and moves those rows'
+ * not_before an hour on, so the dispatcher does not run a pass for them every minute of the practice
+ * week. Going live makes every row due at once (7.6); a newer edit makes its row due in 20 s as usual.
  */
 export async function runPush(run) {
   for (;;) {
@@ -65,7 +70,13 @@ export async function runPush(run) {
       if (timeUp(run)) return true;
       await processRow(run, row);
     }
-    if (run.shadow) return false;
+    if (run.shadow) {
+      await txWrite(run, (tx) => tx.query(
+        `UPDATE qbo_outbox SET not_before = now() + interval '${SHADOW_RECHECK}'
+          WHERE tenant_id = $1 AND not_before <= now() AND (collection, record_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
+        [run.tenantId, rows.map((r) => r.collection), rows.map((r) => r.record_id)]));
+      return false;
+    }
   }
 }
 

@@ -97,6 +97,40 @@ export function invoiceStatus(store, inv) {
   return invoicePaidCents(store, inv.id) > 0 ? 'partial' : inv.status;
 }
 
+/**
+ * Cents of QuickBooks' own tax rounding a 'paid' set by the server may leave on this device (4.8):
+ * 2 per charged rate, the sync's tolerance. The server marks such an invoice paid at the
+ * QuickBooks total (meta.taxDeltaCents, which devices never see).
+ */
+export function taxRoundingCents(inv) {
+  const n = (Array.isArray(inv?.taxes) ? inv.taxes : []).filter((t) => (Number(t.pct) || 0) > 0).length;
+  return 2 * Math.max(1, n);
+}
+
+/**
+ * A stored 'paid' this device keeps although a cent or two is left: only the QuickBooks tax
+ * rounding remains. Never promotes another status, and never counts an overpayment.
+ */
+export function keepsServerPaid(inv, paidCents, totalCents) {
+  if (inv?.status !== 'paid' || !(paidCents > 0)) return false;
+  const left = totalCents - paidCents;
+  return left > 0 && left <= taxRoundingCents(inv);
+}
+
+/**
+ * Status and balance as every screen shows them (invoice list and detail, client and job tabs,
+ * dashboard). A 'paid' the server set at the QuickBooks total (its own tax rounding,
+ * docs/integrations/quickbooks.md 4.8) stays paid with a balance of 0, although a cent or two is
+ * left by Fishtape's arithmetic. Use this, not invoiceStatus / invoiceBalanceCents, for display.
+ */
+export function invoiceShown(store, inv) {
+  if (inv.status === 'void') return { status: 'void', balanceCents: 0 };
+  const paid = invoicePaidCents(store, inv.id);
+  const total = docTotals(inv).totalCents;
+  if (keepsServerPaid(inv, paid, total)) return { status: 'paid', balanceCents: 0 };
+  return { status: invoiceStatus(store, inv), balanceCents: total - paid };
+}
+
 /** Hours worked on a time entry (open entries count up to now). */
 export function entryHours(e, now = new Date()) {
   if (!e.clockIn) return 0;

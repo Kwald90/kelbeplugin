@@ -8,7 +8,7 @@ import { recordLabel, writeLog } from './log.js';
 import { QboError } from './client.js';
 import { QBO_RANK, upsertOutbox } from './hooks.js';
 import {
-  makeRun, txWrite, getLink, getLinkById, updateLink, loadRecord, system, reconcile, tripBrake, BrakeError, PassStop, ctxFor,
+  makeRun, stampPush, txWrite, getLink, getLinkById, updateLink, loadRecord, system, reconcile, tripBrake, BrakeError, PassStop, ctxFor,
   linksByRemote, voidLocalInvoice, assertActive,
 } from './engine.js';
 import { processRecord, pushDelete } from './push.js';
@@ -136,8 +136,11 @@ const CHOICES = {
  * passes its epoch. Writes the audit event qbo.conflict.resolve and a log row.
  * @returns {Promise<object>} the conflict (resolved)
  */
-export async function resolveConflict(deps, tenantId, conflictId, { choice, fields = null, recordId = null }, who, { epoch } = {}) {
-  const run = await makeRun(deps, tenantId, { epoch, purpose: 'sync' });
+export async function resolveConflict(deps, tenantId, conflictId, body, who, o = {}) {
+  const run = await makeRun(deps, tenantId, { epoch: o.epoch, purpose: 'sync' });
+  try { return await resolveRun(run, deps, tenantId, conflictId, body, who, o); } finally { await stampPush(run); }
+}
+async function resolveRun(run, deps, tenantId, conflictId, { choice, fields = null, recordId = null }, who, { epoch } = {}) {
   if (!run) throw new ApiError(409, 'qbo_not_connected', 'QuickBooks is not connected.');
   const c = await run.db.withTenant({ tenantId }, async (tx) => (await tx.query('SELECT * FROM qbo_conflicts WHERE tenant_id = $1 AND id = $2', [tx.tenantId, conflictId])).rows[0]);
   if (!c) throw notFound();

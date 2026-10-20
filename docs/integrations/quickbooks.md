@@ -297,9 +297,8 @@ OAuth "connect someone else's books to my tenant" attack. So it uses a one-time 
    data: "QuickBooks is connected. Go back to Fishtape." (or the error in words, from a fixed table).
    Headers: `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'`, `Cache-Control:
    no-store`. The iOS app polls `GET /api/v1/qbo/status` every 3 seconds while the browser is open (for
-   at most ten minutes) and reloads when the state changes. Closing Safari from the app needs a
-   `closeExternal()` in `electrical-app/js/lib/native.js`, which is not built (BACKLOG); the guide tells the
-   person to close it.
+   at most ten minutes) and reloads when the state changes, closing the Safari sheet with
+   `closeExternal()` (`electrical-app/js/lib/native.js`, Capacitor `Browser.close`).
 
 PKCE: Intuit's pages do not document PKCE for confidential clients. Before W1 merges, someone reads the
 discovery document (`https://developer.api.intuit.com/.well-known/openid_configuration`) by hand once
@@ -2216,7 +2215,11 @@ re-queues blocked links.
   outcome `shadow`, action, collection, record and the changed field names; links, snapshots and
   cursors do not move (the outbox rows stay, so switching to live sends them). The wizard in shadow
   applies phase 1 (links) only (6.4); switching to live runs the remaining phases. Recommended for a
-  first tenant's first week (checklist step 12).
+  first tenant's first week (checklist step 12). Shadow is paced like a live week: a pass moves the
+  `not_before` of the outbox rows it looked at one hour on (a newer edit makes its row due in 20 s;
+  going live makes every row due at once), and a shadow pull records `last_pull_at` and clears
+  `dirty_at` without moving the cursor, so the one-minute dispatcher does not queue a pass and a CDC
+  for the tenant every minute.
 
 ### 5.9 Webhook ingress
 
@@ -3885,6 +3888,14 @@ the contract. Items already folded into the sections above are listed here once,
   `apply_queued` or `applying`; the wizard sets `setup.phase = 'done'` when apply finishes.
 - 6.1, 13.10 shadow mode: due outbox rows are read without being claimed; a would-change log row is
   written at most once a day for the same change, because cursors never move in shadow.
+- 5.8 shadow pacing (**fixed** in the PWA integration pass, found by the e2e against the real worker):
+  shadow passes never set `last_pull_at` or cleared `dirty_at`, and their outbox rows stayed due, so the
+  dispatcher queued a `qbo_sync` and a `qbo_cdc` every minute for the whole practice week. Rows looked
+  at now wait an hour and the shadow pull records `last_pull_at`. Unprocessed `qbo_inbox` rows
+  (TimeActivity, merges) still stay due in shadow (open item).
+- 7.2 `lastPushAt` (**fixed**): nothing set `qbo_connections.last_push_at`, so the overview always
+  said "Last to QuickBooks: —". The client notes its last successful Core call; `syncTenant`, the
+  wizard's apply, Send now / Retry and conflict resolution stamp it when they end.
 - 7.2 Status: `takeoverOffer` always, `setup.errors` and `setup.finishedAt`, `brake: { count }`,
   `features.taxFiledThrough` and `features.province` (**fixed**: `finishedAt`, `taxFiledThrough` and
   `province` were not sent, so the PWA polled a finished scan forever and could not show the filed date)
@@ -3919,20 +3930,27 @@ the contract. Items already folded into the sections above are listed here once,
   are left to the server's `needs_review` (6.4).
 - 8.5: `qboBadge(ctx, collection, recordId, opts)` with `opts { detail, record, cache }`; it returns null
   for people without QuickBooks access and an empty host for permitted users whose company is not
-  connected. Purchasing screens (bills, vendors, purchase orders) do not mount badges yet, and Mark paid /
-  Mark unpaid on bills is not hidden when connected (BACKLOG; the signal is `GET /qbo/status` state
-  `active` through `connectionActive(await qboStatusCache.status())`).
+  connected. The purchasing screens mount it on bills, suppliers and purchase orders (lists and
+  detail), and a bill hides Mark paid / Mark unpaid when `connectionActive(await qboStatusCache.status())`
+  (people who cannot see QuickBooks still see the buttons; the server's pull decides `paid`).
 - 8.6: "Look up in QuickBooks" sits on the draft invoice and draft estimate detail screens (the app has
   no separate new-document screen).
-- `css/quickbooks.css` and `css/purchasing.css` are added at runtime (`ensureQboStyles`, `ensureStyles`),
-  because `electrical-app/index.html` and `sw.js` have no owner; they are not precached (BACKLOG).
+- `css/quickbooks.css` and `css/purchasing.css` are linked from `index.html` (cached on first use by
+  `sw.js`, like the other stylesheets); `ensureQboStyles` / `ensureStyles` remain for a page cached
+  before the links.
 - Invoice status with a QuickBooks tax delta (4.9, W6 handoff): the server's status wins. On the server
   `refreshInvoiceStatus` uses `amountDueCents` (adjustment included). On devices
   (`lib/qbo-ui.js` `keepsServerPaid` / `nextInvoiceStatus`), every payment added or deleted and every
   edit that changes the total uses plain arithmetic; a stored `paid` with at most 2 cents per charged rate
-  left is kept only when the device changed no money. The invoice list and detail use
-  `invoiceShown(store, inv)`; the dashboard, client and job screens still use `invoiceStatus` from
-  `lib/money.js`, so the 1-cent case can show as owing there (BACKLOG).
+  left is kept only when the device changed no money. Every screen that shows an invoice's status or
+  balance (invoice list and detail, the record-payment default, the printed pay link, the client and job
+  tabs, the dashboard's outstanding total and overdue alerts) uses `invoiceShown(store, inv)` from
+  `lib/money.js` (the tolerance rule, `keepsServerPaid`, lives there too). A path that changes an
+  invoice's lines without recomputing its status (an import, the assistant, an older app) can still hide
+  up to 2 cents per charged rate on a stored `paid`; that is the device-side rule's known limit.
+- Payments only the sync writes are read-only on the invoice: the settlement payment
+  (`credit-<invoiceId>`, method `credit`, source `quickbooks`) and a QuickBooks deposit
+  (`deposit-<invoiceId>`, now also source `quickbooks`); deleting an invoice with either is refused.
 - Editors send only the fields typed (5.10, folded in). A field changed on both sides at the same
   moment takes the other side's value with a toast; the invoice and estimate screens redraw through
   `ctx.route()` and keep their scroll position.
@@ -3947,9 +3965,18 @@ the contract. Items already folded into the sections above are listed here once,
 - Settings: the numbering form keeps the other `nextNumbers`, adds "Next purchase order number", and
   never lowers a counter (`Math.max` of the form and the stored value). Deleting an invoice that has a
   settlement payment is refused ("void it instead").
-- 11.5: `electrical-app/tests/e2e/quickbooks.e2e.mjs` still answers the wizard, mappings, record-state,
-  conflict, log and look-up routes with an in-memory stand-in shaped like section 7; connect, disconnect,
-  pause and the webhook are real. Passing `/api/v1/qbo` through to the real routes is open (BACKLOG).
+- 11.5: `electrical-app/tests/e2e/quickbooks.e2e.mjs` runs against the real API (every `/api/v1/qbo`
+  route) and the real QuickBooks worker jobs in-process (dispatcher, sync, reference read, scan, apply,
+  CDC, check) against the fake QuickBooks in HTTP mode; QuickBooks-side changes are made in the fake and
+  arrive by a signed webhook. It also shoots the overview, Review, mappings, a conflict, an invoice with
+  its badge and a bill at 390 and 1280 px and fails on sideways scroll.
+- Errors: 409 `qbo_paused` (resolve, Send now, Retry) shows the pause reason and says Unlink still
+  works; 409 `qbo_pause_locked` shows the reason (support only for `hq`); 409
+  `qbo_reconnect_not_allowed` has its own sentence. An origin review explains "Don't send it: Fishtape
+  goes back to the QuickBooks copy; the change is not sent." The mappings and wizard saves send a cleared
+  option in `remove` only, never in both `set` and `remove`.
+- iOS connect: `lib/native.js` `closeExternal()` closes the Safari sheet when the status poll sees the
+  connection change (2.2 step 4).
 
 ### 15.5 Purchasing (sections 3.5, 4.10, 8.9; W5)
 
@@ -3957,7 +3984,7 @@ the contract. Items already folded into the sections above are listed here once,
   receipt never syncs (4.1: created in QBO when status leaves draft).
 - Bills can be marked paid or unpaid by hand, because purchasing works without QuickBooks. With
   QuickBooks connected, a bill's paid status comes from QBO only (pull); Fishtape never pushes a payment.
-  Hiding the buttons when connected is open (15.4).
+  The buttons are hidden when connected (15.4).
 - Refunds store negative `unitCents`, `amountCents` and tax cents with a positive `qty` (the bill line
   `qty` allows −1e6..1e6; PO line `qty` is at least 0). The pull mapper gives a `Credit: true` Purchase the
   same shape. Bill money fields are bounded to ±1e11 cents and PO `unitCents` to 0..1e11.

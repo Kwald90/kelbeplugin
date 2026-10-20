@@ -1052,6 +1052,25 @@ export async function syncTenant(deps, tenantId, o = {}) {
   const run = await makeRun(deps, tenantId, { epoch: o.epoch, budgetMs: o.budgetMs, purpose: o.purpose || 'sync', workerId: o.workerId });
   const empty = { pushed: 0, pulled: 0, conflicts: 0, errors: 0, shadow: 0 };
   if (!run) return { ...empty, skipped: 'not_connected' };
+  try {
+    return await syncPass(run, deps, tenantId, o, empty);
+  } finally {
+    await stampPush(run);
+  }
+}
+
+/**
+ * Record when this run last wrote to QuickBooks (Status lastPushAt, HQ health). Every write goes
+ * through the client, which notes its last successful Core call; a failure here never fails the pass.
+ */
+export async function stampPush(run) {
+  const at = run?.client?.wroteAt;
+  if (!at) return;
+  await run.db.withTenant({ tenantId: run.tenantId }, (tx) => tx.query(
+    'UPDATE qbo_connections SET last_push_at = GREATEST(COALESCE(last_push_at, $2), $2) WHERE tenant_id = $1', [run.tenantId, at]), { write: true }).catch(() => {});
+}
+
+async function syncPass(run, deps, tenantId, o, empty) {
   if (run.conn.state !== 'active') return { ...empty, skipped: run.conn.state };
   // Out of practice mode with the wizard's remaining phases still to run: they go first (6.4).
   if (!run.shadow && ['shadow_linked', 'apply_queued', 'applying'].includes(run.conn.setup?.phase)) return { ...empty, skipped: 'setup' };
@@ -1156,8 +1175,11 @@ export async function reconcileLink(deps, tenantId, linkId, { remote = null, for
  * Push one record now (Send now, Retry, Send as new). `asNew` replaces an unlinked tombstone with a
  * fresh create. Takes no lease itself: the caller holds it.
  */
-export async function pushRecord(deps, tenantId, collection, id, { force = false, asNew = false, epoch } = {}) {
-  const run = await makeRun(deps, tenantId, { epoch, purpose: 'sync' });
+export async function pushRecord(deps, tenantId, collection, id, o = {}) {
+  const run = await makeRun(deps, tenantId, { epoch: o.epoch, purpose: 'sync' });
+  try { return await pushRecordRun(run, deps, tenantId, collection, id, o); } finally { await stampPush(run); }
+}
+async function pushRecordRun(run, deps, tenantId, collection, id, { force = false, asNew = false, epoch } = {}) {
   assertActive(run);
   if (asNew) {
     await txWrite(run, async (tx) => {

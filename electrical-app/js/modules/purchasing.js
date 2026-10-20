@@ -19,6 +19,7 @@ import { PROVINCES } from '../lib/tax.js';
 import { pickItems } from '../lib/doc-view.js';
 import { downscaleImage } from '../lib/safety-capture.js';
 import { requestName, qtyText } from '../lib/materials.js';
+import { qboBadge, allowedFor, qboStatusCache, connectionActive } from '../lib/qbo-ui.js';
 
 // A shopping cart (icons.js has none).
 const CART = '<circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h3l2.6 12.1a1 1 0 001 .9h9.7a1 1 0 001-.8L21 7H6"/>';
@@ -44,8 +45,8 @@ export default {
 };
 
 /**
- * The module's stylesheet. index.html links the app's stylesheets; until it lists this one, the
- * first purchasing screen adds it (same origin, so the CSP and the service worker treat it alike).
+ * The module's stylesheet. index.html links it; this covers an index.html cached before it did
+ * (same origin, so the CSP and the service worker treat it alike).
  */
 export function ensureStyles() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/purchasing.css"]')) return;
@@ -210,7 +211,7 @@ function renderBills(root, ctx) {
           { key: 'due', label: 'Due', render: (b) => (b.kind === 'bill' ? ui.fmtDate(b.dueDate) : '—'), sort: (b) => b.dueDate || '' },
           { key: 'total', label: 'Total', align: 'right', render: (b) => money(billTotals(b).totalCents), sort: (b) => billTotals(b).totalCents },
           { key: 'status', label: 'Status', render: (b) => h('span', { class: 'pu-status' }, statusBadge(ui, billStatusOf(b, today), BILL_STATUS_LABEL),
-            billTotals(b).mismatch ? ui.badge("Doesn't add up", 'warning') : null), sort: (b) => billStatusOf(b, today) },
+            billTotals(b).mismatch ? ui.badge("Doesn't add up", 'warning') : null, qboBadge(ctx, 'bills', b.id, { record: b })), sort: (b) => billStatusOf(b, today) },
         ],
         rows,
         onRowClick: (b) => nav('#/purchasing/bills/' + b.id),
@@ -436,6 +437,9 @@ function renderBill(root, ctx, id) {
 
   // ---- status ----
   const statusHost = h('div', { class: 'stack' });
+  // With QuickBooks connected a bill's paid status comes only from QuickBooks (4.10): no Mark paid.
+  let qboPaid = false;
+  if (allowedFor(ctx)) qboStatusCache.status().then((s) => { if (connectionActive(s)) { qboPaid = true; drawStatus(); } }).catch(() => {});
   const setStatus = (status, extra = {}) => {
     ed.write({ status, ...extra }, { summary: `${billLabel(doc, vendorMap(store))} → ${status}` });
     drawAll();
@@ -450,18 +454,20 @@ function renderBill(root, ctx, id) {
       ui.toast(doc.kind === 'receipt' ? 'Receipt saved' : 'Bill entered: it is on the To pay list', 'success');
     };
     h(ui.clear(statusHost), null,
-      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), statusBadge(ui, st, BILL_STATUS_LABEL)),
+      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), qboBadge(ctx, 'bills', id, { record: doc }), statusBadge(ui, st, BILL_STATUS_LABEL)),
       problems.length && doc.status !== 'void' ? h('ul', { class: 'pu-problems' }, problems.map((p) => h('li', { class: p.block ? 'block' : 'warn', dataset: { problem: p.code } }, p.message))) : null,
       h('div', { class: 'row pu-actions' },
         doc.status === 'draft' ? ui.button(doc.kind === 'receipt' ? 'Save receipt' : 'Enter bill', { size: 'sm', variant: 'primary', icon: 'check', onClick: enter }) : null,
-        doc.kind === 'bill' && doc.status === 'open' ? ui.button('Mark paid', { size: 'sm', icon: 'dollar', onClick: () => { setStatus('paid'); ui.toast('Marked paid', 'success'); } }) : null,
-        doc.kind === 'bill' && doc.status === 'paid' ? ui.button('Mark unpaid', { size: 'sm', onClick: () => setStatus('open') }) : null,
+        doc.kind === 'bill' && doc.status === 'open' && !qboPaid ? ui.button('Mark paid', { size: 'sm', icon: 'dollar', onClick: () => { setStatus('paid'); ui.toast('Marked paid', 'success'); } }) : null,
+        doc.kind === 'bill' && doc.status === 'paid' && !qboPaid ? ui.button('Mark unpaid', { size: 'sm', onClick: () => setStatus('open') }) : null,
         doc.status !== 'void' && doc.status !== 'draft' ? ui.button('Void', { size: 'sm', variant: 'ghost danger', onClick: async () => {
           if (!(await ui.confirmDialog(`Void this ${doc.kind}? It stays on record but no longer counts.`, { okLabel: 'Void' }))) return;
           setStatus('void');
         } }) : null,
         doc.status === 'void' ? ui.button('Restore', { size: 'sm', onClick: () => setStatus('draft') }) : null),
-      doc.kind === 'bill' && ['open', 'paid'].includes(doc.status) ? h('p', { class: 'muted pu-note' }, 'With QuickBooks connected, paying the bill there marks it paid here.') : null,
+      doc.kind === 'bill' && ['open', 'paid'].includes(doc.status) ? h('p', { class: 'muted pu-note', dataset: qboPaid ? { qboPaid: '1' } : {} }, qboPaid
+        ? 'Pay this bill in QuickBooks: it is marked paid here when the payment comes back.'
+        : 'With QuickBooks connected, paying the bill there marks it paid here.') : null,
       doc.purchaseOrderId && store.get('purchaseOrders', doc.purchaseOrderId) ? ui.button(`Purchase order ${store.get('purchaseOrders', doc.purchaseOrderId).number}`, { size: 'sm', variant: 'ghost', icon: 'file-text', href: '#/purchasing/orders/' + doc.purchaseOrderId }) : null,
       doc.jobId ? ui.button('Open job', { size: 'sm', variant: 'ghost', icon: 'briefcase', href: '#/jobs/' + doc.jobId }) : null,
       (doc.materialRequestIds || []).length ? h('a', { class: 'muted', href: '#/materials' }, `Covers ${doc.materialRequestIds.length} material request${doc.materialRequestIds.length === 1 ? '' : 's'}`) : null);
@@ -623,7 +629,7 @@ function renderVendors(root, ctx) {
     host.append(
       ui.table({
         columns: [
-          { key: 'name', label: 'Supplier', render: (v) => h('span', null, vendorName(v), vendorActive(v) ? null : h('span', { class: 'muted' }, ' (inactive)')), sort: (v) => vendorName(v) },
+          { key: 'name', label: 'Supplier', render: (v) => h('span', { class: 'row-inline' }, vendorName(v), vendorActive(v) ? null : h('span', { class: 'muted' }, ' (inactive)'), qboBadge(ctx, 'vendors', v.id, { record: v })), sort: (v) => vendorName(v) },
           { key: 'phone', label: 'Phone', render: (v) => v.phone || '—' },
           { key: 'email', label: 'Email', render: (v) => v.email || '—' },
           { key: 'acct', label: 'Account', render: (v) => v.accountNumber || '—' },
@@ -682,7 +688,7 @@ function renderVendor(root, ctx, id) {
   };
   const today = ui.today();
   root.append(ui.page({
-    title: vendorName(v), subtitle: h('span', null, h('a', { href: '#/purchasing/vendors' }, 'Suppliers'), owed ? ` · ${money(owed)} to pay` : ''),
+    title: vendorName(v), subtitle: h('span', { class: 'row-inline' }, h('a', { href: '#/purchasing/vendors' }, 'Suppliers'), owed ? ` · ${money(owed)} to pay` : '', qboBadge(ctx, 'vendors', id, { record: v })),
     actions: [
       ui.button('New bill', { icon: 'plus', href: `#/purchasing/bills/new?vendorId=${encodeURIComponent(id)}` }),
       ui.button('New order', { icon: 'file-text', href: `#/purchasing/orders/new?vendorId=${encodeURIComponent(id)}` }),
@@ -746,7 +752,7 @@ function renderOrders(root, ctx) {
           { key: 'expected', label: 'Needed by', render: (p) => ui.fmtDate(p.expectedDate), sort: (p) => p.expectedDate || '' },
           { key: 'total', label: 'Total', align: 'right', render: (p) => money(poTotalCents(p)), sort: (p) => poTotalCents(p) },
           { key: 'billed', label: 'Billed', align: 'right', render: (p) => { const c = poBilled(p, bills).billedCents; return c ? money(c) : '—'; } },
-          { key: 'status', label: 'Status', render: (p) => statusBadge(ui, p.status || 'draft', PO_STATUS_LABEL), sort: (p) => p.status || '' },
+          { key: 'status', label: 'Status', render: (p) => h('span', { class: 'row-inline' }, statusBadge(ui, p.status || 'draft', PO_STATUS_LABEL), qboBadge(ctx, 'purchaseOrders', p.id, { record: p })), sort: (p) => p.status || '' },
         ],
         rows,
         onRowClick: (p) => nav('#/purchasing/orders/' + p.id),
@@ -939,7 +945,7 @@ function renderOrder(root, ctx, id) {
     const place = () => { if (problems.length) { ui.toast(problems[0], 'error', 4000); return; } setStatus('open'); ui.toast(`${doc.number} placed`, 'success'); };
     h(ui.clear(sideHost), null,
       h('div', { class: 'card stack' },
-        h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), statusBadge(ui, st, PO_STATUS_LABEL)),
+        h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), qboBadge(ctx, 'purchaseOrders', doc.id, { record: doc }), statusBadge(ui, st, PO_STATUS_LABEL)),
         st === 'draft' && problems.length ? h('ul', { class: 'pu-problems' }, problems.map((p) => h('li', { class: 'block' }, p))) : null,
         h('div', { class: 'row pu-actions' },
           st === 'draft' ? ui.button('Place order', { size: 'sm', variant: 'primary', icon: 'check', onClick: place }) : null,

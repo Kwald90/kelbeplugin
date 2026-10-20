@@ -63,7 +63,15 @@ export async function runPull(run, { full = false } = {}) {
   }
   await processInbox(run);
   await pullTimeActivity(run, conn);
-  if (run.shadow) return;
+  if (run.shadow) {
+    // The cursor stays (going live reads the window again for real), but the pull ran: record when, and
+    // clear the webhook's dirty mark, so the dispatcher paces the practice week like a live one (a CDC
+    // every 6 hours, a pass per webhook) instead of a full pass every minute.
+    await txWrite(run, (tx) => tx.query(
+      `UPDATE qbo_connections SET last_pull_at = now(), dirty_at = CASE WHEN dirty_at IS NOT NULL AND dirty_at <= $2 THEN NULL ELSE dirty_at END, updated_at = now()
+        WHERE tenant_id = $1`, [run.tenantId, passStart]));
+    return;
+  }
   await txWrite(run, (tx) => tx.query(
     `UPDATE qbo_connections SET cdc_cursor = COALESCE($2, cdc_cursor), last_pull_at = now(),
         dirty_at = CASE WHEN dirty_at IS NOT NULL AND dirty_at <= $3 THEN NULL ELSE dirty_at END, updated_at = now()

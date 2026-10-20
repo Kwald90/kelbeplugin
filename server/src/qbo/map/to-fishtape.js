@@ -276,7 +276,7 @@ export function settlementRecord({ invoiceId, cents, date }) {
 export function depositRecord(qboInvoice, invoiceId) {
   const cents = toCents(qboInvoice?.Deposit);
   if (!cents) return null;
-  return { invoiceId, amountCents: cents, date: str(qboInvoice?.TxnDate), method: 'transfer', reference: 'Deposit in QuickBooks' };
+  return { invoiceId, amountCents: cents, date: str(qboInvoice?.TxnDate), method: 'transfer', source: 'quickbooks', reference: 'Deposit in QuickBooks' };
 }
 
 /**

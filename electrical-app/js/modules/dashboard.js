@@ -1,5 +1,5 @@
 // S11 Dashboard: today at a glance, plus every alert the other modules raise.
-import { invoiceBalanceCents, invoiceStatus, entryHours, moneyFormatter } from '../lib/money.js';
+import { invoiceShown, entryHours, moneyFormatter } from '../lib/money.js';
 import { provinceName } from '../lib/tax.js';
 import { onboardingCard } from './onboarding.js';
 import { workplanTiles } from './workplan.js';
@@ -41,8 +41,9 @@ export default {
       const pipeline = openLeads.reduce((s, l) => s + (l.valueCents || 0), 0);
       const active = jobs.filter((j) => j.status === 'in-progress');
       const invoices = store.list('invoices', (i) => !['void', 'draft'].includes(i.status));
-      const outstanding = invoices.reduce((s, i) => s + Math.max(0, invoiceBalanceCents(store, i)), 0);
-      const overdue = invoices.filter((i) => invoiceStatus(store, i) === 'overdue');
+      const shown = new Map(invoices.map((i) => [i.id, invoiceShown(store, i)]));
+      const outstanding = invoices.reduce((s, i) => s + Math.max(0, shown.get(i.id).balanceCents), 0);
+      const overdue = invoices.filter((i) => shown.get(i.id).status === 'overdue');
       const onClock = store.list('timeEntries', (e) => !e.clockOut);
       const myOpen = onClock.find((e) => e.employeeId === me.id);
       const unbilled = auth.can('invoices') && on('invoices') ? unbilledAcrossJobs(jobs.filter((j) => !['lead'].includes(j.status)), { settings, ...tmSources(store), dayOf: ui.localDay }) : null;
@@ -81,7 +82,7 @@ export default {
       // ---- alerts ----
       const alerts = [];
       const add = (tone, iconName, text, href) => alerts.push({ tone, iconName, text, href });
-      for (const i of overdue) add('danger', 'receipt', `${i.number} is overdue: ${money(invoiceBalanceCents(store, i))}`, `#/invoices/${i.id}`);
+      for (const i of overdue) add('danger', 'receipt', `${i.number} is overdue: ${money(shown.get(i.id).balanceCents)}`, `#/invoices/${i.id}`);
       for (const e of store.list('employees', (x) => x.active !== false && x.licenceExpiry)) {
         const d = ui.daysUntil(e.licenceExpiry);
         if (d < 0) add('danger', 'id-card', `${e.name}'s licence expired ${-d} days ago`, `#/employees/${e.id}`);
