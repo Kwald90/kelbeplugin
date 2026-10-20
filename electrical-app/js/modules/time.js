@@ -142,7 +142,7 @@ export default {
           : jobName(open.jobId) || 'No job';
       const locLine = !ls.enabled ? null
         : !open ? h('div', { class: 'muted loc-small' }, ui.icon('map-pin', 14), state === 'granted' ? ' Location is recorded only while you are clocked in.' : state === 'ask' ? ' You will be asked about location when you clock in.' : ' Location is off for you.', ' ', h('a', { href: '#/time/location' }, 'My location'))
-          : h('div', { class: 'row loc-line' }, locBadge(ui, open) || h('span', { class: 'muted loc-small' }, state === 'granted' ? 'Getting your location…' : 'No location'));
+          : h('div', { class: 'row loc-line' }, locBadge(ui, open) || h('span', { class: 'muted loc-small' }, open.clockInLoc ? `Location recorded at ${ui.fmtTime(open.clockInLoc.at || open.clockIn)}` : state === 'granted' ? 'Getting your location…' : 'No location'));
       return h('div', { class: ['card', 'ops-clock', open ? (open.breakStart ? 'on-break' : travel ? 'travelling' : 'running') : null], dataset: { state: open ? kindOf(open) : 'off' } },
         h('div', { class: 'ops-clock-face' },
           h('div', { class: 'ops-clock-ring' }, ui.icon(travel ? 'truck' : 'clock', 28)),

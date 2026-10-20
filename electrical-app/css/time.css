@@ -14,13 +14,14 @@
   background: var(--surface); color: var(--text); border: 2px solid var(--info); border-radius: var(--r-md); box-shadow: var(--shadow-float);
   max-width: 720px; margin: 0 auto;
 }
-.loc-suggest-actions { gap: var(--s2); margin-left: auto; }
+.loc-suggest > .grow { flex: 1 1 220px; min-width: 0; }
+.loc-suggest-actions { gap: var(--s2); margin-left: auto; flex-wrap: nowrap; }
 @media (max-width: 720px) {
   .loc-suggest { left: var(--s3); right: var(--s3); bottom: calc(var(--rail) + var(--s3) + env(safe-area-inset-bottom, 0px)); }
+  .loc-suggest-actions { width: 100%; justify-content: flex-end; }
 }
 
 /* Consent and policy */
-.loc-consent { max-height: 60vh; overflow-y: auto; }
 .loc-policy p { margin: 0 0 var(--s2); }
 .loc-facts { margin: var(--s2) 0 0; padding-left: var(--s5); color: var(--text-muted); font-size: var(--fs-sm); }
 .loc-details summary { cursor: pointer; font-weight: 600; }

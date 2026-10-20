@@ -37,7 +37,8 @@ const visible = () => typeof document === 'undefined' || document.visibilityStat
 /** A fix for the open shift, or null (consent, permission and the open shift are all checked). */
 async function shiftFix(entry) {
   if (!entry || !granted()) return { fix: null, reason: 'declined' };
-  const r = await getFix();
+  // A fresh fix every time: a cached one from minutes ago would hide a departure or an arrival.
+  const r = await getFix({ maximumAgeMs: 0 });
   const still = ctx.store.get('timeEntries', entry.id);
   if (!still || still.clockOut) return { fix: null, reason: 'closed' }; // clocked out meanwhile: drop it
   return r.ok ? { fix: r.fix } : { fix: null, reason: r.reason };

@@ -202,7 +202,7 @@ function detailView(root, ctx, id) {
         ui.stat({ label: 'Margin', value: ui.fmtMoney(m.marginCents, { whole: true }), hint: pct == null ? 'no revenue yet' : `${pct}% of ${m.invoicedCents ? 'invoiced' : 'estimate'}`, tone: m.marginCents < 0 ? 'danger' : 'success' })),
       h('h2', { class: 'section' }, 'Scope'),
       h('div', { class: 'card flat ops-scope' }, job.description ? job.description : h('span', { class: 'muted' }, 'No description yet.')),
-      locationSettings(store.settings()).enabled ? [h('h2', { class: 'section' }, 'Site for the time clock'), siteCard(ctx, job, { canEdit })] : null,
+      ...(locationSettings(store.settings()).enabled ? [h('h2', { class: 'section' }, 'Site for the time clock'), siteCard(ctx, job, { canEdit })] : []),
     );
   }
 
