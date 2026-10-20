@@ -89,7 +89,7 @@ export default async function hqLeadRoutes(app, { config, db, email }) {
           to: settings.notifyEmail, template: 'hq-lead',
           subject: `New Enterprise lead: ${lead.company.slice(0, 80)}`,
           text: `${lead.company} asked about ${BRAND.name} Enterprise${lead.teamSize ? ` (team of ${lead.teamSize})` : ''}${lead.province ? `, ${lead.province}` : ''}.\n\n`
-            + `Contact details and message are in HQ: ${config.publicOrigin}/hq/#/leads/${lead.id}\n`,
+            + `Contact details and message are in HQ: ${settings.publicUrl}#/leads/${lead.id}\n`,
         });
       }
     });

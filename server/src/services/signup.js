@@ -46,7 +46,7 @@ import { randomToken, sha256 } from '../lib/crypto.js';
 import { hashSecret, passwordProblem } from '../auth/passwords.js';
 import { appendAudit } from './audit.js';
 import { PRICE_KEYS, SELF_SERVE_PLANS, createBilling, extraSeats } from './billing.js';
-import { hqSettings } from './hq-common.js';
+import { hqSettings, hqUrl } from './hq-common.js';
 import { enqueue } from './queue.js';
 import { EMAIL_RE, PROVINCES, insertTenantWithOwner, normaliseEmail, trialDays } from './tenants.js';
 
@@ -327,7 +327,7 @@ export function createSignups({ config, db, email, billing = createBilling({ con
       });
       await notifyHq(tx, `New sign-up: ${cur.company_name.slice(0, 80)} (${planName} trial)`,
         `${cur.company_name} signed up for a ${planName} trial (${cur.user_count} user${cur.user_count === 1 ? '' : 's'}${cur.province ? `, ${cur.province}` : ''}). `
-        + `Deposit ${money(paid)} paid; the trial ends ${day(trialEndsAt)}.\n\nDetails in HQ: ${config.publicOrigin}/hq/#/tenants/${tenantId}\n`, tenantId);
+        + `Deposit ${money(paid)} paid; the trial ends ${day(trialEndsAt)}.\n\nDetails in HQ: ${hqUrl(config)}#/tenants/${tenantId}\n`, tenantId);
       return true;
     }, { write: true });
   }
@@ -343,7 +343,7 @@ export function createSignups({ config, db, email, billing = createBilling({ con
     if (sub?.id) { try { await needStripe().subscriptions.cancel(sub.id); } catch { /* HQ follows up */ } }
     await db.tx((c) => notifyHq(c, `Sign-up could not finish: ${row.company_name.slice(0, 80)}`,
       `A paid sign-up could not become a company (${failure.replace(/_/g, ' ')}). Its subscription was cancelled; refund the ${money(paid)} deposit in Stripe `
-      + `and contact them.\n\nHQ: ${config.publicOrigin}/hq/#/tenants\n`));
+      + `and contact them.\n\nHQ: ${hqUrl(config)}#/tenants\n`));
   }
 
   /** -$1.00 on the Stripe customer balance: it comes off the first invoice after the trial. */
