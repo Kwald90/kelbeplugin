@@ -42,6 +42,7 @@ let syncStatus = null;
 const statusListeners = new Set();
 const viewingLocked = new Set(); // locked modules opened read-only this run
 let banner = null;
+let tracker = null;
 
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
@@ -447,6 +448,8 @@ async function startShell() {
   rebuild();
   askUnitsOnce();
   registerSW();
+  // Location while clocked in: on only while this person has an open shift (lib/shift-tracker.js).
+  import('./lib/shift-tracker.js').then((m) => { tracker = m.startShiftTracker({ store, auth, ui, nav, app: shellApi }); }).catch((e) => console.error(e));
 }
 
 function registerSW() {
@@ -575,4 +578,4 @@ function askUnitsOnce() {
 boot();
 
 // Exposed for tests and the browser console.
-globalThis.kelbe = { store, auth, nav, MODULES, GROUPS, session, moduleEnabled, get sync() { return sync; } };
+globalThis.kelbe = { store, auth, nav, MODULES, GROUPS, session, moduleEnabled, get sync() { return sync; }, get tracker() { return tracker; } };

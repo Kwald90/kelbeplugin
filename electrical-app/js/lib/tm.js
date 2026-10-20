@@ -1,6 +1,7 @@
 // Billing mode per job: time & material (T&M) or fixed price (from the estimate). Pure, no DOM.
 //
-// T&M: approved time entries (travel included when it is tracked, `travel: true` on the entry)
+// T&M: approved time entries (travel included: `kind: 'travel'` on the entry, from the time clock's
+// travel state; the older `travel: true` flag is still read, see isTravel)
 // at the job's or the company's labour rate, plus material used on the job (stock moves out of
 // a location onto the job, and fulfilled material requests that never became a stock move) at
 // cost + markup, become invoice lines. What an invoice billed is kept on the invoice
@@ -10,6 +11,12 @@
 // Fixed price: time is tracked for payroll and job costing only and never becomes an invoice
 // line. jobCosting() compares the estimate with what was spent: hours, cost and margin.
 import { docTotals, entryHours } from './money.js';
+
+/**
+ * Is this time entry travel? One model: `kind: 'travel'` (lib/timesheet.js, lib/clock.js). Entries saved
+ * with the earlier `travel: true` checkbox (before 2026-10-20) still count as travel.
+ */
+export const isTravel = (t) => t?.kind === 'travel' || (t?.kind == null && t?.travel === true);
 import { newDocTax } from './tax.js';
 
 export const BILLING_MODES = [
@@ -81,7 +88,7 @@ export function unbilledTm({ job, settings, timeEntries = [], stockMoves = [], m
     const hours = round2(entryHours(t));
     if (hours <= 0) continue;
     const e = empById.get(t.employeeId);
-    const travel = Boolean(t.travel);
+    const travel = isTravel(t);
     const rateCents = travel ? rates.travelRateCents : (Number(e?.billRateCents) > 0 && job.labourRateCents == null ? Number(e.billRateCents) : rates.labourRateCents);
     labour.push({ id: t.id, day, hours, travel, employeeId: t.employeeId || null, name: e?.name || 'Crew', rateCents });
   }
@@ -208,7 +215,7 @@ export function jobCosting({ job, estimates = [], timeEntries = [], stockMoves =
   for (const t of timeEntries) {
     if (t.jobId !== job.id || !t.clockIn) continue;
     const h = entryHours(t, now);
-    if (t.travel) travelHours += h; else hours += h;
+    if (isTravel(t)) travelHours += h; else hours += h;
     labourCents += Math.round(h * (Number(empById.get(t.employeeId)?.rateCents) || 0));
   }
   let materialCents = 0;

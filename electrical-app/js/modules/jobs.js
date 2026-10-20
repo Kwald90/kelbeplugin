@@ -1,6 +1,9 @@
 // Jobs (S15): list by status, job detail with money, drawings, change orders, crew, compliance.
 import { docTotals, invoiceBalanceCents, invoicePaidCents, entryHours } from '../lib/money.js';
 import { emergencyCard } from '../lib/safety-emergency.js';
+import { siteCard } from '../lib/location-ui.js';
+import { entryMinutes, kindOf, fmtH } from '../lib/timesheet.js';
+import { locationSettings } from '../lib/location-policy.js';
 import { BILLING_MODES, billingLabel, jobBillingMode, defaultBillingMode, jobRates, unbilledTm, buildTmInvoice, jobCosting } from '../lib/tm.js';
 import { moduleOn } from '../lib/modules.js';
 
@@ -246,12 +249,15 @@ function detailView(root, ctx, id) {
   function overview(el, job, m) {
     const pct = m.revenueCents ? Math.round((m.marginCents / m.revenueCents) * 100) : null;
     const tm = jobBillingMode(job) === 'tm';
+    // The job site for the time clock (location while clocked in), for every role that sees the job.
+    const site = () => (on('time') && locationSettings(store.settings()).enabled ? [h('h2', { class: 'section' }, 'Site for the time clock'), siteCard(ctx, job, { canEdit })] : []);
     if (!showMoney) {
       el.append(h('div', { class: 'grid ops-stats' }, ui.stat({ label: 'Labour', value: ui.fmtHours(m.hours), hint: 'logged on this job' }),
         ui.stat({ label: 'Change orders', value: String((job.changeOrders || []).length), hint: `${(job.changeOrders || []).filter((c) => c.status === 'pending').length} pending` })),
       canEdit ? (tm ? tmCard(job) : estimateVsActual(job)) : null,
       h('h2', { class: 'section' }, 'Scope'),
-      h('div', { class: 'card flat ops-scope' }, job.description ? job.description : h('span', { class: 'muted' }, 'No description yet.')));
+      h('div', { class: 'card flat ops-scope' }, job.description ? job.description : h('span', { class: 'muted' }, 'No description yet.')),
+      ...site());
       return;
     }
     el.append(
@@ -264,6 +270,7 @@ function detailView(root, ctx, id) {
       canEdit ? (tm ? tmCard(job) : estimateVsActual(job)) : null,
       h('h2', { class: 'section' }, 'Scope'),
       h('div', { class: 'card flat ops-scope' }, job.description ? job.description : h('span', { class: 'muted' }, 'No description yet.')),
+      ...site(),
     );
   }
 
@@ -467,12 +474,16 @@ function detailView(root, ctx, id) {
 
   function time(el, job) {
     const rows = store.list('timeEntries', (t) => t.jobId === job.id).sort((a, b) => b.clockIn.localeCompare(a.clockIn));
+    const sum = (k) => rows.filter((t) => kindOf(t) === k).reduce((n, t) => n + entryMinutes(t), 0);
+    if (rows.length) el.append(h('p', { class: 'muted' }, `Work ${fmtH(sum('work'))} h · travel to this job ${fmtH(sum('travel'))} h`));
     el.append(ui.table({
       columns: [
         { key: 'day', label: 'Day', render: (t) => ui.fmtDate(t.clockIn) },
         { key: 'emp', label: 'Who', render: (t) => store.get('employees', t.employeeId)?.name || '—' },
+        { key: 'kind', label: 'Type', render: (t) => (kindOf(t) === 'travel' ? ui.badge('travel', 'info') : ui.badge('work', 'neutral')) },
         { key: 'in', label: 'In – out', render: (t) => `${ui.fmtTime(t.clockIn)} – ${t.clockOut ? ui.fmtTime(t.clockOut) : 'on the clock'}` },
-        { key: 'hrs', label: 'Hours', align: 'right', render: (t) => ui.fmtHours(entryHours(t)) },
+        { key: 'hrs', label: 'Hours', align: 'right', render: (t) => `${fmtH(entryMinutes(t))} h` },
+        { key: 'loc', label: 'Location', render: (t) => (t.flag ? ui.badge(t.flag.reviewedAt ? `${t.flag.text} · reviewed` : t.flag.text, t.flag.reviewedAt ? 'neutral' : 'danger') : t.siteCheck?.inside ? ui.badge('at the site', 'success') : '') },
         { key: 'ok', label: 'Approved', render: (t) => (t.approved ? ui.badge('approved', 'success') : ui.badge('pending', 'warning')) },
       ],
       rows, empty: ui.empty({ icon: 'clock', title: 'No time logged', text: 'Crew clock in against this job from the Time clock.' }),

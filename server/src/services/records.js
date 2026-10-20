@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { AUDIT_COLLECTION, TABLE_COLLECTIONS, collectionDef, isCollection } from '../collections.js';
 import { ApiError, badRequest, conflict, forbidden, notFound, tooLarge, validationFailed } from '../errors.js';
-import { canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, restoreHiddenFields, rowFilter, rowVisible, sanitizeForStorage } from '../auth/access.js';
+import { ENTRY_COORDS, canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, restoreHiddenFields, rowFilter, rowVisible, sanitizeForStorage } from '../auth/access.js';
 import { appendAudit, auditRowToRecord, describeRecord } from './audit.js';
 import { assertCollectionWritable, loadTenantPlan } from './entitlements.js';
 import { afterTaskWrite } from './workplan-events.js';
@@ -124,6 +124,10 @@ export function createRecords({ validator }) {
   }
 
   async function keepHistory(tx, coll, id, { version, deleted, data }, reason, who, mid) {
+    // Raw location points are never copied into history (retention must be able to remove them),
+    // and history copies of time entries leave the clock-in/out coordinates out for the same reason.
+    if (collectionDef(coll)?.rls === 'employee') return;
+    if (coll === 'timeEntries' && data) { data = { ...data }; for (const k of ENTRY_COORDS) delete data[k]; }
     await tx.query(
       `INSERT INTO record_history (tenant_id, collection, record_id, version, deleted, data, reason, mid, actor)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,

@@ -229,6 +229,73 @@
           }
         }
       }
+    },
+    "site": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Job site location for the time clock: centre and radius.",
+      "properties": {
+        "lat": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -90,
+          "maximum": 90
+        },
+        "lng": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -180,
+          "maximum": 180
+        },
+        "radiusM": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 30,
+          "maximum": 2000
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "geocode",
+            "pin",
+            "manual",
+            null
+          ]
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300
+        },
+        "setAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "setBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        }
+      }
     }
   },
   "additionalProperties": true

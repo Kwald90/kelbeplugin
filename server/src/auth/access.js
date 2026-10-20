@@ -36,7 +36,7 @@ function hasScope(p, coll, mode) {
 
 /** @param {Principal} p */
 export function canRead(p, coll) {
-  if (p.kind === 'api_key') return hasScope(p, coll, 'read');
+  if (p.kind === 'api_key') return !collectionDef(coll)?.noApiKeys && hasScope(p, coll, 'read');
   if (coll === AUDIT_COLLECTION) return p.perms.has('security');
   const def = collectionDef(coll);
   if (!def) return false;
@@ -46,7 +46,7 @@ export function canRead(p, coll) {
 
 /** @param {Principal} p */
 export function canWrite(p, coll) {
-  if (p.kind === 'api_key') return hasScope(p, coll, 'write');
+  if (p.kind === 'api_key') return !collectionDef(coll)?.noApiKeys && hasScope(p, coll, 'write');
   const def = collectionDef(coll);
   if (!def || coll === AUDIT_COLLECTION) return false;
   if (def.managerWrite && !p.isManager) return false;
@@ -60,7 +60,7 @@ export function canWrite(p, coll) {
  */
 export function rowFilter(p, coll) {
   const def = collectionDef(coll);
-  if (def?.ownRows && p.kind !== 'api_key' && !p.isManager) {
+  if (def?.ownRows && p.kind !== 'api_key' && (!p.isManager || def.ownRowsAlways)) {
     const f = { column: 'employee_id', value: p.employeeId || null };
     const hide = def.ownRowsHide;
     const col = hide && def.gen.find((x) => x.field === hide.field)?.col;
@@ -187,6 +187,16 @@ export function checkWriteRules(p, coll, existing, next) {
 
   // Material requests: crew file their own, and change or withdraw them only until they are sent.
   if (coll === 'materialRequests' && !p.isManager) return materialRequestRule(p, existing, next);
+  // Location points and consents belong to one person: only they record them, whatever their role
+  // (a manager can't give consent or add points for someone else). Points never change once saved.
+  if (coll === 'locationPoints' || coll === 'locationConsents') {
+    if (!p.employeeId) return 'Your membership is not linked to an employee record, so location is not recorded.';
+    if (existing && existing.employeeId !== p.employeeId) return 'Only the person it belongs to can change this.';
+    if (next && next.employeeId !== p.employeeId) return 'Location records are only ever made by the person themselves.';
+    if (coll === 'locationPoints' && existing && next) return 'Location points cannot be changed.';
+    if (!next) return coll === 'locationPoints' ? 'Location points are removed by the retention schedule.' : 'Consent answers are kept; record a new answer instead.';
+    return null;
+  }
 
   // Time entries: non-managers write only their own, and cannot approve.
   if (def?.ownRows && !p.isManager) {
@@ -196,6 +206,13 @@ export function checkWriteRules(p, coll, existing, next) {
   }
   if (coll === 'timeEntries' && next && !p.perms.has('time-approve') && Boolean(next.approved) !== Boolean(existing?.approved)) {
     return 'Approving time needs the time-approve permission.';
+  }
+  // An approved entry is locked for everyone who can't approve (threat model TM-SYNC-04).
+  if (coll === 'timeEntries' && existing?.approved && !p.perms.has('time-approve')) {
+    return 'This time is approved. Ask your foreman or the office to change it.';
+  }
+  if (coll === 'timeEntries' && next && !p.isManager && !same(existing?.flag?.reviewedAt ?? null, next.flag?.reviewedAt ?? null)) {
+    return 'Only a manager can review an off-site clock-in.';
   }
 
   // SOPs: managers edit; everyone else may only add their own acknowledgement.
@@ -305,6 +322,12 @@ function safetyWriteRule(p, coll, existing, next) {
  * Returns the record to store.
  */
 export function restoreHiddenFields(p, coll, existing, next) {
+  if (coll === 'timeEntries' && next && p.kind === 'api_key') {
+    // An API key never saw the coordinates, so its write keeps the stored ones.
+    const out = { ...next };
+    for (const k of ENTRY_COORDS) { if (existing && k in existing) out[k] = existing[k]; else delete out[k]; }
+    return out;
+  }
   if (next && (MONEY_FIELDS[coll] || coll === 'jobs')) {
     if (!seesMoney(p)) return restoreMoney(coll, existing, next);
     if ('pricesHidden' in next) { const out = { ...next }; delete out.pricesHidden; return out; }
@@ -321,7 +344,15 @@ export function restoreHiddenFields(p, coll, existing, next) {
 }
 
 /** Fields hidden from some readers. Returns a copy when anything is removed. */
+/** Coordinates on time entries; API keys and AI tools get the distances and flags without them. */
+export const ENTRY_COORDS = ['clockInLoc', 'clockOutLoc'];
+
 export function redactForReader(p, coll, data) {
+  if (coll === 'timeEntries' && data && p.kind === 'api_key' && ENTRY_COORDS.some((k) => k in data)) {
+    const rest = { ...data };
+    for (const k of ENTRY_COORDS) delete rest[k];
+    return rest;
+  }
   if (data && (MONEY_FIELDS[coll] || coll === 'jobs') && !seesMoney(p)) return stripMoney(coll, data);
   if (coll === 'employees' && data && p.kind !== 'api_key' && !p.perms.has('employees') && 'rateCents' in data) {
     const { rateCents, ...rest } = data;

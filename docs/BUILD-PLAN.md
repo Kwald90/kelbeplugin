@@ -260,7 +260,7 @@ From Kelvin and Travis, 2026-10-20. Shared logic is pure and used by both sides:
   Server: writes into a turned-off module's collections (`COLLECTION_SWITCHES`) are refused with
   403 `module_turned_off` (REST, sync, API keys, AI chat); reads never are (`server/src/services/modules.js`).
 - **Billing mode per job**: `jobs.billingMode 'tm'|'fixed'` (missing = fixed), `jobs.labourRateCents?`,
-  `clients.billingMode?` (default for new jobs), `settings.billing { defaultMode, travelRateCents }`, `timeEntries.travel`.
+  `clients.billingMode?` (default for new jobs), `settings.billing { defaultMode, travelRateCents }`; travel is `timeEntries.kind: 'travel'` (one model with the GPS clock; entries with the earlier `travel: true` flag still count, `lib/tm.js` `isTravel`).
   T&M: "Build invoice from time & material" (date range) turns approved time (travel at its rate) and material used
   (stock moves out of a location onto the job, fulfilled requests without a stock move) at cost + markup into invoice
   lines with provincial tax; the invoice keeps `tm { from, to, timeEntryIds, stockMoveIds, materialRequestIds }` so
@@ -275,6 +275,23 @@ From Kelvin and Travis, 2026-10-20. Shared logic is pure and used by both sides:
   `GET /api/v1/material-requests/schedule`. A send notifies owner/admin/office, emails `materialRequests.emailTo`
   (else the company email) through the platform outbox, and audits. Plan feature `materials` (every plan).
   E2E: `node electrical-app/tests/e2e/modules.e2e.mjs`.
+
+### Location while clocked in, timesheets and payroll (migrations 0140-0149)
+
+Part of the Time clock (every plan). Docs: `docs/field/timesheets.md`; privacy in `docs/compliance/privacy.md`.
+
+- `jobs.site`: `{ lat, lng, radiusM (default 150), source ('geocode'|'pin'|'manual'), label, setAt, setBy }`.
+- `timeEntries` gain `kind ('work'|'travel', missing = work)`, `travelFromJobId`, `clockInLoc`/`clockOutLoc`
+  `{ lat, lng, accuracyM, at, source }`, `siteCheck`, `flag { kind: 'off-site', distanceM, text, reviewedAt, reviewedBy }`,
+  `approvedAt`, `approvedBy`, `source`, `locStatus`. Travel is a plain time entry attributed to the job travelled to,
+  so per-job billing (time and materials) can price it later.
+- `locationPoints` (new): `employeeId, timeEntryId, jobId, at, lat, lng, accuracyM, source, device`. Readable and writable only
+  by the person (RESTRICTIVE RLS on the member's employee id, 0140/0141), never API keys, never changed, emptied by retention.
+- `locationConsents` (new): `employeeId, policyVersion, choice, at, via`; only the worker records it, managers read.
+- `settings.location { enabled, policyText, policyVersion, defaultRadiusM, retentionDays (90), liveCrewMap (false) }`,
+  `settings.payroll { otRule, weekStartsOn, format }`, `employees.payrollId`.
+- API: `GET /api/v1/location/live` (opt-in crew map). Worker job `location_retention` (daily).
+- iOS: `FishtapeGeofence` plugin + `@capacitor/geolocation` (`docs/mobile/README.md`).
 
 ## Definition of done (every workstream)
 

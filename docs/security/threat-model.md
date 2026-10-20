@@ -5,7 +5,7 @@
 | Owner | Kelvin Waldner |
 | Applies to | PWA, iOS app, API and worker, HQ, Postgres, staging and production hosts, CI/CD, integrations, AI features |
 | Review cadence | Annually, and on any major change (see [Review](#review)) |
-| Last reviewed | 2026-10-19 |
+| Last reviewed | 2026-10-20 |
 | Related controls | RSK (risk assessment), SDL (secure development), ACC, CRY, OPS in `compliance/controls.yaml` |
 
 This is a STRIDE threat model of Fishtape as designed in `docs/BUILD-PLAN.md` and as configured in
@@ -114,7 +114,7 @@ Main flows:
 | asset | why it matters |
 | --- | --- |
 | Tenant business data | clients' names, addresses, phone numbers and emails; leads (including Meta lead forms); jobs, estimates, invoices, payments (card data stays with Stripe); inventory, permits, inspections |
-| Employee data | names, contact details, roles, pay-related settings, time entries, certifications, crew PINs |
+| Employee data | names, contact details, roles, pay-related settings, time entries, certifications, crew PINs, location points and consent answers (TM-LOC) |
 | Drawings and photos | plans of customers' homes and businesses (can show panel and alarm locations), AR measurements and snapshots |
 | Identity data | password hashes, session and device tokens (hashed), TOTP seeds, recovery codes, OAuth identities, API key hashes, memberships |
 | Tenant integration secrets | Stripe, Twilio, Resend, Anthropic and Meta credentials in `tenant_secrets` |
@@ -191,7 +191,7 @@ Main flows:
 | TM-DEV-04 | S | Device token copied off the device (XSS, dev tools on an unlocked browser, device backups). | Crew sign-in screen for that tenant reachable from anywhere. | `[contract]` revocable device token. | httpOnly cookie on the web, Keychain on iOS, never localStorage; stored hashed like sessions; the device token alone grants only the PIN screen; alert on use from a new network. | L x M = L |
 | TM-DEV-05 | E | Crew session reaches more than crew work (invoices, clients, settings through REST or sync), is reused off the device, or never ends at shift change. | Crew member or thief reads or edits office data. | `[contract]` short crew session limited to the device. | Server-enforced crew permission matrix on REST and on sync push and pull; crew session bound to the device id; idle sign-out and end-of-day expiry. | M x M = M |
 | TM-DEV-06 | I | The next person on a shared iPad sees the previous person's data: cached screens, drafts, `kc.*` keys in localStorage, service worker cache. | Pay rates, client details or messages seen by co-workers. | None specific. | Clear per-user UI state on sign-out; keep per-user data out of shared storage. | M x L = L |
-| TM-DEV-07 | R | Buddy punching: one crew member clocks another in. | Payroll fraud. | `[contract]` audit records the signed-in user and device. | Show who is signed in on every screen; optional photo or location on punch (needs a privacy notice). | M x L = L |
+| TM-DEV-07 | R | Buddy punching: one crew member clocks another in. | Payroll fraud. | `[contract]` audit records the signed-in user and device. `[repo]` optional location on each punch with notice and consent, off-site flags for review (TM-LOC). | Show who is signed in on every screen; optional photo on punch. | M x L = L |
 
 ### Offline sync (TM-SYNC)
 
@@ -344,6 +344,21 @@ endpoint or a log.
 | TM-DOS-04 | D | Dependency outages: certificate renewal fails, vendors are down. | Expired certificate; degraded features. | `[repo]` certificate expiry in `host-status.json` for HQ health; `check-host.sh` checks the certbot timer. | Self-host pdf.js; alert well before expiry; queue and retry outbound messages. | L x M = L |
 | TM-DOS-05 | D | Disk fills (logs, backups, images, database). | Outage; failed backups. | `[repo]` log rotation; backup retention; image pruning in `update.sh`; disk use in host status. | Alerts at the thresholds `check-host.sh` uses (70 % warn, 85 % fail). | L x M = L |
 | TM-DOS-06 | D | Webhook floods. | Queue backlog. | `[contract]` queue lag reported by `/api/readyz`. | Per-tenant webhook limits; unknown webhook ids dropped early. | L x M = L |
+
+### Location while clocked in (TM-LOC)
+
+Raw location points (`locationPoints`), consent answers (`locationConsents`) and the clock-in fix on
+time entries. Policy in [privacy.md](../compliance/privacy.md#location-while-clocked-in).
+
+| id | STRIDE | threat | impact | existing controls | gaps / planned | rating |
+| --- | --- | --- | --- | --- | --- | --- |
+| TM-LOC-01 | I | A manager, owner, API key, AI tool or a forgotten filter reads another worker's raw location points, turning the time clock into tracking. | Employee surveillance beyond the notice; privacy complaint against the tenant. | `[repo]` RESTRICTIVE RLS policy on `location_points`: rows only where `employee_id = app_member_employee_id()` (0140/0141), so even an owner session gets nothing; `ownRowsAlways` app filter on REST, sync and AI paths; `noApiKeys` (403 for any scope); not in the assistant's collections; tests in `server/test/location.test.js`. | Revisit if HQ ever needs a support view (it has BYPASSRLS today, used only for the audited export and counts). | L x H = M |
+| TM-LOC-02 | E | The narrow database scopes (`app.location_scope` = `system` or `crew`) are set on a request path that should not have them, or left set for the rest of a transaction. | Every point in the company readable. | `[repo]` set only in `services/location.js` (retention job, live map after the role and setting checks); transaction-local `set_config(..., true)`; the live map resets the scope after its query; `crew` is read-only in the policy's WITH CHECK; test that the foreman's own reads are unchanged after viewing the map. | A lint rule that `app.location_scope` appears only in `services/location.js`. | L x H = M |
+| TM-LOC-03 | I | Location is captured off the clock: a bug, a stale native geofence after clock-out, or the app relaunched in the background with no open shift. | Off-hours tracking, the one thing the notice promises never happens. | `[repo]` every capture path checks the open shift first and drops a fix if the shift closed meanwhile (`clock.js` `recordPoint`, `shift-tracker.js`); the iOS monitor records nothing without a shift id, stop() at clock-out and whenever the app finds no open shift, and a shift older than 18 h stops itself; unit tests. | A device test on a real iPhone (background relaunch, force-quit, reboot): VERIFY. | L x H = M |
+| TM-LOC-04 | T, R | A worker spoofs their location (mock-location apps, browser dev tools, a modified app) to look on site, or clocks in for someone else (TM-DEV-07). | Payroll fraud; billing a customer for work not on site. | `[repo]` the fix is evidence, not proof: off-site flags need a foreman's review; accuracy is stored; server time stamps every write; audit trail. | Treat location as a reminder, not a control; flag fixes with implausible accuracy (exactly 0 m) or speed between fixes. | M x L = L |
+| TM-LOC-05 | I | Old location data outlives the retention promise: in tombstones, record history, backups, devices that never sync again. | Data kept longer than the notice says. | `[repo]` daily retention job empties and soft-deletes points and scrubs entry coordinates, audited; points never enter `record_history`, entry history copies omit coordinates; devices prune their own copies; backups age out in about 8 weeks (backup-retention.md). | Say in the notice that backups hold data up to 8 more weeks; a device that never reconnects keeps its copy (TM-SYNC-06). | L x M = L |
+| TM-LOC-06 | I | Third parties learn about job sites from map tiles and address lookups (Natural Resources Canada). | Job addresses (customer addresses) seen by a government service. | `[repo]` tiles show the map area, never a person's position (pins drawn on the device); `referrerpolicy=no-referrer`, `credentials: 'omit'`; one lookup per job, only when a manager taps Find address; CSP allows only these two hosts. | List both on the sub-processor list; NRCan's written OK for commercial use of the Geolocator (VERIFY). | L x L = L |
+| TM-LOC-07 | T | A worker edits approved time, or reviews their own off-site flag. | Payroll integrity. | `[repo]` approved entries are locked for anyone without `time-approve`; only managers can set `flag.reviewedAt` (`access.js`); tests. | Server time decides "last" (TM-SYNC-09). | L x M = L |
 
 ## Top risks and next actions
 

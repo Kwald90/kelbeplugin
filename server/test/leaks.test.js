@@ -152,6 +152,8 @@ describe('public endpoints and URLs', { skip }, () => {
       'planId', 'from', 'to',
       // material requests: GET /api/v1/materialRequests?batchId= (a send's uuid)
       'batchId',
+      // location points (own rows only): a time entry id and an ISO time
+      'timeEntryId', 'at',
       // HQ Mail: "Show images" for one message (0|1), not data.
       'images']);
     for (const [path, ops] of Object.entries(spec.paths)) {

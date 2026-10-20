@@ -22,6 +22,7 @@
 		F15A7A9E0000000000000004 /* MeasureFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000014 /* MeasureFormat.swift */; };
 		F15A7A9E0000000000000005 /* FishtapeKeychainPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000015 /* FishtapeKeychainPlugin.swift */; };
 		F15A7A9E0000000000000006 /* FishtapePrintPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000016 /* FishtapePrintPlugin.swift */; };
+		F15A7A9E0000000000000007 /* FishtapeGeofencePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000017 /* FishtapeGeofencePlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +43,7 @@
 		F15A7A9E0000000000000014 /* MeasureFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeasureFormat.swift; sourceTree = "<group>"; };
 		F15A7A9E0000000000000015 /* FishtapeKeychainPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FishtapeKeychainPlugin.swift; sourceTree = "<group>"; };
 		F15A7A9E0000000000000016 /* FishtapePrintPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FishtapePrintPlugin.swift; sourceTree = "<group>"; };
+		F15A7A9E0000000000000017 /* FishtapeGeofencePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FishtapeGeofencePlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -107,6 +109,7 @@
 			children = (
 				F15A7A9E0000000000000015 /* FishtapeKeychainPlugin.swift */,
 				F15A7A9E0000000000000016 /* FishtapePrintPlugin.swift */,
+				F15A7A9E0000000000000017 /* FishtapeGeofencePlugin.swift */,
 			);
 			path = Plugins;
 			sourceTree = "<group>";
@@ -200,6 +203,7 @@
 				F15A7A9E0000000000000004 /* MeasureFormat.swift in Sources */,
 				F15A7A9E0000000000000005 /* FishtapeKeychainPlugin.swift in Sources */,
 				F15A7A9E0000000000000006 /* FishtapePrintPlugin.swift in Sources */,
+				F15A7A9E0000000000000007 /* FishtapeGeofencePlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

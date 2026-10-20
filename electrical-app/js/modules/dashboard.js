@@ -3,6 +3,7 @@ import { invoiceBalanceCents, invoiceStatus, entryHours, moneyFormatter } from '
 import { provinceName } from '../lib/tax.js';
 import { onboardingCard } from './onboarding.js';
 import { workplanTiles } from './workplan.js';
+import { weekHoursTile } from './time.js';
 import { moduleOn, switchOn, linkOn } from '../lib/modules.js';
 import { unbilledAcrossJobs } from '../lib/tm.js';
 import { tmSources } from './jobs.js';
@@ -58,7 +59,7 @@ export default {
       // ---- my clock ----
       const clockCard = auth.can('time') && on('time') ? h('div', { class: 'card row', style: { justifyContent: 'space-between' } },
         h('div', { class: 'row' }, h('span', { class: 'avatar', style: { background: me.color || '#5f5a51', width: '40px', height: '40px' } }, ui.initials(me.name)),
-          h('div', null, h('div', { style: { fontWeight: 650 } }, myOpen ? `On the clock · ${jobById.get(myOpen.jobId)?.title || 'no job'}` : 'Not clocked in'),
+          h('div', null, h('div', { style: { fontWeight: 650 } }, myOpen ? `${myOpen.kind === 'travel' ? 'Travelling' : 'On the clock'} · ${jobById.get(myOpen.jobId)?.title || 'no job'}` : 'Not clocked in'),
             h('div', { class: 'muted num', id: 'dash-clock' }, myOpen ? ui.fmtHours(entryHours(myOpen)) + ` since ${ui.fmtTime(myOpen.clockIn)}` : 'Clock in from the time clock'))),
         ui.button(myOpen ? 'Open time clock' : 'Clock in', { variant: myOpen ? 'secondary' : 'primary', icon: 'clock', href: '#/time' })) : null;
 
@@ -156,6 +157,7 @@ export default {
       onboardingCard(ctx),
       stats,
       clockCard ? h('div', { style: { marginTop: 'var(--s4)' } }, clockCard) : null,
+      (() => { const t = on('time') ? weekHoursTile(ctx) : null; return t ? h('div', { style: { marginTop: 'var(--s4)' } }, t) : null; })(),
       (() => { const wp = on('workplan') ? workplanTiles(ctx) : null; return wp ? [...ui.section('Crew tasks'), wp] : null; })(),
       h('div', { class: 'grid-2', style: { marginTop: 'var(--s2)' } },
         h('div', null, ...ui.section('Needs attention'), alertList),

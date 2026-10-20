@@ -52,9 +52,17 @@ test('every collection table has RLS enabled and forced, with a policy', { skip 
 });
 
 test('policies use both USING and WITH CHECK on the tenant setting', { skip }, async () => {
-  const { rows } = await t.superPool.query(
-    `SELECT tablename, policyname, qual, with_check FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY($1)`,
+  const { rows: all } = await t.superPool.query(
+    `SELECT tablename, policyname, permissive, qual, with_check FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY($1)`,
     [TABLE_COLLECTIONS.map((c) => collectionDef(c).table)]);
+  // The extra RESTRICTIVE "own rows" policies (location points) narrow the tenant policy further.
+  const own = all.filter((r) => r.permissive === 'RESTRICTIVE');
+  assert.deepEqual(own.map((r) => r.tablename).sort(), TABLE_COLLECTIONS.filter((c) => collectionDef(c).rls === 'employee').map((c) => collectionDef(c).table).sort());
+  for (const r of own) {
+    assert.match(r.qual, /app_member_employee_id\(\)/, `${r.tablename} own USING`);
+    assert.match(r.with_check, /app_member_employee_id\(\)/, `${r.tablename} own WITH CHECK`);
+  }
+  const rows = all.filter((r) => r.permissive !== 'RESTRICTIVE');
   assert.equal(rows.length, TABLE_COLLECTIONS.length);
   for (const r of rows) {
     assert.match(r.qual, /app_tenant_id\(\)/, `${r.tablename} USING`);

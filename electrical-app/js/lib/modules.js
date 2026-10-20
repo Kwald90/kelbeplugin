@@ -155,6 +155,8 @@ export const COLLECTION_SWITCHES = {
   taskTemplates: ['workplan'],
   huddles: ['workplan'],
   materialRequests: ['materials'],
+  locationPoints: ['time'],
+  locationConsents: ['time'],
 };
 
 /** The switch that blocks a write to `coll`, or null when the write is allowed. */

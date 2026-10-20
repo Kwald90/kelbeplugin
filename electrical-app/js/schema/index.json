@@ -39,6 +39,8 @@
     "taskTemplates": "./taskTemplates.json",
     "huddles": "./huddles.json",
     "materialRequests": "./materialRequests.json",
-    "auditLog": "./auditLog.json"
+    "auditLog": "./auditLog.json",
+    "locationPoints": "./locationPoints.json",
+    "locationConsents": "./locationConsents.json"
   }
 }

@@ -15,6 +15,7 @@
 !electrical-app/js/canvas/symbols.js
 !electrical-app/js/lib/modules.js
 !electrical-app/js/lib/materials.js
+!electrical-app/js/lib/location-policy.js
 !compliance/controls.yaml
 
 # Never send these into the build, even inside allowed folders.

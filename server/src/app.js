@@ -49,6 +49,7 @@ import notificationRoutes from './routes/v1/notifications.js';
 import kpiRoutes from './routes/v1/kpis.js';
 import materialRoutes from './routes/v1/materials.js';
 import drawingRoutes from './routes/v1/drawings.js';
+import locationRoutes from './routes/v1/location.js';
 
 const MB = 1024 * 1024;
 /** Sync pushes may carry one maximum-size record plus a normal batch. */
@@ -211,6 +212,7 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(kpiRoutes, deps);
   await app.register(materialRoutes, deps);
   await app.register(drawingRoutes, deps);
+  await app.register(locationRoutes, deps);
   await app.register(hqTenantRoutes, deps);
   await app.register(hqComplianceRoutes, deps);
   await app.register(hqBillingRoutes, deps);

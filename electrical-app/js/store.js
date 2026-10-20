@@ -34,6 +34,7 @@ export const COLLECTIONS = [
   'flhas', 'toolboxTalks', 'incidents', 'correctiveActions', 'safetyInspections', 'siteOrientations', 'jobSafety',
   'workPlans', 'workTasks', 'taskTemplates', 'huddles',
   'materialRequests',
+  'locationPoints', 'locationConsents',
 ];
 
 export const DEFAULT_SETTINGS = {

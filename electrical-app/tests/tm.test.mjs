@@ -103,6 +103,31 @@ describe('time & material', () => {
     assert.equal(all.count, 1, 'only the T&M job counts');
   });
 
+  test('one travel model: kind "travel" entries from the time clock bill as travel; the old flag still counts', () => {
+    assert.equal(TM.isTravel({ kind: 'travel' }), true);
+    assert.equal(TM.isTravel({ travel: true }), true, 'entries saved with the earlier checkbox');
+    assert.equal(TM.isTravel({ kind: 'work', travel: true }), false, 'kind wins when both are set');
+    assert.equal(TM.isTravel({}), false);
+    // The GPS clock's day: work at another job, travel to this one (billed to the job travelled to), work here.
+    const clock = [
+      entry('g1', 'e2', '2026-10-07', '13', '15', { jobId: 'other', kind: 'work' }),
+      entry('g2', 'e2', '2026-10-07', '15', '16', { kind: 'travel', travelFromJobId: 'other' }),
+      entry('g3', 'e2', '2026-10-07', '16', '21', { kind: 'work' }),
+    ];
+    const src = { ...sources, timeEntries: clock };
+    const u = TM.unbilledTm({ job, settings, from: '2026-10-07', to: '2026-10-07', ...src });
+    assert.deepEqual(u.labour.map((l) => [l.id, l.travel, l.rateCents]), [['g2', true, 6000], ['g3', false, 9500]]);
+    assert.equal(u.travelHours, 1);
+    assert.equal(u.hours, 5);
+    const { invoice } = TM.buildTmInvoice({ job, settings, issueDate: '2026-10-08', from: '2026-10-07', to: '2026-10-07', ...src });
+    assert.ok(invoice.lines.some((l) => /^Travel: Ana Apprentice/.test(l.description) && l.qty === 1 && l.unitCents === 6000));
+    assert.deepEqual([...invoice.tm.timeEntryIds].sort(), ['g2', 'g3']);
+    // Fixed price: the same travel is never billed, only costed.
+    assert.throws(() => TM.buildTmInvoice({ job: { ...job, billingMode: 'fixed' }, settings, issueDate: '2026-10-08', ...src }), /fixed price/);
+    const c = TM.jobCosting({ job: { ...job, billingMode: 'fixed' }, settings, ...src });
+    assert.equal(c.travelHours, 1);
+  });
+
   test('Ontario HST and a job rate', () => {
     const on = { ...settings, company: { province: 'ON' } };
     const { invoice } = TM.buildTmInvoice({ job: { ...job, labourRateCents: 11000 }, settings: on, issueDate: '2026-10-11', from: '2026-10-05', to: '2026-10-05', ...sources });

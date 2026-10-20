@@ -13,8 +13,9 @@ import { SIGNUP_HANDLERS, scheduleSignupCleanup } from './services/signup.js';
 import { FINANCE_HANDLERS, scheduleFinanceJobs } from './services/hq-finance.js';
 import { STATUS_HANDLERS, scheduleStatusProbes } from './services/status-page.js';
 import { createMaterialHandlers, scheduleMaterialRequestSends } from './services/materials.js';
+import { LOCATION_HANDLERS, scheduleLocationJobs } from './services/location.js';
 
-Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS, PLATFORM_EMAIL_HANDLERS, SIGNUP_HANDLERS, FINANCE_HANDLERS, STATUS_HANDLERS);
+Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS, PLATFORM_EMAIL_HANDLERS, SIGNUP_HANDLERS, FINANCE_HANDLERS, STATUS_HANDLERS, LOCATION_HANDLERS);
 
 const HOUR = 3600_000;
 
@@ -44,6 +45,7 @@ async function main() {
           await scheduleFinanceJobs(db);
           await scheduleStatusProbes(db);
           await scheduleMaterialRequestSends(db);
+          await scheduleLocationJobs(db);
         }
         const r = await runOnce(db, { workerId, handlers, log: { info: (m) => log('info', m), error: (m) => log('error', m) } });
         if (r) { log(r.outcome === 'done' ? 'info' : 'warn', `job ${r.kind} ${r.outcome}`, { jobId: r.id, ...(r.error ? { error: r.error } : {}) }); continue; }

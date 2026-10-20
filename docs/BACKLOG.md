@@ -74,6 +74,18 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** Module switches / T&M / material requests follow-ups: email the material list through the company's own email integration (today the platform outbox); pick up a changed send time immediately (the worker re-reads it hourly); a "turned off" note in Help search results; seed `settings` (modules, province) server-side when a company is created; per-employee bill rates in Employees (`billRateCents` is read but has no field yet); T&M progress invoices for change orders.
 - **K** Material requests: who in the office gets the bell (owner, admin, office today), and whether foremen should too.
 
+## GPS time tracking (2026-10-20)
+
+- **K** Email NRCan (geo@nrcan-rncan.gc.ca) for a written OK to use the Geolocator in a commercial SaaS; until then "Find address" is VERIFY (the pin drop needs nothing).
+- **K** App Privacy answers in App Store Connect: precise location, linked to the user, app functionality, before the next TestFlight build.
+- **legal** Counsel to confirm the consent model by province (may an employer require location on the clock?) and the notice wording.
+- **dev** Try the geofence plugin on an iPhone: permission prompts, background relaunch, force-quit, reboot, battery over a day.
+- **dev** Wagepoint: check "Fill my Wagepoint template" against a real downloaded template (income-code header names).
+- **dev** QuickBooks Online (Canada) has no hours import: push approved time through the API (TimeActivity) once the QBO connection exists; VERIFY that Canadian payroll reads it.
+- **dev** Overtime cases not automated: SK holiday weeks (32 h) and 10-hour-day schedules, NS construction (110 h per 2 weeks) and apprentices, Ontario averaging.
+- **dev** A shift past midnight counts on the day it started; split it if a province or agreement needs that.
+- **dev** Flag implausible fixes (accuracy exactly 0 m, impossible speed) as possible spoofing (TM-LOC-04).
+
 ## Process
 
 - Cloud agents push straight to the deploy branch. Agents should work on their own branches and open pull requests; the deploy branch should only move by merge.

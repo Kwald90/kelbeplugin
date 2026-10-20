@@ -38,9 +38,12 @@ before(async () => {
 
   // B's data: one record in every collection, all carrying a marker string.
   bIds = {};
+  // Location records can only be made by the person they belong to: link B's owner to an employee.
+  await t.superPool.query("UPDATE memberships SET employee_id = 'b-owner-emp' WHERE tenant_id = $1 AND user_id = $2", [B.tenantId, B.userId]);
   for (const coll of TABLE_COLLECTIONS) {
     const id = coll === 'settings' ? 'settings' : `b-${coll}-1`;
     const data = coll === 'settings' ? { company: { name: SECRET } } : { name: SECRET, title: SECRET, note: SECRET };
+    if (coll === 'locationPoints' || coll === 'locationConsents') Object.assign(data, { employeeId: 'b-owner-emp', at: new Date().toISOString(), lat: 49.9, lng: -97.1 });
     const r = await push(B.token, [mut({ collection: coll, id, op: 'upsert', data })]);
     assert.equal(r.body.results[0].status, 'ok', `${coll}: ${JSON.stringify(r.body.results[0])}`);
     bIds[coll] = id;
@@ -57,7 +60,8 @@ describe('API: tenant A cannot reach tenant B', { skip }, () => {
     for (const coll of TABLE_COLLECTIONS) {
       for (const token of [A.token, keyA]) {
         const r = await call(app, { url: `/api/v1/${coll}/${bIds[coll]}`, token });
-        assert.equal(r.status, 404, `${coll} → ${r.status}`);
+        // API keys never reach location records at all (403), in any company.
+        assert.equal(r.status, token === keyA && collectionDef(coll).noApiKeys ? 403 : 404, `${coll} → ${r.status}`);
         assert.ok(!mentionsSecret(r.body));
       }
     }
@@ -67,7 +71,7 @@ describe('API: tenant A cannot reach tenant B', { skip }, () => {
     for (const coll of TABLE_COLLECTIONS) {
       for (const token of [A.token, keyA]) {
         const r = await call(app, { url: `/api/v1/${coll}?limit=500&includeDeleted=true`, token });
-        assert.equal(r.status, 200, `${coll} → ${r.status}`);
+        assert.equal(r.status, token === keyA && collectionDef(coll).noApiKeys ? 403 : 200, `${coll} → ${r.status}`);
         assert.ok(!mentionsSecret(r.body), `${coll} leaked`);
       }
     }

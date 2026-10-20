@@ -9,7 +9,7 @@ not legal advice. Where it says "confirm with counsel", do that before relying o
 | Owner | Kelvin Waldner (privacy officer) |
 | Applies to | All personal information Fishtape collects, holds or processes, for itself or for tenants |
 | Review cadence | Annually (October), after any breach, and before entering a new province |
-| Last reviewed | 2026-10-19 |
+| Last reviewed | 2026-10-20 |
 | Related controls | PRV-01 to PRV-06, DAT-03, DAT-04 |
 
 ## Purpose
@@ -136,6 +136,35 @@ after the breach is determined). Stored in the encrypted evidence store. Fields:
 - Deleting a whole tenant: [docs/runbooks/offboard-tenant.md](../runbooks/offboard-tenant.md).
   Deleted data stays in encrypted backups for up to about 8 weeks, then ages out. Say so in the reply.
 
+## Location while clocked in
+
+Fishtape can fill in timesheets from where a worker is while they are clocked in: which job they
+are at, and the time spent travelling between jobs. Employee location is sensitive. Canadian privacy
+commissioners treat GPS tracking of employees as acceptable only when it serves a clear, legitimate
+purpose, collects no more than that purpose needs, and employees are told about it in advance. That
+is the standard here: PIPEDA principles 2 to 5 (and PIPEDA itself for federally regulated employers),
+Alberta PIPA and BC PIPA for employee personal information in those provinces, and the same practice
+everywhere else. Each tenant is the organization in control of its crew's location data; Fishtape
+is its service provider. Confirm with counsel before launch, in particular whether a tenant may make
+location a condition of using the clock (today it is the worker's choice).
+
+| question | what Fishtape does | where |
+| --- | --- | --- |
+| Purpose | Hours and travel time against the right job, and checking timesheets before payroll. Not discipline about where someone goes on a break, not sold, not advertising. Stated in the notice. | `js/lib/location-policy.js` |
+| When | **Only while clocked in.** A fix is taken at clock-in, clock-out, start of travel and arrival, and in the browser every 3 minutes while the app is open on a running shift. Every capture path first checks that the person has an open shift; the fix is dropped if they clocked out meanwhile. Nothing is captured before clock-in, on days off or after clock-out. | `js/lib/shift-tracker.js`, `js/lib/clock.js` `recordPoint` |
+| iOS background | Only while a shift is open: region monitoring (one circle per job site, at most 18) and significant location changes, which iOS runs at low power. No continuous GPS, no route. Clock-out (or the app finding no open shift) stops it, and a shift left open more than 18 hours stops itself. "Always" permission is asked only after "While Using", with plain wording in `Info.plist`. | `mobile/ios/App/App/Plugins/FishtapeGeofencePlugin.swift` |
+| Notice and consent | The first time each worker clocks in, a notice shows the company's policy text (the owner can edit it; a plain default is provided) and the current settings (retention period, live map on or off). The worker allows or declines; the answer is recorded per policy version (`locationConsents`, only the worker can record it). Changing the text, the live map or the retention asks everyone again. Declining still lets them clock in. They can change their answer any time under Time clock > My location. | `js/lib/location-ui.js` `ensureConsent` |
+| Access | **Workers see all of their own location records** (Time clock > My location: map and list). Raw points are readable only by the person they belong to, managers and owners included, enforced by a RESTRICTIVE row-level-security policy on the member's employee id (`0140_location_access.sql`, `0141_location.sql`), by the API (own rows only), and never by API keys. Managers see time entries: the job, hours, travel, and the clock-in fix with its distance from the site and an "off site" flag to review. | `server/src/auth/access.js`, `server/src/collections.js` |
+| Live tracking | **Off by default.** A company can turn on "Live crew map while clocked in"; then managers see the latest point of each person clocked in now (last 12 hours), never anyone off the clock and never a history. Turning it on re-asks every worker, and every view of the map is written to the audit log. | `GET /api/v1/location/live` |
+| Retention | Raw points are deleted after **90 days** (owner can set 7 to 730). A daily worker job empties and soft-deletes old points (the tombstone keeps only the worker's employee id so their devices drop their copy) and removes the clock-in/out coordinates from time entries that old; hours, jobs, distances and flags stay as payroll records. Devices also prune their own copies. Raw points are never copied into record history, and history copies of time entries leave coordinates out. Each run is audited. | `server/src/services/location.js` |
+| Minimisation | 6 decimal places, accuracy in whole metres. Clock-in coordinates are left out for API keys and never sent to the AI assistant. HQ (BYPASSRLS) reads location tables only for the audited company export and counts. | `access.js` `redactForReader`, `ai/data.js` |
+| Third parties | Map tiles come from Natural Resources Canada (CBMT, Open Government Licence – Canada); the request shows the map area of a job site, never a person's position (pins are drawn on the device). The "Find address" button sends a job's street address to NRCan's Geolocator. Both are Government of Canada services in Canada. Add both to the sub-processor list. | `js/lib/minimap.js`, `js/lib/geocode.js` |
+| Requests | A worker's request to see or correct their location data goes to their employer (the tenant). Workers can already see everything held about them in My location; corrections are made to time entries by the foreman or office. | |
+
+Tenants should tell their crews before turning location on, keep the policy text accurate for their
+province and any collective agreement, and not use it for anything the notice doesn't say.
+
+
 ## CASL
 
 Tenants use Fishtape to send email and SMS sequences, which are often commercial electronic messages.
@@ -174,3 +203,4 @@ None for legal duties. Process changes go through [information-security.md](info
 | date | reviewer | result | notes |
 | --- | --- | --- | --- |
 | 2026-10-19 | Kelvin Waldner | First version | Drafted with an AI agent; adopted when Kelvin merges it. Needs a review by privacy counsel before launch. |
+| 2026-10-20 | Kelvin Waldner | Location while clocked in | New section for GPS time tracking, drafted with an AI agent. Counsel to confirm the consent model for each province before launch. |
