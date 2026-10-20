@@ -96,6 +96,12 @@ image_exists() { docker image inspect "$IMAGE_REPO:$1" >/dev/null 2>&1; }
 # After a successful deploy: is anything sensitive served, is any header missing? Warns only
 # (the release is already live); output kept for the evidence bundle.
 exposure_check() {
+  # When this release changed the nginx files, install them first (nginx -t, then reload; the
+  # installer restores the previous files if the test fails) so the check tests the new config.
+  if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "${TARGET:-$PREV_SHA}" ] && ! git_ diff --quiet "$PREV_SHA" "$TARGET" --       deploy/staging/nginx-api.conf.snippet deploy/staging/security-headers.conf deploy/staging/nginx-http.conf       deploy/staging/nginx-proxy.conf deploy/staging/logrotate-nginx 2>/dev/null; then
+    say "nginx files changed in this release: installing them"
+    "$HERE/install-nginx.sh" > "$STATE_DIR/last-nginx-install.txt" 2>&1       || say "WARNING: install-nginx.sh failed, the previous nginx config is still live; see $STATE_DIR/last-nginx-install.txt"
+  fi
   local args=("https://$PUBLIC_HOST" --resolve "$PUBLIC_HOST:443:127.0.0.1")
   [ "$SERVER" -eq 1 ] || args+=(--no-api)
   if "$REPO_DIR/deploy/check-exposure.sh" "${args[@]}" > "$STATE_DIR/last-exposure-check.txt" 2>&1; then

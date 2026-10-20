@@ -266,6 +266,16 @@ fi
 
 say "done: production is on $TAG (${TARGET:0:12}) in $(( $(date +%s) - START ))s"
 
+# ---- 7b. nginx: when this release changed the nginx files, install them (nginx -t, then reload;
+#      install-nginx.sh restores the previous files if the test fails) so the checks below test
+#      the new config instead of reporting false failures against the old one. ----
+if [ "$PREV_SHA" != "$TARGET" ] && ! git_ diff --quiet "$PREV_SHA" "$TARGET" -- deploy/production/nginx deploy/production/logrotate-nginx 2>/dev/null; then
+  say "nginx files changed in this release: installing them"
+  if ! "$HERE/install-nginx.sh" > "$STATE_DIR/last-nginx-install.txt" 2>&1; then
+    say "WARNING: install-nginx.sh failed, the previous nginx config is still live; see $STATE_DIR/last-nginx-install.txt"
+  fi
+fi
+
 # ---- 8. exposure checks ----
 # Is anything sensitive served, is any header missing? Warns only (the release is live); the
 # output is kept for the evidence bundle. The deploy workflow runs the same checks from outside.
