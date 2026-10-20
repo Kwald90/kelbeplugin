@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Export options for TestFlight / App Store uploads (mobile/scripts/testflight.sh). No secrets:
-     the API key is passed on the command line from ~/.appstoreconnect/api_key.json. -->
+<!-- Export options for TestFlight / App Store uploads (mobile/scripts/testflight.sh), which copies
+     this file and adds signingCertificate (the distribution certificate's SHA-1) and
+     provisioningProfiles (the App Store profile it makes for that certificate). No secrets. -->
 <plist version="1.0">
 <dict>
 	<key>method</key>
 	<string>app-store-connect</string>
 	<key>destination</key>
-	<string>upload</string>
+	<string>export</string>
 	<key>signingStyle</key>
-	<string>automatic</string>
+	<string>manual</string>
 	<key>teamID</key>
 	<string>9C68LPL6JA</string>
 	<key>uploadSymbols</key>

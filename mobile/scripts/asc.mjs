@@ -2,11 +2,13 @@
 //   node mobile/scripts/asc.mjs app [bundleId]                         the app record (id, name, SKU)
 //   node mobile/scripts/asc.mjs wait-build <buildNumber> [minutes]     wait until the upload is processed
 //   node mobile/scripts/asc.mjs testflight <buildNumber> [group]       put the build in an internal group
+//   node mobile/scripts/asc.mjs profile <certSha1> [name]              App Store profile for that certificate,
+//                                                                       installed for Xcode; prints its UUID
 // Reads ~/.appstoreconnect/api_key.json ({ key_id, issuer_id, key_filepath }) like
 // register-bundle-id.mjs. Prints only results: never the key, the issuer ID or the signed token.
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { createSign } from 'node:crypto';
+import { createSign, createHash } from 'node:crypto';
 
 const API = 'https://api.appstoreconnect.apple.com/v1';
 const BUNDLE_ID = process.env.FISHTAPE_BUNDLE_ID || 'com.fishtapehq.app';
@@ -98,12 +100,48 @@ async function testflight(number, groupName = DEFAULT_GROUP) {
   });
 }
 
+// An App Store profile for the bundle, signed by the distribution certificate whose SHA-1 is given
+// (the one in the login keychain: codesign over SSH can only use a certificate it can unlock, and a
+// same-named one in another keychain would be picked by name). Replaces this script's earlier
+// profiles for the bundle, installs the new one where Xcode looks, and prints its UUID.
+async function profile(sha1, name) {
+  const want = String(sha1 || '').toUpperCase();
+  if (!/^[0-9A-F]{40}$/.test(want)) throw new Error('profile needs the certificate SHA-1 (40 hex characters)');
+  const bid = (await call('GET', `/bundleIds?filter[identifier]=${encodeURIComponent(BUNDLE_ID)}&fields[bundleIds]=identifier&limit=50`))
+    .data?.find((d) => d.attributes.identifier === BUNDLE_ID);
+  if (!bid) throw new Error(`No bundle ID ${BUNDLE_ID} on the team`);
+  const certs = (await call('GET', '/certificates?fields[certificates]=certificateContent,certificateType,displayName,expirationDate&limit=200')).data || [];
+  const cert = certs.find((c) => createHash('sha1').update(Buffer.from(c.attributes.certificateContent || '', 'base64')).digest('hex').toUpperCase() === want);
+  if (!cert) throw new Error(`Certificate ${want} is not on the team (revoked or from another team)`);
+  const prefix = 'Fishtape App Store';
+  const old = (await call('GET', `/bundleIds/${bid.id}/profiles?fields[profiles]=name,profileType&limit=200`)).data || [];
+  for (const o of old) if (o.attributes.name.startsWith(prefix)) await call('DELETE', `/profiles/${o.id}`);
+  const made = (await call('POST', '/profiles', {
+    data: {
+      type: 'profiles',
+      attributes: { name: name || `${prefix} ${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}`, profileType: 'IOS_APP_STORE' },
+      relationships: {
+        bundleId: { data: { type: 'bundleIds', id: bid.id } },
+        certificates: { data: [{ type: 'certificates', id: cert.id }] },
+      },
+    },
+  })).data;
+  const content = Buffer.from(made.attributes.profileContent, 'base64');
+  for (const dir of [`${homedir()}/Library/MobileDevice/Provisioning Profiles`, `${homedir()}/Library/Developer/Xcode/UserData/Provisioning Profiles`]) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(`${dir}/${made.attributes.uuid}.mobileprovision`, content);
+  }
+  console.error(`profile "${made.attributes.name}" for ${BUNDLE_ID} with ${cert.attributes.displayName} (expires ${String(cert.attributes.expirationDate).slice(0, 10)})`);
+  console.log(made.attributes.uuid);
+}
+
 const [cmd, ...args] = process.argv.slice(2);
 try {
   if (cmd === 'app') out(await app(args[0]));
   else if (cmd === 'wait-build') await waitBuild(args[0], Number(args[1]) || 25);
   else if (cmd === 'testflight') await testflight(args[0], args[1]);
-  else { console.error('usage: asc.mjs app [bundleId] | wait-build <buildNumber> [minutes] | testflight <buildNumber> [group]'); process.exitCode = 64; }
+  else if (cmd === 'profile') await profile(args[0], args[1]);
+  else { console.error('usage: asc.mjs app [bundleId] | wait-build <buildNumber> [minutes] | testflight <buildNumber> [group] | profile <certSha1> [name]'); process.exitCode = 64; }
 } catch (e) {
   console.error(`asc: ${e.message}`);
   process.exitCode = 1;
