@@ -5,7 +5,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 
 ## Needs Kelvin
 
-- **K** App Store Connect Issuer ID and Apple Team ID (bundle ID `com.fishtapehq.app`, signing, TestFlight). Steps: `docs/mobile/README.md`.
+- **K** App Store Connect: create the app record for bundle ID `com.fishtapehq.app` (registered 2026-10-19, team 9C68LPL6JA) in the web UI (Apple has no API for that), then TestFlight. Steps: `docs/mobile/README.md`.
 - **K** Production VPS at dotmoose: host, SSH access, OS, data-centre country, disk encryption.
 - **K** Domain: confirm the spelling registered (fishtapehq.com vs fishtapewq.com) and point DNS (`app.`, `hq.`, `status.`).
 - **K** Real tier prices (placeholders in `electrical-app/js/plans.js`), the failed-payment grace period (7 days now), the trial length (30 days now, `TRIAL_DAYS`) and the deleted-company grace (30 days now).
