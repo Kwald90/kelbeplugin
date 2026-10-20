@@ -255,7 +255,7 @@ describe('payments', { skip }, () => {
     const memo = fake.create(T.realmId, 'CreditMemo', { CustomerRef: { value: cust }, Line: [{ DetailType: 'SalesItemLineDetail', Amount: 1120, SalesItemLineDetail: { ItemRef: { value: T.seed.items.labour.Id }, Qty: 1, UnitPrice: 1120 } }], GlobalTaxCalculation: 'NotApplicable' });
     fake.create(T.realmId, 'Payment', { CustomerRef: { value: cust }, TotalAmt: 0, Line: [{ Amount: 1120, LinkedTxn: [{ TxnId: l.qbo_id, TxnType: 'Invoice' }] }, { Amount: 1120, LinkedTxn: [{ TxnId: memo.Id, TxnType: 'CreditMemo' }] }] });
     await pass(T);
-    const s = await rec(T, 'payments', 'qbo-settle-inv-s');
+    const s = await rec(T, 'payments', 'credit-inv-s');
     assert.ok(s && !s.deleted, 'settlement payment');
     assert.equal(s.method, 'credit');
     assert.equal(s.source, 'quickbooks');

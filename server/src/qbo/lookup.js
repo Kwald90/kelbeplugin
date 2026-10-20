@@ -175,13 +175,16 @@ export async function renumber(run, collection, id) {
   return txWrite(run, async (tx) => {
     const rec = await loadRecord(tx, collection, id);
     if (!rec || rec.deleted) throw new ApiError(404, 'not_found', 'Not found.');
-    const s = (await tx.query("SELECT data FROM settings WHERE tenant_id = $1 AND id = 'settings' AND deleted_at IS NULL", [tx.tenantId])).rows[0]?.data || {};
+    const sRow = (await tx.query("SELECT data FROM settings WHERE tenant_id = $1 AND id = 'settings' AND deleted_at IS NULL", [tx.tenantId])).rows[0];
+    const s = sRow?.data || {};
     const own = (await tx.query(`SELECT number FROM ${collection} WHERE tenant_id = $1 AND number IS NOT NULL`, [tx.tenantId])).rows.map((r) => r.number);
     let top = Number(s.nextNumbers?.[kind]) || 0;
     for (const n of [...own, ...qboNumbers.map((o) => o.DocNumber)]) { const m = re.exec(String(n || '')); if (m) top = Math.max(top, Number(m[1]) + 1); }
     const number = `${prefix}-${top}`;
     await system.patch(tx, run, collection, id, { number });
-    await system.patch(tx, run, 'settings', 'settings', { nextNumbers: { ...(s.nextNumbers || {}), [kind]: top + 1 } });
+    const nextNumbers = { ...(s.nextNumbers || {}), [kind]: top + 1 };
+    if (sRow) await system.patch(tx, run, 'settings', 'settings', { nextNumbers });
+    else await system.create(tx, run, 'settings', { id: 'settings', nextNumbers });
     await tx.query(
       `UPDATE qbo_links SET state = CASE WHEN state IN ('error', 'blocked') THEN 'pending' ELSE state END, reason = NULL WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 AND role = 'main' AND reason IN ('duplicate_number', 'duplicate_number_local')`,
       [tx.tenantId, collection, id]);

@@ -4,6 +4,7 @@
 // no read needed). TimeActivity is not in CDC: it is read by id for inbox rows and every 6 hours by
 // its update time. Webhook-only signals (TimeActivity deletes, merges) are confirmed by a read
 // before anything is written. A cursor older than 29 days runs a full reconcile by id.
+import { randomUUID } from 'node:crypto';
 import { QboError } from './client.js';
 import { recordLabel, writeLog } from './log.js';
 import {
@@ -181,8 +182,12 @@ export async function remoteDeleted(run, link, { record = null, row = null } = {
 
 // ---- creating Fishtape records from QuickBooks (4.1) ------------------------------------------------
 
-/** Record ids for pulled records are derived from the QuickBooks id, so a retried pull never doubles. */
-export const pulledId = (entity, qboId, extra = '') => `qbo-${entity.toLowerCase()}-${qboId}${extra ? `-${extra}` : ''}`.slice(0, 128);
+/**
+ * A new record id for a pulled record. Never derived from a QuickBooks id: QBO ids stay out of
+ * Fishtape records (3.1). The record and its link are written in one transaction, so a retried pull
+ * finds the link and never makes a second record.
+ */
+export const pulledId = () => randomUUID();
 
 /**
  * Create a Fishtape record and its link from a QuickBooks object (pull, the wizard, an import).
@@ -196,7 +201,7 @@ export async function createFromRemote(run, collection, entity, o, { owner = 'bo
   const R = qboToCanon(entity, o, { ...ctx, collection });
   const report = {};
   const body = { ...canonToFishtape(collection, R, ctx, { existing: null, report }), ...extra };
-  const id = pulledId(entity, o.Id);
+  const id = pulledId();
   if (collection === 'clients' && o.CompanyName == null) body.type = body.type || 'residential';
   if (collection === 'invoices' && isVoidedInvoice(o)) body.status = 'void';
   if (collection === 'bills') { body.status = billStatusFromQbo(o, 'open') || 'open'; if (body.kind === 'receipt') body.status = 'paid'; }
@@ -213,6 +218,8 @@ export async function createFromRemote(run, collection, entity, o, { owner = 'bo
     return { collection, id, state: 'shadow' };
   }
   const created = await txWrite(run, async (tx) => {
+    const again = (await linksByRemote(tx, entity, o.Id)).find((l) => l.collection === collection && l.role === 'main');
+    if (again) return { link: again, version: again.fishtape_version, existed: true };
     checkBrake(run);
     let version;
     try {
@@ -236,13 +243,14 @@ export async function createFromRemote(run, collection, entity, o, { owner = 'bo
       const text = { tax_inclusive: 'Tax-inclusive in QuickBooks; Fishtape shows its total without the tax split.', tax_shape: 'QuickBooks uses tax codes Fishtape cannot show exactly on this document.' }[reason] || 'Check this record against QuickBooks.';
       await openReview(tx, run, link, { reason, label, message: text });
     }
-    if (collection === 'invoices' && body.invoiceId == null && body.number) await raiseNextNumber(tx, run, 'invoice', body.number);
+    if (collection === 'invoices' && body.number) await raiseNextNumber(tx, run, 'invoice', body.number);
     if (collection === 'estimates' && body.number) await raiseNextNumber(tx, run, 'estimate', body.number);
     run.stats.pulled++;
     await writeLog(tx, { direction: 'pull', outcome: 'ok', action: 'pull_create', collection, recordId: id, qboEntity: entity, label, message: 'Created from QuickBooks' });
     return { link, version };
   });
   if (!created) return null;
+  if (created.existed) return { collection, id: created.link.record_id, state: created.link.state, link: created.link };
   return { collection, id, state, link: created.link };
 }
 
@@ -401,13 +409,12 @@ async function pullPaymentLines(run, o, links) {
     const ctx = ctxFor(run, { role: 'main', qbo_line: line.inv, meta: {} }, 'payments');
     const R = qboToCanon('Payment', o, { ...ctx, collection: 'payments' });
     const body = canonToFishtape('payments', R, ctx, { existing: null });
-    const id = pulledId('Payment', o.Id, line.inv);
+    const id = pulledId();
     if (run.shadow) { await shadowLog(run, { direction: 'pull', action: 'pull_create', collection: 'payments', recordId: id, qboEntity: 'Payment', message: 'Would create a Fishtape payment' }); continue; }
     await txWrite(run, async (tx) => {
-      if (await getLink(tx, 'payments', id)) return;
+      if ((await linksByRemote(tx, 'Payment', o.Id)).some((l) => l.collection === 'payments' && l.role === 'main' && l.qbo_line === line.inv)) return;
       checkBrake(run);
-      const rec = await loadRecord(tx, 'payments', id);
-      const version = rec ? rec.version : (await system.create(tx, run, 'payments', { ...body, invoiceId, id })).version;
+      const version = (await system.create(tx, run, 'payments', { ...body, invoiceId, id })).version;
       countWrite(run);
       await insertLink(tx, run, {
         collection: 'payments', record_id: id, role: 'main', qbo_entity: 'Payment', qbo_id: String(o.Id), qbo_line: line.inv, sync_token: String(o.SyncToken),
@@ -425,7 +432,7 @@ async function pullPaymentLines(run, o, links) {
 async function pullDeposit(run, invLink, o) {
   const rec = depositRecord(o, invLink.record_id);
   if (!rec || run.shadow) return;
-  const id = pulledId('Invoice', o.Id, 'deposit');
+  const id = `deposit-${invLink.record_id}`.slice(0, 128);
   await txWrite(run, async (tx) => {
     if (await getLink(tx, 'payments', id, 'deposit')) return;
     const existing = await loadRecord(tx, 'payments', id);
@@ -449,7 +456,7 @@ export async function settle(run, invLink, o) {
     if (rows.some((r) => r.state === 'pending')) return;
     const linked = rows.map((r) => Number(r.snapshot?.amountCents) || 0);
     const cents = isVoidedInvoice(o) ? 0 : settlementCents(o, linked);
-    const id = `qbo-settle-${invLink.record_id}`.slice(0, 128);
+    const id = `credit-${invLink.record_id}`.slice(0, 128);
     const link = await getLink(tx, 'invoices', id, 'settlement');
     const rec = await loadRecord(tx, 'payments', id);
     if (cents > 0) {
