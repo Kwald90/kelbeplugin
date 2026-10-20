@@ -5,31 +5,9 @@
 import { test, before, after, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { skip, createTestDatabase } from './support/db.js';
 import { RULES, createQboAlertHandlers, qboBudgets, qboEnabled, runQboAlerts, scheduleQboAlerts, tenantBudget } from '../src/qbo/alerts.js';
 import { createTenantWithOwner } from '../src/services/tenants.js';
-
-/**
- * Migration 0150 belongs to W1. Until it is merged, build its tables from the contract's own
- * DDL (docs/integrations/quickbooks.md 3.2), so these tests run against what W1 ships.
- * Does nothing once 0150 exists.
- */
-async function ensureQboTables(t) {
-  if ((await t.superPool.query("SELECT to_regclass('public.qbo_connections') IS NOT NULL AS ok")).rows[0].ok) return;
-  const doc = readFileSync(fileURLToPath(new URL('../../docs/integrations/quickbooks.md', import.meta.url)), 'utf8');
-  const ddl = /```sql\r?\n([\s\S]*?)```/.exec(doc.slice(doc.indexOf('### 3.2')))[1];
-  const policies = ['qbo_links', 'qbo_outbox', 'qbo_inbox', 'qbo_conflicts', 'qbo_sync_log', 'qbo_mappings', 'qbo_reference', 'qbo_candidates', 'stripe_payouts']
-    .map((tb) => `ALTER TABLE ${tb} ENABLE ROW LEVEL SECURITY; ALTER TABLE ${tb} FORCE ROW LEVEL SECURITY;
-      CREATE POLICY ${tb}_tenant ON ${tb} USING (tenant_id = app_tenant_id() AND app_portal_client_id() IS NULL)
-        WITH CHECK (tenant_id = app_tenant_id() AND app_portal_client_id() IS NULL);`).join('\n');
-  // The contract's own event list has intuit_5xx, which its CHECK (^[a-z_]{2,40}$) refuses: digits
-  // are allowed here, as asked of W1 in the W6 merge report.
-  const kinds = "ALTER TABLE qbo_platform_events DROP CONSTRAINT qbo_platform_events_kind_check, ADD CONSTRAINT qbo_platform_events_kind_check CHECK (kind ~ '^[a-z0-9_]{2,40}$');";
-  const c = await t.ownerPool.connect();
-  try { await c.query(`${ddl}\n${policies}\n${kinds}`); } finally { c.release(); }
-}
 
 const NOTIFY = 'hq-alerts@fishtape.test';
 const ENV = { QBO_ENVIRONMENT: 'production' };
@@ -50,7 +28,6 @@ const times = (n, every = 0.5) => Array.from({ length: n }, (_, i) => i * every)
 before(async () => {
   if (skip) return;
   t = await createTestDatabase('qboalerts');
-  await ensureQboTables(t);
   for (const name of ['Alpha Wiring', 'Bravo Power', 'Charlie Lights', 'Delta Volts']) {
     const { tenant } = await createTenantWithOwner(t.db, { name, owner: { email: `${name.split(' ')[0].toLowerCase()}-${randomBytes(3).toString('hex')}@example.test`, password: `pw-${randomBytes(12).toString('hex')}`, displayName: name } });
     tenants.push(tenant.id);

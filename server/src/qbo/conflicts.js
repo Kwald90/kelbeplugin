@@ -53,9 +53,17 @@ export async function closeConflict(tx, linkId, by = 'system', resolution = null
 export function conflictView(row) {
   return {
     id: row.id, kind: row.kind, collection: row.collection, recordId: row.record_id, label: row.label, reason: row.reason, status: row.status,
-    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at, fields: row.fields || [],
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    fields: (row.fields || []).map(({ recordIds, qboId, ...f }) => f), // the merge's own keys stay inside
     resolution: row.resolution || null, resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
+    ...(row.kind === 'merged' ? { recordIds: mergedRecordIds(row) } : {}),
   };
+}
+
+/** The two Fishtape records a QuickBooks merge folded together (the conflict's own record first). */
+function mergedRecordIds(row) {
+  const ids = Array.isArray(row.fields?.[0]?.recordIds) ? row.fields[0].recordIds.map(String) : [];
+  return [...new Set([row.record_id, ...ids])];
 }
 
 // ---- unlink and relink (5.6, 7.5) -----------------------------------------------------------------
@@ -138,8 +146,9 @@ export async function resolveConflict(deps, tenantId, conflictId, { choice, fiel
   const link = await run.db.withTenant({ tenantId }, (tx) => getLinkById(tx, c.link_id));
   if (!link) throw notFound();
   // Paused (any reason) or in setup, sync is off (2.5): only choices that never call QuickBooks run.
+  // A push-only record's held edit is dropped without reading QuickBooks (dropHeldEdit).
   const offline = choice === 'unlink' || c.kind === 'merged'
-    || (c.kind === 'review' && choice === 'quickbooks' && (!link.qbo_id || !DROP_REASONS.includes(c.reason || link.reason)));
+    || (c.kind === 'review' && choice === 'quickbooks' && (!link.qbo_id || !DROP_REASONS.includes(c.reason || link.reason) || PUSH_ONLY_COLLECTIONS.includes(canonCollection(link.collection, link.role))));
   if (!offline) assertActive(run);
   const by = who?.actor ? `${who.actor.type}:${who.actor.id ?? ''}` : 'system';
   const resolution = { choice, ...(fields ? { fields } : {}), ...(recordId ? { recordId } : {}) };
@@ -152,10 +161,7 @@ export async function resolveConflict(deps, tenantId, conflictId, { choice, fiel
     if (c.kind === 'fields') await resolveFields(run, link, c, choice, fields);
     else if (c.kind === 'review') await resolveReview(run, link, c, choice, who);
     else if (c.kind === 'deleted') await resolveDeleted(run, link, c, choice);
-    else if (c.kind === 'merged') {
-      if (!recordId) throw validationFailed('recordId is required.');
-      await unlinkRecord(run, link.collection, recordId, who);
-    }
+    else if (c.kind === 'merged') await resolveMerged(run, link, c, recordId, who);
   } catch (e) {
     if (e instanceof BrakeError) { await tripBrake(run, e.count); throw new ApiError(409, 'qbo_paused', 'QuickBooks sync paused by the safety brake.'); }
     if (e instanceof PassStop && e.cause) throw e.cause;
@@ -291,6 +297,24 @@ async function dropHeldEdit(run, link, choice) {
   delete meta.held;
   const l = await txWrite(run, (tx) => finish(tx, { state: 'pending', reason: null, snapshot: B, prev_values: {}, owner: link.owner === 'quickbooks' ? 'both' : link.owner, meta }));
   await reconcile(run, l, { record: rec, remote: obj, force: true, direction: 'push' });
+}
+
+/**
+ * A QuickBooks merge folded two linked Fishtape records into one QuickBooks record (4.2): one of the two
+ * is unlinked. When it is the other record, this one moves to the record QuickBooks kept, as an
+ * uncontested merge does (pull.js confirmMerge). No Intuit call either way.
+ */
+async function resolveMerged(run, link, c, recordId, who) {
+  if (!recordId) throw validationFailed('recordId is required.');
+  const ids = mergedRecordIds(c);
+  if (!ids.includes(String(recordId))) throw validationFailed(`recordId must be one of: ${ids.join(', ')}.`);
+  await unlinkRecord(run, link.collection, recordId, who);
+  const survivor = c.fields?.[0]?.qboId;
+  if (String(recordId) === link.record_id || !survivor) return;
+  await txWrite(run, async (tx) => {
+    await updateLink(tx, run, link.id, { qbo_id: String(survivor), sync_token: null, state: 'synced', reason: null });
+    await writeLog(tx, { direction: 'system', outcome: 'ok', action: 'merge', collection: link.collection, recordId: link.record_id, qboEntity: link.qbo_entity, message: 'Merged in QuickBooks; now linked to the record that was kept.' });
+  });
 }
 
 /** Deleted on one side: restore it there, or delete it on the other (5.6). */

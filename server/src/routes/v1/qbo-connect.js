@@ -58,7 +58,7 @@ export async function buildStatus(db, config, p) {
       features: {
         edition: f.edition ?? null, salesTax: Boolean(f.salesTax), customTxnNumbers: Boolean(f.customTxnNumbers), purchaseOrders: f.purchaseOrders !== false,
         timeTracking: f.timeTracking !== false, bills: f.bills !== false, classes: Boolean(f.classes), locations: Boolean(f.locations), projects: Boolean(f.projects),
-        multicurrency: Boolean(f.multicurrency),
+        multicurrency: Boolean(f.multicurrency), taxFiledThrough: f.taxFiledThrough ?? null, province: f.province ?? null,
       },
       connectedAt: iso(c.connected_at), connectedBy: by,
       syncFrom: (opt.find((o) => o.key === 'syncFrom')?.value) || (c.sync_from ? new Date(c.sync_from).toISOString().slice(0, 10) : null),
@@ -66,7 +66,7 @@ export async function buildStatus(db, config, p) {
       counts: { pending: counts.pending, error: counts.error, blocked: counts.blocked, conflict: counts.conflict, needsReview: counts.needs_review, mismatch: counts.mismatch, waitingOffline: waiting },
       writeMode: opt.find((o) => o.key === 'writeMode')?.value === 'shadow' ? 'shadow' : 'live',
       refreshExpiresAt: iso(c.refresh_expires_at), hardExpiresAt: iso(c.refresh_hard_expires_at),
-      setup: { phase: c.setup?.phase || null, done: c.setup?.done ?? 0, total: c.setup?.total ?? 0, errors: c.setup?.errors ?? 0 },
+      setup: { phase: c.setup?.phase || null, done: c.setup?.done ?? 0, total: c.setup?.total ?? 0, errors: c.setup?.errors ?? 0, finishedAt: c.setup?.finishedAt ?? null },
       lookupsEnabled,
       ...(c.pause_reason === 'brake' ? { brake: { count: c.brake_allow_count ?? null } } : {}),
       takeoverOffer: await hasTakeoverOffer(db, tenantId, p.userId),

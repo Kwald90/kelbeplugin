@@ -44,18 +44,21 @@ export async function runPull(run, { full = false } = {}) {
   } else {
     let since = new Date(cursor.getTime() - 2 * 60_000);
     let covered = true;
-    for (let page = 0; page < 20; page++) {
-      const res = await run.client.cdc(CDC_ENTITIES, since);
-      const objects = [];
-      for (const [entity, list] of Object.entries(res.entities)) for (const o of list) objects.push({ entity, o });
-      await processObjects(run, objects);
-      if (res.count < CDC_CAP) { newCursor = new Date(Date.parse(res.time || new Date().toISOString()) - 60_000); break; }
-      // More than the cap: carry on from the newest object seen (CDC has no end time; 5.4).
-      const newest = objects.map((x) => Date.parse(lastUpdated(x.o) || 0)).filter(Number.isFinite).sort((a, b) => b - a)[0];
-      if (!newest || newest <= since.getTime()) { covered = false; break; }
-      since = new Date(newest);
-      if (timeUp(run)) { covered = false; break; }
-    }
+    // Settlement waits for the last page: an invoice and its payment can land on different pages (4.9).
+    await withSettlesAfter(run, async () => {
+      for (let page = 0; page < 20; page++) {
+        const res = await run.client.cdc(CDC_ENTITIES, since);
+        const objects = [];
+        for (const [entity, list] of Object.entries(res.entities)) for (const o of list) objects.push({ entity, o });
+        await processObjects(run, objects);
+        if (res.count < CDC_CAP) { newCursor = new Date(Date.parse(res.time || new Date().toISOString()) - 60_000); break; }
+        // More than the cap: carry on from the newest object seen (CDC has no end time; 5.4).
+        const newest = objects.map((x) => Date.parse(lastUpdated(x.o) || 0)).filter(Number.isFinite).sort((a, b) => b - a)[0];
+        if (!newest || newest <= since.getTime()) { covered = false; break; }
+        since = new Date(newest);
+        if (timeUp(run)) { covered = false; break; }
+      }
+    });
     if (!covered) newCursor = null;
   }
   await processInbox(run);
@@ -596,9 +599,12 @@ async function confirmMerge(run, r) {
     const from = (await linksByRemote(tx, r.entity, r.deleted_id)).filter((l) => l.role === 'main');
     const into = (await linksByRemote(tx, r.entity, r.qbo_id)).filter((l) => l.role === 'main');
     for (const l of from) {
-      if (into.some((x) => x.collection === l.collection)) {
+      const other = into.find((x) => x.collection === l.collection);
+      if (other) {
+        // recordIds: both Fishtape records, so the office can pick which one to unlink (7.7);
+        // qboId: the record QuickBooks kept, which this link moves to if the other one is unlinked.
         await updateLink(tx, run, l.id, { state: 'conflict' });
-        await openConflict(tx, run, l, { kind: 'merged', label: recordLabel(l.collection, { id: l.record_id }), reason: 'merged', fields: [{ field: 'name', label: 'Merged', base: '', fishtape: 'Two records', quickbooks: 'These two were merged in QuickBooks; merge them in Fishtape or unlink one.' }] });
+        await openConflict(tx, run, l, { kind: 'merged', label: recordLabel(l.collection, { id: l.record_id }), reason: 'merged', fields: [{ field: 'name', label: 'Merged', base: '', fishtape: 'Two records', quickbooks: 'These two were merged in QuickBooks; merge them in Fishtape or unlink one.', recordIds: [l.record_id, other.record_id], qboId: String(survivor.Id) }] });
         continue;
       }
       await updateLink(tx, run, l.id, { qbo_id: String(survivor.Id), sync_token: null, snapshot: l.snapshot });

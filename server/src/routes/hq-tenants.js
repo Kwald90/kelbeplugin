@@ -282,7 +282,9 @@ export default async function hqTenantRoutes(app, { config, db, email }) {
           `UPDATE qbo_connections SET state = $2, state_before = NULL, pause_reason = $3, paused_since = CASE WHEN $2 = 'paused' THEN paused_since END, updated_at = now()
             WHERE tenant_id = $1`, [t.id, back, prior]);
         // The next pass runs the Fishtape-side sweep first (2.5); start it now rather than at the next dispatch.
-        if (back === 'active') await enqueue(c, { kind: 'qbo_sync', tenantId: t.id, payload: { reason: 'hq_resume' }, dedupeKey: `qbo_sync:${t.id}` });
+        // Its own key (as every resume path uses, connection.js enqueueSync), so a plain qbo_sync already
+        // waiting does not swallow the sweep.
+        if (back === 'active') await enqueue(c, { kind: 'qbo_sync', tenantId: t.id, payload: { sweep: true, reason: 'hq_resume' }, dedupeKey: `qbo_sync:${t.id}:sweep` });
       }
       await hqAudit(c, req, t.id, {
         action: 'hq.qbo.pause', collection: 'qbo_connections', recordId: t.id,

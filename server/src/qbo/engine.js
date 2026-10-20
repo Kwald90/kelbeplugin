@@ -829,14 +829,16 @@ export async function reconcile(run, link, o = {}) {
     let state = keepState ? link.state : 'synced';
     let owner = link.owner;
     let reason = keepState ? link.reason : null;
-    if (report.taxShape && link.owner !== 'quickbooks') { state = 'needs_review'; owner = 'quickbooks'; reason = 'tax_shape'; }
+    // Only a hold this call makes opens the tax_shape review. A held link keeps its own review text.
+    let taxShapeNow = false;
+    if (report.taxShape && link.owner !== 'quickbooks') { state = 'needs_review'; owner = 'quickbooks'; reason = 'tax_shape'; taxShapeNow = true; }
     const updated = await updateLink(tx, run, link.id, {
       ...(collection === 'payments' && link.role === 'main' && link.qbo_entity === 'Payment' && result.merged.invoiceRef ? { qbo_line: String(result.merged.invoiceRef) } : {}),
       snapshot: { ...result.merged, ...Object.fromEntries(deferred.map((f) => [f, R[f] ?? null])), extra: L.extra }, sync_token: written?.SyncToken ?? link.sync_token, qbo_updated_at: lastUpdated(written),
       fishtape_version: patchedVersion ?? record.version, state, reason, owner, attempts: 0, last_error: null, next_attempt_at: null,
       meta: newMeta, prev_values: prevValues,
     });
-    if (state === 'needs_review') await openReview(tx, run, updated, { reason, label, message: 'QuickBooks uses tax codes Fishtape cannot show exactly on this document.' });
+    if (taxShapeNow) await openReview(tx, run, updated, { reason, label, message: 'QuickBooks uses tax codes Fishtape cannot show exactly on this document.' });
     if (link.state === 'conflict') await closeConflict(tx, link.id, 'system');
     if (link.state !== 'synced' && state === 'synced') await requeueDependents(tx, link);
     await finishOutbox(tx, run, row);
@@ -1171,7 +1173,10 @@ export async function pushRecord(deps, tenantId, collection, id, { force = false
     `UPDATE qbo_outbox SET claimed_until = now() + interval '5 minutes', claimed_epoch = $4
       WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 RETURNING *`, [tx.tenantId, collection, id, run.epoch])).rows[0] || null);
   try {
-    return await processRecord(run, collection, id, { force, sendNow: force, actorType: 'user', ...(row ? { row, stale: row.stale, held: row.held } : {}) });
+    // Without force the waiting row keeps its own actor, so an API key's, the assistant's or a field
+    // user's edit still goes to origin review (5.2); force is the office approving it (7.5).
+    const actorType = force ? 'user' : (row?.actor_type || 'user');
+    return await processRecord(run, collection, id, { force, sendNow: force, actorType, ...(row ? { row, stale: row.stale, held: row.held } : {}) });
   } catch (e) {
     if (row) await run.db.withTenant({ tenantId }, (tx) => tx.query('UPDATE qbo_outbox SET claimed_until = NULL, claimed_epoch = NULL WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 AND claimed_epoch = $4', [tenantId, collection, id, run.epoch])).catch(() => {});
     if (e instanceof BrakeError) { await tripBrake(run, e.count); return 'paused'; }

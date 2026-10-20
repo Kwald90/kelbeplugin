@@ -233,8 +233,13 @@ describe('records, log, mappings, conflicts (7.5 to 7.7)', { skip }, () => {
     const st = await call(app, { url: '/api/v1/qbo/records/status?collection=clients&ids=c-api', token: office.token });
     assert.equal(st.status, 200);
     assert.equal(st.body.data['c-api'].state, 'synced');
+    assert.equal(st.body.data['c-api'].owner, 'both', "owner 'quickbooks' shows Edit in QuickBooks");
     const view = await call(app, { url: '/api/v1/qbo/records/clients/c-api', token: office.token });
     assert.equal(view.body.state.state, 'synced');
+    // Retry / Send now: JSON, so the PWA reads it like the other 202s (7.5).
+    const send = await call(app, { method: 'POST', url: '/api/v1/qbo/records/clients/c-api/sync', token: A.token, body: {} });
+    assert.equal(send.status, 202, JSON.stringify(send.body));
+    assert.deepEqual(send.body, { queued: true, state: 'synced' });
     assert.match(view.body.quickbooks.url, /^https:\/\/app\.sandbox\.qbo\.intuit\.com\/app\/customerdetail\?nameId=\d+$/);
     assert.ok(view.body.log.some((l) => l.action === 'create'));
     const s1 = await call(app, { method: 'POST', url: '/api/v1/qbo/sync', token: A.token, body: { direction: 'push' } });
@@ -258,6 +263,8 @@ describe('records, log, mappings, conflicts (7.5 to 7.7)', { skip }, () => {
     assert.equal(status.body.state, 'active');
     assert.equal(status.body.counts.conflict, 1);
     assert.equal(status.body.writesEnabled, true);
+    // 2.8: the filed-through date and province reach the mappings screen.
+    assert.ok('taxFiledThrough' in status.body.features && 'province' in status.body.features, JSON.stringify(status.body.features));
     assert.ok(!JSON.stringify(status.body).includes(realms[A.tenantId]));
   });
 
@@ -275,9 +282,13 @@ describe('records, log, mappings, conflicts (7.5 to 7.7)', { skip }, () => {
     const prev = (await t.superPool.query('SELECT state, pause_reason FROM qbo_connections WHERE tenant_id = $1', [A.tenantId])).rows[0];
     await t.superPool.query("UPDATE qbo_connections SET state = 'paused', pause_reason = 'hq' WHERE tenant_id = $1", [A.tenantId]);
     const paused = await call(app, { method: 'POST', url: `/api/v1/qbo/conflicts/${c.id}/resolve`, token: A.token, body: { choice: 'quickbooks' } });
+    // Relinking reads QuickBooks: refused while paused too.
+    const relinkPaused = await call(app, { method: 'PUT', url: '/api/v1/qbo/records/clients/c-api/link', token: A.token, body: { qboId: '1' } });
     await t.superPool.query('UPDATE qbo_connections SET state = $2, pause_reason = $3 WHERE tenant_id = $1', [A.tenantId, prev.state, prev.pause_reason]);
     assert.equal(paused.status, 409);
     assert.equal(paused.body.error.code, 'qbo_paused', JSON.stringify(paused.body));
+    assert.equal(relinkPaused.status, 409, JSON.stringify(relinkPaused.body));
+    assert.equal(relinkPaused.body.error.code, 'qbo_paused');
     const r = await call(app, { method: 'POST', url: `/api/v1/qbo/conflicts/${c.id}/resolve`, token: A.token, body: { choice: 'quickbooks' } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.status, 'resolved');
@@ -316,6 +327,14 @@ describe('records, log, mappings, conflicts (7.5 to 7.7)', { skip }, () => {
     // Removing an option is setting it back to its default: engine-set options cannot be removed.
     const rm = await call(app, { method: 'PUT', url: '/api/v1/qbo/mappings', token: A.token, body: { remove: [{ kind: 'option', key: 'stripeVendorId' }] } });
     assert.equal(rm.status, 400, JSON.stringify(rm.body));
+    // Practice mode and Go live are owner or admin only (8.2): an office user may not set or remove writeMode.
+    for (const body of [{ set: [{ kind: 'option', key: 'writeMode', value: 'shadow' }] }, { remove: [{ kind: 'option', key: 'writeMode' }] }]) {
+      const r = await call(app, { method: 'PUT', url: '/api/v1/qbo/mappings', token: officeMfa.token, body });
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+    }
+    assert.equal((await t.superPool.query("SELECT count(*)::int AS n FROM qbo_mappings WHERE tenant_id = $1 AND kind = 'option' AND key = 'writeMode'", [A.tenantId])).rows[0].n, 0);
+    assert.equal((await call(app, { method: 'PUT', url: '/api/v1/qbo/mappings', token: officeMfa.token, body: { set: [{ kind: 'option', key: 'pushDrafts', value: false }] } })).status, 200, 'other options stay office level');
+    assert.equal((await put([{ kind: 'option', key: 'writeMode', value: 'live' }])).status, 200, 'the owner may');
     const audit = (await t.superPool.query("SELECT count(*)::int AS n FROM audit_events WHERE tenant_id = $1 AND action = 'qbo.mappings'", [A.tenantId])).rows[0].n;
     assert.ok(audit >= 2);
   });
@@ -412,5 +431,11 @@ describe('setup routes (7.4)', { skip }, () => {
     assert.ok(ap.body.error.details.missing.some((m) => m.kind === 'item' && m.key === 'material'));
     const sync = await call(app, { method: 'POST', url: '/api/v1/qbo/sync', token: C.token, body: {} });
     assert.equal(sync.body.error.code, 'qbo_not_ready');
+    // A finished scan waits for choices: the PWA stops polling on setup.finishedAt.
+    const at = '2026-10-20T15:00:00.000Z';
+    await t.superPool.query(`UPDATE qbo_connections SET setup = jsonb_build_object('phase', 'scanned', 'finishedAt', $2::text) WHERE tenant_id = $1`, [C.tenantId, at]);
+    const st = await call(app, { url: '/api/v1/qbo/status', token: C.token });
+    assert.equal(st.body.setup.phase, 'scanned');
+    assert.equal(st.body.setup.finishedAt, at);
   });
 });

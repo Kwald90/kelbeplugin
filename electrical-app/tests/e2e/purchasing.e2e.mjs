@@ -40,6 +40,9 @@ const { readConfig } = await mod('src/config.js');
 const { buildApp } = await mod('src/app.js');
 const { seed } = await mod('src/seed.js');
 const { hashSecret } = await mod('src/auth/passwords.js');
+const { createRecords } = await mod('src/services/records.js');
+const { createValidator } = await mod('src/schemas.js');
+const { systemPrincipal, systemWho } = await mod('src/integrations/state.js');
 
 const results = [];
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -92,6 +95,11 @@ const people = {};
   people.sam = { email, password: pw2, emp: 'emp-sam' };
 }
 log('seeded TG Electrical with an owner and an electrician');
+
+// A QuickBooks pull, as the server would write it (system:qbo), without a QuickBooks connection.
+const records = createRecords({ validator: createValidator() });
+const qboP = systemPrincipal(tg, 'qbo', 'QuickBooks sync');
+const asQbo = (fn) => db.withTenant({ tenantId: tg }, (tx) => fn(tx, qboP, systemWho(qboP)), { write: true });
 
 const apiPort = await freePort();
 const webPort = await freePort();
@@ -405,11 +413,13 @@ try {
   });
 
   await step('a status that changes while the bill is open is not written back', async () => {
-    // As if a QuickBooks pull marked the bill paid while the office had it open (a local stand-in:
-    // the server never hears of it), then the notes are typed into.
+    // A QuickBooks pull marks the bill paid on the server while the office has it open; the device
+    // takes it, then the notes are typed into. The editor must send only the notes, never its old
+    // 'open' status (a whole-record save would put 'open' back over the pulled 'paid').
     await own.goto(`/#/purchasing/bills/${billId}`);
     await own.waitFor('!!document.querySelector("main textarea[name=notes]")', 'the bill');
-    await own.evaluate(`(() => { const s = kelbe.store, r = s.get("bills", ${J(billId)}); s.applyRemote("bills", r.id, { ...r, status: "paid" }, s.version("bills", r.id)); return true; })()`);
+    await asQbo((tx, pr, who) => records.patchRecord(tx, pr, 'bills', billId, { status: 'paid' }, {}, who));
+    await synced(own);
     await own.waitFor('/Paid/.test(document.querySelector("main aside")?.innerText || "")', 'the pulled status on screen');
     await own.fill('main textarea[name=notes]', 'Paid by cheque 1043');
     await sleep(700);
@@ -417,10 +427,11 @@ try {
     if (local.status !== 'paid' || !local.fields.length || local.fields.some((f) => !f || f.includes('status'))) throw new Error(J(local));
     await synced(own);
     const b = (await row('SELECT data, status FROM bills WHERE tenant_id = $1 AND id = $2', [tg, billId]))[0];
-    if (b.data.notes !== 'Paid by cheque 1043' || b.status !== 'open') throw new Error(J({ notes: b.data.notes, status: b.status }));
-    // Back in step with the server for the steps after.
-    await own.evaluate(`(() => { const s = kelbe.store, r = s.get("bills", ${J(billId)}); s.applyRemote("bills", r.id, { ...r, status: "open" }, s.version("bills", r.id)); return true; })()`);
-    return `only ${J(local.fields)} went to the server; the bill stayed ${local.status} on screen`;
+    if (b.data.notes !== 'Paid by cheque 1043' || b.status !== 'paid') throw new Error(J({ notes: b.data.notes, status: b.status }));
+    // Back to open on both sides for the steps after.
+    await asQbo((tx, pr, who) => records.patchRecord(tx, pr, 'bills', billId, { status: 'open' }, {}, who));
+    await synced(own);
+    return `only ${J(local.fields)} went to the server; the pulled ${b.status} stayed`;
   });
 
   await step('the electrician sees no purchasing at all', async () => {
