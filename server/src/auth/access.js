@@ -3,6 +3,9 @@
 import { AUDIT_COLLECTION, collectionDef } from '../collections.js';
 // Work tasks: the same rules the PWA applies offline (who may change what, photo evidence).
 import { mergeTask, taskWriteProblem } from '../../../electrical-app/js/lib/workplan.js';
+// Drawings: object-level merge (two people editing different parts both keep their work).
+import { mergeDrawing } from '../../../electrical-app/js/lib/drawing-collab.js';
+import { canSeeMoney } from '../../../electrical-app/js/lib/drawing-costs.js';
 
 /**
  * @typedef {object} Principal
@@ -82,8 +85,81 @@ export function rowVisible(f, data, def) {
  * (lib/workplan.js mergeTask). Returns null for collections that store what was sent.
  */
 export function mergeWrite(p, coll, existing, next) {
-  if (coll !== 'workTasks' || !existing || !next) return null;
+  if (!existing || !next) return null;
+  if (coll === 'drawings') return mergeDrawing(existing, next);
+  if (coll !== 'workTasks') return null;
   return mergeTask(existing, next, { worker: p.kind !== 'api_key' && !p.isManager });
+}
+
+// ---- money (prices, costs, rates) ---------------------------------------------
+// Crew never see prices or costs. Money roles: owner, admin, office (the `estimates`
+// permission), foremen when the company allows it (settings.foremanSeesCosts, loaded once per
+// request by services/records.js loadMoneyAccess), API keys (a company admin scoped them) and
+// background agents. Readers without money get records without these fields, and their
+// writes cannot change them (restoreHiddenFields puts the stored values back).
+
+/** Price fields hidden from readers without money, per collection. */
+export const MONEY_FIELDS = {
+  items: ['priceCents', 'costCents'],
+  settings: ['labourRateCents', 'markupPct'],
+  // the office's cost on a material request (crew file requests, never with prices)
+  materialRequests: ['costCents'],
+};
+
+/** Can this principal see prices and costs? */
+export function seesMoney(p) {
+  if (!p) return false;
+  if (typeof p.seesMoney === 'boolean') return p.seesMoney;
+  if (p.kind === 'api_key') return true;
+  return canSeeMoney({ role: p.role, perms: p.perms });
+}
+
+/** A change order as a reader without money sees it. */
+function coWithoutMoney(co) {
+  if (!co || typeof co !== 'object') return co;
+  const { amountCents, lines, ...rest } = co;
+  void amountCents;
+  return Array.isArray(lines)
+    ? { ...rest, lines: lines.map((l) => { const { unitCents, ...x } = l || {}; void unitCents; return x; }) }
+    : rest;
+}
+
+function stripMoney(coll, data) {
+  if (!data) return data;
+  if (MONEY_FIELDS[coll] && MONEY_FIELDS[coll].some((k) => k in data)) {
+    const rest = { ...data };
+    for (const k of MONEY_FIELDS[coll]) delete rest[k];
+    rest.pricesHidden = true;
+    return rest;
+  }
+  if (coll === 'jobs' && Array.isArray(data.changeOrders) && data.changeOrders.length) {
+    return { ...data, changeOrders: data.changeOrders.map(coWithoutMoney), pricesHidden: true };
+  }
+  return data;
+}
+
+/** Put back the money a reader without it could not see (or change). */
+function restoreMoney(coll, existing, next) {
+  const out = { ...next };
+  delete out.pricesHidden; // a read marker, never stored
+  if (MONEY_FIELDS[coll]) {
+    for (const k of MONEY_FIELDS[coll]) {
+      // A new record from a reader without money carries none either (a crew member's material request).
+      if (existing && k in existing) out[k] = existing[k]; else if (existing || coll === 'materialRequests') delete out[k];
+    }
+  }
+  if (coll === 'jobs' && Array.isArray(out.changeOrders)) {
+    const before = new Map((existing?.changeOrders || []).filter((c) => c?.id).map((c) => [c.id, c]));
+    out.changeOrders = out.changeOrders.map((co) => {
+      const old = co?.id && before.get(co.id);
+      if (!old) { const { amountCents, ...rest } = co || {}; void amountCents; return rest; }
+      const keep = { ...co };
+      if ('amountCents' in old) keep.amountCents = old.amountCents; else delete keep.amountCents;
+      if ('lines' in old) keep.lines = old.lines; else delete keep.lines;
+      return keep;
+    });
+  }
+  return out;
 }
 
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -146,15 +222,6 @@ export function checkWriteRules(p, coll, existing, next) {
 }
 
 // ---- money and material requests ------------------------------------------------
-
-/** Permission keys that show costs and prices (office and managers). */
-const MONEY_PERMS = ['inventory', 'estimates', 'invoices'];
-
-/** May this principal see costs and prices? API keys act for the company, so they may. */
-export const seesMoney = (p) => p.kind === 'api_key' || MONEY_PERMS.some((k) => p.perms?.has(k));
-
-/** Fields that carry money, per collection, hidden from readers who do not see money. */
-export const MONEY_FIELDS = { materialRequests: ['costCents'], items: ['costCents', 'priceCents'] };
 
 /** A non-manager's write to a material request: an error message, or null when allowed. */
 function materialRequestRule(p, existing, next) {
@@ -238,13 +305,10 @@ function safetyWriteRule(p, coll, existing, next) {
  * Returns the record to store.
  */
 export function restoreHiddenFields(p, coll, existing, next) {
-  if (MONEY_FIELDS[coll] && next && !seesMoney(p)) {
-    // A crew member's copy never had the cost: keep the stored one (or none).
-    const out = { ...next };
-    for (const k of MONEY_FIELDS[coll]) {
-      if (existing && k in existing) out[k] = existing[k]; else delete out[k];
-    }
-    return out;
+  if (next && (MONEY_FIELDS[coll] || coll === 'jobs')) {
+    if (!seesMoney(p)) return restoreMoney(coll, existing, next);
+    if ('pricesHidden' in next) { const out = { ...next }; delete out.pricesHidden; return out; }
+    return next;
   }
   if (coll !== 'incidents' || !next) return next;
   const out = { ...next };
@@ -258,11 +322,7 @@ export function restoreHiddenFields(p, coll, existing, next) {
 
 /** Fields hidden from some readers. Returns a copy when anything is removed. */
 export function redactForReader(p, coll, data) {
-  if (MONEY_FIELDS[coll] && data && !seesMoney(p) && MONEY_FIELDS[coll].some((k) => k in data)) {
-    const rest = { ...data };
-    for (const k of MONEY_FIELDS[coll]) delete rest[k];
-    return rest;
-  }
+  if (data && (MONEY_FIELDS[coll] || coll === 'jobs') && !seesMoney(p)) return stripMoney(coll, data);
   if (coll === 'employees' && data && p.kind !== 'api_key' && !p.perms.has('employees') && 'rateCents' in data) {
     const { rateCents, ...rest } = data;
     return rest;

@@ -30,7 +30,7 @@ export default {
     const me = auth.current();
     const manager = auth.isManager();
     // Office and managers with money permissions see costs; the crew never do.
-    const money = auth.can('invoices') || auth.can('estimates') || auth.can('inventory');
+    const money = auth.seesMoney?.() ?? (auth.can('invoices') || auth.can('estimates'));
     const stock = () => switchOn(store.settings(), 'inventory') && auth.can('inventory');
     let tab = ctx.query.batch ? 'sent' : 'requested';
     let batch = ctx.query.batch || null;

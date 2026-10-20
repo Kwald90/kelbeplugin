@@ -6,6 +6,7 @@
 // Demo mode: one device shared by a crew picks the current person from Employees (with an
 // optional PIN). That is access control for a trusted device, not security.
 import { store } from './store.js';
+import { canSeeMoney } from './lib/drawing-costs.js';
 
 export const PERMS = [
   'dashboard', 'clients', 'leads', 'sequences', 'jobs', 'schedule', 'drawings', 'estimates', 'invoices',
@@ -91,5 +92,19 @@ export const auth = {
     return (ROLES[this.role()]?.perms || []).includes(perm);
   },
   isManager() { return MANAGER_ROLES.includes(this.role()); },
+  /**
+   * Prices, costs and the cost impact of drawing changes: owner, admin and office, and foremen
+   * when the company allows it (settings.foremanSeesCosts). Crew never; the server strips
+   * price fields for them too (server/src/auth/access.js).
+   */
+  seesMoney() {
+    const perms = account ? account.perms : (ROLES[this.role()]?.perms || []);
+    return canSeeMoney({ role: this.role(), perms }, store.settings());
+  },
+  /** { id, name } for "who drew this": the employee record, else the signed-in user. */
+  who() {
+    const c = this.current();
+    return { id: c.id || account?.userId || null, name: c.name || account?.name || 'Someone' };
+  },
   isAdmin() { return ['owner', 'admin'].includes(this.role()); },
 };

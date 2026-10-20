@@ -3,6 +3,7 @@ import { invoiceBalanceCents, invoiceStatus, docTotals } from '../lib/money.js';
 import { openLeadSheet } from './leads.js';
 import { moduleOn } from '../lib/modules.js';
 import { BILLING_MODES } from '../lib/tm.js';
+import { lastEdited } from './drawings.js';
 
 const TYPES = ['residential', 'commercial', 'industrial'];
 const TYPE_TONE = { residential: 'info', commercial: 'accent', industrial: 'neutral' };
@@ -122,7 +123,7 @@ function detailView(root, ctx, id) {
     const estimates = store.list('estimates', (e) => e.clientId === id || (e.jobId && jobIds.has(e.jobId)));
     const invoices = store.list('invoices', (i) => invoiceClientId(store, i) === id);
     const leads = store.list('leads', (l) => l.clientId === id);
-    const drawings = store.list('drawings', (d) => d.jobId && jobIds.has(d.jobId), { omit: ['underlay', 'strokes', 'texts', 'rooms'] });
+    const drawings = store.list('drawings', (d) => d.clientId === id || (d.jobId && jobIds.has(d.jobId)), { omit: ['underlay', 'strokes', 'texts', 'rooms', 'history', 'tombstones'] });
     const owed = clientBalanceCents(store, id);
     const lifetime = invoices.filter((i) => i.status !== 'void').reduce((s, i) => s + docTotals(i).totalCents, 0);
 
@@ -199,11 +200,14 @@ function detailView(root, ctx, id) {
         rows: leads, onRowClick: (r) => openLeadSheet(ctx, r),
         empty: ui.empty({ icon: 'funnel', title: 'No leads for this client', action: ui.button('New lead', { icon: 'plus', onClick: () => openLeadSheet(ctx, null, { prefill: { clientId: id, contactName: c.name, email: c.email, phone: c.phone } }) }) }),
       }));
-      if (tab === 'drawings') tabBody.append(drawings.length
+      // one drawing set per customer: "Open drawings" opens it, or starts it
+      if (tab === 'drawings') tabBody.append(h('div', { class: 'row', style: { marginBottom: '12px' } },
+        ui.button(`Open ${c.name}'s drawings`, { variant: 'primary', icon: 'pen', href: `#/drawings/customer?clientId=${encodeURIComponent(id)}` }),
+        drawings.length ? ui.button('All their drawings', { icon: 'layers', href: `#/drawings?clientId=${encodeURIComponent(id)}` }) : null), drawings.length
         ? h('div', { class: 'grid' }, drawings.map((d) => h('a', { class: 'card click crm-drawing', href: '#/drawings/' + d.id },
           d.thumb ? h('img', { src: d.thumb, alt: '' }) : h('div', { class: 'crm-drawing-ph' }, icon('pen', 28)),
-          h('div', { style: { fontWeight: 600 } }, d.name), h('div', { class: 'muted crm-sub' }, jobTitle(d.jobId)))))
-        : ui.empty({ icon: 'pen', title: 'No drawings yet', text: 'Drawings attached to this client\'s jobs show up here.' }));
+          h('div', { style: { fontWeight: 600 } }, d.name), h('div', { class: 'muted crm-sub' }, [d.jobId ? jobTitle(d.jobId) : null, lastEdited(ui, d)].filter(Boolean).join(' · ')))))
+        : ui.empty({ icon: 'pen', title: 'No drawings yet', text: 'Open the customer\'s drawings to start their plan set. Drawings on their jobs show up here too.' }));
     };
     drawTab();
 

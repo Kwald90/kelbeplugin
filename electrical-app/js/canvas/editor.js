@@ -8,11 +8,13 @@ import {
 } from './engine.js';
 import { SYMBOLS, SYMBOL_ORDER, symbolPreview } from './symbols.js';
 import { createRooms, swallowNextClick, ROOM_ICON, CHECK_ICON, WAND_ICON } from './rooms.js';
+import { addInkPoint, endInk } from './ink.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 import {
-  makePlanSet, sheetRecord, sheetName, sheetLabel, isDefaultDrawingName, sortSheets, neighbours, scaleTargets, hasOwnScale,
+  makePlanSet, sheetRecord, sheetName, sheetLabel, isDefaultDrawingName, sortSheets, neighbours, scaleTargets, hasOwnScale, customerSheetRecord,
 } from '../lib/plansets.js';
 import { isPdf, openPdf, renderSheet, renderImage, pickPages, importPages, chooseDialog, release } from './plansets-ui.js';
+import { createCollab, COLLAB_ICON } from './collab.js';
 
 const RAW = {
   wire: '<path d="M3 18c3 0 3-12 9-12s6 12 9 12"/><circle cx="3" cy="18" r="1.6"/><circle cx="21" cy="18" r="1.6"/>',
@@ -112,6 +114,8 @@ export function openEditor(root, ctx, id) {
   let dpr = 1, W = 0, H = 0;
   let baseDirty = true, rafId = 0, saveTimer = 0, contentDirty = false, destroyed = false;
   let rooms = null; // rooms, auto-place and code check (./rooms.js), created once the DOM exists
+  let collab = null; // who drew what, change history, cost impact, merge (./collab.js)
+  const seesMoney = ctx.auth.seesMoney?.() ?? false;
 
   root.classList.add('full-bleed');
   document.body.classList.add('canvas-open');
@@ -144,6 +148,7 @@ export function openEditor(root, ctx, id) {
     paperBtn,
     btn('upload', 'Import plan (image or PDF)', () => importUnderlay(), { class: 'wide-only' }),
     btn(RAW.check, 'Code check (CEC)', () => rooms.openCheck()),
+    btn(COLLAB_ICON, 'Changes and who drew what', () => collab.open()),
     btn('list', 'Takeoff', () => takeoffSheet(), { class: 'wide-only' }),
     btn('download', 'Export PNG', () => exportPNG(), { class: 'wide-only' }),
     btn('more', 'More', () => moreSheet()));
@@ -245,7 +250,7 @@ export function openEditor(root, ctx, id) {
 
   function changed(content = true) {
     baseDirty = true;
-    if (content) { contentDirty = true; rooms?.onChanged(); }
+    if (content) { contentDirty = true; rooms?.onChanged(); collab?.onChanged(); }
     scheduleSave();
     updateChrome();
     requestFrame();
@@ -269,6 +274,9 @@ export function openEditor(root, ctx, id) {
     // only on drawings that have them, so older drawings don't gain empty fields
     if (d.scaleSet !== undefined) patch.scaleSet = d.scaleSet;
     if (d.planSet !== undefined) patch.planSet = d.planSet;
+    if (d.clientId !== undefined) patch.clientId = d.clientId;
+    // who drew what: stamp changed items, record history and tombstones (./collab.js)
+    collab?.beforeSave(patch, contentDirty);
     if (contentDirty) {
       contentDirty = false;
       try {
@@ -329,7 +337,7 @@ export function openEditor(root, ctx, id) {
     g.setTransform(dpr * v.zoom, 0, 0, dpr * v.zoom, dpr * v.x, dpr * v.y);
     const al = layerOf(st.activeLayer);
     g.globalAlpha = al?.opacity ?? 1;
-    if (op?.stroke) drawStroke(g, op.stroke, d, { zoom: v.zoom, dark, units: units() });
+    if (op?.stroke) drawStroke(g, op.pred ? { ...op.stroke, points: [...op.stroke.points, ...op.pred] } : op.stroke, d, { zoom: v.zoom, dark, units: units() });
     if (op?.type === 'wire') {
       const pts = op.hover ? [...op.points, op.hover] : op.points;
       if (pts.length > 1) drawStroke(g, { ...op.proto, points: pts }, d, { zoom: v.zoom, dark, units: units() });
@@ -361,6 +369,7 @@ export function openEditor(root, ctx, id) {
     g.setLineDash([]);
     // rooms: drafts, handles, ghosts and code-check markers
     rooms.overlay(g);
+    collab.overlay(g);
     // eraser cursor
     if (st.tool === 'eraser' && st.hover && !st.placing) {
       g.strokeStyle = dark ? '#ecebe7' : '#1c1b19'; g.lineWidth = 1 / v.zoom;
@@ -518,10 +527,36 @@ export function openEditor(root, ctx, id) {
   }
 
   // ---------- pointer input ----------
+  // Every op except a wire belongs to the pointer that started it (op.pid): another pointer
+  // moving or lifting (a resting palm, a second finger) never adds to it or ends it.
+  // Palm rejection: while the Pencil is on the glass, and for a moment after it lifts between
+  // letters, a new touch is a resting hand. It is ignored until it lifts; the pen never is.
+  const PALM_MS = 350;
+  let penDown = null; // pointerId of the Pencil while it touches
+  let penUpAt = -Infinity;
+  const palms = new Set();
   function local(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+  const owns = (e) => !op || op.pid == null || op.pid === e.pointerId;
 
   function onDown(e) {
-    if (e.pointerType === 'pen') st.penSeen = true;
+    const pen = e.pointerType === 'pen', touch = e.pointerType === 'touch';
+    if (touch && (penDown != null || (st.penSeen && performance.now() - penUpAt < PALM_MS))) { palms.add(e.pointerId); return; }
+    if (e.isPrimary) {
+      // first contact of its kind: anything of that kind still listed lost its pointerup
+      for (const [pid, p] of pointers) if (p.type === e.pointerType) pointers.delete(pid);
+      if (touch) { pinch = null; palms.clear(); }
+    }
+    if (pen) {
+      st.penSeen = true;
+      penDown = e.pointerId;
+      // the pen wins: end a pinch, and fingers already down become palms
+      pinch = null;
+      for (const [pid, p] of pointers) if (p.type === 'touch') { pointers.delete(pid); palms.add(pid); }
+      if (op && op.type !== 'wire' && op.pid !== e.pointerId) { op = null; wrap.classList.remove('panning'); }
+      // a focused text field would let iPadOS Scribble take the Pencil's handwriting
+      const ae = document.activeElement;
+      if (ae && ae !== document.body && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) ae.blur();
+    }
     pop.hidden = true;
     const [sx, sy] = local(e);
     pointers.set(e.pointerId, { x: sx, y: sy, type: e.pointerType });
@@ -537,8 +572,8 @@ export function openEditor(root, ctx, id) {
     }
     if (pinch) return;
     const [wx, wy] = toWorld(sx, sy);
-    const panTool = e.button === 1 || st.space || st.tool === 'hand' || (e.pointerType === 'touch' && st.penSeen);
-    if (panTool) { op = { type: 'pan', sx, sy, vx: st.view.x, vy: st.view.y }; wrap.classList.add('panning'); return; }
+    const panTool = e.button === 1 || st.space || st.tool === 'hand' || (touch && st.penSeen);
+    if (panTool) { op = { type: 'pan', pid: e.pointerId, sx, sy, vx: st.view.x, vy: st.view.y }; wrap.classList.add('panning'); return; }
     if (e.button === 2) return;
     if (!st.placing && rooms.down(e, wx, wy)) { op = null; updateChrome(); requestFrame(); return; }
 
@@ -554,12 +589,12 @@ export function openEditor(root, ctx, id) {
     if (FREEHAND.has(t)) {
       if (!needLayer()) return;
       const o = opts[t];
-      const p = e.pointerType === 'pen' ? (e.pressure || 0.5) : 0.5;
-      op = { type: 'draw', start: [wx, wy], stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: [[wx, wy, p]] } };
+      const p = pen ? (e.pressure || 0.5) : 0.5;
+      op = { type: 'draw', pid: e.pointerId, start: [wx, wy], last: [wx, wy, p], stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: [[wx, wy, p]] } };
     } else if (t === 'line' || t === 'rect' || t === 'measure') {
       if (!st.setScale && !needLayer()) return;
       const o = opts[t];
-      op = { type: 'shape', stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: [[wx, wy, 0.5], [wx, wy, 0.5]] } };
+      op = { type: 'shape', pid: e.pointerId, stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: [[wx, wy, 0.5], [wx, wy, 0.5]] } };
     } else if (t === 'wire') {
       if (!needLayer()) return;
       const sp = snapPoint(wx, wy) || [wx, wy];
@@ -575,7 +610,7 @@ export function openEditor(root, ctx, id) {
       swallowNextClick();
       if (hit?.kind === 'text') editText(hit.item); else addText(wx, wy);
     } else if (t === 'eraser') {
-      op = { type: 'erase', cp: false };
+      op = { type: 'erase', pid: e.pointerId, cp: false, lastW: [wx, wy] };
       eraseAt(wx, wy);
     } else if (t === 'select') {
       const hit = hitTest(d, wx, wy, 6 / z(), usable);
@@ -584,13 +619,13 @@ export function openEditor(root, ctx, id) {
         const inSel = st.selection.some((s) => s.id === key.id);
         if (e.shiftKey) st.selection = inSel ? st.selection.filter((s) => s.id !== key.id) : [...st.selection, key];
         else if (!inSel) st.selection = [key];
-        op = { type: 'move', last: [wx, wy], cp: false };
+        op = { type: 'move', pid: e.pointerId, last: [wx, wy], cp: false };
         if (e.detail >= 2 && hit.kind === 'text') { op = null; swallowNextClick(); editText(hit.item); }
       } else if (inUnderlay(wx, wy) && !e.shiftKey && st.selection.length === 0) {
-        op = { type: 'underlay', last: [wx, wy], cp: false };
+        op = { type: 'underlay', pid: e.pointerId, last: [wx, wy], cp: false };
       } else {
         if (!e.shiftKey) st.selection = [];
-        op = { type: 'box', a: [wx, wy], b: [wx, wy], add: e.shiftKey };
+        op = { type: 'box', pid: e.pointerId, a: [wx, wy], b: [wx, wy], add: e.shiftKey };
       }
       updateChrome();
     }
@@ -598,9 +633,11 @@ export function openEditor(root, ctx, id) {
   }
 
   function onMove(e) {
+    if (palms.has(e.pointerId)) return;
     const [sx, sy] = local(e);
     if (pointers.has(e.pointerId)) { const p = pointers.get(e.pointerId); p.x = sx; p.y = sy; }
     if (pinch) { movePinch(); return; }
+    if (!owns(e)) return;
     const [wx, wy] = toWorld(sx, sy);
     st.hover = [wx, wy];
     if ((!op || op.type !== 'pan') && rooms.move(e, wx, wy, pointers.has(e.pointerId))) { requestFrame(); return; }
@@ -616,18 +653,19 @@ export function openEditor(root, ctx, id) {
       case 'draw': {
         const pts = op.stroke.points;
         if (e.shiftKey) { op.stroke.points = [pts[0], [wx, wy, pts[0][2]]]; op.straight = true; break; }
+        // every sample since the last frame (a fast V can be only a few events apart otherwise),
+        // kept as sampled so its tip isn't smoothed away (./ink.js)
         let evs = e.getCoalescedEvents?.();
         if (!evs?.length) evs = [e];
-        const minD = 0.8 / z();
+        const minDist = 0.8 / z();
         for (const ev of evs) {
-          const [cx, cy] = local(ev);
-          const [qx, qy] = toWorld(cx, cy);
-          const last = pts[pts.length - 1];
-          if (Math.hypot(qx - last[0], qy - last[1]) < minD) continue;
-          const p = ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5;
-          // light smoothing toward the previous point
-          pts.push([last[0] * 0.25 + qx * 0.75, last[1] * 0.25 + qy * 0.75, last[2] * 0.4 + p * 0.6]);
+          const [qx, qy] = toWorld(...local(ev));
+          op.last = [qx, qy, ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5];
+          addInkPoint(pts, op.last, { minDist });
         }
+        // where the pen is heading, drawn this frame only
+        const pred = e.getPredictedEvents?.() || [];
+        op.pred = pred.length ? pred.map((ev) => [...toWorld(...local(ev)), op.last[2]]) : null;
         break;
       }
       case 'shape': {
@@ -650,7 +688,16 @@ export function openEditor(root, ctx, id) {
         op.hover = sp || [wx, wy];
         break;
       }
-      case 'erase': eraseAt(wx, wy); break;
+      case 'erase': {
+        // sweep the path between samples so a quick swipe doesn't skip strokes it crossed
+        const step = Math.max(1, opts.eraser.size / 2) / z();
+        const [lx, ly] = op.lastW || [wx, wy];
+        const n = Math.min(64, Math.ceil(Math.hypot(wx - lx, wy - ly) / step));
+        for (let i = 1; i <= n; i++) eraseAt(lx + ((wx - lx) * i) / n, ly + ((wy - ly) * i) / n);
+        if (!n) eraseAt(wx, wy);
+        op.lastW = [wx, wy];
+        break;
+      }
       case 'move': {
         const dx = wx - op.last[0], dy = wy - op.last[1];
         if (!dx && !dy) break;
@@ -675,20 +722,27 @@ export function openEditor(root, ctx, id) {
   }
 
   async function onUp(e) {
+    if (palms.delete(e.pointerId)) return;
+    if (e.pointerId === penDown) { penDown = null; penUpAt = performance.now(); }
     pointers.delete(e.pointerId);
     if (pinch) {
       if ([...pointers.values()].filter((p) => p.type === 'touch').length < 2) pinch = null;
       return;
     }
+    if (!owns(e)) return; // another pointer's lift doesn't end this op
     wrap.classList.remove('panning');
     if (op?.type !== 'pan' && rooms.up(e)) { updateChrome(); requestFrame(); return; }
     if (!op) return;
     const cur = op;
     if (cur.type === 'wire') return; // wires are click-by-click
     op = null;
-    if (e.type === 'pointercancel' && (cur.type === 'draw' || cur.type === 'shape')) { requestFrame(); return; }
+    // A cancelled finger stroke is usually a gesture starting; drop it. A cancelled Pencil or
+    // mouse stroke (iPadOS taking the stroke for Scribble or a system gesture) keeps what was drawn.
+    const cancelled = e.type === 'pointercancel';
+    if (cancelled && (cur.type === 'shape' || (cur.type === 'draw' && e.pointerType === 'touch'))) { requestFrame(); return; }
     if (cur.type === 'draw') {
       const s = cur.stroke;
+      if (!cur.straight) endInk(s.points, cur.last); // the last sample, not e: a cancel's coordinates can be 0,0
       if (s.points.length === 1) s.points.push([s.points[0][0] + 0.01, s.points[0][1], s.points[0][2]]);
       checkpoint(); d.strokes.push(s); changed();
     } else if (cur.type === 'shape') {
@@ -753,10 +807,21 @@ export function openEditor(root, ctx, id) {
 
   function onLeave() { st.hover = null; requestFrame(); }
 
-  // Safari pinch on trackpads
+  // Safari pinch on trackpads. On an iPad, Safari also sends these for any two touches, the
+  // Pencil plus a resting palm included: pointers handle touch there, so with anything on the
+  // glass they only get their default (zoom) cancelled.
   let gestureZ = 1;
+  const touching = () => pointers.size > 0 || palms.size > 0;
   const onGestureStart = (e) => { e.preventDefault(); gestureZ = 1; };
-  const onGestureChange = (e) => { e.preventDefault(); const [sx, sy] = local(e); zoomAt(sx, sy, e.scale / gestureZ); gestureZ = e.scale; };
+  const onGestureChange = (e) => {
+    e.preventDefault();
+    if (touching()) { gestureZ = e.scale; return; }
+    const [sx, sy] = local(e); zoomAt(sx, sy, e.scale / gestureZ); gestureZ = e.scale;
+  };
+  // iPadOS Scribble and the system's swipe gestures can claim a fast Pencil stroke and cancel
+  // it; refusing the touches' default action keeps the stroke on the canvas. Pointer events
+  // still arrive (Excalidraw and tldraw do the same).
+  const noTouchDefault = (e) => { if (e.cancelable) e.preventDefault(); };
 
   // ---------- keyboard ----------
   function onKey(e) {
@@ -906,6 +971,7 @@ export function openEditor(root, ctx, id) {
       const hasSized = st.selection.some((s) => s.kind === 'object' || s.kind === 'text');
       const selObjs = st.selection.filter((s) => s.kind === 'object').map(findSel).filter(Boolean);
       parts.push(h('span', { class: 'cv-ctx-label' }, `${st.selection.length} selected`),
+        st.selection.length === 1 ? collab.selectionInfo(findSel(st.selection[0])) : null,
         tbtn('copy', 'Duplicate (Ctrl+D)', duplicateSel),
         hasObj ? tbtn(RAW.rotate, 'Rotate 45°', rotateSel) : null,
         hasObj ? tbtn(RAW.tag, 'Protection and height (GFCI, AFCI, TR)', () => rooms.deviceSheet(selObjs)) : null,
@@ -968,7 +1034,7 @@ export function openEditor(root, ctx, id) {
           const priced = items.find((i) => i.symbol === sid);
           return h('button', { type: 'button', class: ['cv-symbol', st.placing === sid ? 'on' : null], dataset: { symbol: sid },
             onClick: () => { if (st.tool === 'eraser' || st.tool === 'hand') st.tool = 'select'; st.placing = sid; st.selection = []; s.close(); updateChrome(); ui.toast(`Tap the plan to place: ${SYMBOLS[sid].label}`); } },
-          symbolPreview(sid, ink, 48), h('span', null, SYMBOLS[sid].label), priced ? h('small', { class: 'muted' }, ui.fmtMoney(priced.priceCents)) : null);
+          symbolPreview(sid, ink, 48), h('span', null, SYMBOLS[sid].label), priced && seesMoney ? h('small', { class: 'muted' }, ui.fmtMoney(priced.priceCents)) : null);
         }))),
     });
   }
@@ -1061,16 +1127,17 @@ export function openEditor(root, ctx, id) {
             { key: 'sym', label: '', render: (r) => symbolPreview(r.sid, ink, 32) },
             { key: 'label', label: 'Symbol', render: (r) => h('div', null, h('div', null, SYMBOLS[r.sid].label), h('div', { class: 'muted', style: { fontSize: '12px' } }, r.item ? r.item.sku : 'Not in price book')) },
             { key: 'n', label: 'Count', align: 'right', render: (r) => String(r.n) },
-            { key: 'v', label: 'Value', align: 'right', render: (r) => r.item ? ui.fmtMoney(r.item.priceCents * r.n) : '—' },
-          ], rows,
+            seesMoney ? { key: 'v', label: 'Value', align: 'right', render: (r) => r.item ? ui.fmtMoney(r.item.priceCents * r.n) : '—' } : null,
+          ].filter(Boolean), rows,
         }) : ui.empty({ icon: RAW.outlet, title: 'No symbols yet', text: 'Place receptacles, switches and lights from the Symbols library to count them here.' }),
         wires.length ? h('p', { class: 'muted', style: { margin: 0 } }, `${wires.length} wire run${wires.length === 1 ? '' : 's'} drawn, about ${fmtWorldLength(wirePx, d, units())} at the drawing scale.`) : null,
-        rows.length ? h('div', { class: 'row' }, h('strong', { class: 'grow' }, 'Price-book value'), h('strong', { class: 'num' }, ui.fmtMoney(total))) : null,
+        rows.length && seesMoney ? h('div', { class: 'row' }, h('strong', { class: 'grow' }, 'Price-book value'), h('strong', { class: 'num' }, ui.fmtMoney(total))) : null,
         sheets.length > 1 ? h('p', { class: 'muted', style: { margin: 0 } }, `This sheet only. The whole set (${sheets.length} sheets) has ${setSymbols} symbol${setSymbols === 1 ? '' : 's'}.`) : null),
       actions: [
         ui.button('Close', { variant: 'ghost', onClick: () => s.close() }),
-        sheets.length > 1 ? ui.button(`Estimate whole set (${sheets.length})`, { icon: 'layers', disabled: !setSymbols, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromPlanSet=${encodeURIComponent(d.planSet.id)}`); } }) : null,
-        ui.button(sheets.length > 1 ? 'Estimate this sheet' : 'Create estimate', { variant: 'primary', icon: 'file-text', disabled: !rows.length, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromDrawing=${encodeURIComponent(id)}`); } }),
+        sheets.length > 1 && ctx.auth.can('estimates') ? ui.button(`Estimate whole set (${sheets.length})`, { icon: 'layers', disabled: !setSymbols, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromPlanSet=${encodeURIComponent(d.planSet.id)}`); } }) : null,
+        ctx.auth.can('estimates') ? ui.button(sheets.length > 1 ? 'Estimate this sheet' : 'Create estimate', { variant: 'primary', icon: 'file-text', disabled: !rows.length, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromDrawing=${encodeURIComponent(id)}`); } }) : null,
+        seesMoney && d.jobId ? ui.button('Cost impact', { icon: COLLAB_ICON, onClick: () => { s.close(); collab.open('cost'); } }) : null,
       ].filter(Boolean),
     });
   }
@@ -1112,6 +1179,8 @@ export function openEditor(root, ctx, id) {
           row(RAW.room, 'Draw a room', 'Walls, doors, windows and counters for auto-place and the code check', () => setTool('room')),
           row(RAW.wand, 'Auto-place boxes in every room', d.rooms.length ? `${d.rooms.length} room${d.rooms.length === 1 ? '' : 's'}: receptacles, switches, lights, alarms` : 'Draw a room first', () => rooms.autoPlace()),
           row(RAW.check, 'Code check', 'CEC 2024 receptacle rules, GFCI, AFCI, alarms', () => rooms.openCheck()),
+          row(COLLAB_ICON, 'Changes', 'History by person and day, and who drew what', () => collab.open('history')),
+          seesMoney ? row('dollar', 'Cost impact', d.jobId ? 'What the changes do to the estimate; create a change order' : 'Link to a job with an estimate first', () => collab.open('cost')) : null,
           row('sliders', 'Placement & check settings', 'Mounting heights, alarms, live check', () => rooms.settingsSheet()),
           row('upload', 'Import plan', 'Image or PDF. A PDF with several pages becomes a plan set, one drawing per sheet', importUnderlay),
           d.planSet?.id ? row('layers', 'Sheets in this set', `${d.planSet.name}: jump to any sheet`, sheetsSheet) : null,
@@ -1190,8 +1259,16 @@ export function openEditor(root, ctx, id) {
     const sheets = setSheets();
     if (!sheets.length) return;
     const symbolsOf = (x) => (x.objects || []).filter((o) => o.symbol).length;
+    const addSheet = () => {
+      flushSave();
+      const page = Math.max(...sheets.map((x) => x.planSet?.page || 1)) + 1;
+      const rec = store.add('drawings', customerSheetRecord({ setId: d.planSet.id, name: d.planSet.name, clientId: d.clientId || null, jobId: d.jobId || null, page, layers: d.layers }));
+      s.close();
+      nav('#/drawings/' + rec.id);
+    };
     const s = ui.openSheet({
       title: d.planSet.name,
+      actions: d.planSet.customer ? [ui.button('Add a sheet', { variant: 'primary', icon: 'plus', onClick: addSheet })] : [],
       body: h('div', { class: 'stack' },
         h('p', { class: 'muted', style: { margin: 0 } }, `${sheets.length} sheet${sheets.length === 1 ? '' : 's'}. Each sheet keeps its own scale and markup.`),
         h('div', { class: 'list cv-sheet-list' }, sheets.map((x) => {
@@ -1295,11 +1372,16 @@ export function openEditor(root, ctx, id) {
 
   async function importSet(doc, pages) {
     flushSave();
-    const setId = uid();
-    const base = { jobId: d.jobId, paper: d.paper, layers: d.layers };
+    // a customer's set keeps its id and name: the PDF's pages become more sheets of it
+    const cust = d.planSet?.customer ? d.planSet : null;
+    const setId = cust ? cust.id : uid();
+    const base = { jobId: d.jobId, paper: d.paper, layers: d.layers, clientId: d.clientId || null };
+    let next = cust ? Math.max(cust.page, ...setSheets().map((x) => x.planSet?.page || 1)) : 0;
     let first = true;
     const res = await importPages(ui, doc, pages, async (r) => {
-      const ps = makePlanSet({ id: setId, name: doc.name, page: r.page, label: r.label, pageCount: doc.numPages, pxPerPt: r.pxPerPt });
+      const ps = cust
+        ? makePlanSet({ id: setId, name: cust.name, page: first ? cust.page : ++next, label: r.label || `Sheet ${first ? cust.page : next}`, pageCount: null, pxPerPt: r.pxPerPt, customer: true })
+        : makePlanSet({ id: setId, name: doc.name, page: r.page, label: r.label, pageCount: doc.numPages, pxPerPt: r.pxPerPt });
       if (first && !destroyed && store.count('drawings', (x) => x.id === id)) {
         first = false;
         if (isDefaultDrawingName(d.name)) d.name = sheetName(ps.name, ps.label, ps.page);
@@ -1342,6 +1424,8 @@ export function openEditor(root, ctx, id) {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('gesturestart', onGestureStart);
   canvas.addEventListener('gesturechange', onGestureChange);
+  canvas.addEventListener('touchstart', noTouchDefault, { passive: false });
+  canvas.addEventListener('touchmove', noTouchDefault, { passive: false });
   addEventListener('keydown', onKey);
   addEventListener('keyup', onKey);
   const ro = new ResizeObserver(resize);
@@ -1358,21 +1442,43 @@ export function openEditor(root, ctx, id) {
   rooms = createRooms({
     d, st, store, ui, auth: ctx.auth, wrap, z, checkpoint, changed, requestFrame, updateChrome, setTool, centerOn, label, isDark, layerOf, usable,
   });
+  collab = createCollab({
+    d, id, st, store, ui, auth: ctx.auth, nav, wrap, z, centerOn, requestFrame, isDark, layerOf, flushSave, size: () => ({ w: W, h: H }),
+  });
+
+  // Another device's copy of this drawing arrived (sync): merge it object by object, so both
+  // people's work stays. Local edits are saved (stamped) first. Undo history is cleared when
+  // the plan changed under it, so an undo can never delete someone else's work.
+  const offRemote = store.on('drawings', (e) => {
+    if (!e.remote || e.type !== 'update' || e.record?.id !== id || destroyed) return;
+    const remote = store.get('drawings', id);
+    const pendingLocal = Boolean(saveTimer);
+    flushSave();
+    const res = collab.mergeRemote(remote);
+    if (res.changed) { undo = []; redo = []; st.selection = st.selection.filter((x) => findSel(x)); if (!layerOf(st.activeLayer)) st.activeLayer = d.layers[d.layers.length - 1].id; }
+    if (res.dirty || pendingLocal) { contentDirty = true; scheduleSave(); }
+    baseDirty = true;
+    updateChrome(); renderSheetBar(); requestFrame();
+  });
 
   loadUnderlay();
   resize();
   updateChrome();
   renderSheetBar();
+  // #/drawings/<id>?focus=<history entry>: open the history and zoom to that change
+  if (ctx.query?.focus) { collab.open('history'); collab.focusEntry(ctx.query.focus); }
 
   // exposed for tests
   globalThis.kelbeCanvas = {
     d, st, setTool, fit, takeoff: () => takeoff(d), save: () => save(), rooms,
-    importFile: (file) => importUnderlay(file), sheets: () => setSheets(), goSheet,
+    importFile: (file) => importUnderlay(file), sheets: () => setSheets(), goSheet, collab,
   };
 
   return () => {
     destroyed = true;
     flushSave();
+    offRemote();
+    collab.destroy();
     rooms.destroy();
     cancelAnimationFrame(rafId);
     ro.disconnect(); mo.disconnect();

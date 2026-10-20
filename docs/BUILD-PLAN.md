@@ -284,3 +284,20 @@ From Kelvin and Travis, 2026-10-20. Shared logic is pure and used by both sides:
 - No secrets in the repo. No network calls to production. No deploys or SSH (the lead does those).
 - Commit on your worktree branch with clear messages ending in the Co-Authored-By line. Do not push.
 - Finish with a short report: what you built, what you couldn't, open questions, and files outside your area you think need changes.
+
+### Collaborative drawings (who drew what, history, cost impact)
+
+- Every stroke, object, text and room carries `by { id, name }`, `at`, and `editBy`, `editAt` after a change, stamped on
+  save by diffing against the last saved state (`js/lib/drawing-collab.js`, `canvas/collab.js`). Items without them are
+  "Before tracking". Drawings add `history[]` (symbol counts per person and session, folded within 15 min, capped at 400),
+  `tombstones { id: { at, by } }`, `editedBy`, `editedAt`, `clientId`.
+- Drawing writes merge per object on the server (`mergeWrite` → `mergeDrawing`), like work tasks: union by id, later
+  edit wins, tombstones delete unless the item was edited after. A write without `tombstones` (older app) is last-writer-wins.
+- Money: owner, admin, office (`estimates` permission), and foremen when `settings.foremanSeesCosts` is true. Everyone else
+  gets items without `priceCents`/`costCents`, settings without `labourRateCents`/`markupPct` and change orders without
+  amounts or line prices (`redactForReader`, `pricesHidden: true`); their writes cannot change those fields.
+  `GET /api/v1/drawings/:id/cost-impact` compares the job's drawings with its estimate plus drawing change orders
+  (`js/lib/drawing-costs.js`); crew get counts and names only.
+- One set per customer: `planSet { id: 'cust-<clientId>' | 'job-<jobId>', customer: true }`, opened from
+  `#/drawings/customer?clientId=…&jobId=…`. Tests: `tests/drawing-collab.test.mjs`, `server/test/drawings.test.js`,
+  `tests/e2e/drawings-collab.e2e.mjs`.

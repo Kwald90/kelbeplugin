@@ -177,12 +177,13 @@ export default {
       { label: 'New jobs bill', name: 'defaultMode', type: 'select', value: s.billing?.defaultMode || 'fixed', options: BILLING_MODES.map((m) => ({ value: m.value, label: m.label })), hint: 'A client can have its own default' },
       { label: 'Travel rate (per hour)', name: 'travelRateCents', type: 'money', value: s.billing?.travelRateCents ?? null, hint: 'Blank: the labour rate' },
       { label: 'Currency', name: 'currency', type: 'select', value: s.currency || 'CAD', options: CURRENCIES },
+      { label: 'Foremen see prices and costs', name: 'foremanSeesCosts', type: 'checkbox', value: s.foremanSeesCosts === true, hint: 'Owners, admins and the office always do; electricians and apprentices never do. Includes the cost impact of drawing changes.' },
     ]));
     const saveDefaults = () => {
       if (!defaults.reportValidity()) return;
       const v = ui.readForm(defaults);
       const travelRaw = defaults.querySelector('[name=travelRateCents]').value.trim();
-      store.saveSettings({ labourRateCents: v.labourRateCents, markupPct: v.markupPct ?? 0, currency: v.currency,
+      store.saveSettings({ labourRateCents: v.labourRateCents, markupPct: v.markupPct ?? 0, currency: v.currency, foremanSeesCosts: Boolean(v.foremanSeesCosts),
         billing: { ...(store.settings().billing || {}), defaultMode: v.defaultMode === 'tm' ? 'tm' : 'fixed', travelRateCents: travelRaw === '' ? null : v.travelRateCents } });
       ui.setCurrency(v.currency);
       ui.toast('Defaults saved', 'success');
