@@ -152,7 +152,12 @@ function safetyWriteRule(p, coll, existing, next) {
     return locked.length ? 'Only managers investigate, close or report incidents.' : null;
   }
   if (coll === 'correctiveActions') {
-    if (!existing || !next) return 'Only managers assign or delete corrective actions.';
+    if (!next) return 'Only managers delete corrective actions.';
+    if (!existing) {
+      // A worker may raise an action from their own inspection or report: open, unassigned or theirs.
+      if (next.createdBy !== me || (next.status || 'open') !== 'open' || (next.ownerId && next.ownerId !== me)) return 'Only managers assign corrective actions.';
+      return null;
+    }
     if (existing.ownerId !== me) return 'Only the owner of a corrective action can close it.';
     if (onlyKeys(existing, next, ['status', 'doneAt', 'doneBy', 'doneNote', 'evidence']).length) return 'You can only mark the action done with evidence.';
     if (!['open', 'done'].includes(next.status)) return 'Only a manager can verify a corrective action.';
