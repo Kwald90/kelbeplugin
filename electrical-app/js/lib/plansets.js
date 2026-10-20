@@ -117,11 +117,47 @@ export function sheetName(setName, label, page) {
 }
 
 /** The planSet field for one sheet, typed the way the drawings schema expects. */
-export function makePlanSet({ id, name, page, label = null, pageCount, pxPerPt = null }) {
-  return {
+export function makePlanSet({ id, name, page, label = null, pageCount, pxPerPt = null, customer = false }) {
+  const ps = {
     id: String(id), name: String(name || 'Plan set').slice(0, 200), page: Math.max(1, Math.round(Number(page) || 1)),
     label: label ? String(label).slice(0, 40) : null, pageCount: Math.max(1, Math.round(Number(pageCount) || 1)),
     pxPerPt: Number(pxPerPt) > 0 ? Math.round(Number(pxPerPt) * 1e6) / 1e6 : null,
+  };
+  if (customer) ps.customer = true;
+  return ps;
+}
+
+// ---------- one drawing set per customer ----------
+// Each customer gets their own plan set: drawings whose planSet.customer is true and whose
+// planSet.id is customerSetId(...). Opening "Drawings" from a client or job opens it (or makes
+// its first sheet). Other sets and single drawings still work as before.
+
+/** The set id for a customer, or for a job with no client. */
+export function customerSetId({ clientId = null, jobId = null } = {}) {
+  if (clientId) return `cust-${clientId}`;
+  if (jobId) return `job-${jobId}`;
+  return null;
+}
+
+/** The customer's sheets, in order (from a list of drawings). */
+export function customerSheets(drawings, setId) {
+  return sortSheets((drawings || []).filter((d) => d?.planSet?.id === setId));
+}
+
+/** The sheet to open: the one edited last. */
+export function sheetToOpen(sheets) {
+  return [...(sheets || [])].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || null;
+}
+
+/**
+ * A new blank sheet for a customer's set: "Smith Residence · Sheet 2".
+ * @param {{ setId: string, name: string, clientId?: string|null, jobId?: string|null, page: number }} o
+ */
+export function customerSheetRecord({ setId, name, clientId = null, jobId = null, page = 1, layers }) {
+  const label = `Sheet ${page}`;
+  const ps = makePlanSet({ id: setId, name, page, label, pageCount: page, customer: true });
+  return {
+    ...sheetRecord({ jobId, paper: 'grid', layers }, ps), clientId: clientId || null, underlayLocked: false, tombstones: {}, history: [],
   };
 }
 
@@ -141,7 +177,7 @@ export function sheetRecord(base, planSet, underlay = {}) {
     layers, strokes: [], objects: [], texts: [], rooms: [],
     underlay: underlay.url || null, underlayX: 0, underlayY: 0, underlayW: underlay.w || 0, underlayH: underlay.h || 0,
     underlayOpacity: 1, underlayLocked: true, view: null, thumb: underlay.thumb || null,
-    planSet,
+    planSet, ...(base?.clientId ? { clientId: base.clientId } : {}), tombstones: {}, history: [],
   };
 }
 

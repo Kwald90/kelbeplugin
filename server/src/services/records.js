@@ -8,6 +8,7 @@ import { ENTRY_COORDS, canRead, canWrite, checkWriteRules, mergeWrite, redactFor
 import { appendAudit, auditRowToRecord, describeRecord } from './audit.js';
 import { assertCollectionWritable, loadTenantPlan } from './entitlements.js';
 import { afterTaskWrite } from './workplan-events.js';
+import { assertCollectionModuleOn, loadModuleSettings } from './modules.js';
 
 export const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const META_KEYS = ['id', 'version', 'changeSeq', 'deleted', 'tenantId'];
@@ -42,6 +43,18 @@ function clientTime(value, now) {
   const t = typeof value === 'string' ? Date.parse(value) : NaN;
   if (!Number.isFinite(t)) return now;
   return Math.min(t, now + MAX_CLOCK_SKEW_MS);
+}
+
+/**
+ * Foremen see prices and costs only when the company allows it (settings.foremanSeesCosts).
+ * Read that once per request, before any record is shown to the principal or written by it
+ * (auth/access.js seesMoney). Everyone else is decided by role.
+ */
+export async function loadMoneyAccess(tx, p) {
+  if (!p || typeof p.seesMoney === 'boolean' || p.kind !== 'session' || p.role !== 'foreman' || p.perms?.has?.('estimates')) return;
+  const { rows } = await tx.query(
+    "SELECT data->'foremanSeesCosts' AS f FROM settings WHERE tenant_id = $1 AND id = 'settings' AND deleted_at IS NULL", [tx.tenantId]);
+  p.seesMoney = rows[0]?.f === true;
 }
 
 function rowTime(row) {
@@ -131,9 +144,16 @@ export function createRecords({ validator }) {
   // are refused (feature_not_in_plan); reads stay open. Loaded once per transaction, so a
   // sync push of 500 mutations reads the plan once.
   const planCache = new WeakMap();
+  // Module switches (Settings → Modules): writes into a turned-off module are refused
+  // (module_turned_off); reads stay open. Cached per transaction like the plan, and dropped when
+  // the transaction writes settings, so a push that turns a module back on can then write to it.
+  const moduleCache = new WeakMap();
   async function assertPlanAllows(tx, p, coll) {
     if (!planCache.has(tx)) planCache.set(tx, await loadTenantPlan(tx, tx.tenantId));
     assertCollectionWritable(planCache.get(tx), coll, p);
+    if (coll === 'settings') { moduleCache.delete(tx); return; }
+    if (!moduleCache.has(tx)) moduleCache.set(tx, await loadModuleSettings(tx));
+    assertCollectionModuleOn(moduleCache.get(tx), coll);
   }
 
   function checkRules(p, coll, existing, next) {
@@ -156,6 +176,7 @@ export function createRecords({ validator }) {
   // ---- reads ---------------------------------------------------------------
 
   async function getRecord(tx, p, coll, id) {
+    await loadMoneyAccess(tx, p);
     assertCollection(coll);
     if (!canRead(p, coll)) throw forbidden(`You cannot read ${coll}.`);
     if (coll === AUDIT_COLLECTION) {
@@ -186,6 +207,7 @@ export function createRecords({ validator }) {
    * @param {{ limit?: number, cursor?: string, filters?: Record<string, string>, includeDeleted?: boolean }} q
    */
   async function listRecords(tx, p, coll, q = {}) {
+    await loadMoneyAccess(tx, p);
     assertCollection(coll);
     if (!canRead(p, coll)) throw forbidden(`You cannot read ${coll}.`);
     const limit = Math.min(Math.max(Number(q.limit) || 50, 1), MAX_LIST_LIMIT);
@@ -246,6 +268,7 @@ export function createRecords({ validator }) {
   // ---- REST writes ---------------------------------------------------------
 
   async function createRecord(tx, p, coll, body, who) {
+    await loadMoneyAccess(tx, p);
     assertCollection(coll);
     if (!canWrite(p, coll)) throw forbidden(`You cannot change ${coll}.`);
     await assertPlanAllows(tx, p, coll);
@@ -262,6 +285,7 @@ export function createRecords({ validator }) {
   }
 
   async function patchRecord(tx, p, coll, id, patch, opts, who) {
+    await loadMoneyAccess(tx, p);
     assertCollection(coll);
     if (!canWrite(p, coll)) throw forbidden(`You cannot change ${coll}.`);
     await assertPlanAllows(tx, p, coll);
@@ -401,6 +425,7 @@ export function createRecords({ validator }) {
    * mutation returns its first result without being applied twice.
    */
   async function push(tx, p, mutations, who) {
+    await loadMoneyAccess(tx, p);
     const results = [];
     for (const m of mutations) {
       const shapeError = checkMutationShape(m);
@@ -435,6 +460,7 @@ export function createRecords({ validator }) {
    * principal may read. Run in a REPEATABLE READ transaction.
    */
   async function pull(tx, p, { since, limit }) {
+    await loadMoneyAccess(tx, p);
     const lim = Math.min(Math.max(Number(limit) || 500, 1), MAX_PULL_LIMIT);
     const parts = [];
     const params = [tx.tenantId, since, lim + 1];

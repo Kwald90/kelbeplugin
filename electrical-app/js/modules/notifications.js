@@ -7,6 +7,7 @@ import { store } from '../store.js';
 import { auth } from '../auth.js';
 import { api } from '../session.js';
 import { deriveNotifications, mergeNotifications, unreadCount, pruneReadKeys, timeAgo, KIND_ICON, KIND_LABEL } from '../lib/notify.js';
+import { linkOn } from '../lib/modules.js';
 
 export { addNotificationSource } from '../lib/notify.js';
 
@@ -24,10 +25,11 @@ const synced = () => auth.synced && store.synced;
 const me = () => ({ employeeId: auth.current()?.id || null, can: (p) => auth.can(p), manager: auth.isManager() });
 const readKeys = () => new Set(store.meta(READ_META) || []);
 
-/** The merged list, newest first, with unread flags. */
+/** The merged list, newest first, with unread flags. Items about a turned-off module are left out. */
 export function items() {
   const derived = deriveNotifications(store, me());
-  return mergeNotifications(state.server, derived, readKeys());
+  const switches = { modules: store.settings()?.modules ?? null };
+  return mergeNotifications(state.server, derived, readKeys()).filter((i) => !i.link || linkOn(switches, i.link));
 }
 export function unread() { return unreadCount(items()) + Math.max(0, state.serverUnread - state.server.filter((n) => !n.readAt).length); }
 

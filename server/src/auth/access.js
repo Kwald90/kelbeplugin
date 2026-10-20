@@ -3,6 +3,9 @@
 import { AUDIT_COLLECTION, collectionDef } from '../collections.js';
 // Work tasks: the same rules the PWA applies offline (who may change what, photo evidence).
 import { mergeTask, taskWriteProblem } from '../../../electrical-app/js/lib/workplan.js';
+// Drawings: object-level merge (two people editing different parts both keep their work).
+import { mergeDrawing } from '../../../electrical-app/js/lib/drawing-collab.js';
+import { canSeeMoney } from '../../../electrical-app/js/lib/drawing-costs.js';
 
 /**
  * @typedef {object} Principal
@@ -82,8 +85,81 @@ export function rowVisible(f, data, def) {
  * (lib/workplan.js mergeTask). Returns null for collections that store what was sent.
  */
 export function mergeWrite(p, coll, existing, next) {
-  if (coll !== 'workTasks' || !existing || !next) return null;
+  if (!existing || !next) return null;
+  if (coll === 'drawings') return mergeDrawing(existing, next);
+  if (coll !== 'workTasks') return null;
   return mergeTask(existing, next, { worker: p.kind !== 'api_key' && !p.isManager });
+}
+
+// ---- money (prices, costs, rates) ---------------------------------------------
+// Crew never see prices or costs. Money roles: owner, admin, office (the `estimates`
+// permission), foremen when the company allows it (settings.foremanSeesCosts, loaded once per
+// request by services/records.js loadMoneyAccess), API keys (a company admin scoped them) and
+// background agents. Readers without money get records without these fields, and their
+// writes cannot change them (restoreHiddenFields puts the stored values back).
+
+/** Price fields hidden from readers without money, per collection. */
+export const MONEY_FIELDS = {
+  items: ['priceCents', 'costCents'],
+  settings: ['labourRateCents', 'markupPct'],
+  // the office's cost on a material request (crew file requests, never with prices)
+  materialRequests: ['costCents'],
+};
+
+/** Can this principal see prices and costs? */
+export function seesMoney(p) {
+  if (!p) return false;
+  if (typeof p.seesMoney === 'boolean') return p.seesMoney;
+  if (p.kind === 'api_key') return true;
+  return canSeeMoney({ role: p.role, perms: p.perms });
+}
+
+/** A change order as a reader without money sees it. */
+function coWithoutMoney(co) {
+  if (!co || typeof co !== 'object') return co;
+  const { amountCents, lines, ...rest } = co;
+  void amountCents;
+  return Array.isArray(lines)
+    ? { ...rest, lines: lines.map((l) => { const { unitCents, ...x } = l || {}; void unitCents; return x; }) }
+    : rest;
+}
+
+function stripMoney(coll, data) {
+  if (!data) return data;
+  if (MONEY_FIELDS[coll] && MONEY_FIELDS[coll].some((k) => k in data)) {
+    const rest = { ...data };
+    for (const k of MONEY_FIELDS[coll]) delete rest[k];
+    rest.pricesHidden = true;
+    return rest;
+  }
+  if (coll === 'jobs' && Array.isArray(data.changeOrders) && data.changeOrders.length) {
+    return { ...data, changeOrders: data.changeOrders.map(coWithoutMoney), pricesHidden: true };
+  }
+  return data;
+}
+
+/** Put back the money a reader without it could not see (or change). */
+function restoreMoney(coll, existing, next) {
+  const out = { ...next };
+  delete out.pricesHidden; // a read marker, never stored
+  if (MONEY_FIELDS[coll]) {
+    for (const k of MONEY_FIELDS[coll]) {
+      // A new record from a reader without money carries none either (a crew member's material request).
+      if (existing && k in existing) out[k] = existing[k]; else if (existing || coll === 'materialRequests') delete out[k];
+    }
+  }
+  if (coll === 'jobs' && Array.isArray(out.changeOrders)) {
+    const before = new Map((existing?.changeOrders || []).filter((c) => c?.id).map((c) => [c.id, c]));
+    out.changeOrders = out.changeOrders.map((co) => {
+      const old = co?.id && before.get(co.id);
+      if (!old) { const { amountCents, ...rest } = co || {}; void amountCents; return rest; }
+      const keep = { ...co };
+      if ('amountCents' in old) keep.amountCents = old.amountCents; else delete keep.amountCents;
+      if ('lines' in old) keep.lines = old.lines; else delete keep.lines;
+      return keep;
+    });
+  }
+  return out;
 }
 
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -109,6 +185,8 @@ export function checkWriteRules(p, coll, existing, next) {
   if (p.kind === 'api_key') return null;
   const def = collectionDef(coll);
 
+  // Material requests: crew file their own, and change or withdraw them only until they are sent.
+  if (coll === 'materialRequests' && !p.isManager) return materialRequestRule(p, existing, next);
   // Location points and consents belong to one person: only they record them, whatever their role
   // (a manager can't give consent or add points for someone else). Points never change once saved.
   if (coll === 'locationPoints' || coll === 'locationConsents') {
@@ -157,6 +235,22 @@ export function checkWriteRules(p, coll, existing, next) {
     const changed = changedKeys(existing, next);
     if (changed.some((k) => k !== 'nextNumbers')) return 'Changing settings needs the settings permission.';
   }
+  return null;
+}
+
+// ---- money and material requests ------------------------------------------------
+
+/** A non-manager's write to a material request: an error message, or null when allowed. */
+function materialRequestRule(p, existing, next) {
+  const me = p.employeeId;
+  if (!me) return 'Your membership is not linked to an employee record, so you cannot request material.';
+  if (existing && existing.employeeId !== me) return 'You can only change your own material requests.';
+  if (next && next.employeeId !== me) return 'Request material as yourself.';
+  if (existing && (existing.status || 'requested') !== 'requested') return 'This request has gone to the office; ask them to change it.';
+  if (!next) return null;
+  if (!['requested', 'cancelled'].includes(next.status || 'requested')) return 'Only the office marks requests sent, ordered or fulfilled.';
+  if (!same(existing?.costCents ?? null, next.costCents ?? null)) return 'Only the office sets costs.';
+  for (const k of ['batchId', 'sentAt', 'stockMoveId']) if (!same(existing?.[k] ?? null, next[k] ?? null)) return 'Only the office handles sent requests.';
   return null;
 }
 
@@ -234,6 +328,11 @@ export function restoreHiddenFields(p, coll, existing, next) {
     for (const k of ENTRY_COORDS) { if (existing && k in existing) out[k] = existing[k]; else delete out[k]; }
     return out;
   }
+  if (next && (MONEY_FIELDS[coll] || coll === 'jobs')) {
+    if (!seesMoney(p)) return restoreMoney(coll, existing, next);
+    if ('pricesHidden' in next) { const out = { ...next }; delete out.pricesHidden; return out; }
+    return next;
+  }
   if (coll !== 'incidents' || !next) return next;
   const out = { ...next };
   delete out.medicalHidden; // a read marker (redactForReader), never stored
@@ -254,6 +353,7 @@ export function redactForReader(p, coll, data) {
     for (const k of ENTRY_COORDS) delete rest[k];
     return rest;
   }
+  if (data && (MONEY_FIELDS[coll] || coll === 'jobs') && !seesMoney(p)) return stripMoney(coll, data);
   if (coll === 'employees' && data && p.kind !== 'api_key' && !p.perms.has('employees') && 'rateCents' in data) {
     const { rateCents, ...rest } = data;
     return rest;

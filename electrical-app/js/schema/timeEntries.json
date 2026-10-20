@@ -516,6 +516,13 @@
       "maxLength": 40,
       "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$",
       "description": "When retention removed the coordinates (distances and flags stay)."
+    },
+    "travel": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Older travel flag (before 2026-10-20). Use kind: 'travel'; billing still reads this when kind is missing (lib/tm.js isTravel)."
     }
   },
   "additionalProperties": true

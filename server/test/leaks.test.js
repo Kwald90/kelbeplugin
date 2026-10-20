@@ -150,6 +150,8 @@ describe('public endpoints and URLs', { skip }, () => {
       'kind', 'ownerId', 'sourceId',
       // work plans: GET /api/v1/workTasks?planId=, GET /api/v1/kpis?from=&to= (ids and YYYY-MM-DD only)
       'planId', 'from', 'to',
+      // material requests: GET /api/v1/materialRequests?batchId= (a send's uuid)
+      'batchId',
       // location points (own rows only): a time entry id and an ISO time
       'timeEntryId', 'at',
       // HQ Mail: "Show images" for one message (0|1), not data.

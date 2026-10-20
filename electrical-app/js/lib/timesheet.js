@@ -12,6 +12,7 @@
 // agreements, and industry orders (construction in some provinces) can differ, and the payroll
 // provider has the final say. Overtime hours are reported; pay rates are the payroll software's job.
 import { toCSV } from './csv.js';
+import { isTravel } from './tm.js';
 
 /**
  * mode:
@@ -101,7 +102,8 @@ export function ruleText(rule) {
   return `${when} at ${r.rate}x ${r.basis === 'minimum' ? 'the minimum wage' : 'the regular wage'}${dbl} (${r.name})`;
 }
 
-export const kindOf = (e) => (e?.kind === 'travel' ? 'travel' : 'work');
+/** 'travel' or 'work' (lib/tm.js isTravel: kind, or the older travel flag). */
+export const kindOf = (e) => (isTravel(e) ? 'travel' : 'work');
 const MIN = 60_000;
 
 /** Net minutes of an entry (breaks taken off), an open one counted up to `now`. */

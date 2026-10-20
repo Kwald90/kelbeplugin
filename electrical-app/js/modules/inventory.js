@@ -1,5 +1,10 @@
 // Inventory (S19): price book, stock by location, stock moves, locations.
 import { SYMBOL_IDS } from '../seed.js';
+import { store as appStore } from '../store.js';
+import { switchOn } from '../lib/modules.js';
+
+/** Stock (shop, vans, moves) can be turned off while the price book stays (Settings → Modules). */
+const stockOn = (store) => switchOn(store.settings(), 'inventory');
 
 const TABS = [
   { id: 'book', label: 'Price book' }, { id: 'stock', label: 'Stock' },
@@ -16,14 +21,15 @@ export const isLow = (it) => Number(it.reorderPoint) > 0 && itemTotal(it) < Numb
 
 export default {
   id: 'inventory',
-  title: 'Inventory',
+  get title() { return stockOn(appStore) ? 'Inventory' : 'Price book'; },
   icon: 'box',
   group: 'money',
   perm: 'inventory',
   render(root, ctx) {
     const { store, ui } = ctx;
     const { h } = ui;
-    let tab = TABS.some((t) => t.id === ctx.params[0]) ? ctx.params[0] : 'book';
+    const tabs = stockOn(store) ? TABS : TABS.filter((t) => t.id === 'book');
+    let tab = tabs.some((t) => t.id === ctx.params[0]) ? ctx.params[0] : 'book';
     let q = '', lowOnly = ctx.query.low === '1';
     const tabHost = h('div');
     const actions = h('div', { class: 'row' });
@@ -31,7 +37,7 @@ export default {
 
     const draw = () => {
       ui.clear(tabHost); ui.clear(actions); ui.clear(body);
-      tabHost.append(ui.tabs(TABS, tab, (t) => { tab = t; q = ''; history.replaceState(null, '', '#/inventory/' + t); draw(); }));
+      if (tabs.length > 1) tabHost.append(ui.tabs(tabs, tab, (t) => { tab = t; q = ''; history.replaceState(null, '', '#/inventory/' + t); draw(); }));
       if (tab === 'book') drawBook();
       else if (tab === 'stock') drawStock();
       else if (tab === 'moves') drawMoves();
@@ -257,7 +263,9 @@ export default {
       ui.toast('Location deleted');
     }
 
-    root.append(ui.page({ title: 'Inventory', subtitle: 'Price book, stock in the shop and vans, and what moved where', actions: [actions] }, tabHost, h('div', { style: { height: '16px' } }), body));
+    root.append(ui.page(stockOn(store)
+      ? { title: 'Inventory', subtitle: 'Price book, stock in the shop and vans, and what moved where', actions: [actions] }
+      : { title: 'Price book', subtitle: 'Your items with cost and sell prices', actions: [actions] }, tabHost, h('div', { style: { height: '16px' } }), body));
     draw();
     // Redraw on data changes, but not under an open sheet (it would steal the form);
     // changes made from a sheet are drawn once the sheet closes.

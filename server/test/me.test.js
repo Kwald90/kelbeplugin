@@ -31,6 +31,7 @@ test('cleanPrefs keeps only known keys and values', () => {
   assert.deepEqual(cleanPrefs({ units: 'imperial', theme: 'dark', other: 1 }), { units: 'imperial', theme: 'dark' });
   assert.deepEqual(cleanPrefs({ units: 'furlongs' }), {});
   assert.deepEqual(cleanPrefs(null), {});
+  assert.deepEqual(cleanPrefs({ twoFingerTap: 'redo', threeFingerTap: 'wheel', longPress: 'explode' }), { twoFingerTap: 'redo', threeFingerTap: 'wheel' });
 });
 
 describe('GET /api/v1/me', { skip }, () => {
@@ -122,6 +123,15 @@ describe('PATCH /api/v1/me/prefs', { skip }, () => {
     const r2 = await call(app, { method: 'PATCH', url: '/api/v1/me/prefs', token: A.token, body: { theme: 'dark' } });
     assert.deepEqual(r2.body.prefs, { units: 'imperial', theme: 'dark' });
     assert.deepEqual((await call(app, { url: '/api/v1/me', token: A.token })).body.prefs, { units: 'imperial', theme: 'dark' });
+  });
+
+  test('saves the drawing canvas finger gestures, and refuses unknown actions', async () => {
+    const r = await call(app, { method: 'PATCH', url: '/api/v1/me/prefs', token: A.token, body: { twoFingerTap: 'redo', threeFingerTap: 'fit', longPress: 'wheel' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.prefs.twoFingerTap, 'redo');
+    assert.equal(r.body.prefs.longPress, 'wheel');
+    assert.equal((await call(app, { url: '/api/v1/me', token: A.token })).body.prefs.threeFingerTap, 'fit');
+    assert.equal((await call(app, { method: 'PATCH', url: '/api/v1/me/prefs', token: A.token, body: { twoFingerTap: 'explode' } })).status, 400);
   });
 
   test('only your own: another user is untouched', async () => {

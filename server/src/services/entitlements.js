@@ -115,6 +115,8 @@ export const COLLECTION_FEATURES = {
   workPlans: ['workplan'],
   taskTemplates: ['workplan'],
   huddles: ['workplan'],
+  // Every plan: crew ask for material, the office gets one list a day.
+  materialRequests: ['materials'],
   // Location while clocked in is part of the time clock (every plan).
   locationPoints: ['time'],
   locationConsents: ['time'],

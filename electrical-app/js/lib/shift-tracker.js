@@ -16,6 +16,7 @@ import { sitesOf, suggestJob, travelSuggestion, buildTravelSegments, fmtDistance
 import { getFix, fixProblem, isNative, startGeofence, stopGeofence, drainGeofenceEvents, pickRegions } from './location.js';
 import { locationSettings, locationState, expiredPoints } from './location-policy.js';
 import { ensureConsent } from './location-ui.js';
+import { moduleOn } from './modules.js';
 
 export const CHECK_EVERY_MS = 3 * 60_000;
 
@@ -31,7 +32,8 @@ const me = () => ctx?.auth.current().id || null;
 const sites = () => sitesOf(ctx.store.list('jobs'), locationSettings(ctx.store.settings()).defaultRadiusM);
 const job = (id) => (id ? ctx.store.get('jobs', id) : null);
 const jobLabel = (id) => { const j = job(id); return j ? `${j.number} · ${j.title}` : 'no job'; };
-const granted = () => locationState(ctx.store.list('locationConsents'), me(), ctx.store.settings()) === 'granted';
+// Off when the company switched the time clock off (Settings > Modules), whatever the consent.
+const granted = () => moduleOn(ctx.store.settings(), 'time') && locationState(ctx.store.list('locationConsents'), me(), ctx.store.settings()) === 'granted';
 const visible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
 
 /** A fix for the open shift, or null (consent, permission and the open shift are all checked). */

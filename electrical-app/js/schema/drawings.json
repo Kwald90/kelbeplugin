@@ -116,6 +116,13 @@
           ],
           "exclusiveMinimum": 0,
           "description": "Canvas units per PDF point the page was rendered at, so a scale can move between sheets."
+        },
+        "customer": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "True for a customer's own drawing set (one per customer)."
         }
       },
       "required": [
@@ -242,6 +249,65 @@
               "boolean",
               "null"
             ]
+          },
+          "by": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 80
+              }
+            },
+            "description": "Who placed it. Strokes, texts and rooms carry the same by/at/editBy/editAt; items without them are from before tracking."
+          },
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
+          },
+          "editBy": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 80
+              }
+            }
+          },
+          "editAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
           }
         }
       }
@@ -321,6 +387,162 @@
       ],
       "maxLength": 2097152,
       "description": "Thumbnail data URL."
+    },
+    "clientId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "The customer whose drawing set this is (one set per customer, js/lib/plansets.js customerSetId)."
+    },
+    "editedBy": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        }
+      },
+      "description": "Who last changed the drawing's content (stamped on save by canvas/collab.js)."
+    },
+    "editedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "description": "When the drawing's content last changed."
+    },
+    "tombstones": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Deleted item ids -> { at, by }, so the object-level merge (js/lib/drawing-collab.js) knows an item was deleted rather than never seen. A write without this field replaces the stored copy (last writer wins), as before tracking.",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "history": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 1000,
+      "description": "Change history: one entry per person per editing session, as symbol counts (add, del, move, edit), the area changed (box) and item ids. Not copies of the drawing.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "by": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 80
+              }
+            }
+          },
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
+          },
+          "until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
+          },
+          "add": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "del": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "move": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "edit": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "box": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 4,
+            "items": {
+              "type": "number"
+            }
+          },
+          "ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 200,
+            "items": {
+              "type": "string"
+            }
+          },
+          "ch": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 200,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
     }
   },
   "additionalProperties": true

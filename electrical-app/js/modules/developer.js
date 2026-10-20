@@ -20,7 +20,7 @@ const LABEL = {
   estimates: 'Estimates', invoices: 'Invoices', payments: 'Payments', items: 'Price book', locations: 'Locations', stockMoves: 'Stock moves',
   employees: 'Employees', timeEntries: 'Time entries', drawings: 'Drawings', sops: 'SOPs', permits: 'Permits', inspections: 'Inspections',
   certifications: 'Certifications', checklists: 'Checklists', panels: 'Panels', auditLog: 'Audit log', settings: 'Settings',
-  wireRuns: 'Wire runs', bends: 'Bends', benderProfiles: 'Bender profiles',
+  wireRuns: 'Wire runs', bends: 'Bends', benderProfiles: 'Bender profiles', materialRequests: 'Material requests',
 };
 
 /** Human summary of a scope list: "Read everything", "Jobs (read), Estimates (write)". */

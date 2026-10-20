@@ -12,6 +12,7 @@ import { createNotificationHandlers, scheduleNotificationDigest } from './routes
 import { SIGNUP_HANDLERS, scheduleSignupCleanup } from './services/signup.js';
 import { FINANCE_HANDLERS, scheduleFinanceJobs } from './services/hq-finance.js';
 import { STATUS_HANDLERS, scheduleStatusProbes } from './services/status-page.js';
+import { createMaterialHandlers, scheduleMaterialRequestSends } from './services/materials.js';
 import { LOCATION_HANDLERS, scheduleLocationJobs } from './services/location.js';
 
 Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS, PLATFORM_EMAIL_HANDLERS, SIGNUP_HANDLERS, FINANCE_HANDLERS, STATUS_HANDLERS, LOCATION_HANDLERS);
@@ -23,7 +24,7 @@ async function main() {
   const config = readConfig();
   const db = createDb({ app: createPool(config.databaseUrl, { max: config.worker.concurrency + 1, applicationName: 'fishtape-worker' }) });
   const workerId = `${hostname()}:${process.pid}`;
-  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }) };
+  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }), ...createMaterialHandlers({ config }) };
   const log = (level, msg, extra = {}) => process.stdout.write(JSON.stringify({ level, time: Date.now(), workerId, msg, ...extra }) + '\n');
   let stopping = false;
   let lastHousekeeping = 0;
@@ -43,6 +44,7 @@ async function main() {
           await scheduleSignupCleanup(db);
           await scheduleFinanceJobs(db);
           await scheduleStatusProbes(db);
+          await scheduleMaterialRequestSends(db);
           await scheduleLocationJobs(db);
         }
         const r = await runOnce(db, { workerId, handlers, log: { info: (m) => log('info', m), error: (m) => log('error', m) } });

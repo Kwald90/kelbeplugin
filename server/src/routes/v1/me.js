@@ -1,6 +1,6 @@
 // /api/v1/me: who is signed in, their companies, the active company's role, permissions
 // and plan entitlements, and their own preferences. PATCH /api/v1/me/prefs saves the
-// preferences that follow a person across devices (units, theme).
+// preferences that follow a person across devices (units, theme, drawing-canvas finger gestures).
 //
 // Nothing here is secret: no tokens, hashes, MFA secrets or recovery codes, and only the
 // caller's own user and memberships. Every /api response is Cache-Control: no-store.
@@ -11,10 +11,16 @@ import { loadTenantPlan, tenantEntitlements } from '../../services/entitlements.
 import { capCrewRole, permsForRole } from '../../auth/permissions.js';
 import { mfaState } from '../../auth/sessions.js';
 
+/** What a finger gesture on the drawing canvas can do (electrical-app/js/canvas/gestures.js). */
+const GESTURE_ACTIONS = ['undo', 'redo', 'wheel', 'lastTool', 'fit', 'none'];
+
 /** Preference keys and the values each may take. Anything else is dropped. */
 export const PREFS = {
   units: ['metric', 'imperial'],
   theme: ['light', 'dark', 'system'],
+  twoFingerTap: GESTURE_ACTIONS,
+  threeFingerTap: GESTURE_ACTIONS,
+  longPress: GESTURE_ACTIONS,
 };
 
 /** Keep only known keys with allowed values. */
@@ -56,7 +62,7 @@ export async function meBody(db, row) {
 
 const prefsBody = {
   type: 'object', additionalProperties: false, minProperties: 1,
-  properties: { units: { type: 'string', enum: PREFS.units }, theme: { type: 'string', enum: PREFS.theme } },
+  properties: Object.fromEntries(Object.entries(PREFS).map(([k, allowed]) => [k, { type: 'string', enum: allowed }])),
 };
 
 /** @param {import('fastify').FastifyInstance} app */
@@ -72,7 +78,7 @@ export default async function meRoutes(app, { db }) {
 
   app.patch('/api/v1/me/prefs', {
     config: { auth: 'session' },
-    schema: { tags: ['auth'], summary: 'Save your preferences (units, theme); returns all of them', body: prefsBody },
+    schema: { tags: ['auth'], summary: 'Save your preferences (units, theme, canvas gestures); returns all of them', body: prefsBody },
   }, async (req) => {
     const s = req.auth.session;
     const state = mfaState(s);

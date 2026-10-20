@@ -1,6 +1,9 @@
 // Clients (S12): list, detail with related records, add/edit/delete.
 import { invoiceBalanceCents, invoiceStatus, docTotals } from '../lib/money.js';
 import { openLeadSheet } from './leads.js';
+import { moduleOn } from '../lib/modules.js';
+import { BILLING_MODES } from '../lib/tm.js';
+import { lastEdited } from './drawings.js';
 
 const TYPES = ['residential', 'commercial', 'industrial'];
 const TYPE_TONE = { residential: 'info', commercial: 'accent', industrial: 'neutral' };
@@ -29,11 +32,14 @@ export function openClientSheet({ store, ui, nav }, client = null, { onSaved, pr
       { label: 'Email', name: 'email', type: 'email', value: c.email },
       { label: 'Address', name: 'address', value: c.address, span: true },
       { label: 'Tags', name: 'tags', value: (c.tags || []).join(', '), hint: 'Comma separated, e.g. repeat, referral', span: true },
+      { label: 'Billing for new jobs', name: 'billingMode', type: 'select', value: c.billingMode || '', hint: 'e.g. this customer is always time & material',
+        options: [{ value: '', label: 'Company default' }, ...BILLING_MODES.map((m) => ({ value: m.value, label: `Always ${m.label.toLowerCase()}` }))] },
       { label: 'Notes', name: 'notes', type: 'textarea', value: c.notes, span: true },
     ],
     danger: client ? { label: 'Delete', onClick: () => deleteClient({ store, ui, nav }, client) } : null,
     onSubmit(v) {
       v.tags = String(v.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
+      v.billingMode = v.billingMode === 'tm' || v.billingMode === 'fixed' ? v.billingMode : null;
       const saved = client ? store.update('clients', client.id, v) : store.add('clients', v);
       ui.toast(client ? 'Client saved' : 'Client added', 'success');
       onSaved?.(saved);
@@ -74,8 +80,8 @@ function listView(root, ctx) {
         { key: 'phone', label: 'Phone', render: (r) => r.phone || '—' },
         { key: 'email', label: 'Email', render: (r) => r.email || '—' },
         { key: 'openJobs', label: 'Open jobs', align: 'right', sort: (r) => r.openJobs, render: (r) => String(r.openJobs) },
-        { key: 'balance', label: 'Owed', align: 'right', sort: (r) => r.balance, render: (r) => (r.balance > 0 ? h('span', { class: 'crm-owed' }, ui.fmtMoney(r.balance)) : ui.fmtMoney(0)) },
-      ],
+        moduleOn(store.settings(), 'invoices') ? { key: 'balance', label: 'Owed', align: 'right', sort: (r) => r.balance, render: (r) => (r.balance > 0 ? h('span', { class: 'crm-owed' }, ui.fmtMoney(r.balance)) : ui.fmtMoney(0)) } : null,
+      ].filter(Boolean),
       rows,
       onRowClick: (r) => nav('#/clients/' + r.id),
       empty: ui.empty({ icon: 'users', title: term || type !== 'all' ? 'No matching clients' : 'No clients yet', text: term ? 'Try a different search.' : 'Add the people and companies you work for.',
@@ -99,9 +105,11 @@ function listView(root, ctx) {
 }
 
 function detailView(root, ctx, id) {
-  const { store, ui, nav } = ctx;
+  const { store, ui, nav, auth } = ctx;
   const { h, icon } = ui;
   let tab = ctx.query.tab || 'jobs';
+  const on = (m) => (ctx.on ? ctx.on(m) : moduleOn(store.settings(), m));
+  const money = !auth || auth.can('invoices') || auth.can('estimates');
 
   const draw = () => {
     ui.clear(root);
@@ -115,7 +123,7 @@ function detailView(root, ctx, id) {
     const estimates = store.list('estimates', (e) => e.clientId === id || (e.jobId && jobIds.has(e.jobId)));
     const invoices = store.list('invoices', (i) => invoiceClientId(store, i) === id);
     const leads = store.list('leads', (l) => l.clientId === id);
-    const drawings = store.list('drawings', (d) => d.jobId && jobIds.has(d.jobId), { omit: ['underlay', 'strokes', 'texts', 'rooms'] });
+    const drawings = store.list('drawings', (d) => d.clientId === id || (d.jobId && jobIds.has(d.jobId)), { omit: ['underlay', 'strokes', 'texts', 'rooms', 'history', 'tombstones'] });
     const owed = clientBalanceCents(store, id);
     const lifetime = invoices.filter((i) => i.status !== 'void').reduce((s, i) => s + docTotals(i).totalCents, 0);
 
@@ -132,16 +140,18 @@ function detailView(root, ctx, id) {
 
     const stats = h('div', { class: 'grid crm-stats' },
       ui.stat({ label: 'Open jobs', value: String(jobs.filter((j) => !CLOSED_JOB.has(j.status)).length) }),
-      ui.stat({ label: 'Owed', value: ui.fmtMoney(owed), tone: owed > 0 ? 'danger' : null }),
-      ui.stat({ label: 'Invoiced to date', value: ui.fmtMoney(lifetime, { whole: true }) }));
+      on('invoices') && money ? ui.stat({ label: 'Owed', value: ui.fmtMoney(owed), tone: owed > 0 ? 'danger' : null }) : null,
+      on('invoices') && money ? ui.stat({ label: 'Invoiced to date', value: ui.fmtMoney(lifetime, { whole: true }) }) : null);
 
+    // Tabs for turned-off modules are left out; their records are kept.
     const tabItems = [
       { id: 'jobs', label: `Jobs (${jobs.length})` },
-      { id: 'estimates', label: `Estimates (${estimates.length})` },
-      { id: 'invoices', label: `Invoices (${invoices.length})` },
-      { id: 'leads', label: `Leads (${leads.length})` },
-      { id: 'drawings', label: `Drawings (${drawings.length})` },
-    ];
+      on('estimates') ? { id: 'estimates', label: `Estimates (${estimates.length})` } : null,
+      on('invoices') ? { id: 'invoices', label: `Invoices (${invoices.length})` } : null,
+      on('leads') ? { id: 'leads', label: `Leads (${leads.length})` } : null,
+      on('drawings') ? { id: 'drawings', label: `Drawings (${drawings.length})` } : null,
+    ].filter(Boolean);
+    if (!tabItems.some((t) => t.id === tab)) tab = 'jobs';
     const tabBody = h('div');
     const tabsEl = h('div');
     const drawTab = () => {
@@ -190,11 +200,14 @@ function detailView(root, ctx, id) {
         rows: leads, onRowClick: (r) => openLeadSheet(ctx, r),
         empty: ui.empty({ icon: 'funnel', title: 'No leads for this client', action: ui.button('New lead', { icon: 'plus', onClick: () => openLeadSheet(ctx, null, { prefill: { clientId: id, contactName: c.name, email: c.email, phone: c.phone } }) }) }),
       }));
-      if (tab === 'drawings') tabBody.append(drawings.length
+      // one drawing set per customer: "Open drawings" opens it, or starts it
+      if (tab === 'drawings') tabBody.append(h('div', { class: 'row', style: { marginBottom: '12px' } },
+        ui.button(`Open ${c.name}'s drawings`, { variant: 'primary', icon: 'pen', href: `#/drawings/customer?clientId=${encodeURIComponent(id)}` }),
+        drawings.length ? ui.button('All their drawings', { icon: 'layers', href: `#/drawings?clientId=${encodeURIComponent(id)}` }) : null), drawings.length
         ? h('div', { class: 'grid' }, drawings.map((d) => h('a', { class: 'card click crm-drawing', href: '#/drawings/' + d.id },
           d.thumb ? h('img', { src: d.thumb, alt: '' }) : h('div', { class: 'crm-drawing-ph' }, icon('pen', 28)),
-          h('div', { style: { fontWeight: 600 } }, d.name), h('div', { class: 'muted crm-sub' }, jobTitle(d.jobId)))))
-        : ui.empty({ icon: 'pen', title: 'No drawings yet', text: 'Drawings attached to this client\'s jobs show up here.' }));
+          h('div', { style: { fontWeight: 600 } }, d.name), h('div', { class: 'muted crm-sub' }, [d.jobId ? jobTitle(d.jobId) : null, lastEdited(ui, d)].filter(Boolean).join(' · ')))))
+        : ui.empty({ icon: 'pen', title: 'No drawings yet', text: 'Open the customer\'s drawings to start their plan set. Drawings on their jobs show up here too.' }));
     };
     drawTab();
 
@@ -203,10 +216,10 @@ function detailView(root, ctx, id) {
       subtitle: h('a', { href: '#/clients' }, '← All clients'),
       actions: [
         ui.button('Edit', { icon: 'edit', onClick: () => openClientSheet(ctx, c) }),
-        ui.button('New lead', { icon: 'funnel', onClick: () => openLeadSheet(ctx, null, { prefill: { clientId: id, contactName: c.name, email: c.email, phone: c.phone } }) }),
-        ui.button('New estimate', { icon: 'file-text', href: `#/estimates/new?clientId=${id}` }),
+        on('leads') ? ui.button('New lead', { icon: 'funnel', onClick: () => openLeadSheet(ctx, null, { prefill: { clientId: id, contactName: c.name, email: c.email, phone: c.phone } }) }) : null,
+        on('estimates') ? ui.button('New estimate', { icon: 'file-text', href: `#/estimates/new?clientId=${id}` }) : null,
         ui.button('New job', { variant: 'primary', icon: 'plus', href: `#/jobs?new=1&clientId=${id}` }),
-      ],
+      ].filter(Boolean),
     }, h('div', { class: 'crm-detail' }, contact, h('div', { class: 'stack' }, stats, tabsEl, tabBody))));
   };
   draw();
