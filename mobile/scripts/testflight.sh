@@ -40,9 +40,12 @@ field() { node -e "const c=require(process.argv[1]);process.stdout.write(String(
 # The distribution certificate in the login keychain (override with SIGNING_CERT=<sha1>).
 CERT="${SIGNING_CERT:-$(security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" | awk -v t="($TEAM)" '/"Apple Distribution: / && index($0, t) {print $2; exit}')}"
 [ -n "$CERT" ] || { echo "No Apple Distribution certificate for team $TEAM in the login keychain"; exit 1; }
-# A locked keychain fails here instead of after a 10-minute archive.
-security show-keychain-info "$LOGIN_KEYCHAIN" > /dev/null 2>&1 \
-  || { echo "The login keychain is locked: run  security unlock-keychain $LOGIN_KEYCHAIN  then try again"; exit 1; }
+# A locked keychain fails here (a test signature) instead of after a 10-minute archive.
+# (show-keychain-info is no test: over SSH it refuses even when the keychain is unlocked.)
+PROBE="$(mktemp -d)/probe"; cp /usr/bin/true "$PROBE"
+codesign -f -s "$CERT" "$PROBE" > /dev/null 2>&1 \
+  || { echo "codesign can't use the login keychain (locked): unlock it in this same SSH session with  security unlock-keychain $LOGIN_KEYCHAIN  then run this again"; exit 1; }
+rm -rf "$(dirname "$PROBE")"
 
 echo "== Fishtape TestFlight build $BUILD_NUMBER"
 cd "$MOBILE"
