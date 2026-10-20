@@ -14,6 +14,7 @@ const PAGES = [
   { id: 'compliance', title: 'Compliance & security', icon: 'shield-check', load: () => import('./pages/compliance.js') },
   { id: 'billing', title: 'Billing', icon: 'dollar', load: () => import('./pages/billing.js') },
   { id: 'leads', title: 'Leads', icon: 'funnel', load: () => import('./pages/leads.js') },
+  { id: 'promotions', title: 'Promotions', icon: 'play', load: () => import('./pages/promotions.js') },
   { id: 'flags', title: 'Feature flags', icon: 'sliders', load: () => import('./pages/flags.js') },
 ];
 

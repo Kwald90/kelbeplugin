@@ -190,8 +190,14 @@ function icon(path) {
 export function createHero(root, promotion, opts = {}) {
   const win = root.ownerDocument.defaultView;
   const env = { ...detectEnv(win), ...(opts.env || {}) };
-  const stage = root.querySelector('.hero-stage') || root.prepend(el('div', 'hero-stage', { 'aria-hidden': 'true' })) || root.querySelector('.hero-stage');
-  const copy = root.querySelector('.hero-copy') || root.appendChild(el('div', 'hero-copy'));
+  if (!root.querySelector('.hero-stage')) root.prepend(el('div', 'hero-stage', { 'aria-hidden': 'true' }));
+  const stage = root.querySelector('.hero-stage');
+  if (!root.querySelector('.hero-copy')) {
+    const inner = el('div', 'hero-inner');
+    inner.append(el('div', 'hero-copy'));
+    stage.after(el('div', 'hero-scrim', { 'aria-hidden': 'true' }), inner);
+  }
+  const copy = root.querySelector('.hero-copy');
   const controls = root.querySelector('.hero-controls') || root.appendChild(el('div', 'hero-controls'));
   const portraitMq = win.matchMedia?.(PORTRAIT_QUERY);
   const reducedMq = win.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -207,7 +213,8 @@ export function createHero(root, promotion, opts = {}) {
   const paused = () => reasons.size > 0;
   const clearTimer = () => { clearTimeout(timer); timer = null; };
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  const portrait = () => Boolean(portraitMq?.matches);
+  // env.portrait forces the phone cut (the HQ phone preview); otherwise the viewport decides, clip by clip.
+  const portrait = () => (typeof env.portrait === 'boolean' ? env.portrait : Boolean(portraitMq?.matches));
 
   // ---- layers ----
   function makeVideo() {
