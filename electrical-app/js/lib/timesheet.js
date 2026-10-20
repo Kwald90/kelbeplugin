@@ -296,7 +296,8 @@ function warningsFor(format, sheets, ctx) {
 
 const jobCode = (j) => j?.number || '';
 const jobName = (j) => (j ? j.title || '' : 'No job (shop / admin)');
-const byPersonDay = (a, b) => a.p.name.localeCompare(b.p.name) || a.day.localeCompare(b.day) || a.kind.localeCompare(b.kind) || jobCode(a.j).localeCompare(jobCode(b.j));
+// Person, then day, then the order the day happened in.
+const byPersonDay = (a, b) => a.p.name.localeCompare(b.p.name) || a.day.localeCompare(b.day) || a.e.clockIn.localeCompare(b.e.clockIn);
 
 /**
  * Rows (arrays, header first) for a payroll file.

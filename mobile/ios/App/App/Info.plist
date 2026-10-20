@@ -72,6 +72,13 @@
 	<!-- Export compliance: the app only uses standard HTTPS/TLS from iOS, so no question on each upload. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- Location: only while clocked in (docs/compliance/privacy.md). One fix at each clock change; with "Always",
+	     arrivals at and departures from job sites while the app is closed (region monitoring and significant
+	     location changes, no continuous GPS). No UIBackgroundModes entry is needed for those. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Fishtape records where you are when you clock in, clock out or travel between jobs, so your timesheet fills in itself. Only while you are clocked in.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Allow "Always" so Fishtape can notice when you arrive at or leave a job site with the app closed, and record your travel time. Only while you are clocked in; clocking out stops it.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Fishtape uses the camera to measure wire runs along walls and conduit, and to take photos for your jobs.</string>
 	<!-- Saved PDFs and CSVs go to the app's Documents folder, shown in the Files app under Fishtape. -->

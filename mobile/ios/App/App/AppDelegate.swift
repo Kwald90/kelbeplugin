@@ -7,7 +7,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // iOS relaunches the app in the background for job-site arrivals and departures during an open
+        // shift; the monitor must exist before then (and it stops a shift left open over 18 hours).
+        FishtapeLocationMonitor.shared.resume()
         return true
     }
 

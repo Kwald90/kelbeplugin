@@ -1,8 +1,8 @@
 // Location while clocked in, server side (docs/compliance/privacy.md, "Location while clocked in").
 //
 // - Retention: raw location points older than the company's retention period (settings.location.
-//   retentionDays, default 90, 7..730) are emptied and soft-deleted, so devices drop them on their
-//   next sync; time entries that old lose their clock-in/out coordinates (distances, flags and hours
+//   retentionDays, default 90, 7..730) are emptied (only the owner's employee id stays, so the
+//   tombstone reaches their devices) and soft-deleted, so devices drop them on their next sync; time entries that old lose their clock-in/out coordinates (distances, flags and hours
 //   stay). Runs daily in the worker, one company at a time, under the 'system' location scope.
 // - Live crew map: only when the company turned it on, only for managers, only people clocked in
 //   right now, only their latest point from the last 12 hours. Every view is audited.
@@ -32,9 +32,9 @@ export async function purgeTenantLocation(tx) {
   const days = clampRetention(s.retentionDays);
   const at = new Date().toISOString();
   const points = await tx.query(
-    `UPDATE location_points SET data = jsonb_build_object('purgedAt', $3::text), deleted_at = COALESCE(deleted_at, now()), updated_by = 'system:retention'
+    `UPDATE location_points SET data = jsonb_build_object('purgedAt', $3::text, 'employeeId', data->'employeeId'), deleted_at = COALESCE(deleted_at, now()), updated_by = 'system:retention'
       WHERE tenant_id = $1
-        AND (data ? 'lat' OR data ? 'lng' OR data ? 'employeeId')
+        AND (data ? 'lat' OR data ? 'lng')
         AND COALESCE((data->>'at')::timestamptz, created_at) < now() - make_interval(days => $2)`,
     [tx.tenantId, days, at]);
   const entries = await tx.query(
