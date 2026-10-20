@@ -28,7 +28,7 @@ export function appUrl(path = '/', doc = document) {
   return `${appOrigin(doc)}${p}`;
 }
 
-/** Point every [data-app-link] at the app. */
-export function wireAppLinks(doc = document) {
-  for (const a of doc.querySelectorAll('a[data-app-link]')) a.href = appUrl(a.dataset.appLink || '/', doc);
+/** Point every [data-app-link] at the app; a link with no path of its own goes to `fallback`. */
+export function wireAppLinks(doc = document, fallback = '/') {
+  for (const a of doc.querySelectorAll('a[data-app-link]')) a.href = appUrl(a.dataset.appLink || fallback, doc);
 }

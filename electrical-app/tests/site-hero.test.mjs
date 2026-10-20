@@ -6,7 +6,8 @@ import {
   FALLBACK_PROMOTION, DEFAULT_SETTINGS, REDUCED, normaliseSettings, playbackMode, pickVideo, pickPoster, nextIndex,
   handoverDelayMs, timingFor, progressFor, resolveOverlay, safeHref,
 } from '../../site/hero.js';
-import { appOriginFor } from '../../site/app-link.js';
+import { appOriginFor, wireAppLinks } from '../../site/app-link.js';
+import { readFileSync } from 'node:fs';
 import { DEFAULT_PROMOTION, publicView, selectActive } from '../../server/src/services/promotions.js';
 
 const V = { videoDesktop: '/media/a.mp4', videoMobile: '/media/a-m.mp4', poster: '/media/a.jpg' };
@@ -123,4 +124,17 @@ test('site app links: the apex goes to app.fishtapehq.com, one-host setups stay 
   assert.equal(appOriginFor('app.fishtapehq.com'), '');
   assert.equal(appOriginFor('fishtapehq.com', 'https://app.example.ca/'), 'https://app.example.ca', 'the meta tag wins');
   assert.equal(appOriginFor('localhost', 'javascript:alert(1)'), '', 'a bad meta value is ignored');
+});
+
+test('sign-up page: "Sign in" links open the sign-in screen and "Try the demo" still opens the demo', () => {
+  const link = (appLink) => ({ dataset: { appLink }, href: '' });
+  const links = [link(''), link('/#/demo'), link('')];
+  const doc = { defaultView: { location: { hostname: 'fishtapehq.com' } }, querySelector: () => null, querySelectorAll: () => links };
+  wireAppLinks(doc); // site.js
+  assert.deepEqual(links.map((a) => a.href), ['https://app.fishtapehq.com/', 'https://app.fishtapehq.com/#/demo', 'https://app.fishtapehq.com/']);
+  wireAppLinks(doc, '/#/sign-in'); // signup.js, which runs after site.js
+  assert.deepEqual(links.map((a) => a.href), ['https://app.fishtapehq.com/#/sign-in', 'https://app.fishtapehq.com/#/demo', 'https://app.fishtapehq.com/#/sign-in']);
+  const src = readFileSync(new URL('../../site/signup.js', import.meta.url), 'utf8');
+  assert.match(src, /wireAppLinks\(document, '\/#\/sign-in'\)/);
+  assert.doesNotMatch(src, /querySelectorAll\('\[data-app-link\]'\)/, 'no blanket rewrite of every app link');
 });
