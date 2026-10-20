@@ -593,6 +593,14 @@ async function applyCosts(run) {
 async function finishApply(run) {
   const setup = (await run.db.withTenant({ tenantId: run.tenantId }, loadConnection))?.setup || {};
   await txWrite(run, async (tx) => {
+    // Edits queued during setup were decided by the wizard (linked, created or skipped): a record it
+    // skipped is not created now. Later edits stay queued, and the sweep covers changes since the scan.
+    if (setup.scanStartedAt) {
+      await tx.query(
+        `DELETE FROM qbo_outbox o WHERE o.tenant_id = $1 AND o.enqueued_at < $2 AND o.collection <> 'stripePayouts'
+            AND NOT EXISTS (SELECT 1 FROM qbo_links l WHERE l.tenant_id = o.tenant_id AND l.collection = o.collection AND l.record_id = o.record_id AND l.role = 'main' AND l.qbo_id IS NOT NULL)`,
+        [run.tenantId, setup.scanStartedAt]);
+    }
     await tx.query(
       `UPDATE qbo_connections SET state = 'active', cdc_cursor = COALESCE($2, now()), fishtape_cursor = $3, sync_from = COALESCE(sync_from, $4::date),
           setup = setup || $5::jsonb, updated_at = now() WHERE tenant_id = $1`,

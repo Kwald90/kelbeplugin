@@ -957,6 +957,8 @@ export async function syncTenant(deps, tenantId, o = {}) {
   const empty = { pushed: 0, pulled: 0, conflicts: 0, errors: 0, shadow: 0 };
   if (!run) return { ...empty, skipped: 'not_connected' };
   if (run.conn.state !== 'active') return { ...empty, skipped: run.conn.state };
+  // Out of practice mode with the wizard's remaining phases still to run: they go first (6.4).
+  if (!run.shadow && ['shadow_linked', 'apply_queued', 'applying'].includes(run.conn.setup?.phase)) return { ...empty, skipped: 'setup' };
   const direction = o.direction || 'both';
   let more = false;
   try {
