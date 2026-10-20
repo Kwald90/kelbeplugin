@@ -55,7 +55,7 @@ export function enqueue(store, change, { newMid = uid, now = () => new Date().to
       Object.assign(last, { op: 'delete', data: null, fields: null, at });
     } else {
       const merged = last.op === 'upsert' ? unionFields(last.fields, fields ?? null) : null;
-      Object.assign(last, { op: 'upsert', data: record, fields: merged, at });
+      Object.assign(last, { op: 'upsert', data: record, fields: merged, at, itemMerge: true });
     }
     store.putQueue(last);
     return;
@@ -66,13 +66,19 @@ export function enqueue(store, change, { newMid = uid, now = () => new Date().to
     // corrected when that push's result comes back (applyPushResults).
     baseVersion: store.version(coll, id),
     data: op === 'delete' ? null : record, fields: op === 'delete' ? null : (fields ?? null),
-    at, sent: false, state: 'pending',
+    at, sent: false, state: 'pending', itemMerge: true,
   });
 }
 
-/** The wire shape of a queued mutation (POST /api/v1/sync/push). */
+/**
+ * The wire shape of a queued mutation (POST /api/v1/sync/push). itemMerge says the record comes
+ * from this app, which records deleted drawing items as tombstones, so the server may merge it
+ * item by item. A mutation queued by an older app (before tracking) has no flag: its drawing
+ * leaves deleted items out without tombstones, so the server treats it as last-writer-wins.
+ */
 export function toWire(e) {
   const m = { mid: e.mid, collection: e.collection, id: e.id, op: e.op, baseVersion: e.baseVersion ?? null };
+  if (e.itemMerge) m.itemMerge = true;
   // Deletes carry their edit time so last-writer-wins can compare it.
   m.data = e.op === 'upsert' ? e.data : { deletedAt: e.at };
   return m;

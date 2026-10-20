@@ -82,11 +82,21 @@ export function rowVisible(f, data, def) {
 /**
  * The data to store for a write, when a collection merges instead of replacing: work tasks
  * keep the foreman's fields from a worker's write and resolve progress by its own timestamp
- * (lib/workplan.js mergeTask). Returns null for collections that store what was sent.
+ * (lib/workplan.js mergeTask); drawings merge item by item (lib/drawing-collab.js mergeDrawing).
+ * Returns null for collections that store what was sent (last writer wins).
+ * @param {{ itemMerge?: boolean }} [opts] itemMerge: the push said its app records deletions
+ *   as tombstones (sync.js toWire)
  */
-export function mergeWrite(p, coll, existing, next) {
+export function mergeWrite(p, coll, existing, next, { itemMerge = false } = {}) {
   if (!existing || !next) return null;
-  if (coll === 'drawings') return mergeDrawing(existing, next);
+  if (coll === 'drawings') {
+    // Only a copy from an app that tracks deletions merges. An older app deletes by leaving
+    // items out: it may carry the stored tombstones over without adding its own, so a union
+    // would undo its deletes, and a copy without tombstones would skip the stale-write check.
+    // Both are last-writer-wins: a stale copy loses to the newer stored one.
+    if (!itemMerge || !next.tombstones || typeof next.tombstones !== 'object') return null;
+    return mergeDrawing(existing, next);
+  }
   if (coll !== 'workTasks') return null;
   return mergeTask(existing, next, { worker: p.kind !== 'api_key' && !p.isManager });
 }
@@ -114,13 +124,24 @@ export function seesMoney(p) {
   return canSeeMoney({ role: p.role, perms: p.perms });
 }
 
-/** A change order as a reader without money sees it. */
+/** The markup line drawing-costs.js changeOrderFrom wrote before the rate moved to markupPct. */
+const OLD_MARKUP_LINE = /^Markup [\d.]+% on material$/;
+
+/** A change order as a reader without money sees it (no amounts, unit prices or markup rate). */
 function coWithoutMoney(co) {
   if (!co || typeof co !== 'object') return co;
   const { amountCents, lines, ...rest } = co;
   void amountCents;
   return Array.isArray(lines)
-    ? { ...rest, lines: lines.map((l) => { const { unitCents, ...x } = l || {}; void unitCents; return x; }) }
+    ? {
+      ...rest,
+      lines: lines.map((l) => {
+        const { unitCents, markupPct, ...x } = l || {};
+        void unitCents; void markupPct;
+        if (typeof x.description === 'string' && OLD_MARKUP_LINE.test(x.description)) x.description = 'Markup on material';
+        return x;
+      }),
+    }
     : rest;
 }
 

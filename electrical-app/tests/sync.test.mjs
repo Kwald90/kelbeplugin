@@ -87,6 +87,18 @@ test('deleting a synced record queues a delete with its version', () => {
   assert.ok(w.data.deletedAt);
 });
 
+test('pushes from this app say they track deletions (itemMerge); a mutation an older app queued does not', () => {
+  store.applyRemote('drawings', 'dw1', { id: 'dw1', name: 'E1.0', objects: [], tombstones: {}, version: 2 }, 2);
+  store.update('drawings', 'dw1', { name: 'E1.1' });
+  assert.equal(toWire(store.queue[0]).itemMerge, true);
+  store.update('drawings', 'dw1', { name: 'E1.2' });
+  assert.equal(store.queue.length, 1);
+  assert.equal(toWire(store.queue[0]).itemMerge, true, 'still set after coalescing');
+  // an entry left in IndexedDB by the app from before tracking has no flag: the server keeps last-writer-wins
+  const old = { mid: 'old-1', seq: 9, collection: 'drawings', id: 'dw2', op: 'upsert', baseVersion: 3, data: { name: 'x', tombstones: {} }, fields: null, at: 'z', sent: false, state: 'pending' };
+  assert.ok(!('itemMerge' in toWire(old)));
+});
+
 test('routine audit entries stay local; exports go to the server as client events', () => {
   store.add('clients', { name: 'X' });
   assert.equal(store.queue.filter((e) => e.collection === 'auditLog').length, 0);

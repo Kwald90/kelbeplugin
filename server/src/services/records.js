@@ -374,9 +374,10 @@ export function createRecords({ validator }) {
         await afterWrite(tx, coll, m.id, null, data, who);
         return { mid: m.mid, status: 'ok', version: row.version, changeSeq: row.change_seq };
       }
-      // Collections that merge (work tasks): field groups resolve on their own, so an offline
-      // completion and a foreman's edit made meanwhile both survive. Never a whole-record loss.
-      const mergedData = !cur.deleted_at ? mergeWrite(p, coll, cur.data, data) : null;
+      // Collections that merge (work tasks, drawings from an app that tracks deletions): field
+      // groups or items resolve on their own, so an offline completion and a foreman's edit made
+      // meanwhile both survive. Never a whole-record loss.
+      const mergedData = !cur.deleted_at ? mergeWrite(p, coll, cur.data, data, { itemMerge: m.itemMerge === true }) : null;
       if (mergedData) {
         const stored = prepare(coll, m.id, mergedData, cur.data, now);
         checkRules(p, coll, cur.data, stored);

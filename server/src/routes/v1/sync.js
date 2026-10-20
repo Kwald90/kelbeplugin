@@ -15,6 +15,7 @@ const mutation = {
     op: { type: 'string', enum: ['upsert', 'delete'] },
     baseVersion: { type: ['integer', 'null'], description: 'Server version the client edited; null for a new record.' },
     data: { type: 'object', description: 'The whole record (upsert). Validated against the collection JSON Schema.' },
+    itemMerge: { type: 'boolean', description: 'True from an app that records deleted drawing items as tombstones: a drawing write then merges item by item. Without it a drawing write is last-writer-wins.' },
   },
 };
 

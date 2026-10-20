@@ -75,10 +75,10 @@ describe('drawings merge object by object', { skip }, () => {
       history: [{ id: 'h-office', by: { id: 'emp-office', name: 'Olive Office' }, at: at(40), until: at(40), add: {}, del: { junction: 1 }, move: {}, edit: {}, box: [60, -20, 100, 20], ids: [], ch: [] }],
       updatedAt: at(40),
     });
-    const r1 = await pushOne(office.token, { collection: 'drawings', id: 'dw-1', op: 'upsert', baseVersion: base.version, data: officeCopy });
+    const r1 = await pushOne(office.token, { collection: 'drawings', id: 'dw-1', op: 'upsert', baseVersion: base.version, itemMerge: true, data: officeCopy });
     assert.equal(r1.status, 'ok', JSON.stringify(r1));
     // the crew device was offline: its push is stale and older, but nothing of either is lost
-    const r2 = await pushOne(crew.token, { collection: 'drawings', id: 'dw-1', op: 'upsert', baseVersion: base.version, data: crewCopy });
+    const r2 = await pushOne(crew.token, { collection: 'drawings', id: 'dw-1', op: 'upsert', baseVersion: base.version, itemMerge: true, data: crewCopy });
     assert.equal(r2.status, 'conflict', 'the device gets the merged copy back');
     const ids = r2.server.data.objects.map((o) => o.id).sort();
     assert.deepEqual(ids, ['n1', 'n2', 'n3', 'n4', 'o1', 'o2']);
@@ -88,8 +88,49 @@ describe('drawings merge object by object', { skip }, () => {
     assert.deepEqual(now.body.objects.map((o) => o.id).sort(), ids);
     assert.equal(now.body.objects.find((o) => o.id === 'n1').by.name, 'Jackson Reid', 'attribution kept');
     // pushing the merged copy back is a clean write
-    const r3 = await pushOne(crew.token, { collection: 'drawings', id: 'dw-1', op: 'upsert', baseVersion: r2.server.version, data: r2.server.data });
+    const r3 = await pushOne(crew.token, { collection: 'drawings', id: 'dw-1', op: 'upsert', baseVersion: r2.server.version, itemMerge: true, data: r2.server.data });
     assert.equal(r3.status, 'ok', JSON.stringify(r3));
+  });
+
+  test('an older app (no itemMerge) is last-writer-wins: a stale copy never replaces newer work, a fresh delete sticks', async () => {
+    const OLIVE = { id: 'emp-office', name: 'Olive Office' };
+    const c = await pushOne(office.token, { collection: 'drawings', id: 'dw-old', op: 'upsert', itemMerge: true, data: drawingBody({ jobId: null, objects: [rec('o1', 0, OLIVE, 1), rec('o2', 40, OLIVE, 1)] }) });
+    assert.equal(c.status, 'ok', JSON.stringify(c));
+    // a new-app device adds 5 receptacles at minute 20
+    const newer = drawingBody({ jobId: null, objects: [rec('o1', 0, OLIVE, 1), rec('o2', 40, OLIVE, 1), ...[1, 2, 3, 4, 5].map((i) => rec(`n${i}`, 80 + i * 40, JACK, 20))],
+      history: [{ id: 'h-n', by: JACK, at: at(20), until: at(20), add: { receptacle: 5 }, del: {}, move: {}, edit: {}, box: null, ids: [], ch: [] }], updatedAt: at(20) });
+    const w = await pushOne(crew.token, { collection: 'drawings', id: 'dw-old', op: 'upsert', baseVersion: c.version, itemMerge: true, data: newer });
+    assert.equal(w.status, 'ok', JSON.stringify(w));
+    const ids = (d) => d.objects.map((o) => o.id).sort();
+
+    // an iPad on the app from before tracking edited its version-1 copy offline at minute 10 (no tombstones field)
+    const legacy = drawingBody({ jobId: null, objects: [rec('o1', 5, OLIVE, 1)], updatedAt: at(10) });
+    delete legacy.tombstones; delete legacy.history;
+    const r1 = await pushOne(office.token, { collection: 'drawings', id: 'dw-old', op: 'upsert', baseVersion: c.version, data: legacy });
+    assert.equal(r1.status, 'conflict', 'the newer server copy wins, as before tracking');
+    assert.deepEqual(ids(r1.server.data), ['n1', 'n2', 'n3', 'n4', 'n5', 'o1', 'o2']);
+    assert.deepEqual(r1.server.data.history.map((h) => h.id), ['h-n'], 'history kept');
+    assert.ok(r1.server.data.tombstones, 'tombstones kept');
+    // the same stale copy without tombstones from a new app (a drawing never opened since tracking) is no different
+    const r2 = await pushOne(office.token, { collection: 'drawings', id: 'dw-old', op: 'upsert', baseVersion: c.version, itemMerge: true, data: legacy });
+    assert.equal(r2.status, 'conflict');
+    assert.deepEqual(ids(r2.server.data), ids(r1.server.data));
+
+    // the older app pulled the current copy (tombstones and history carried over) and deletes n1 and o2:
+    // its deletes stick instead of being merged back from the stored copy
+    const cur = await call(app, { url: '/api/v1/drawings/dw-old', token: office.token });
+    const { id: _id, version, ...data } = cur.body;
+    void _id;
+    const oldApp = { ...data, objects: data.objects.filter((o) => o.id !== 'n1' && o.id !== 'o2'), updatedAt: at(30) };
+    const r3 = await pushOne(office.token, { collection: 'drawings', id: 'dw-old', op: 'upsert', baseVersion: version, data: oldApp });
+    assert.equal(r3.status, 'ok', JSON.stringify(r3));
+    const after = await call(app, { url: '/api/v1/drawings/dw-old', token: office.token });
+    assert.deepEqual(ids(after.body), ['n2', 'n3', 'n4', 'n5', 'o1']);
+    // the same kind of write from a tracking app (an item left out with no tombstone) keeps the union, as designed
+    const t = await pushOne(office.token, { collection: 'drawings', id: 'dw-old', op: 'upsert', baseVersion: after.body.version, itemMerge: true,
+      data: { ...oldApp, objects: oldApp.objects.filter((o) => o.id !== 'n2'), updatedAt: at(31) } });
+    assert.equal(t.status, 'conflict', 'an item left out without a tombstone comes back');
+    assert.ok(t.server.data.objects.some((o) => o.id === 'n2'));
   });
 
   test('crew can draw: a crew session writes drawings', async () => {
@@ -170,6 +211,26 @@ describe('cost impact: prices for money roles only', { skip }, () => {
     const seen = crewJob.body.changeOrders.find((c) => c.id === 'co-dw');
     assert.equal(seen.lines[0].qty, 4);
     assert.ok(!MONEY_KEYS.test(JSON.stringify(crewJob.body).replace(/"labourHours"/g, '"h"')), JSON.stringify(crewJob.body));
+  });
+
+  test("a drawing change order's markup line: crew see neither the rate nor its words", async () => {
+    const j = await call(app, { url: '/api/v1/jobs/job-1', token: office.token });
+    const co = { id: 'co-mk', title: 'Drawing changes: +2 duplex receptacles', amountCents: 2880, status: 'pending', date: '2026-10-19', source: 'drawing',
+      lines: [{ symbol: null, itemId: null, description: 'Markup on material', markupPct: 20, qty: 1, unitCents: 480, labourHours: 0, kind: 'other' },
+        // as raised by v0.7.0, with the rate in the words
+        { symbol: null, itemId: null, description: 'Markup 12.5% on material', qty: 1, unitCents: 300, labourHours: 0, kind: 'other' }] };
+    const r = await pushOne(office.token, { collection: 'jobs', id: 'job-1', op: 'upsert', baseVersion: j.body.version, data: { ...j.body, changeOrders: [...j.body.changeOrders, co] } });
+    assert.equal(r.status, 'ok', JSON.stringify(r));
+    const crewJob = await call(app, { url: '/api/v1/jobs/job-1', token: crew.token });
+    const seen = crewJob.body.changeOrders.find((x) => x.id === 'co-mk');
+    assert.deepEqual(seen.lines.map((l) => l.description), ['Markup on material', 'Markup on material']);
+    assert.ok(!/%|markupPct/.test(JSON.stringify(seen)), JSON.stringify(seen));
+    const crewPull = (await pullAll(crew.token)).find((x) => x.collection === 'jobs' && x.id === 'job-1');
+    assert.ok(!/\d%|markupPct/.test(JSON.stringify(crewPull)), 'nor in a sync pull');
+    const officeJob = await call(app, { url: '/api/v1/jobs/job-1', token: office.token });
+    const full = officeJob.body.changeOrders.find((x) => x.id === 'co-mk');
+    assert.equal(full.lines[0].markupPct, 20);
+    assert.equal(full.lines[1].description, 'Markup 12.5% on material', 'stored as written');
   });
 
   test('writes from readers without money cannot wipe or change prices', async () => {

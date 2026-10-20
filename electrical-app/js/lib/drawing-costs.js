@@ -189,7 +189,8 @@ export function changeOrderFrom(delta, { id, date, createdBy, createdAt, drawing
     unitCents: l.unitCents, labourHours: l.diff ? Math.round((l.labourHours / l.diff) * 1000) / 1000 : 0, kind: 'material',
   }));
   const t = delta.totals;
-  if (t.markupCents) lines.push({ symbol: null, itemId: null, description: `Markup ${t.markupPct}% on material`, qty: 1, unitCents: t.markupCents, labourHours: 0, kind: 'other' });
+  // the rate goes in markupPct, which crew never get (server access.js), not in the words they do
+  if (t.markupCents) lines.push({ symbol: null, itemId: null, description: 'Markup on material', markupPct: t.markupPct, qty: 1, unitCents: t.markupCents, labourHours: 0, kind: 'other' });
   if (t.labourSeparate && t.labourHours) lines.push({ symbol: null, itemId: null, description: 'Labour for the drawing changes', qty: t.labourHours, unitCents: t.labourRateCents, labourHours: 0, kind: 'labour' });
   const words = delta.lines.map((l) => `${l.diff > 0 ? '+' : '−'}${l.label}`);
   const title = `Drawing changes: ${words.slice(0, 4).join(', ')}${words.length > 4 ? ` and ${words.length - 4} more` : ''}`.slice(0, 300);
