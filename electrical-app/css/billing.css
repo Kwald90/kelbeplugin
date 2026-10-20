@@ -22,3 +22,11 @@
 .billing-action { margin-top: auto; padding-top: var(--s3); }
 .billing-action .btn { width: 100%; }
 .billing-fine { font-size: var(--fs-xs); margin: 0; }
+
+/* Free-trial banner at the top of each screen (app.js trialBanner, lib/trial.js). */
+.trial-banner { display: flex; gap: var(--s2); align-items: center; margin: var(--s3) var(--s5) 0; padding: var(--s2) var(--s2) var(--s2) var(--s3); border-radius: var(--r-sm); background: var(--info-soft); color: var(--info); font-weight: 600; font-size: var(--fs-sm); }
+.trial-banner .grow { flex: 1; min-width: 0; }
+.trial-banner a { color: var(--info); }
+.trial-banner-x { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border: 0; border-radius: var(--r-sm); background: transparent; color: inherit; cursor: pointer; }
+.trial-banner-x:hover { background: var(--surface); }
+@media (max-width: 760px) { .trial-banner { margin: var(--s2) var(--s3) 0; } }

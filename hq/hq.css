@@ -35,6 +35,7 @@
 .hq-json { margin: 0; padding: var(--s3); max-height: 320px; overflow: auto; background: var(--surface-2); border-radius: var(--r-md); font: var(--fs-xs)/1.5 var(--font-mono); white-space: pre-wrap; word-break: break-word; }
 .hq-pill-list { display: flex; flex-wrap: wrap; gap: 4px; }
 .hq-small { font-size: var(--fs-xs); }
+.hq-subhead { margin: var(--s5) 0 var(--s3); font-size: var(--fs-base); }
 .hq-danger-zone { border-color: var(--danger); }
 .hq-danger-zone h3 { color: var(--danger); }
 .hq-steps-inline { display: flex; gap: var(--s3); flex-wrap: wrap; align-items: center; }

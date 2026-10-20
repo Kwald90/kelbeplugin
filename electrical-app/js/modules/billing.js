@@ -84,7 +84,10 @@ export default {
         const left = ui.daysUntil(i.trialEndsAt);
         body.append(h('div', { class: ['billing-banner', left <= 7 ? 'warning' : 'info'] }, ui.icon('clock', 20), h('div', null,
           h('strong', null, left >= 0 ? `Free trial: ${left} day${left === 1 ? '' : 's'} left` : 'Your trial has ended'),
-          h('span', null, left >= 0 ? ` You have ${PLANS.business.name} features until ${ui.fmtDate(i.trialEndsAt)}. Pick a plan to keep going.` : ' You are on Starter features. Pick a plan to unlock the rest.'))));
+          h('span', null, left < 0 ? ' You are on Starter features. Pick a plan to unlock the rest.'
+            // Self-serve sign-up: a trialing subscription that bills when the trial ends.
+            : i.hasSubscription ? ` You have ${i.planName} features. On ${ui.fmtDate(i.trialEndsAt)} your card is charged ${i.monthlyCents == null ? 'for your plan' : `${fmt(i.monthlyCents)} plus tax`}${i.deposit?.cents ? `, less your ${fmt(i.deposit.cents)} deposit` : ''}. Change plan or cancel before then.`
+              : ` You have ${i.planName} features until ${ui.fmtDate(i.trialEndsAt)}. Pick a plan to keep going.`))));
       }
 
       body.append(h('div', { class: 'grid' },
@@ -109,7 +112,7 @@ export default {
     function planCard(id) {
       const p = PLANS[id];
       const i = info;
-      const current = !i.onTrial && i.plan === id && i.status !== 'none';
+      const current = i.hasSubscription ? i.subscribedPlan === id : !i.onTrial && i.plan === id && i.status !== 'none';
       const contact = p.contactSales || p.priceCents == null;
       const lower = planRank(id) < planRank(i.subscribedPlan || i.plan);
       const added = featuresAddedBy(id).slice(0, 6);
