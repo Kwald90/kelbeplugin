@@ -518,27 +518,44 @@ export function taxCheck(run, doc, docWord) {
  * After a write that carries tax (4.8): compare Fishtape's tax per rate with QuickBooks', override a
  * difference of 2 cents or less, refuse more. Returns { obj, outcome: 'equal'|'overridden'|'delta'|'mismatch', deltaCents }.
  */
-export async function taxAfterWrite(run, link, collection, record, obj, { requestParts }) {
-  if (!DOCS.has(collection) || !run.ctx.features?.salesTax || !obj?.TxnTaxDetail) return { obj, outcome: 'equal' };
-  const totals = docTotals(record);
-  const date = record.issueDate || undefined;
+export async function taxAfterWrite(run, link, collection, record, obj, { requestParts, L = null }) {
+  if (!run.ctx.features?.salesTax || !obj?.TxnTaxDetail) return { obj, outcome: 'equal' };
+  let totals, codeIds, date, purchase = false, entity;
+  if (DOCS.has(collection)) {
+    totals = docTotals(record);
+    codeIds = Object.values(codeIdsByKind(run, record));
+    date = record.issueDate || undefined;
+    entity = collection === 'invoices' ? 'Invoice' : 'Estimate';
+  } else if (collection === 'bills' && L) {
+    // Purchases: QuickBooks must hold the recoverable tax printed on the bill (4.8).
+    const taxes = (L.taxes || []).map((t) => ({ id: t.id, pct: t.pct, cents: t.cents, baseCents: 0 }));
+    totals = { taxes, taxCents: taxes.reduce((s, t) => s + t.cents, 0) };
+    codeIds = [run.ctx.mappings.purchaseTaxCode?.[L.extra?.taxKey]].filter(Boolean);
+    date = L.date || undefined;
+    purchase = true;
+    entity = link.qbo_entity;
+    if (!taxes.length || !codeIds.length) return { obj, outcome: 'equal' };
+  } else return { obj, outcome: 'equal' };
   const cmp = compareTax(totals, obj.TxnTaxDetail, run.ctx.rates, date);
   if (cmp.equal) return { obj, outcome: 'equal' };
-  if (!cmp.withinTolerance) return { obj, outcome: 'mismatch', cmp };
-  const detail = taxOverride(totals, Object.values(codeIdsByKind(run, record)), run.ctx.rates, { date });
-  const delta = toCents(obj.TotalAmt) - totals.totalCents;
-  if (!detail) return { obj, outcome: 'delta', deltaCents: delta };
+  if (!cmp.withinTolerance && !purchase) return { obj, outcome: 'mismatch', cmp };
+  const detail = taxOverride(totals, codeIds, run.ctx.rates, { date, purchase });
+  const delta = purchase ? 0 : toCents(obj.TotalAmt) - totals.totalCents;
+  if (!detail) return { obj, outcome: purchase ? 'equal' : 'delta', deltaCents: delta };
   checkBrake(run);
   try {
-    const fixed = await run.client.update(obj.Id && collection === 'invoices' ? 'Invoice' : 'Estimate', { Id: obj.Id, SyncToken: obj.SyncToken, TxnTaxDetail: detail },
-      { requestId: requestIdFor([run.tenantId, link.id, 'tax', ...requestParts, obj.SyncToken]), sparse: true });
+    const body = purchase ? { ...readable(obj), Id: obj.Id, SyncToken: obj.SyncToken, TxnTaxDetail: detail } : { Id: obj.Id, SyncToken: obj.SyncToken, TxnTaxDetail: detail };
+    const fixed = await run.client.update(entity, body, { requestId: requestIdFor([run.tenantId, link.id, 'tax', ...requestParts, obj.SyncToken]), sparse: !purchase });
     countWrite(run);
     return { obj: fixed, outcome: 'overridden' };
   } catch (e) {
-    if (e instanceof QboError && e.kind === 'validation') return { obj, outcome: 'delta', deltaCents: delta };
+    if (e instanceof QboError && e.kind === 'validation') return { obj, outcome: purchase ? 'equal' : 'delta', deltaCents: delta };
     throw e;
   }
 }
+
+/** A QuickBooks object as a full-update body (read-only fields dropped). */
+const readable = (o) => { const b = { ...o }; for (const k of ['MetaData', 'domain', 'sparse']) delete b[k]; return b; };
 
 /**
  * Reconcile one link (5.5): L, R and B, the merge, then the write on each side. `remote` is the
@@ -578,6 +595,28 @@ export async function reconcile(run, link, o = {}) {
 
   // Voids first (4.7): a QuickBooks void only sets the status; its zeroed lines never reach Fishtape.
   if (collection === 'invoices' && link.role === 'main' && isVoidedInvoice(obj)) return voidedRemote(run, link, record, obj, { row, label, B });
+
+  // A payment's line that left its invoice (4.9): gone (a void, an unapply) is a remote delete; moved to
+  // another invoice is a conflict on the invoice, never read as a delete plus a create.
+  if (collection === 'payments' && link.role === 'main' && link.qbo_entity === 'Payment' && link.qbo_line) {
+    const invLines = (obj.Line || []).filter((l) => (l.LinkedTxn || []).some((t) => t.TxnType === 'Invoice') && toCents(l.Amount));
+    const mine = invLines.find((l) => l.LinkedTxn.some((t) => t.TxnType === 'Invoice' && String(t.TxnId) === String(link.qbo_line)));
+    if (!mine) {
+      if (invLines.length === 1 && B?.invoiceRef === link.qbo_line && String(record.data.invoiceId || '') && run.ctx.refs.qboIdFor('invoices', record.data.invoiceId) === link.qbo_line) {
+        if (run.shadow) return 'conflict';
+        await txWrite(run, async (tx) => {
+          await updateLink(tx, run, link.id, { state: 'conflict' });
+          await openConflict(tx, run, link, { kind: 'fields', label, reason: 'payment_moved', fields: [{ field: 'invoiceRef', label: 'Invoice', base: `QuickBooks #${link.qbo_line}`, fishtape: `QuickBooks #${link.qbo_line}`, quickbooks: `QuickBooks #${(invLines[0].LinkedTxn.find((t) => t.TxnType === 'Invoice') || {}).TxnId}` }] });
+          await finishOutbox(tx, run, row);
+        });
+        run.stats.conflicts++;
+        return 'conflict';
+      }
+      const { remoteDeleted } = await import('./pull.js');
+      await remoteDeleted(run, link, { record, row });
+      return 'deleted_remote';
+    }
+  }
 
   const data = withHeld(record.data, o.held);
   const L = fishtapeToCanon(collection, data, ctx);
@@ -693,8 +732,8 @@ export async function reconcile(run, link, o = {}) {
         }
         throw e;
       }
-      if (DOCS.has(collection) && toRemote.includes('lines')) {
-        const tax = await taxAfterWrite(run, link, collection, record.data, written, { requestParts: ['update', record.version] });
+      if ((DOCS.has(collection) || collection === 'bills') && (toRemote.includes('lines') || toRemote.includes('taxes'))) {
+        const tax = await taxAfterWrite(run, link, collection, record.data, written, { requestParts: ['update', record.version], L });
         written = tax.obj;
         if (tax.outcome === 'mismatch') {
           await txWrite(run, async (tx) => {
@@ -760,6 +799,7 @@ export async function reconcile(run, link, o = {}) {
     let reason = null;
     if (report.taxShape && link.owner !== 'quickbooks') { state = 'needs_review'; owner = 'quickbooks'; reason = 'tax_shape'; }
     const updated = await updateLink(tx, run, link.id, {
+      ...(collection === 'payments' && link.role === 'main' && link.qbo_entity === 'Payment' && result.merged.invoiceRef ? { qbo_line: String(result.merged.invoiceRef) } : {}),
       snapshot: { ...result.merged, extra: L.extra }, sync_token: written?.SyncToken ?? link.sync_token, qbo_updated_at: lastUpdated(written),
       fishtape_version: patchedVersion ?? record.version, state, reason, owner, attempts: 0, last_error: null, next_attempt_at: null,
       meta: newMeta, prev_values: prevValues,

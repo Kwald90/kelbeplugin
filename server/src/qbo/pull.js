@@ -93,6 +93,11 @@ export async function processRemote(run, entity, o) {
   }
   const mains = links.filter((l) => l.role === 'main' || l.role === 'fee');
   if (!mains.length && !links.length) return pullCreate(run, entity, o);
+  // A voided payment is a delete for every Fishtape payment on it (4.9).
+  if (entity === 'Payment' && toCents(o.TotalAmt) === 0 && (o.Line || []).every((l) => !toCents(l.Amount)) && /^Voided/i.test(String(o.PrivateNote || ''))) {
+    for (const l of mains) await remoteDeleted(run, l, {});
+    return;
+  }
   for (const l of mains) {
     if (['unlinked', 'deleted_local'].includes(l.state)) continue;
     if (l.sync_token != null && String(o.SyncToken) === String(l.sync_token)) continue; // our own write coming back
@@ -378,6 +383,9 @@ async function pullCreate(run, entity, o) {
  * A line that left an invoice opens a conflict for payments Fishtape made, and deletes a pulled one.
  */
 async function pullPaymentLines(run, o, links) {
+  // A $0 payment only applies credit memos or journals to invoices: no money came in, so it is not
+  // a Fishtape payment; the invoice's settlement payment shows it (4.9).
+  if (toCents(o.TotalAmt) === 0) return null;
   const lines = (o.Line || []).map((l) => ({ amount: toCents(l.Amount), inv: str((l.LinkedTxn || []).find((t) => t.TxnType === 'Invoice')?.TxnId) })).filter((x) => x.inv && x.amount);
   const syncFrom = str(optionOf(run.ctx.mappings, 'syncFrom', null));
   for (const line of lines) {

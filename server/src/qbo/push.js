@@ -455,6 +455,10 @@ async function finishCreate(run, link, collection, record, obj, build, { row, la
     written = tax.obj;
     if (tax.outcome === 'delta') meta.taxDeltaCents = tax.deltaCents;
   }
+  if (collection === 'bills' && !adopted) {
+    // The recoverable tax printed on the bill, not QuickBooks' own sum (4.8 purchases).
+    written = (await taxAfterWrite(run, { ...link, qbo_entity: entity }, collection, d, written, { requestParts: ['create'], L })).obj;
+  }
   const ctx = ctxFor(run, { ...link, meta }, collection);
   const R = qboToCanon(entity, written, { ...ctx, collection });
   const snapshot = createdSnapshot(collection, link.role, L, R);

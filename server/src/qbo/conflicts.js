@@ -159,7 +159,8 @@ export async function resolveConflict(deps, tenantId, conflictId, { choice, fiel
   if (still?.status === 'open') await close();
   else await txWrite(run, (tx) => appendAudit(tx, tenantId, { actor: who.actor, action: 'qbo.conflict.resolve', collection: link.collection, recordId: link.record_id, summary: `Resolved a QuickBooks ${c.kind} (${choice})`, request: who.request, meta: { conflictId, choice } }));
   const row = await run.db.withTenant({ tenantId }, async (tx) => (await tx.query('SELECT * FROM qbo_conflicts WHERE tenant_id = $1 AND id = $2', [tx.tenantId, conflictId])).rows[0]);
-  return conflictView(row);
+  // A restore that re-creates the QuickBooks object replaces the link (and its conflicts) with a new one.
+  return conflictView(row || { ...c, status: 'resolved', resolution, resolved_at: new Date() });
 }
 
 /**
