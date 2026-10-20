@@ -32,6 +32,7 @@ export const COLLECTIONS = [
   'wireRuns', 'bends', 'benderProfiles',
   'flhas', 'toolboxTalks', 'incidents', 'correctiveActions', 'safetyInspections', 'siteOrientations', 'jobSafety',
   'workPlans', 'workTasks', 'taskTemplates', 'huddles',
+  'locationPoints', 'locationConsents',
 ];
 
 export const DEFAULT_SETTINGS = {

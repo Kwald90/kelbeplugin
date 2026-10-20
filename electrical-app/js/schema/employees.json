@@ -104,6 +104,14 @@
       ],
       "maxLength": 12,
       "description": "Local-only. The server drops it on write; crew PINs are set with PUT /api/v1/members/{id}/pin and stored hashed."
+    },
+    "payrollId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 64,
+      "description": "The employee number in the payroll system (Wagepoint, QuickBooks), for payroll exports."
     }
   },
   "additionalProperties": true

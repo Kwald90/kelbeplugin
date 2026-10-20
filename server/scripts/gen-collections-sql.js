@@ -48,6 +48,19 @@ CREATE POLICY ${t}_tenant ON ${t}
   WITH CHECK (tenant_id = app_tenant_id() AND app_portal_client_id() IS NULL);
 GRANT SELECT, INSERT, UPDATE ON ${t} TO fishtape_app;
 GRANT SELECT ON ${t} TO fishtape_hq;
+${def.rls === 'employee' ? ownEmployeePolicy(t) : ''}`;
+}
+
+// Rows that belong to one person (location points): on top of the tenant policy, a RESTRICTIVE
+// policy lets a session reach only the rows of its own member's employee id (0140 defines the
+// functions). Two narrow scopes the server sets itself: 'system' (the retention job, no user) and
+// 'crew' (read-only, the opt-in live crew map). HQ keeps SELECT (BYPASSRLS) only for the counts
+// and the export made when a company is deleted, both audited. The app role still has no DELETE:
+// retention soft-deletes and empties a point (the tombstone keeps no coordinates and no person).
+function ownEmployeePolicy(t) {
+  return `CREATE POLICY ${t}_own ON ${t} AS RESTRICTIVE
+  USING (employee_id = app_member_employee_id() OR app_location_scope() IN ('system', 'crew'))
+  WITH CHECK (employee_id = app_member_employee_id() OR app_location_scope() = 'system');
 `;
 }
 
@@ -137,7 +150,7 @@ GRANT SELECT ON record_history, sync_mutations TO fishtape_hq;
 }
 
 /** Later migrations that create collection tables: version -> file name. */
-export const LATER = { '0100': '0100_workplan.sql', '0110': '0110_safety.sql' };
+export const LATER = { '0100': '0100_workplan.sql', '0110': '0110_safety.sql', '0141': '0141_location.sql' };
 export const laterFile = (version) => fileURLToPath(new URL(`../migrations/${LATER[version]}`, import.meta.url));
 
 /** The tables of the collections whose registry entry says `migration: version`, made exactly like 0003's. */

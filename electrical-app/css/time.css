@@ -1,0 +1,77 @@
+/* Time clock: travel state, location badges, timesheets, the payroll bar, the small map. Tokens only. */
+
+.ops-clock.travelling { border-color: var(--info); }
+.ops-clock.travelling .ops-clock-ring { border-color: var(--info); color: var(--info); }
+.loc-line { margin-top: var(--s1); gap: var(--s2); }
+.loc-small { font-size: var(--fs-xs); line-height: var(--lh-xs); }
+.loc-cell { gap: var(--s2); flex-wrap: nowrap; }
+.loc-hint { display: flex; align-items: center; gap: var(--s1); color: var(--success); }
+
+/* Suggestion bar (shift tracker): above the wheel and the home indicator. */
+.loc-suggest {
+  position: fixed; left: calc(var(--rail) + var(--s4)); right: var(--s4); bottom: calc(var(--s4) + env(safe-area-inset-bottom, 0px)); z-index: 60;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4);
+  background: var(--surface); color: var(--text); border: 2px solid var(--info); border-radius: var(--r-md); box-shadow: var(--shadow-float);
+  max-width: 720px; margin: 0 auto;
+}
+.loc-suggest-actions { gap: var(--s2); margin-left: auto; }
+@media (max-width: 720px) {
+  .loc-suggest { left: var(--s3); right: var(--s3); bottom: calc(var(--rail) + var(--s3) + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Consent and policy */
+.loc-consent { max-height: 60vh; overflow-y: auto; }
+.loc-policy p { margin: 0 0 var(--s2); }
+.loc-facts { margin: var(--s2) 0 0; padding-left: var(--s5); color: var(--text-muted); font-size: var(--fs-sm); }
+.loc-details summary { cursor: pointer; font-weight: 600; }
+.loc-details[open] summary { margin-bottom: var(--s2); }
+.loc-policy-text { font: inherit; min-height: 220px; }
+.loc-day { gap: var(--s2); }
+.loc-dayhead { margin: var(--s3) 0 0; font-size: var(--fs-sm); color: var(--text-muted); }
+.loc-time { min-width: 72px; color: var(--text-muted); }
+
+/* Job site card */
+.loc-site { display: flex; flex-direction: column; gap: var(--s3); }
+.loc-site-actions { gap: var(--s2); flex-wrap: wrap; }
+.loc-radius-field { gap: var(--s1); }
+.loc-radius { width: 90px; }
+
+/* Small map */
+.mm { position: relative; overflow: hidden; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-2); touch-action: none; user-select: none; }
+.mm-pick { cursor: crosshair; }
+.mm-tiles, .mm-pins { position: absolute; inset: 0; }
+.mm-tile { position: absolute; max-width: none; pointer-events: none; }
+.mm-labels { mix-blend-mode: normal; }
+.mm-missing { visibility: hidden; }
+.mm-overlay { position: absolute; inset: 0; pointer-events: none; }
+.mm-radius { fill: var(--info); fill-opacity: .14; stroke: var(--info); stroke-width: 2; }
+.mm-pin { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--accent-fill); border: 2px solid var(--text); box-shadow: var(--shadow-card); }
+.mm-crew { background: var(--success); border-color: var(--surface); width: 24px; height: 24px; margin: -12px 0 0 -12px; }
+.mm-point { background: var(--info); border-color: var(--surface); width: 20px; height: 20px; margin: -10px 0 0 -10px; }
+.mm-pin-label { position: absolute; inset: 0; display: grid; place-items: center; font-size: 10px; font-weight: 700; color: var(--surface); }
+.mm-zooms { position: absolute; top: var(--s2); right: var(--s2); display: flex; flex-direction: column; gap: var(--s1); }
+.mm-zoom { width: 36px; height: 36px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 20px; line-height: 1; cursor: pointer; }
+.mm-attr { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 6px; font-size: 10px; line-height: 14px; color: var(--text-muted); background: var(--surface); opacity: .85; }
+
+/* Timesheets */
+.time-stats { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+.time-week .ops-week-day { gap: 2px; }
+.time-travel { color: var(--info); }
+.time-warn { color: var(--danger); font-weight: 600; }
+.time-jobs td, .time-jobs th { white-space: nowrap; }
+.time-actions { margin-top: var(--s4); gap: var(--s2); flex-wrap: wrap; align-items: center; }
+.time-warnings { margin: 0; padding-left: var(--s5); }
+
+/* Dashboard tile: hours by person, work and travel */
+.time-tile { display: flex; flex-direction: column; gap: var(--s3); color: inherit; text-decoration: none; }
+.time-legend { display: inline-flex; align-items: center; gap: var(--s1); font-size: var(--fs-xs); color: var(--text-muted); }
+.time-legend i, .time-bar i { display: inline-block; height: 10px; border-radius: 3px; }
+.time-legend i { width: 10px; }
+.tw { background: var(--success); }
+.tt { background: var(--info); }
+.time-bars { display: flex; flex-direction: column; gap: var(--s2); }
+.time-bar-row { display: grid; grid-template-columns: minmax(64px, 110px) 1fr auto; align-items: center; gap: var(--s3); }
+.time-bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.time-bar { display: flex; gap: 2px; height: 10px; min-width: 40px; }
+.time-bar-val { font-size: var(--fs-sm); white-space: nowrap; }
+.time-ot { color: var(--accent); }

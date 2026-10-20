@@ -31,6 +31,7 @@ function employeeForm(ctx, emp, onSaved) {
       { label: 'Email', name: 'email', type: 'email', value: emp?.email },
       { label: 'Phone', name: 'phone', type: 'tel', value: emp?.phone },
       { label: 'Licence no.', name: 'licenceNo', value: emp?.licenceNo },
+      { label: 'Payroll ID', name: 'payrollId', value: emp?.payrollId, hint: 'Employee ID in Wagepoint or QuickBooks, for payroll exports' },
       { label: 'Licence expiry', name: 'licenceExpiry', type: 'date', value: emp?.licenceExpiry },
       { label: 'PIN (4 digits, optional)', name: 'pin', value: emp?.pin, placeholder: '••••', hint: 'Asked when switching to this user' },
       { label: 'Colour', name: 'color', type: 'color', value: emp?.color || COLORS[store.count('employees') % COLORS.length] },
@@ -42,7 +43,8 @@ function employeeForm(ctx, emp, onSaved) {
     } } : null,
     onSubmit(v) {
       if (v.pin && !/^\d{4}$/.test(v.pin)) { ui.toast('PIN must be exactly 4 digits', 'error'); return false; }
-      if (!mgr) { delete v.role; delete v.rateCents; delete v.pin; }
+      if (!mgr) { delete v.role; delete v.rateCents; delete v.pin; delete v.payrollId; }
+      if (v.payrollId != null) v.payrollId = String(v.payrollId).trim().slice(0, 64);
       if (emp && emp.id === me.id && v.role && v.role !== emp.role && ['owner', 'admin'].includes(emp.role) && !['owner', 'admin'].includes(v.role)) {
         const admins = store.count('employees', (e) => e.active !== false && ['owner', 'admin'].includes(e.role));
         if (admins <= 1) { ui.toast('You are the last owner/admin; keep that role', 'error'); return false; }

@@ -2,7 +2,7 @@
 // with the caller's principal: the same canRead/canWrite rules, own-row filters and
 // field redaction as the REST API, so a tool can never see more than its user or key.
 import { collectionDef, isCollection, AUDIT_COLLECTION } from '../collections.js';
-import { canRead, redactForReader, rowFilter } from '../auth/access.js';
+import { ENTRY_COORDS, canRead, redactForReader, rowFilter } from '../auth/access.js';
 import { forbidden, notFound, badRequest } from '../errors.js';
 import { docTotals } from '../../../electrical-app/js/lib/money.js';
 
@@ -64,7 +64,14 @@ const visibleWhere = (p, coll, params) => {
   return ` AND ${f.column} = $${params.length}`;
 };
 
-const view = (p, coll, row) => redactForReader(p, coll, { ...row.data, id: row.id, version: row.version });
+// Clock-in coordinates never go to the AI provider (docs/compliance/privacy.md); distances and flags do.
+const view = (p, coll, row) => {
+  const out = redactForReader(p, coll, { ...row.data, id: row.id, version: row.version });
+  if (coll !== 'timeEntries' || !out) return out;
+  const rest = { ...out };
+  for (const k of ENTRY_COORDS) delete rest[k];
+  return rest;
+};
 
 /** One record (or 404 for missing, deleted, hidden or another company's id). */
 export async function readRecord(tx, p, coll, id) {

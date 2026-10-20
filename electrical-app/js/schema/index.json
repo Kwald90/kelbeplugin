@@ -38,6 +38,8 @@
     "workTasks": "./workTasks.json",
     "taskTemplates": "./taskTemplates.json",
     "huddles": "./huddles.json",
-    "auditLog": "./auditLog.json"
+    "auditLog": "./auditLog.json",
+    "locationPoints": "./locationPoints.json",
+    "locationConsents": "./locationConsents.json"
   }
 }

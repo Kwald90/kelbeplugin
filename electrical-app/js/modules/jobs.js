@@ -1,6 +1,9 @@
 // Jobs (S15): list by status, job detail with money, drawings, change orders, crew, compliance.
 import { docTotals, invoiceBalanceCents, invoicePaidCents, entryHours } from '../lib/money.js';
 import { emergencyCard } from '../lib/safety-emergency.js';
+import { siteCard } from '../lib/location-ui.js';
+import { entryMinutes, kindOf, fmtH } from '../lib/timesheet.js';
+import { locationSettings } from '../lib/location-policy.js';
 
 const STATUSES = ['lead', 'scheduled', 'in-progress', 'on-hold', 'complete', 'invoiced'];
 const ACTIVE = new Set(['scheduled', 'in-progress', 'on-hold']);
@@ -199,6 +202,7 @@ function detailView(root, ctx, id) {
         ui.stat({ label: 'Margin', value: ui.fmtMoney(m.marginCents, { whole: true }), hint: pct == null ? 'no revenue yet' : `${pct}% of ${m.invoicedCents ? 'invoiced' : 'estimate'}`, tone: m.marginCents < 0 ? 'danger' : 'success' })),
       h('h2', { class: 'section' }, 'Scope'),
       h('div', { class: 'card flat ops-scope' }, job.description ? job.description : h('span', { class: 'muted' }, 'No description yet.')),
+      locationSettings(store.settings()).enabled ? [h('h2', { class: 'section' }, 'Site for the time clock'), siteCard(ctx, job, { canEdit })] : null,
     );
   }
 
@@ -294,12 +298,16 @@ function detailView(root, ctx, id) {
 
   function time(el, job) {
     const rows = store.list('timeEntries', (t) => t.jobId === job.id).sort((a, b) => b.clockIn.localeCompare(a.clockIn));
+    const sum = (k) => rows.filter((t) => kindOf(t) === k).reduce((n, t) => n + entryMinutes(t), 0);
+    if (rows.length) el.append(h('p', { class: 'muted' }, `Work ${fmtH(sum('work'))} h · travel to this job ${fmtH(sum('travel'))} h`));
     el.append(ui.table({
       columns: [
         { key: 'day', label: 'Day', render: (t) => ui.fmtDate(t.clockIn) },
         { key: 'emp', label: 'Who', render: (t) => store.get('employees', t.employeeId)?.name || '—' },
+        { key: 'kind', label: 'Type', render: (t) => (kindOf(t) === 'travel' ? ui.badge('travel', 'info') : ui.badge('work', 'neutral')) },
         { key: 'in', label: 'In – out', render: (t) => `${ui.fmtTime(t.clockIn)} – ${t.clockOut ? ui.fmtTime(t.clockOut) : 'on the clock'}` },
-        { key: 'hrs', label: 'Hours', align: 'right', render: (t) => ui.fmtHours(entryHours(t)) },
+        { key: 'hrs', label: 'Hours', align: 'right', render: (t) => `${fmtH(entryMinutes(t))} h` },
+        { key: 'loc', label: 'Location', render: (t) => (t.flag ? ui.badge(t.flag.reviewedAt ? `${t.flag.text} · reviewed` : t.flag.text, t.flag.reviewedAt ? 'neutral' : 'danger') : t.siteCheck?.inside ? ui.badge('at the site', 'success') : '') },
         { key: 'ok', label: 'Approved', render: (t) => (t.approved ? ui.badge('approved', 'success') : ui.badge('pending', 'warning')) },
       ],
       rows, empty: ui.empty({ icon: 'clock', title: 'No time logged', text: 'Crew clock in against this job from the Time clock.' }),

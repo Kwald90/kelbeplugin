@@ -115,6 +115,9 @@ export const COLLECTION_FEATURES = {
   workPlans: ['workplan'],
   taskTemplates: ['workplan'],
   huddles: ['workplan'],
+  // Location while clocked in is part of the time clock (every plan).
+  locationPoints: ['time'],
+  locationConsents: ['time'],
 };
 
 /**

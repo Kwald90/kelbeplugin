@@ -11,6 +11,7 @@ export const COLLECTIONS = [
   'wireRuns', 'bends', 'benderProfiles',
   'flhas', 'toolboxTalks', 'incidents', 'correctiveActions', 'safetyInspections', 'siteOrientations', 'jobSafety',
   'workPlans', 'workTasks', 'taskTemplates', 'huddles',
+  'locationPoints', 'locationConsents',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -44,6 +45,9 @@ const DAY = g('day', 'date');
  * @property {string[]} write     permission keys, any of which allows writing
  * @property {boolean} [managerWrite]  writes also need a manager role (owner/admin/office/foreman)
  * @property {boolean} [ownRows]  non-managers only see and write rows whose employeeId is theirs
+ * @property {boolean} [ownRowsAlways]  managers too (location points)
+ * @property {'employee'} [rls]   an extra RESTRICTIVE policy: rows only for the member's own employee id
+ * @property {boolean} [noApiKeys] API keys can neither read nor write it, whatever their scopes
  * @property {{ field: string, values: string[] }} [ownRowsHide]  of their own rows, non-managers never see these
  *                                (the field needs a generated column)
  * @property {string} [migration] the migration that creates the table (default 0003_collections)
@@ -108,6 +112,16 @@ const DEFS = {
   },
   taskTemplates: { table: 'task_templates', gen: [], read: ['workplan'], write: ['workplan'], managerWrite: true, portal: null, migration: '0100' },
   huddles: { table: 'huddles', gen: [g('day', 'date')], read: ['workplan', 'kpis'], write: ['workplan'], managerWrite: true, portal: null, migration: '0100' },
+  // Location while clocked in (migrations 0140-0141, docs/compliance/privacy.md). Raw points belong to
+  // the person: nobody else reads or writes them, managers included (ownRowsAlways, and an RLS policy
+  // on the member's employee id), and API keys never reach them. The retention job and the opt-in live
+  // crew map use their own narrow database scopes (services/location.js).
+  locationPoints: {
+    table: 'location_points', gen: [EMPLOYEE, g('time_entry_id', 'timeEntryId'), g('point_at', 'at')], read: ['time'], write: ['time'],
+    ownRows: true, ownRowsAlways: true, rls: 'employee', noApiKeys: true, portal: null, maxBytes: 4 * KB, migration: '0141',
+  },
+  // A worker's answer to the location notice. Only the worker records it; managers read them (evidence).
+  locationConsents: { table: 'location_consents', gen: [EMPLOYEE], read: ['time'], write: ['time'], ownRows: true, noApiKeys: true, portal: null, maxBytes: 4 * KB, migration: '0141' },
 };
 
 /** @type {Map<string, CollectionDef>} */
