@@ -13,6 +13,8 @@
 !electrical-app/js/lib/drawing-costs.js
 !electrical-app/js/lib/drawing-collab.js
 !electrical-app/js/canvas/symbols.js
+!electrical-app/js/lib/modules.js
+!electrical-app/js/lib/materials.js
 !compliance/controls.yaml
 
 # Never send these into the build, even inside allowed folders.
