@@ -44,6 +44,18 @@ function clientTime(value, now) {
   return Math.min(t, now + MAX_CLOCK_SKEW_MS);
 }
 
+/**
+ * Foremen see prices and costs only when the company allows it (settings.foremanSeesCosts).
+ * Read that once per request, before any record is shown to the principal or written by it
+ * (auth/access.js seesMoney). Everyone else is decided by role.
+ */
+export async function loadMoneyAccess(tx, p) {
+  if (!p || typeof p.seesMoney === 'boolean' || p.kind !== 'session' || p.role !== 'foreman' || p.perms?.has?.('estimates')) return;
+  const { rows } = await tx.query(
+    "SELECT data->'foremanSeesCosts' AS f FROM settings WHERE tenant_id = $1 AND id = 'settings' AND deleted_at IS NULL", [tx.tenantId]);
+  p.seesMoney = rows[0]?.f === true;
+}
+
 function rowTime(row) {
   if (row.deleted_at) return new Date(row.deleted_at).getTime();
   const t = Date.parse(row.data?.updatedAt);
@@ -152,6 +164,7 @@ export function createRecords({ validator }) {
   // ---- reads ---------------------------------------------------------------
 
   async function getRecord(tx, p, coll, id) {
+    await loadMoneyAccess(tx, p);
     assertCollection(coll);
     if (!canRead(p, coll)) throw forbidden(`You cannot read ${coll}.`);
     if (coll === AUDIT_COLLECTION) {
@@ -182,6 +195,7 @@ export function createRecords({ validator }) {
    * @param {{ limit?: number, cursor?: string, filters?: Record<string, string>, includeDeleted?: boolean }} q
    */
   async function listRecords(tx, p, coll, q = {}) {
+    await loadMoneyAccess(tx, p);
     assertCollection(coll);
     if (!canRead(p, coll)) throw forbidden(`You cannot read ${coll}.`);
     const limit = Math.min(Math.max(Number(q.limit) || 50, 1), MAX_LIST_LIMIT);
@@ -242,6 +256,7 @@ export function createRecords({ validator }) {
   // ---- REST writes ---------------------------------------------------------
 
   async function createRecord(tx, p, coll, body, who) {
+    await loadMoneyAccess(tx, p);
     assertCollection(coll);
     if (!canWrite(p, coll)) throw forbidden(`You cannot change ${coll}.`);
     await assertPlanAllows(tx, p, coll);
@@ -258,6 +273,7 @@ export function createRecords({ validator }) {
   }
 
   async function patchRecord(tx, p, coll, id, patch, opts, who) {
+    await loadMoneyAccess(tx, p);
     assertCollection(coll);
     if (!canWrite(p, coll)) throw forbidden(`You cannot change ${coll}.`);
     await assertPlanAllows(tx, p, coll);
@@ -397,6 +413,7 @@ export function createRecords({ validator }) {
    * mutation returns its first result without being applied twice.
    */
   async function push(tx, p, mutations, who) {
+    await loadMoneyAccess(tx, p);
     const results = [];
     for (const m of mutations) {
       const shapeError = checkMutationShape(m);
@@ -431,6 +448,7 @@ export function createRecords({ validator }) {
    * principal may read. Run in a REPEATABLE READ transaction.
    */
   async function pull(tx, p, { since, limit }) {
+    await loadMoneyAccess(tx, p);
     const lim = Math.min(Math.max(Number(limit) || 500, 1), MAX_PULL_LIMIT);
     const parts = [];
     const params = [tx.tenantId, since, lim + 1];
