@@ -68,6 +68,9 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** Permits on new jobs: "Does this job need a permit?" when a job is created; create the permit (authority by province, e.g. Manitoba Hydro), list the inspections it needs (rough-in, service, final), remind when each is due, and open the authority's online portal in one tap. No public booking API is known for Manitoba Hydro, so booking stays a person's click: VERIFY.
 - **dev** Canvas tool polish (precision, selection, eraser, lasso, undo) after the pen-dropout fix.
 
+- **dev** Module switches / T&M / material requests follow-ups: email the material list through the company's own email integration (today the platform outbox); pick up a changed send time immediately (the worker re-reads it hourly); a "turned off" note in Help search results; seed `settings` (modules, province) server-side when a company is created; per-employee bill rates in Employees (`billRateCents` is read but has no field yet); T&M progress invoices for change orders.
+- **K** Material requests: who in the office gets the bell (owner, admin, office today), and whether foremen should too.
+
 ## Process
 
 - Cloud agents push straight to the deploy branch. Agents should work on their own branches and open pull requests; the deploy branch should only move by merge.

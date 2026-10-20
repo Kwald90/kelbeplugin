@@ -248,6 +248,34 @@ completion survives a foreman's edit; the device gets the merged copy back as a 
 (`electrical-app/js/lib/kpis.js`) are shared with `GET /api/v1/kpis`. Notifications: a marked hook in
 `server/src/services/workplan-events.js` until a server `notify()` exists. Tables: `server/migrations/0100_workplan.sql`, generated with `node scripts/gen-collections-sql.js --migration 0100` (the registry entries carry `migration: '0100'`; `--all` rewrites every generated file).
 
+### Module switches, billing mode per job, material requests (migrations 0130–0139)
+
+From Kelvin and Travis, 2026-10-20. Shared logic is pure and used by both sides: `electrical-app/js/lib/{modules,tm,materials}.js`.
+
+- **Module switches** (Settings → Modules, owner/admin): `settings.modules = { [switchId]: boolean }`, separate from the plan.
+  Missing `modules` (companies from before) = everything on; a new company starts with the `core` preset
+  (`DEFAULT_MODULES`); presets Recommended, Simple mode (schedule, time, drawings, estimates, invoices; jobs is always on),
+  Everything. Turned-off modules disappear from the rail, wheel, dashboard, job/client tabs and buttons, the bell,
+  onboarding and every `#/` link (a sweeper in `app.js`); their routes show a "turned off" page. Data is kept.
+  Server: writes into a turned-off module's collections (`COLLECTION_SWITCHES`) are refused with
+  403 `module_turned_off` (REST, sync, API keys, AI chat); reads never are (`server/src/services/modules.js`).
+- **Billing mode per job**: `jobs.billingMode 'tm'|'fixed'` (missing = fixed), `jobs.labourRateCents?`,
+  `clients.billingMode?` (default for new jobs), `settings.billing { defaultMode, travelRateCents }`, `timeEntries.travel`.
+  T&M: "Build invoice from time & material" (date range) turns approved time (travel at its rate) and material used
+  (stock moves out of a location onto the job, fulfilled requests without a stock move) at cost + markup into invoice
+  lines with provincial tax; the invoice keeps `tm { from, to, timeEntryIds, stockMoveIds, materialRequestIds }` so
+  nothing bills twice (voiding frees it). Fixed: time is never billed; the job shows estimate vs actual hours, cost, margin.
+- **Material requests**: collection `materialRequests` (`jobId, itemId?, description, qty, unit, note, urgent, employeeId,
+  status requested|sent|ordered|fulfilled|cancelled, sentAt, batchId, orderedAt, fulfilledAt, stockMoveId?, costCents?`),
+  table `material_requests` (0130, generated), batches `material_request_batches` (0131, one scheduled send per local
+  day). Crew see and change only their own, only while unsent; `costCents` (and price-book `costCents/priceCents`) are
+  stripped for readers without inventory/estimates/invoices. The worker queues each company's send at
+  `settings.materialRequests.sendAt` (default 15:00) in its zone (from the province, Manitoba = America/Winnipeg;
+  `materialRequests.timeZone` overrides); `POST /api/v1/material-requests/send` sends now;
+  `GET /api/v1/material-requests/schedule`. A send notifies owner/admin/office, emails `materialRequests.emailTo`
+  (else the company email) through the platform outbox, and audits. Plan feature `materials` (every plan).
+  E2E: `node electrical-app/tests/e2e/modules.e2e.mjs`.
+
 ## Definition of done (every workstream)
 
 - Tests with `node:test` next to the existing ones; run `node --test electrical-app/tests/*.test.mjs` (and `server` tests for A) and they pass.
