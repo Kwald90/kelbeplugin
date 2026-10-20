@@ -97,7 +97,7 @@ describe('tenant lifecycle', { skip }, () => {
     const row = (await t.superPool.query('SELECT plan, trial_ends_at FROM tenants WHERE id = $1', [created.id])).rows[0];
     assert.equal(row.plan, 'trial');
     const days = (new Date(row.trial_ends_at) - Date.now()) / 86_400_000;
-    assert.ok(days > 29 && days <= 30, `trial ends in ${days} days`);
+    assert.ok(days > 13.9 && days <= 14, `trial ends in ${days} days (TRIAL_DAYS default 14)`);
     const m = (await t.superPool.query("SELECT m.status FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND u.email = 'owner@charlie.example'", [created.id])).rows[0];
     assert.equal(m.status, 'invited');
     const mail = (await t.superPool.query("SELECT template FROM email_outbox WHERE to_address = 'owner@charlie.example'")).rows;

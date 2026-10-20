@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy a release tag to production.
+# Deploy a release tag to production (the shared CloudPanel box; README.md).
 #
 #   sudo /srv/fishtape/repo/deploy/production/update.sh --tag v1.4.0 [--sha <commit>] [--actor <name>]
 #
@@ -8,9 +8,13 @@
 # 2. build the server image tagged with the commit SHA
 # 3. encrypted pre-deploy backup (required; --skip-backup only in an emergency, and it is logged)
 # 4. migrations, then switch api/worker and wait for /api/readyz
-# 5. publish the static app and HQ console as /srv/fishtape/www/releases/<sha> and flip the
-#    `current` symlink atomically, then check the public URLs through nginx
-# Any failure rolls back the containers and the symlink. Every run appends one JSON line to
+# 5. publish the static app, HQ console and public site (electrical-app/, hq/, site/) as
+#    /srv/fishtape/www/releases/<sha>, flip the `current` symlink atomically, and check
+#    app.fishtapehq.com through nginx (a failure here rolls back)
+# 6. check the apex, status. and hq. through nginx, then run deploy/check-exposure.sh on each:
+#    warnings only (the API and the app are already live and fine). hq. is skipped with a
+#    warning while it doesn't resolve or isn't on the certificate yet.
+# Any failure in 1-5 rolls back the containers and the symlink. Every run appends one JSON line to
 # /var/lib/fishtape-production/deploy-log.jsonl. Migrations are not rolled back: they must be
 # expand/contract (docs/compliance/change-management.md). There is no seed in production.
 set -Eeuo pipefail
@@ -22,11 +26,16 @@ REPO_DIR="${REPO_DIR:-/srv/fishtape/repo}"
 WWW_DIR="${WWW_DIR:-/srv/fishtape/www}"
 RELEASE_BRANCH="${RELEASE_BRANCH:-claude/electrical-concept-app-h4qz12}"
 APP_HOST="${APP_HOST:-app.fishtapehq.com}"
+APEX_HOST="${APEX_HOST:-fishtapehq.com}"
+STATUS_HOST="${STATUS_HOST:-status.fishtapehq.com}"
+HQ_HOST="${HQ_HOST:-hq.fishtapehq.com}"
+CERT_FILE="${CERT_FILE:-/etc/letsencrypt/live/fishtape/fullchain.pem}"
 HERE="$REPO_DIR/deploy/production"
 STATE_DIR="/var/lib/fishtape-$ENV_NAME"
 DEPLOY_LOG="$STATE_DIR/deploy-log.jsonl"
-API="http://127.0.0.1:3410"
-HQ_API="http://127.0.0.1:3411"
+# Production's host ports on the shared box (staging owns 3410/3411).
+API="http://127.0.0.1:3420"
+HQ_API="http://127.0.0.1:3421"
 IMAGE_REPO=fishtape.invalid/server
 READY_TIMEOUT="${READY_TIMEOUT:-150}"
 KEEP_IMAGES="${KEEP_IMAGES:-5}"
@@ -45,7 +54,7 @@ while [ $# -gt 0 ]; do
     --force) FORCE=1; shift ;;
     --skip-backup) SKIP_BACKUP=1; shift ;;
     --actor) ACTOR="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -55,6 +64,10 @@ done
 [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
 
 mkdir -p "$STATE_DIR/status" "$WWW_DIR/releases"
+# Hero videos and posters: uploaded by hq-api (uid 1000), served read-only by nginx.
+install -d -o 1000 -g 1000 -m 755 "$STATE_DIR/media"
+# HQ Mail files: only the containers' user (uid 1000) may read them.
+install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/mail"
 chmod 755 "$STATE_DIR" "$STATE_DIR/status" "$WWW_DIR" "$WWW_DIR/releases"
 exec 9>"$STATE_DIR/deploy.lock"
 flock -n 9 || { echo "another deploy is running" >&2; exit 1; }
@@ -195,6 +208,7 @@ rm -rf "${WWW_DIR:?}/$REL.tmp"
 mkdir -p "$WWW_DIR/$REL.tmp"
 cp -a "$REPO_DIR/electrical-app" "$WWW_DIR/$REL.tmp/"
 if [ -d "$REPO_DIR/hq" ]; then cp -a "$REPO_DIR/hq" "$WWW_DIR/$REL.tmp/"; fi
+if [ -d "$REPO_DIR/site" ]; then cp -a "$REPO_DIR/site" "$WWW_DIR/$REL.tmp/"; fi
 chown -R root:root "$WWW_DIR/$REL.tmp"
 chmod -R a+rX,go-w "$WWW_DIR/$REL.tmp"
 rm -rf "${WWW_DIR:?}/$REL"
@@ -206,12 +220,38 @@ say "web root is now $REL"
 curl -fsS -m 10 -o /dev/null --resolve "$APP_HOST:443:127.0.0.1" "https://$APP_HOST/" || fail "https://$APP_HOST/ failed through nginx"
 curl -fsS -m 10 -o /dev/null --resolve "$APP_HOST:443:127.0.0.1" "https://$APP_HOST/api/readyz" || fail "https://$APP_HOST/api/readyz failed through nginx"
 
-# ---- 6. record and tidy ----
+# ---- 6. the other public hosts (warnings only) ----
 trap - ERR
+WARNINGS=()
+warn() { say "WARNING: $*"; WARNINGS+=("$*"); }
+cert_has() { openssl x509 -in "$CERT_FILE" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^, ]+' | cut -d: -f2 | grep -qx "$1"; }
+site_check() { # host path... -> 0 when every path answers 2xx through nginx
+  local h="$1" p
+  shift
+  if ! cert_has "$h"; then warn "$h is not on the fishtape certificate yet (run issue-cert.sh); not checked"; return 1; fi
+  for p in "$@"; do
+    curl -fsS -m 10 -o /dev/null --resolve "$h:443:127.0.0.1" "https://$h$p" || { warn "https://$h$p failed through nginx"; return 1; }
+  done
+  return 0
+}
+APEX_OK=0; STATUS_OK=0; HQ_OK=0
+if site_check "$APEX_HOST" / /pricing /api/v1/status; then APEX_OK=1; fi
+if site_check "$STATUS_HOST" / /api/v1/status /api/readyz; then STATUS_OK=1; fi
+if ! getent ahosts "$HQ_HOST" >/dev/null 2>&1; then
+  warn "$HQ_HOST does not resolve yet; HQ checks skipped (they run once it does: issue-cert.sh, then the next deploy)"
+elif site_check "$HQ_HOST" / /api/v1/status; then
+  HQ_OK=1
+fi
+
+# ---- 7. record and tidy ----
 docker tag "$IMAGE_REPO:$TARGET" "$IMAGE_REPO:current" || say "warning: could not tag $IMAGE_REPO:current"
 printf '%s\n' "$TARGET" > "$STATE_DIR/current-image"
 if [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$TARGET" ]; then printf '%s\n' "$PREV_TAG" > "$STATE_DIR/previous-image"; fi
-record success "deployed $TAG"
+if [ "${#WARNINGS[@]}" -eq 0 ]; then
+  record success "deployed $TAG"
+else
+  record success "deployed $TAG; warnings: $(IFS=';'; printf '%s' "${WARNINGS[*]}")"
+fi
 
 { docker image ls "$IMAGE_REPO" --format '{{.CreatedAt}}\t{{.Tag}}' | sort -r | cut -f2 \
     | grep -vx current | tail -n +"$(( KEEP_IMAGES + 1 ))" \
@@ -226,13 +266,25 @@ record success "deployed $TAG"
 
 say "done: production is on $TAG (${TARGET:0:12}) in $(( $(date +%s) - START ))s"
 
+# ---- 8. exposure checks ----
 # Is anything sensitive served, is any header missing? Warns only (the release is live); the
-# output is kept for the evidence bundle. The deploy workflow runs the same check from outside.
-HQ_HOST="${HQ_HOST:-hq.fishtapehq.com}"
-if { "$REPO_DIR/deploy/check-exposure.sh" "https://$APP_HOST" --production --resolve "$APP_HOST:443:127.0.0.1" \
-     && "$REPO_DIR/deploy/check-exposure.sh" "https://$HQ_HOST" --hq --resolve "$HQ_HOST:443:127.0.0.1"; } \
-     > "$STATE_DIR/last-exposure-check.txt" 2>&1; then
-  say "exposure check passed"
+# output is kept for the evidence bundle. The deploy workflow runs the same checks from outside.
+EXPOSURE_OUT="$STATE_DIR/last-exposure-check.txt"
+: > "$EXPOSURE_OUT"
+expo_failed=""
+expo() { # label base-url mode-args...
+  local label="$1" base="$2" host="${2#https://}"
+  shift 2
+  if ! "$REPO_DIR/deploy/check-exposure.sh" "$base" "$@" --resolve "$host:443:127.0.0.1" >> "$EXPOSURE_OUT" 2>&1; then
+    expo_failed="$expo_failed $label"
+  fi
+}
+expo app "https://$APP_HOST" --production
+if [ "$APEX_OK" -eq 1 ]; then expo apex "https://$APEX_HOST" --marketing; fi
+if [ "$STATUS_OK" -eq 1 ]; then expo status "https://$STATUS_HOST" --status; fi
+if [ "$HQ_OK" -eq 1 ]; then expo hq "https://$HQ_HOST" --hq; fi
+if [ -z "$expo_failed" ]; then
+  say "exposure checks passed"
 else
-  say "WARNING: exposure check failed; see $STATE_DIR/last-exposure-check.txt"
+  say "WARNING: exposure check failed for:$expo_failed; see $EXPOSURE_OUT"
 fi

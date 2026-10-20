@@ -21,7 +21,7 @@ const listeners = new Set();
 let pollTimer = null, recalcTimer = null, started = false;
 
 const synced = () => auth.synced && store.synced;
-const me = () => ({ employeeId: auth.current()?.id || null, can: (p) => auth.can(p) });
+const me = () => ({ employeeId: auth.current()?.id || null, can: (p) => auth.can(p), manager: auth.isManager() });
 const readKeys = () => new Set(store.meta(READ_META) || []);
 
 /** The merged list, newest first, with unread flags. */

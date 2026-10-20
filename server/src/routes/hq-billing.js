@@ -7,11 +7,15 @@ import { appendAudit } from '../services/audit.js';
 import { SELF_SERVE_PLANS, createBilling, estimateMrrCents } from '../services/billing.js';
 import { effectivePlan } from '../services/entitlements.js';
 import { iso } from '../services/hq-common.js';
+import { createSignups, isSignupEvent } from '../services/signup.js';
 import { tenantCtx, who } from './util.js';
 
 /** @param {import('fastify').FastifyInstance} app */
-export default async function hqBillingRoutes(app, { config, db }) {
+export default async function hqBillingRoutes(app, { config, db, email }) {
   const billing = createBilling({ config, db });
+  // Self-serve sign-ups (services/signup.js) share this webhook: their Checkout events carry
+  // metadata.fishtape_signup_id and become a company there.
+  const signups = createSignups({ config, db, email, billing });
   const admin = { auth: 'admin' };
   const tags = ['billing'];
 
@@ -60,7 +64,7 @@ export default async function hqBillingRoutes(app, { config, db }) {
       schema: { tags, summary: 'Stripe webhook for Fishtape subscriptions (Stripe-Signature verified)', hide: false },
     }, async (req) => {
       const event = billing.verifyEvent(req.rawBody, req.headers['stripe-signature']);
-      const r = await billing.handleEvent(event);
+      const r = isSignupEvent(event) ? await signups.handleEvent(event) : await billing.handleEvent(event);
       req.log.info({ stripeEvent: event.type, outcome: r.outcome }, 'stripe event');
       return { received: true, outcome: r.outcome };
     });

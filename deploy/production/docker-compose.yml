@@ -1,4 +1,5 @@
-# Fishtape production: Postgres 17, the API and the worker, on the dedicated production host.
+# Fishtape production: Postgres 17, the API and the worker, on the shared CloudPanel box
+# (208.113.210.97) next to staging and other people's sites.
 #
 # Normally driven by update.sh (from a v* tag). By hand, from this folder:
 #   sudo docker compose ps
@@ -8,6 +9,10 @@
 # Differences from staging: APP_ENV=production, no seed service, Postgres is not published on
 # any host port (admin through `docker compose exec`), tuning comes from .env, and every secret
 # is generated for production alone (init-env.sh). See README.md.
+#
+# Host ports on the shared box, all on 127.0.0.1: api 3420, hq-api 3421. Taken by others, never
+# use them here: 3000 (another site), 3410/3411/5433 (staging), 5432 (the host's Postgres).
+# The project name, volume (fishtape-production_pgdata) and network are separate from staging.
 
 name: fishtape-production
 
@@ -39,8 +44,17 @@ x-server: &server
     COMPLIANCE_CONTROLS_FILE: /app/compliance/controls.yaml
     # Public certificate chain copied by host-status.sh (never the key), for HQ health.
     TLS_CERT_FILE: /run/fishtape/status/tls-cert.pem
+    # HQ Mail attachments and original messages (docs/email/README.md). Written by the api
+    # (Inbound Parse), read by hq-api (downloads) and the worker (sending attachments).
+    MAIL_DIR: /var/lib/fishtape/mail
+    # Hero videos and posters uploaded in HQ -> Promotions; nginx serves them at /media/.
+    MEDIA_DIR: /var/lib/fishtape/media
+    # Under nginx's 72m request limit on /api/; hero clips at the documented specs are ~10 MB.
+    MEDIA_MAX_VIDEO_MB: "70"
   volumes:
     - /var/lib/fishtape-production/status:/run/fishtape/status:ro
+    - /var/lib/fishtape-production/mail:/var/lib/fishtape/mail
+    - /var/lib/fishtape-production/media:/var/lib/fishtape/media
   depends_on:
     postgres:
       condition: service_healthy
@@ -132,7 +146,7 @@ services:
         GIT_SHA: ${IMAGE_TAG:-unknown}
     command: ["node", "src/index.js"]
     ports:
-      - "127.0.0.1:3410:3410"
+      - "127.0.0.1:3420:3410"
     cpus: ${API_CPUS:-2}
     mem_limit: ${API_MEM_LIMIT:-1g}
     pids_limit: 512
@@ -147,7 +161,7 @@ services:
       <<: *server-environment
       HQ_DATABASE_URL: postgres://fishtape_hq:${FISHTAPE_HQ_PASSWORD:?set in .env}@postgres:5432/fishtape
     ports:
-      - "127.0.0.1:3411:3410"
+      - "127.0.0.1:3421:3410"
     cpus: 1
     mem_limit: ${HQ_API_MEM_LIMIT:-512m}
     pids_limit: 256

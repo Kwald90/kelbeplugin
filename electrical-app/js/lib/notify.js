@@ -20,10 +20,10 @@ const daysBetween = (fromDay, toDay) => Math.round((Date.parse(`${toDay}T00:00:0
 
 export const KIND_LABEL = {
   job_assigned: 'Jobs', timesheet: 'Time', ai_suggestion: 'AI suggestions', payment: 'Payments', lead: 'Leads',
-  expiring: 'Expiring', announcement: 'Announcements', system: 'System',
+  expiring: 'Expiring', announcement: 'Announcements', system: 'System', safety: 'Safety', workplan: 'Crew tasks',
 };
 export const KIND_ICON = {
-  job_assigned: 'briefcase', timesheet: 'clock', ai_suggestion: 'zap', payment: 'dollar', lead: 'funnel', expiring: 'id-card', announcement: 'info', system: 'info',
+  job_assigned: 'briefcase', timesheet: 'clock', ai_suggestion: 'zap', payment: 'dollar', lead: 'funnel', expiring: 'id-card', announcement: 'info', system: 'info', safety: 'shield-check', workplan: 'list',
 };
 
 /**

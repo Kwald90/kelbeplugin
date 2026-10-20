@@ -1,6 +1,7 @@
 # Deploy to production
 
-Production is app.fishtapehq.com (with hq. and status.). It only ever runs a `v*` tag on the
+Production is app.fishtapehq.com (with hq., status. and the public site on fishtapehq.com), on the
+shared VPS next to staging. It only ever runs a `v*` tag on the
 release branch, after CI passes and Kelvin approves. First-time setup and the host checklist:
 [deploy/production/README.md](../../deploy/production/README.md).
 
@@ -38,8 +39,9 @@ The job SSHes to the deploy user's forced command, which runs
 `update.sh --tag v1.4.0 --sha <tested commit>`. `update.sh` refuses the tag if it now points
 elsewhere, requires an encrypted pre-deploy backup, migrates, switches `api`, `hq-api` and
 `worker`, waits for readiness, publishes the static files as a new release folder, flips the
-web root, checks the public URLs through nginx, and rolls everything back on failure. The workflow
-then runs `deploy/check-exposure.sh` against the app and HQ hosts.
+web root, checks the app host through nginx, and rolls everything back on failure. It then checks
+the apex, status and hq hosts and runs `deploy/check-exposure.sh` on each (warnings only). The
+workflow runs the same exposure checks from outside.
 
 By hand, on the host, if GitHub is unavailable (this is an emergency change: record it, see
 [change-management.md](../compliance/change-management.md)):
@@ -60,7 +62,9 @@ Then sign in to HQ and look at the developer health page (migrations current, qu
 last backup). Watch it for 30 minutes after anything touching sync or auth.
 
 If nginx files changed: `sudo /srv/fishtape/repo/deploy/production/install-nginx.sh`, then
-`/srv/fishtape/repo/deploy/check-exposure.sh https://app.fishtapehq.com --production`.
+`/srv/fishtape/repo/deploy/check-exposure.sh https://app.fishtapehq.com --production` (and
+`https://fishtapehq.com --marketing`, `https://status.fishtapehq.com --status`,
+`https://hq.fishtapehq.com --hq`). A new host name in DNS: `sudo .../issue-cert.sh` first.
 
 ## If it fails
 

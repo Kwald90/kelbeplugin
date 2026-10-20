@@ -10,6 +10,7 @@ import { runNotificationDigest } from '../src/routes/v1/notifications.js';
 import { recordStripePayment } from '../src/integrations/payments.js';
 import { createRecords } from '../src/services/records.js';
 import { createValidator } from '../src/schemas.js';
+import { afterTaskWrite } from '../src/services/workplan-events.js';
 
 let t, app, config, A, B, officeA, crewA, keyA;
 const list = (token, qs = '') => call(app, { url: `/api/v1/notifications${qs}`, token });
@@ -153,5 +154,22 @@ describe('notifications', { skip }, () => {
     assert.match(mail.rows[0].text_body, /Card payment/);
     assert.match(mail.rows[0].text_body, /#\/notifications/);
     assert.equal((await runNotificationDigest(t.db, { config })).sent, 0, 'nothing new, nothing sent');
+  });
+
+  test('work plans: a published list reaches its worker once per day; a blocked task reaches planners', async () => {
+    const worker = await addMember(t, app, A.tenantId, { role: 'electrician', employeeId: 'emp-wp-1' });
+    const foreman = await addMember(t, app, A.tenantId, { role: 'foreman' });
+    const task = (o) => ({ employeeId: 'emp-wp-1', date: '2026-10-20', title: 'Pull home runs', status: 'draft', ...o });
+    await t.db.withTenant({ tenantId: A.tenantId }, async (tx) => {
+      await afterTaskWrite(tx, { id: 't1', before: task(), after: task({ status: 'published', publishedAt: '2026-10-19T20:00:00Z' }), who: {} });
+      await afterTaskWrite(tx, { id: 't2', before: task({ title: 'Label panel' }), after: task({ title: 'Label panel', status: 'published', publishedAt: '2026-10-19T20:00:00Z' }), who: {} });
+      await afterTaskWrite(tx, { id: 't3', before: null, after: task({ title: 'Extra drop', status: 'published', publishedAt: '2026-10-20T09:00:00Z', lateAdd: true }), who: {} });
+      await afterTaskWrite(tx, { id: 't1', before: task({ status: 'published' }), after: task({ status: 'blocked', blocks: [{ reason: 'No ceiling access' }] }), who: {} });
+    }, { write: true });
+    const mine = (await list(worker.token)).body.data.filter((n) => n.kind === 'workplan').map((n) => n.title).sort();
+    assert.deepEqual(mine, ['New task added for 2026-10-20: Extra drop', 'Your list for 2026-10-20 is ready'], 'one list notice per day, plus the late add');
+    const fm = (await list(foreman.token)).body.data.filter((n) => n.kind === 'workplan').map((n) => n.title);
+    assert.deepEqual(fm, ['A worker is blocked on Pull home runs: No ceiling access']);
+    assert.ok(!(await list(officeA.token)).body.data.some((n) => n.kind === 'workplan' && n.title.startsWith('Your list')));
   });
 });

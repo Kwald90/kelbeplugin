@@ -5,6 +5,7 @@
 import { today } from './ui.js';
 import { newDocTax } from './lib/tax.js';
 import { CEC_TEMPLATES } from './lib/cec/checklists.js';
+import { seedDemoPlan } from './lib/workplan.js';
 
 // Canvas symbol ids (js/canvas/symbols.js draws them). Price book items point
 // at these so a drawing's symbol count can become an estimate.
@@ -284,6 +285,9 @@ export function seedIfEmpty(store) {
       { id: 'o7', layer: 'L2', symbol: 'data', x: 460, y: 160, rotation: 0, scale: 1 },
     ], texts: [], underlay: null, view: { x: 0, y: 0, zoom: 1 }, thumb: null,
   }, S);
+
+  // a 35-day work plan on the in-progress job: today's and tomorrow's lists are out
+  seedDemoPlan(store, { today: today(), jobId: j1.id, employees: [marcus, priya, tom] });
 
   store.log('seed', 'Demo data loaded');
   return true;

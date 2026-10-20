@@ -2,7 +2,7 @@
 // client (db.withHq, BYPASSRLS); callers audit reads of a company's own data into its chain.
 import { TABLE_COLLECTIONS, collectionDef } from '../collections.js';
 import { PLANS } from '../../../electrical-app/js/plans.js';
-import { effectivePlan, tenantEntitlements } from './entitlements.js';
+import { effectivePlan, onTrial, tenantEntitlements } from './entitlements.js';
 import { extraSeats } from './billing.js';
 import { clipDeep, iso } from './hq-common.js';
 
@@ -12,7 +12,11 @@ const TENANT_COLS = `t.id, t.slug, t.name, t.status, t.status_reason, t.status_c
   t.last_export_at, t.delete_requested_at, t.delete_after, t.created_at, t.updated_at,
   (SELECT count(*)::int FROM memberships m WHERE m.tenant_id = t.id AND m.status = 'active') AS members,
   (SELECT count(*)::int FROM memberships m WHERE m.tenant_id = t.id AND m.status IN ('active', 'invited')) AS seats,
-  (SELECT max(s.last_seen_at) FROM sessions s WHERE s.tenant_id = t.id) AS last_active_at`;
+  (SELECT max(s.last_seen_at) FROM sessions s WHERE s.tenant_id = t.id) AS last_active_at,
+  (SELECT json_build_object('plan', su.plan, 'users', su.user_count, 'depositPaid', su.deposit_paid_at IS NOT NULL,
+          'depositCents', su.deposit_paid_cents, 'depositCredited', su.credited_at IS NOT NULL, 'creditError', su.credit_error,
+          'emailVerified', su.welcome_used_at IS NOT NULL, 'at', su.completed_at)
+     FROM signups su WHERE su.tenant_id = t.id ORDER BY su.completed_at DESC NULLS LAST LIMIT 1) AS signup`;
 
 /** Company row as HQ shows it. Never includes Stripe ids or secrets. */
 export function tenantView(t) {
@@ -21,6 +25,9 @@ export function tenantView(t) {
   return {
     id: t.id, slug: t.slug, name: t.name, status: t.status, statusReason: t.status_reason, statusChangedAt: iso(t.status_changed_at),
     province: t.province, plan: t.plan, effectivePlan: plan, overrides: t.plan_overrides || {}, trialEndsAt: iso(t.trial_ends_at),
+    onTrial: onTrial(t),
+    // Self-serve sign-up (services/signup.js): deposit paid and credited; null for HQ-created companies.
+    signup: t.signup ? { ...t.signup, at: iso(t.signup.at) } : null,
     members: t.members, seats: { used: t.seats, included, extra: extraSeats(plan, t.seats), billed: t.billed_seats },
     billing: {
       status: t.billing_status, plan: t.billing_plan, pastDueSince: iso(t.past_due_since), graceEndsAt: iso(t.grace_ends_at),

@@ -23,6 +23,10 @@ export const FEATURE_PLAN = {
   drawings: 'pro', panels: 'pro', inventory: 'pro', compliance: 'pro', sequences: 'pro', security: 'pro',
   assistant: 'business',
   onboarding: 'starter', import: 'starter', notifications: 'starter', developer: 'business',
+  // Safety (FLHAs, toolbox talks, incidents, inspections) is in every plan.
+  safety: 'starter',
+  // work plans: every worker's "My day" is in every plan; planning, meetings and KPIs are Pro
+  today: 'starter', workplan: 'pro', kpis: 'pro',
   // features inside modules
   'drawings.rooms': 'pro', 'wireruns.trace': 'pro', portal: 'pro', 'payments.online': 'pro', 'integrations.email': 'pro',
   'ai.assistant': 'business', 'ai.cec': 'business', 'ai.background': 'business', api: 'business', mcp: 'business',

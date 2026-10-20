@@ -305,8 +305,9 @@ nothing changes. Two cautions:
 
 ## HSTS preload for fishtapehq.com
 
-Today HSTS with `includeSubDomains` is sent by `app.`, `hq.` and `status.fishtapehq.com`. It covers
-those hosts and their own subdomains, not the rest of the domain. There is no `preload`.
+Today HSTS with `includeSubDomains` is sent by the apex `fishtapehq.com` and by `www.`, `app.`, `hq.`
+and `status.fishtapehq.com`. Sent by the apex, it covers every subdomain of `fishtapehq.com`: any new
+subdomain must serve HTTPS. There is no `preload`.
 
 The preload list (hstspreload.org) requires:
 
@@ -319,8 +320,8 @@ The preload list (hstspreload.org) requires:
 
 Before submitting:
 
-- give the apex and `www` an HTTPS site or redirect with that header (today nginx covers only
-  `app`, `hq` and `status`);
+- the apex and `www` already serve HTTPS (the marketing site and a redirect) with HSTS; add
+  `preload` to the header only when submitting;
 - make sure every subdomain, now and later, can serve HTTPS, including ones run by vendors (an
   external status page, a help centre, email click-tracking domains);
 - run with a one-year `max-age` for a few months without trouble;
@@ -350,7 +351,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://app.fishtapehq.com/api/hq/healt
 Also:
 
 - Unknown host on production: `curl -sk --resolve example.invalid:443:<server ip> https://example.invalid/`
-  must fail the TLS handshake.
+  must not answer with a Fishtape page or certificate (on the shared box another site owns the
+  default server; Fishtape has none).
 - TLS: `testssl.sh` against each host (TLS 1.2 and 1.3 only, strong ciphers).
 - Browser: open the app with the developer console open; visit the dashboard, drawings (import a
   PDF plan), calculators and settings. There should be no CSP errors except, until

@@ -424,3 +424,21 @@ test('API key scope summaries', async () => {
   assert.equal(keyStatus({ expiresAt: '2000-01-01T00:00:00Z' }), 'expired');
   assert.equal(keyStatus({}), 'active');
 });
+
+test('safety items for the bell: stop work and incidents to managers, actions to their owner', async () => {
+  const { safetyNotifications } = await import('../js/modules/safety/common.js');
+  const now = new Date('2026-10-19T15:00:00Z');
+  const data = {
+    flhas: [{ id: 'f1', stopWork: true, stopWorkReason: 'Live panel, no LOTO', signature: { dataUrl: 'data:x' }, updatedAt: '2026-10-19T14:00:00Z' }, { id: 'f2', stopWork: true, signature: null, updatedAt: '2026-10-19T14:00:00Z' }],
+    incidents: [{ id: 'i1', kind: 'near-miss', title: 'Ladder slipped', status: 'reported', reportedAt: '2026-10-18T10:00:00Z' }, { id: 'i2', kind: 'incident', title: 'Old', status: 'closed', reportedAt: '2026-10-18T10:00:00Z' }],
+    correctiveActions: [{ id: 'a1', title: 'Fix ladder feet', ownerId: 'e1', status: 'open', dueDate: '2026-10-25' }, { id: 'a2', title: 'Guard rail', ownerId: 'e2', status: 'open', dueDate: '2026-10-10' }, { id: 'a3', title: 'Done', ownerId: 'e1', status: 'done' }],
+  };
+  const store = { list: (c, pred) => (data[c] || []).filter((r) => !pred || pred(r)), settings: () => ({ company: { province: 'AB' } }) };
+  const mgr = safetyNotifications({ store, me: { employeeId: 'e9', manager: true, can: () => true }, now }).map((n) => n.key);
+  assert.deepEqual(mgr.sort(), ['safety:inc:i1:new', 'safety:overdue:a2:2026-10-10', 'safety:stop:f1'].sort());
+  const worker = safetyNotifications({ store, me: { employeeId: 'e1', manager: false, can: () => true }, now });
+  assert.deepEqual(worker.map((n) => n.title), ['Safety action for you: Fix ladder feet']);
+  assert.deepEqual(safetyNotifications({ store, me: { employeeId: 'e1', can: () => false }, now }), []);
+  const all = deriveNotifications(store, { employeeId: 'e9', manager: true, can: () => true }, now);
+  assert.ok(all.some((n) => n.key === 'safety:stop:f1' && n.kind === 'safety'), 'registered with the bell');
+});

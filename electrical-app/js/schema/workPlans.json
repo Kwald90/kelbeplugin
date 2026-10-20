@@ -1,0 +1,194 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/workPlans.json",
+  "title": "Work plan",
+  "description": "A job broken into phases over a range of working days, and which days have been published to the crew. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "jobId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200
+    },
+    "startDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 10,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "endDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 10,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "skipWeekends": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "holidays": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 400,
+      "items": {
+        "type": "string",
+        "maxLength": 10,
+        "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+      },
+      "description": "Days off inside the range (YYYY-MM-DD)."
+    },
+    "province": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2
+    },
+    "dayHours": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 24,
+      "description": "Hours in a working day, for capacity warnings."
+    },
+    "crewIds": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 200,
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      }
+    },
+    "phases": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "order": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 20
+          }
+        }
+      }
+    },
+    "published": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Day (YYYY-MM-DD) -> when and by whom it was published.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          }
+        }
+      },
+      "properties": {}
+    },
+    "status": {
+      "enum": [
+        "active",
+        "paused",
+        "complete",
+        "archived",
+        null
+      ]
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20000
+    }
+  },
+  "additionalProperties": true
+}

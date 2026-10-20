@@ -3,6 +3,7 @@
 import { PLANS, PLAN_IDS, FEATURE_PLAN, EXTRA_USER_CENTS, CURRENCY, planRank } from '/js/plans.js';
 import { FEATURE_LABELS } from '/js/modules/billing.js';
 import { BRAND } from '/js/brand.js';
+import { wireAppLinks } from '/site/app-link.js';
 
 const API = document.querySelector('meta[name="fishtape-api"]')?.content.replace(/\/$/, '') || '';
 const money = (cents) => (cents / 100).toLocaleString('en-CA', { style: 'currency', currency: CURRENCY, maximumFractionDigits: cents % 100 ? 2 : 0 });
@@ -18,6 +19,7 @@ function el(tag, attrs = {}, ...kids) {
 }
 
 for (const n of document.querySelectorAll('[data-brand]')) n.textContent = BRAND.name;
+wireAppLinks();
 document.getElementById('year').textContent = String(new Date().getFullYear());
 document.title = `Pricing · ${BRAND.name}`;
 
@@ -37,7 +39,7 @@ plansHost.replaceChildren(...PLAN_IDS.map((id, i) => {
       feats.map((f) => el('li', {}, FEATURE_LABELS[f]))),
     contact
       ? el('a', { class: 'site-btn ghost', href: '#talk' }, "Let's talk")
-      : el('a', { class: 'site-btn', href: '/' }, 'Start a free trial'));
+      : el('a', { class: 'site-btn', href: `/site/signup.html?plan=${id}` }, 'Start a free trial'));
 }));
 document.getElementById('extra-users').textContent = `More users than your plan includes? Each extra user is ${money(EXTRA_USER_CENTS)}/month. Taxes are added at checkout for your province.`;
 

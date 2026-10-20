@@ -41,6 +41,8 @@ COPY electrical-app/js/plans.js /app/electrical-app/js/plans.js
 # The AI tools run the app's own CEC calculators and money/tax code (no imports outside lib/).
 COPY electrical-app/js/lib/cec/ /app/electrical-app/js/lib/cec/
 COPY electrical-app/js/lib/money.js electrical-app/js/lib/tax.js /app/electrical-app/js/lib/
+# Work-plan write rules and KPIs are shared with the PWA (auth/access.js, routes/v1/kpis.js).
+COPY electrical-app/js/lib/workplan.js electrical-app/js/lib/kpis.js /app/electrical-app/js/lib/
 # The HQ compliance page reads the control list (COMPLIANCE_CONTROLS_FILE).
 COPY compliance/controls.yaml /app/compliance/controls.yaml
 

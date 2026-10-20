@@ -3,6 +3,7 @@
 import { fileURLToPath } from 'node:url';
 import { forbidden } from '../errors.js';
 import { appendAudit, requestFacts } from './audit.js';
+import { trialDays } from './tenants.js';
 
 const int = (v, d) => (v === undefined || v === '' ? d : Number.parseInt(v, 10));
 
@@ -37,7 +38,7 @@ export function hqSettings(config, env = process.env) {
     tlsCheck: env.TLS_CHECK ? env.TLS_CHECK !== 'off' : Boolean(config.deployed),
     deleteGraceDays: int(env.TENANT_DELETE_GRACE_DAYS, 30),
     exportFreshHours: int(env.TENANT_EXPORT_FRESH_HOURS, 24),
-    trialDays: int(env.TRIAL_DAYS, 30),
+    trialDays: trialDays(env),
     leadsPerHour: int(env.LEAD_RATE_LIMIT_PER_HOUR, 5),
     leadsGlobalPerHour: int(env.LEAD_RATE_LIMIT_GLOBAL_PER_HOUR, 200),
     ...(config.hq || {}),

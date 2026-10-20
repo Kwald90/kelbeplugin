@@ -1,6 +1,8 @@
 // Server-side access rules per collection. Same roles and permission keys as the PWA
 // (auth/permissions.js), applied to every REST call and every sync mutation.
 import { AUDIT_COLLECTION, collectionDef } from '../collections.js';
+// Work tasks: the same rules the PWA applies offline (who may change what, photo evidence).
+import { mergeTask, taskWriteProblem } from '../../../electrical-app/js/lib/workplan.js';
 
 /**
  * @typedef {object} Principal
@@ -49,13 +51,39 @@ export function canWrite(p, coll) {
 }
 
 /**
- * Row filter for reads. Non-managers see only their own time entries.
- * @returns {null | { column: string, value: string|null }}
+ * Row filter for reads. Non-managers see only their own time entries and work tasks, and of
+ * their tasks only the published ones (`exclude`: rows whose column holds one of `values`).
+ * @returns {null | { column: string, value: string|null, exclude?: { column: string, field: string, values: string[] } }}
  */
 export function rowFilter(p, coll) {
   const def = collectionDef(coll);
-  if (def?.ownRows && p.kind !== 'api_key' && !p.isManager) return { column: 'employee_id', value: p.employeeId || null };
+  if (def?.ownRows && p.kind !== 'api_key' && !p.isManager) {
+    const f = { column: 'employee_id', value: p.employeeId || null };
+    const hide = def.ownRowsHide;
+    const col = hide && def.gen.find((x) => x.field === hide.field)?.col;
+    if (col) f.exclude = { column: col, field: hide.field, values: [...hide.values] };
+    return f;
+  }
   return null;
+}
+
+/** Does a row's data pass the row filter? (the same test as the SQL in services/records.js) */
+export function rowVisible(f, data, def) {
+  if (!f) return true;
+  const field = def.gen.find((x) => x.col === f.column)?.field;
+  if (f.value == null || data?.[field] !== f.value) return false;
+  if (f.exclude && f.exclude.values.includes(data?.[f.exclude.field])) return false;
+  return true;
+}
+
+/**
+ * The data to store for a write, when a collection merges instead of replacing: work tasks
+ * keep the foreman's fields from a worker's write and resolve progress by its own timestamp
+ * (lib/workplan.js mergeTask). Returns null for collections that store what was sent.
+ */
+export function mergeWrite(p, coll, existing, next) {
+  if (coll !== 'workTasks' || !existing || !next) return null;
+  return mergeTask(existing, next, { worker: p.kind !== 'api_key' && !p.isManager });
 }
 
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -73,6 +101,11 @@ function changedKeys(before, after) {
  * @param {object|null} next      new record data (null when deleting)
  */
 export function checkWriteRules(p, coll, existing, next) {
+  // Evidence is required on every path, API keys included; the rest is per person.
+  if (coll === 'workTasks') {
+    if (p.kind === 'api_key') return taskWriteProblem({ isManager: true, employeeId: null }, existing, next);
+    return taskWriteProblem({ isManager: p.isManager, employeeId: p.employeeId || null }, existing, next);
+  }
   if (p.kind === 'api_key') return null;
   const def = collectionDef(coll);
 
@@ -97,6 +130,9 @@ export function checkWriteRules(p, coll, existing, next) {
     if (after.slice(before.length).some((a) => a?.employeeId !== p.employeeId)) return 'You can only acknowledge for yourself.';
   }
 
+  const safetyMsg = SAFETY_COLLECTIONS.has(coll) && !p.isManager ? safetyWriteRule(p, coll, existing, next) : null;
+  if (safetyMsg) return safetyMsg;
+
   // Settings: the settings permission edits anything; document creators may only bump nextNumbers.
   if (coll === 'settings' && !p.perms.has('settings')) {
     if (!existing || !next) return 'Only the settings permission can create or delete settings.';
@@ -106,10 +142,94 @@ export function checkWriteRules(p, coll, existing, next) {
   return null;
 }
 
+// ---- safety (docs/safety/README.md) ------------------------------------------
+// Every role holds `safety`. Managers (owner, admin, office, foreman) do anything; everyone
+// else files their own FLHAs, near misses, incidents and inspections, signs toolbox talks for
+// themselves and closes corrective actions assigned to them.
+const SAFETY_COLLECTIONS = new Set(['flhas', 'toolboxTalks', 'incidents', 'correctiveActions', 'safetyInspections']);
+
+/** Incident fields only managers read: injury, body part, treatment, WCB claim. */
+export const MEDICAL_FIELDS = ['medical'];
+
+/** Can this principal see incident medical details? Session managers only (not API keys). */
+export const seesMedical = (p) => p.kind === 'session' && Boolean(p.isManager);
+
+const onlyKeys = (existing, next, allowed) => changedKeys(existing, next).filter((k) => !allowed.includes(k));
+
+/** A non-manager's write to a safety collection: an error message, or null when allowed. */
+function safetyWriteRule(p, coll, existing, next) {
+  if (p.kind === 'api_key') return null;
+  const me = p.employeeId;
+  if (!me) return 'Your membership is not linked to an employee record, so you cannot file safety records.';
+  if (coll === 'flhas') {
+    if (!next) return 'Only managers can delete a hazard assessment.';
+    if ((existing && existing.employeeId !== me) || next.employeeId !== me) return 'You can only file your own hazard assessment.';
+    if (!same(existing?.review ?? null, next.review ?? null)) return 'Only a manager can sign off the review.';
+    return null;
+  }
+  if (coll === 'toolboxTalks') {
+    if (!existing || !next) return 'Only managers can schedule or delete toolbox talks.';
+    if (onlyKeys(existing, next, ['attendees']).length) return 'You can only sign the attendance sheet.';
+    const before = existing.attendees || [];
+    const after = next.attendees || [];
+    if (after.length < before.length || !before.every((a, i) => same(a, after[i]))) return 'Signatures cannot be removed or changed.';
+    if (after.slice(before.length).some((a) => a?.employeeId !== me)) return 'You can only sign for yourself.';
+    return null;
+  }
+  if (coll === 'incidents') {
+    if (!next) return 'Only managers can delete an incident report.';
+    if (!existing) return next.reportedBy === me ? null : 'File the report as yourself.';
+    if (existing.reportedBy !== me) return "Only managers can change someone else's report.";
+    if ((existing.status || 'reported') !== 'reported') return 'This report is under investigation; ask a manager to change it.';
+    const locked = changedKeys(existing, next).filter((k) => ['status', 'investigation', 'reporting', 'reportedBy', 'closedAt'].includes(k));
+    return locked.length ? 'Only managers investigate, close or report incidents.' : null;
+  }
+  if (coll === 'correctiveActions') {
+    if (!next) return 'Only managers delete corrective actions.';
+    if (!existing) {
+      // A worker may raise an action from their own inspection or report: open, unassigned or theirs.
+      if (next.createdBy !== me || (next.status || 'open') !== 'open' || (next.ownerId && next.ownerId !== me)) return 'Only managers assign corrective actions.';
+      return null;
+    }
+    if (existing.ownerId !== me) return 'Only the owner of a corrective action can close it.';
+    if (onlyKeys(existing, next, ['status', 'doneAt', 'doneBy', 'doneNote', 'evidence']).length) return 'You can only mark the action done with evidence.';
+    if (!['open', 'done'].includes(next.status)) return 'Only a manager can verify a corrective action.';
+    return null;
+  }
+  if (coll === 'safetyInspections') {
+    if (!next) return 'Only managers can delete an inspection.';
+    if ((existing && existing.inspectorId !== me) || next.inspectorId !== me) return 'You can only file inspections you did.';
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Hidden fields a reader could not see cannot be changed by their write either: put the
+ * stored values back (a worker editing their own report never wipes the medical details).
+ * Returns the record to store.
+ */
+export function restoreHiddenFields(p, coll, existing, next) {
+  if (coll !== 'incidents' || !next) return next;
+  const out = { ...next };
+  delete out.medicalHidden; // a read marker (redactForReader), never stored
+  if (!existing || seesMedical(p)) return out;
+  for (const k of MEDICAL_FIELDS) {
+    if (k in existing) out[k] = existing[k]; else delete out[k];
+  }
+  return out;
+}
+
 /** Fields hidden from some readers. Returns a copy when anything is removed. */
 export function redactForReader(p, coll, data) {
   if (coll === 'employees' && data && p.kind !== 'api_key' && !p.perms.has('employees') && 'rateCents' in data) {
     const { rateCents, ...rest } = data;
+    return rest;
+  }
+  if (coll === 'incidents' && data && !seesMedical(p) && MEDICAL_FIELDS.some((k) => k in data)) {
+    const rest = { ...data };
+    for (const k of MEDICAL_FIELDS) delete rest[k];
+    rest.medicalHidden = true;
     return rest;
   }
   return data;

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Start your free trial · Fishtape</title>
+  <meta name="description" content="Start a 14-day free trial of Fishtape, the app for Canadian electrical contractors. A $1 deposit confirms your card and comes off your first invoice.">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <!-- Where the API lives. Empty = this origin. On a separate marketing domain, set the app origin
+       and add this site's origin to CORS_ORIGINS on the API. -->
+  <meta name="fishtape-api" content="">
+  <!-- Where "Sign in" and the app live. Empty = this origin. -->
+  <meta name="fishtape-app" content="">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/site/site.css">
+  <link rel="stylesheet" href="/site/signup.css">
+</head>
+<body>
+  <header class="site-head">
+    <a class="site-brand" href="/site/index.html"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+    <nav><a href="/site/pricing.html">Pricing</a> <a class="site-btn ghost" data-app-link href="/">Sign in</a></nav>
+  </header>
+
+  <main class="su-main">
+    <!-- Shown after Stripe sends people back (?done=1). -->
+    <section id="su-done" class="su-card su-done" hidden aria-labelledby="su-done-title">
+      <div class="su-done-mark" aria-hidden="true">✓</div>
+      <h1 id="su-done-title" tabindex="-1">Check your email</h1>
+      <p id="su-done-to">We sent you a link to confirm your email and set up two-step sign-in.</p>
+      <ol class="su-steps">
+        <li>Open the email from <span data-brand>Fishtape</span> (check spam if it isn't there in a few minutes).</li>
+        <li>Tap the link, then scan the code with an authenticator app on your phone.</li>
+        <li>You're in. Your trial has started, and your $1 deposit comes off your first invoice.</li>
+      </ol>
+      <p class="site-fine">Prefer to start now? <a data-app-link href="/">Sign in</a> with the email and password you just chose.</p>
+    </section>
+
+    <div id="su-start" class="su-layout">
+      <section class="su-intro" aria-labelledby="su-title">
+        <h1 id="su-title">Start your free trial</h1>
+        <p class="su-lede"><span data-trial-days>14</span> days free, then pick up where you left off. Built for Canadian electrical contractors.</p>
+        <div class="su-summary" aria-live="polite">
+          <h2>What happens next</h2>
+          <ol class="su-steps">
+            <li><strong><span data-trial-days>14</span> days free</strong> on <span data-plan-name>Pro</span>, with every <span data-plan-name>Pro</span> feature.</li>
+            <li><strong><span data-deposit>$1.00</span> today</strong> on Stripe's secure page, to confirm your card is real. It comes off your first invoice.</li>
+            <li><strong>After the trial:</strong> <span id="su-price">$129/month</span> plus tax, less the <span data-deposit>$1.00</span> deposit. Cancel any time before the trial ends and the plan is never charged.</li>
+          </ol>
+        </div>
+        <p class="site-fine">Prices in Canadian dollars. Need more than 25 users, single sign-on or setup done for you? <a href="/site/pricing.html#talk">Talk to us about Enterprise</a>.</p>
+      </section>
+
+      <section class="su-card" aria-labelledby="su-form-title">
+        <h2 id="su-form-title" class="sr-only">Your details</h2>
+        <div id="su-notice" class="su-notice" role="status" hidden></div>
+        <div id="su-errors" class="su-errors" role="alert" tabindex="-1" hidden>
+          <p><strong>Please fix the following:</strong></p>
+          <ul></ul>
+        </div>
+
+        <form id="su-form" novalidate>
+          <div class="su-field">
+            <label for="su-company">Company name</label>
+            <input id="su-company" name="companyName" autocomplete="organization" required maxlength="200" aria-describedby="su-company-err">
+            <p class="su-err" id="su-company-err" hidden></p>
+          </div>
+
+          <div class="su-field">
+            <label for="su-province">Province or territory</label>
+            <select id="su-province" name="province" required aria-describedby="su-province-err">
+              <option value="">Choose…</option>
+              <option value="AB">Alberta</option>
+              <option value="BC">British Columbia</option>
+              <option value="MB">Manitoba</option>
+              <option value="NB">New Brunswick</option>
+              <option value="NL">Newfoundland and Labrador</option>
+              <option value="NS">Nova Scotia</option>
+              <option value="NT">Northwest Territories</option>
+              <option value="NU">Nunavut</option>
+              <option value="ON">Ontario</option>
+              <option value="PE">Prince Edward Island</option>
+              <option value="QC">Quebec</option>
+              <option value="SK">Saskatchewan</option>
+              <option value="YT">Yukon</option>
+            </select>
+            <p class="su-err" id="su-province-err" hidden></p>
+          </div>
+
+          <div class="su-field">
+            <label for="su-name">Your name</label>
+            <input id="su-name" name="name" autocomplete="name" required maxlength="200" aria-describedby="su-name-err">
+            <p class="su-err" id="su-name-err" hidden></p>
+          </div>
+
+          <div class="su-field">
+            <label for="su-email">Work email</label>
+            <input id="su-email" name="email" type="email" inputmode="email" autocomplete="email" required maxlength="254" spellcheck="false" aria-describedby="su-email-hint su-email-err">
+            <p class="su-hint" id="su-email-hint">You sign in with this. We send the confirmation link here.</p>
+            <p class="su-err" id="su-email-err" hidden></p>
+          </div>
+
+          <div class="su-field">
+            <label for="su-password">Password</label>
+            <div class="su-pw">
+              <input id="su-password" name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="256" aria-describedby="su-password-hint su-password-err">
+              <button type="button" class="su-show" id="su-show" aria-controls="su-password" aria-pressed="false">Show</button>
+            </div>
+            <p class="su-hint" id="su-password-hint">At least 12 characters, not your email. A short sentence is easy to remember and hard to guess.</p>
+            <p class="su-err" id="su-password-err" hidden></p>
+          </div>
+
+          <fieldset class="su-field su-plans" aria-describedby="su-plan-err">
+            <legend>Plan</legend>
+            <div class="su-plan-list" id="su-plan-list"></div>
+            <p class="su-err" id="su-plan-err" hidden></p>
+          </fieldset>
+
+          <div class="su-field">
+            <label for="su-users">How many people will use it?</label>
+            <input id="su-users" name="users" type="number" inputmode="numeric" min="1" max="500" step="1" value="1" required aria-describedby="su-users-hint su-users-err">
+            <p class="su-hint" id="su-users-hint">Office and field staff together. You can add or remove people any time.</p>
+            <p class="su-err" id="su-users-err" hidden></p>
+          </div>
+
+          <div class="su-field su-check">
+            <input id="su-terms" name="acceptTerms" type="checkbox" required aria-describedby="su-terms-err">
+            <label for="su-terms">I agree to the <a href="/site/terms.html" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/site/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</label>
+            <p class="su-err" id="su-terms-err" hidden></p>
+          </div>
+
+          <!-- Honeypot: people never see or fill this; bots do. -->
+          <div class="site-hp" aria-hidden="true"><label>Website <input name="website" tabindex="-1" autocomplete="off"></label></div>
+
+          <button class="site-btn su-submit" id="su-submit" type="submit">Continue to payment</button>
+          <p class="site-fine su-fine">Next is Stripe's secure checkout. You pay <span data-deposit>$1.00</span> today; nothing else until the trial ends. We never see your card number.</p>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-foot">
+    <span>© <span id="year"></span> <span data-brand>Fishtape</span></span>
+    <span class="su-foot-links"><a href="/site/terms.html">Terms</a> <a href="/site/privacy.html">Privacy</a> <a href="/site/status.html">Service status</a></span>
+  </footer>
+
+  <script type="module" src="/site/signup.js"></script>
+</body>
+</html>
