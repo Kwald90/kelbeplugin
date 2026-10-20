@@ -11,7 +11,8 @@
 # "production" (deploy/production/README.md, step 7): required reviewer Kelvin, deployment
 # tags matching v* only, and these secrets:
 #   PRODUCTION_SSH_KEY, PRODUCTION_HOST, PRODUCTION_USER, PRODUCTION_KNOWN_HOSTS
-# Optional variables: RELEASE_BRANCH (default claude/electrical-concept-app-h4qz12), PRODUCTION_URL.
+# Optional variables: RELEASE_BRANCH (default claude/electrical-concept-app-h4qz12), PRODUCTION_URL,
+# PRODUCTION_SITE_URL, PRODUCTION_STATUS_URL, PRODUCTION_HQ_URL (exposure checks per host).
 name: Deploy production
 
 on:
@@ -126,9 +127,18 @@ jobs:
       - name: Exposure check (no secrets or repo files served, security headers present)
         env:
           HQ_URL: ${{ vars.PRODUCTION_HQ_URL || 'https://hq.fishtapehq.com' }}
+          SITE_URL: ${{ vars.PRODUCTION_SITE_URL || 'https://fishtapehq.com' }}
+          STATUS_URL: ${{ vars.PRODUCTION_STATUS_URL || 'https://status.fishtapehq.com' }}
         run: |
           bash deploy/check-exposure.sh "$PRODUCTION_URL" --production
-          bash deploy/check-exposure.sh "$HQ_URL" --hq
+          bash deploy/check-exposure.sh "$SITE_URL" --marketing
+          bash deploy/check-exposure.sh "$STATUS_URL" --status
+          # hq. may not have DNS yet; check it once it resolves.
+          if getent hosts "${HQ_URL#https://}" >/dev/null; then
+            bash deploy/check-exposure.sh "$HQ_URL" --hq
+          else
+            echo "::warning::${HQ_URL#https://} does not resolve yet; HQ exposure check skipped"
+          fi
 
       - name: Remove the key
         if: always()
