@@ -14,6 +14,7 @@ import { collectionDef } from '../collections.js';
 import { systemPrincipal, systemWho } from '../integrations/state.js';
 import { refreshInvoiceStatus } from '../integrations/payments.js';
 import { appendAudit } from '../services/audit.js';
+import { loadTenantPlan, onTrial } from '../services/entitlements.js';
 import { notify } from '../services/notify.js';
 import { enqueue } from '../services/queue.js';
 import { qboCfg } from './env.js';
@@ -500,6 +501,18 @@ export async function writeOpts(run, tx, collection, record, B = null) {
 
 export const localToday = (run) => new Date(run.ctx.now || Date.now()).toLocaleDateString('en-CA', { timeZone: run.ctx.company.zone });
 
+/**
+ * Link meta after a write or a pull: W2's linkMetaFromQbo, plus a purchase order's line ids by
+ * position, which a bill line's LinkedTxn needs (refs.poLineId, 4.10).
+ */
+export function linkMeta(entity, obj, ctx, opts = {}) {
+  const meta = linkMetaFromQbo(entity, obj, ctx, opts);
+  if (entity === 'PurchaseOrder' && obj) {
+    meta.lineIds = Object.fromEntries((obj.Line || []).filter((l) => l.DetailType === 'ItemBasedExpenseLineDetail' && l.Id != null).map((l, i) => [String(i), String(l.Id)]));
+  }
+  return meta;
+}
+
 /** The QuickBooks codes of a document's kinds (4.8). */
 export function codeIdsByKind(run, doc) {
   const codes = run.ctx.mappings.taxCode || {};
@@ -782,7 +795,7 @@ export async function reconcile(run, link, o = {}) {
       if (collection === 'payments' && record.data.invoiceId) await system.refreshInvoice(tx, run, record.data.invoiceId);
       if (collection === 'invoices' && toLocal.includes('lines')) await system.refreshInvoice(tx, run, link.record_id);
     }
-    const newMeta = { ...meta, ...linkMetaFromQbo(link.qbo_entity, written, ctxWrite, { pushed: built }) };
+    const newMeta = { ...meta, ...linkMeta(link.qbo_entity, written, ctxWrite, { pushed: built }) };
     if (written?.CustomerRef) newMeta.customerRef = ref(written.CustomerRef);
     newMeta.fieldSeenAt = {};
     if (patchedVersion != null) {
@@ -841,6 +854,10 @@ async function remoteHolds(run, link, collection, doc, L, R, B, toRemote, obj) {
     if (hasPayments && (toRemote.includes('clientRef') || toRemote.includes('jobRef'))) {
       return { conflict: 'fields', reason: 'customer_change', message: "QuickBooks can't move an invoice with payments to another customer.", fields: [{ field: 'clientRef', label: 'Customer', base: 'Same customer', fishtape: 'Another customer', quickbooks: "QuickBooks can't move an invoice with payments to another customer" }] };
     }
+  }
+  if (collection === 'bills' && toRemote.includes('kind')) {
+    // A bill turned into a receipt (or back) is a different QuickBooks object (4.10): changed there.
+    return { conflict: 'fields', reason: 'kind_change', message: 'A bill and a receipt are different records in QuickBooks; change it there.', fields: [{ field: 'kind', label: 'Kind', base: B?.kind || '', fishtape: L.kind, quickbooks: `${R.kind} (change it in QuickBooks)` }] };
   }
   if (DOCS.has(collection) && toRemote.includes('lines')) {
     const msg = taxCheck(run, doc, collection === 'invoices' ? 'invoice' : 'estimate');
@@ -963,9 +980,10 @@ export async function syncTenant(deps, tenantId, o = {}) {
   let more = false;
   try {
     if (o.sweep) await runSweep(deps, tenantId, { run });
-    if (direction !== 'push') await runPull(run, { full: Boolean(o.full) });
+    const pulls = direction !== 'push' && await pullAllowed(run);
+    if (pulls) await runPull(run, { full: Boolean(o.full) });
     if (direction !== 'pull' && !timeUp(run)) more = await runPush(run);
-    if (direction === 'both' && run.wrote && !timeUp(run)) await runPull(run, {});
+    if (direction === 'both' && pulls && run.wrote && !timeUp(run)) await runPull(run, {});
     if (timeUp(run)) more = true;
   } catch (e) {
     await releaseClaims(run);
@@ -980,6 +998,23 @@ export async function syncTenant(deps, tenantId, o = {}) {
   }
   await releaseClaims(run);
   return { ...run.stats, more };
+}
+
+/**
+ * At 100% of the tenant's read budget (production), pulls run only when a webhook marked the tenant
+ * dirty, at most once an hour (5.11; the client still allows purpose 'sync' there).
+ */
+async function pullAllowed(run) {
+  if (run.cfg.environment !== 'production') return true;
+  const plan = await loadTenantPlan(run.db, run.tenantId);
+  const budget = plan && onTrial(plan) ? run.cfg.trialReadBudget : run.cfg.tenantReadBudget;
+  if (!budget) return true;
+  const month = `${new Date().toISOString().slice(0, 7)}-01`;
+  const used = await run.db.withTenant({ tenantId: run.tenantId }, async (tx) => (await tx.query(
+    "SELECT coreplus_calls FROM qbo_api_usage WHERE month = $1 AND tenant_id = $2 AND environment = 'production'", [month, run.tenantId])).rows[0]?.coreplus_calls || 0);
+  if (used < budget) return true;
+  const last = run.conn.last_pull_at ? new Date(run.conn.last_pull_at).getTime() : 0;
+  return Boolean(run.conn.dirty_at) && Date.now() - last > 3_600_000;
 }
 
 /** Rows this pass claimed but did not finish go back at once (a stopped pass, 5.3). */

@@ -16,7 +16,7 @@ import { upsertOutbox } from './hooks.js';
 import {
   txWrite, getLink, getLinkById, insertLink, updateLink, requeueDependents, finishOutbox, deferOutbox, loadRecord, system,
   linkFailure, holdLink, reconcile, voidLocalInvoice, checkBrake, countWrite, shadowLog, ctxFor, writeOpts, taxCheck, taxAfterWrite,
-  optionOf, taxFiledThrough, timeUp, passStopFor, BrakeError, PassStop, localToday, moduleRefusal,
+  optionOf, taxFiledThrough, timeUp, passStopFor, BrakeError, PassStop, localToday, moduleRefusal, linkMeta,
 } from './engine.js';
 import { FencedError } from './lease.js';
 import { fishtapeToCanon, qboToCanon, canonEqual, markerFor, toCents, str } from './map/canon.js';
@@ -462,7 +462,7 @@ async function finishCreate(run, link, collection, record, obj, build, { row, la
   const ctx = ctxFor(run, { ...link, meta }, collection);
   const R = qboToCanon(entity, written, { ...ctx, collection });
   const snapshot = createdSnapshot(collection, link.role, L, R);
-  Object.assign(meta, linkMetaFromQbo(entity, written, ctx, { pushed: build }));
+  Object.assign(meta, linkMeta(entity, written, ctx, { pushed: build }));
   if (written?.CustomerRef) meta.customerRef = ref(written.CustomerRef);
   if (collection === 'jobs' && written?.ParentRef) meta.parentRef = ref(written.ParentRef);
   if (build?.body?.DisplayName || build?.body?.Name) meta.displayName = written?.DisplayName || written?.Name || meta.displayName;

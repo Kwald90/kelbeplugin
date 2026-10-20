@@ -88,8 +88,11 @@ export function createQboHandlers(deps = {}) {
         const pre = await db.withTenant({ tenantId }, loadConnection);
         if (pre && ['active', 'setup', 'paused'].includes(pre.state) && !(await planGate(db, tenantId, pre))) return { skipped: 'plan' };
       }
-      return tenantJob({ db, job }, async (d, id, epoch) => {
-        const r = await syncTenant(d, id, { epoch, sweep: Boolean(job.payload?.sweep), direction: job.payload?.direction || 'both', workerId });
+      return tenantJob({ db, job }, async (d, id, epoch, conn) => {
+        // The first pass after any move back to active runs the sweep (2.5): the resume paths queue
+        // payload.sweep (W1) or reason hq_resume (W6), and a connection never swept has no cursor yet.
+        const sweep = Boolean(job.payload?.sweep) || job.payload?.reason === 'hq_resume' || conn.fishtape_cursor == null;
+        const r = await syncTenant(d, id, { epoch, sweep, direction: job.payload?.direction || 'both', workerId });
         if (r.stopped === 'throttled') {
           const until = await db.withTenant({ tenantId: id }, async (tx) => (await tx.query('SELECT throttled_until FROM qbo_connections WHERE tenant_id = $1', [id])).rows[0]?.throttled_until);
           await enqueue(db, { kind: 'qbo_sync', tenantId: id, dedupeKey: `qbo_sync:${id}:cont`, runAt: until ? new Date(new Date(until).getTime() + 1000) : new Date(Date.now() + 61_000), maxAttempts: 5 });
