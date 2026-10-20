@@ -1,7 +1,8 @@
 // The Stripe side of the books (docs/integrations/quickbooks.md 4.9 and 12.7): the fee of each
 // Stripe payment, payout webhooks and their itemisation from balance transactions, queuing a
-// payout for QuickBooks, and the amount due (pay link and invoice status) with an adjuster.
-// Stripe is faked through setFetch(); a call to anything not faked fails the test.
+// payout for QuickBooks, the hourly catch-up of reads that failed, and the amount due (pay link
+// and invoice status) with an adjuster. Stripe is read for the books only for a company on
+// QuickBooks. Stripe is faked through setFetch(); a call to anything not faked fails the test.
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -115,6 +116,7 @@ describe('Stripe reads for the books (fake Stripe, no database)', () => {
 });
 
 let t, app, A, B, handlers, records;
+const QBO_ENV = process.env.QBO_ENVIRONMENT;
 const p = (tenantId) => systemPrincipal(tenantId, 'stripe', 'Stripe');
 
 before(async () => {
@@ -123,16 +125,22 @@ before(async () => {
   t = await createTestDatabase('stripefees');
   await ensureQboTables(t);
   ({ app } = await startApp(t));
+  process.env.QBO_ENVIRONMENT = 'sandbox'; // QuickBooks is on for this server (read when each call runs)
   A = await ownerTenant(t, app, 'Alpha Electric');
   B = await ownerTenant(t, app, 'Bravo Electric');
-  const r = await call(app, { method: 'PUT', url: '/api/v1/integrations/stripe', token: A.token, body: { secrets: { 'stripe.secret_key': KEY, 'stripe.webhook_secret': WHSEC } } });
-  assert.equal(r.status, 200, JSON.stringify(r.body));
+  for (const who of [A, B]) {
+    const r = await call(app, { method: 'PUT', url: '/api/v1/integrations/stripe', token: who.token, body: { secrets: { 'stripe.secret_key': KEY, 'stripe.webhook_secret': WHSEC } } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  }
   records = createRecords({ validator: createValidator() });
   handlers = createIntegrationHandlers({ sealer: app.sealer, records });
   // A is connected to QuickBooks (sandbox, active); B is not.
   await t.superPool.query("INSERT INTO qbo_connections (tenant_id, environment, realm_hash, state) VALUES ($1, 'sandbox', $2, 'active')", [A.tenantId, randomBytes(32)]);
 });
-after(async () => { setFetch(null); await app?.close(); await t?.close(); });
+after(async () => {
+  if (QBO_ENV === undefined) delete process.env.QBO_ENVIRONMENT; else process.env.QBO_ENVIRONMENT = QBO_ENV;
+  setFetch(null); await app?.close(); await t?.close();
+});
 
 async function makeInvoice(who, id, unitCents = 100000) {
   await call(app, { method: 'POST', url: '/api/v1/clients', token: who.token, body: { id: `client-${id}`, name: PII, email: 'pat@example.com' } });
@@ -177,7 +185,7 @@ describe('Stripe fees on payments', { skip }, () => {
     const out = await handlers.stripe_fee_fetch({ db: t.db, job: queued[0] });
     assert.deepEqual(out, { feeCents: 3075 });
     const pay = await getPayment(paymentId);
-    assert.deepEqual(pay.stripe, { ...before.stripe, chargeId: 'ch_fee1', balanceTransactionId: 'txn_fee1', feeCents: 3075, netCents: 101925 });
+    assert.deepEqual(pay.stripe, { ...before.stripe, chargeId: 'ch_fee1', balanceTransactionId: 'txn_fee1', feeCents: 3075, netCents: 101925, feeCurrency: 'CAD' });
     assert.equal(pay.amountCents, 105000, 'the payment stays gross');
     assert.equal(pay.version, before.version + 1);
     const audit = (await t.superPool.query("SELECT actor_type, actor_id FROM audit_events WHERE tenant_id = $1 AND record_id = $2 AND action = 'record.update'", [A.tenantId, paymentId])).rows;
@@ -188,7 +196,7 @@ describe('Stripe fees on payments', { skip }, () => {
     assert.equal(net.calls.length, calls, 'a known fee is not read again');
   });
 
-  test('a fee not settled yet makes the job retry; a refused key stops it and marks the Stripe card', async () => {
+  test('a fee not settled yet makes the job retry; a refused key stops it and marks the Stripe card (a company on QuickBooks)', async () => {
     await makeInvoice(A, 'inv-f2');
     const pi = `pi_${hex(8)}`;
     const session = { id: `cs_test_${hex(8)}`, object: 'checkout.session', payment_status: 'paid', amount_total: 105000, currency: 'cad', payment_intent: pi,
@@ -205,9 +213,15 @@ describe('Stripe fees on payments', { skip }, () => {
     assert.equal(card.status, 'error');
   });
 
-  test('a payment that is not from Stripe, or is gone, is skipped', async () => {
+  test('a payment that is not from Stripe, or is gone, is skipped; a malformed reference is not retried', async () => {
     assert.deepEqual(await handlers.stripe_fee_fetch({ db: t.db, job: { tenant_id: A.tenantId, payload: { paymentId: 'nope' } } }), { skipped: 'not a Stripe payment' });
     assert.deepEqual(await handlers.stripe_fee_fetch({ db: t.db, job: { tenant_id: A.tenantId, payload: {} } }), { skipped: true });
+    await t.db.withTenant({ tenantId: A.tenantId }, (tx) => records.createRecord(tx, p(A.tenantId), 'payments', {
+      id: 'pay-badpi', amountCents: 100, date: '2026-10-20', method: 'card', source: 'stripe', stripe: { paymentIntentId: 'pi_x/../../v1/customers' },
+    }, systemWho(p(A.tenantId))), { write: true });
+    net.reset();
+    assert.deepEqual(await handlers.stripe_fee_fetch({ db: t.db, job: { tenant_id: A.tenantId, payload: { paymentId: 'pay-badpi' } } }), { skipped: 'not a Stripe payment reference' });
+    assert.equal(net.calls.length, 0);
   });
 });
 
@@ -320,7 +334,7 @@ describe('Stripe payouts', { skip }, () => {
     const out = await t.db.withTenant({ tenantId: B.tenantId }, (tx) => recordStripePayout(tx, {
       id: po.id, amountCents: 5000, currency: 'cad', arrivalDate: '2026-10-22', status: 'paid', automatic: false, livemode: true,
     }), { write: true });
-    assert.deepEqual(out, { inserted: true, status: 'paid', queued: false });
+    assert.deepEqual(out, { inserted: true, status: 'paid', queued: false, itemise: false });
     assert.ok(await payoutRow(B.tenantId, po.id));
     assert.equal((await jobs('qbo_sync', B.tenantId)).length, 0);
     const bad = await t.db.withTenant({ tenantId: B.tenantId }, (tx) => recordStripePayout(tx, { id: 'po_x', amountCents: 1, currency: 'cad', arrivalDate: '2026-10-22', status: 'paid', livemode: true }), { write: true });
@@ -328,6 +342,143 @@ describe('Stripe payouts', { skip }, () => {
     // A's payouts are invisible to B (RLS).
     const leak = await t.db.withTenant({ tenantId: B.tenantId }, async (tx) => (await tx.query('SELECT count(*)::int AS n FROM stripe_payouts')).rows[0].n);
     assert.equal(leak, 1);
+  });
+});
+
+describe('Only for a company on QuickBooks, and caught up when a read failed', { skip }, () => {
+  const checkout = (who, invoiceId, pi) => postStripe(who.tenantId, {
+    id: `cs_test_${hex(8)}`, object: 'checkout.session', payment_status: 'paid', amount_total: 105000, currency: 'cad', payment_intent: pi,
+    created: Math.floor(Date.now() / 1000), livemode: false, metadata: { fishtape_tenant: who.tenantId, fishtape_invoice: invoiceId },
+  }, 'checkout.session.completed');
+  const stripeCard = async (who) => (await call(app, { url: '/api/v1/integrations', token: who.token })).body.data.find((c) => c.provider === 'stripe');
+  const byKey = async (key) => (await t.superPool.query('SELECT * FROM jobs_queue WHERE dedupe_key = $1 ORDER BY id', [key])).rows;
+  /** Run the waiting job for this dedupe key the way the worker would, and mark it done. */
+  const runQueued = async (kind, key) => {
+    const [job] = (await byKey(key)).filter((j) => j.status === 'queued');
+    assert.ok(job, `a ${kind} job is waiting`);
+    const out = await handlers[kind]({ db: t.db, job });
+    await t.superPool.query("UPDATE jobs_queue SET status = 'done', finished_at = now() WHERE id = $1", [job.id]);
+    return out;
+  };
+
+  test('a company without QuickBooks, or a server with QuickBooks off, never reads Stripe for the books', async () => {
+    // Bravo takes card payments through Stripe but never connected QuickBooks.
+    await makeInvoice(B, 'inv-b1');
+    const pi = `pi_${hex(8)}`;
+    assert.equal((await checkout(B, 'inv-b1', pi)).status, 200);
+    assert.equal((await call(app, { url: `/api/v1/payments/stripe-${pi}`, token: B.token })).status, 200, 'the payment is recorded as before');
+    assert.equal((await jobs('stripe_fee_fetch', B.tenantId)).length, 0, 'no fee read');
+    const po = { id: `po_${hex(10)}`, object: 'payout', amount: 5000, currency: 'cad', arrival_date: Math.floor(Date.now() / 1000), status: 'paid', automatic: true, livemode: true };
+    assert.equal((await postStripe(B.tenantId, po, 'payout.paid')).status, 200);
+    assert.equal((await payoutRow(B.tenantId, po.id)).status, 'paid', 'the payout is stored all the same');
+    assert.equal((await jobs('stripe_payout_fetch', B.tenantId)).length, 0, 'not itemised');
+    assert.equal(await outboxRow(B.tenantId, po.id), undefined);
+    // A job queued anyway (QuickBooks disconnected since) asks Stripe nothing and leaves the card alone.
+    net.reset();
+    assert.deepEqual(await handlers.stripe_fee_fetch({ db: t.db, job: { tenant_id: B.tenantId, payload: { paymentId: `stripe-${pi}` } } }), { skipped: 'QuickBooks not connected' });
+    assert.deepEqual(await handlers.stripe_payout_fetch({ db: t.db, job: { tenant_id: B.tenantId, payload: { payoutId: po.id } } }), { skipped: 'QuickBooks not connected' });
+    await handlers.integrations_housekeeping({ db: t.db });
+    assert.equal((await jobs('stripe_fee_fetch', B.tenantId)).length, 0, 'nor does the catch-up');
+    assert.equal(net.calls.length, 0);
+    assert.notEqual((await stripeCard(B)).status, 'error');
+
+    // QuickBooks off on the server (QBO_ENVIRONMENT unset): Alpha's payment queues nothing either.
+    await makeInvoice(A, 'inv-off');
+    process.env.QBO_ENVIRONMENT = '';
+    try {
+      const before = (await jobs('stripe_fee_fetch', A.tenantId)).length;
+      assert.equal((await checkout(A, 'inv-off', `pi_${hex(8)}`)).status, 200);
+      assert.equal((await jobs('stripe_fee_fetch', A.tenantId)).length, before);
+      assert.equal((await handlers.integrations_housekeeping({ db: t.db })).fees, undefined, 'and no catch-up');
+    } finally {
+      process.env.QBO_ENVIRONMENT = 'sandbox';
+    }
+  });
+
+  test('reads refused by a key without the read permissions are asked again once the key is fixed', async () => {
+    await makeInvoice(A, 'inv-late');
+    const pi = `pi_${hex(8)}`;
+    assert.equal((await checkout(A, 'inv-late', pi)).status, 200);
+    const paymentId = `stripe-${pi}`;
+    const po = { id: `po_${hex(10)}`, object: 'payout', amount: 101725, currency: 'cad', arrival_date: Math.floor(Date.now() / 1000), status: 'paid', automatic: true, livemode: true };
+    assert.equal((await postStripe(A.tenantId, po, 'payout.paid')).status, 200);
+    const feeKey = `stripe_fee_fetch:${A.tenantId}:${paymentId}`;
+    const poKey = `stripe_payout_fetch:${A.tenantId}:${po.id}`;
+
+    // The restricted key has Checkout Sessions: Write only (the old guide): Stripe refuses both reads.
+    net.reset();
+    const refuse = () => ({ status: 403, json: { error: { type: 'invalid_request_error', message: 'The provided key does not have the required permissions' } } });
+    net.on('GET', new RegExp(`/v1/payment_intents/${pi}\\?`), refuse);
+    net.on('GET', new RegExp(`/v1/payouts/${po.id}\\?`), refuse);
+    assert.deepEqual(await runQueued('stripe_fee_fetch', feeKey), { failed: true });
+    assert.deepEqual(await runQueued('stripe_payout_fetch', poKey), { failed: true });
+    assert.deepEqual((await payoutRow(A.tenantId, po.id)).balance_txns, []);
+    assert.equal(await outboxRow(A.tenantId, po.id), undefined);
+
+    // The next hourly run leaves them alone: Stripe was asked less than 6 hours ago.
+    await handlers.integrations_housekeeping({ db: t.db });
+    assert.equal((await byKey(feeKey)).length, 1);
+    assert.equal((await byKey(poKey)).length, 1);
+
+    // The company adds the read permissions. Six hours on, the catch-up queues both reads again, once.
+    await t.superPool.query("UPDATE jobs_queue SET finished_at = now() - interval '7 hours' WHERE dedupe_key = ANY($1)", [[feeKey, poKey]]);
+    const hk = await handlers.integrations_housekeeping({ db: t.db });
+    assert.ok(hk.fees >= 1 && hk.payouts >= 1, JSON.stringify(hk));
+    await handlers.integrations_housekeeping({ db: t.db });
+    assert.equal((await byKey(feeKey)).filter((j) => j.status === 'queued').length, 1);
+    assert.equal((await byKey(poKey)).filter((j) => j.status === 'queued').length, 1);
+    assert.equal((await byKey(feeKey))[1].run_at <= new Date(), true, 'due now, not in two minutes');
+
+    net.reset();
+    net.on('GET', new RegExp(`/v1/payment_intents/${pi}\\?`), () => ({
+      json: { id: pi, latest_charge: { id: 'ch_late', created: unix('2026-10-19T12:00:00Z'), balance_transaction: { id: 'txn_late', fee: 3075, net: 101925, currency: 'cad' } } },
+    }));
+    net.on('GET', new RegExp(`/v1/payouts/${po.id}\\?expand`), () => ({ json: { ...po, balance_transaction: { id: `txn_${po.id}`, fee: 0 } } }));
+    net.on('GET', new RegExp(`/v1/balance_transactions\\?payout=${po.id}&`), () => ({ json: { has_more: false, data: [
+      { id: 'txn_late_c', type: 'charge', amount: 105000, fee: 3075, created: unix('2026-10-19T12:00:00Z'), source: { id: 'ch_late', payment_intent: pi } },
+      { id: 'txn_late_p', type: 'payout', amount: -101725, fee: 0, created: unix('2026-10-20T00:00:00Z'), source: po.id },
+    ] } }));
+    assert.deepEqual(await runQueued('stripe_fee_fetch', feeKey), { feeCents: 3075 });
+    assert.equal((await getPayment(paymentId)).stripe.feeCents, 3075);
+    assert.equal((await runQueued('stripe_payout_fetch', poKey)).queued, true);
+    const row = await payoutRow(A.tenantId, po.id);
+    assert.equal(row.balance_txns.length, 2);
+    assert.deepEqual(row.payment_intent_ids, [pi]);
+    assert.ok(await outboxRow(A.tenantId, po.id), 'queued for QuickBooks');
+
+    // Done: nothing is asked again for these two.
+    await t.superPool.query("UPDATE jobs_queue SET finished_at = now() - interval '7 hours' WHERE dedupe_key = ANY($1)", [[feeKey, poKey]]);
+    await handlers.integrations_housekeeping({ db: t.db });
+    assert.equal((await byKey(feeKey)).filter((j) => j.status === 'queued').length, 0);
+    assert.equal((await byKey(poKey)).filter((j) => j.status === 'queued').length, 0);
+    assert.deepEqual(net.unexpected, []);
+  });
+
+  test('two events for a new payout at once: a failure is never overwritten by a late "paid"', async () => {
+    const base = { id: `po_${hex(10)}`, amountCents: 7000, currency: 'cad', arrivalDate: '2026-10-22', automatic: false, livemode: true };
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let entered;
+    const inFirst = new Promise((r) => { entered = r; });
+    // payout.failed arrives first and its transaction is still open when payout.paid arrives. Today's
+    // callers also hold the company's write lock ({ write: true }), which serialises them anyway; the
+    // row lock keeps it right without that (so these two do not take it).
+    const first = t.db.withTenant({ tenantId: A.tenantId }, async (tx) => {
+      const r = await recordStripePayout(tx, { ...base, status: 'failed' });
+      entered();
+      await gate;
+      return r;
+    });
+    await inFirst;
+    const second = t.db.withTenant({ tenantId: A.tenantId }, (tx) => recordStripePayout(tx, { ...base, status: 'paid' }));
+    await new Promise((r) => { setTimeout(r, 300); }); // the second now waits on the first's row
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.equal(a.status, 'failed');
+    assert.equal(b.status, 'failed', 'the second saw the first');
+    assert.equal(b.inserted, false);
+    assert.equal((await payoutRow(A.tenantId, base.id)).status, 'failed');
+    assert.equal(await outboxRow(A.tenantId, base.id), undefined, 'no Transfer for a payout that failed before it was ever paid');
   });
 });
 

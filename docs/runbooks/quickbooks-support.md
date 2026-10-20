@@ -77,8 +77,9 @@ audit log, which its owner can read):
   was already paused before (by itself, its plan, its budget or the safety brake) puts that pause
   back.
 - **Release QuickBooks company** (HQ admins): disconnects this company and frees its QuickBooks
-  company so another Fishtape company can connect it. The worker then revokes the old tokens and
-  deletes them. Use it for a squatted company when the takeover below is not possible, and record
+  company so another Fishtape company can connect it. The worker then deletes the old tokens. It
+  revokes them at Intuit first only if no other Fishtape company has connected that QuickBooks
+  company meanwhile: the grant may be shared, and revoking it would disconnect the new holder. Use it for a squatted company when the takeover below is not possible, and record
   who asked and how you checked they are entitled to the books.
 
 ## Takeover

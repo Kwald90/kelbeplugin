@@ -29,11 +29,11 @@ A restricted key can only do what Fishtape needs, which is safer than your full 
 1. In Stripe, open **Developers > API keys**.
 2. Under **Restricted keys**, choose **Create restricted key**. Name it `Fishtape`.
 3. Set **Checkout Sessions** to **Write**.
-4. Set these to **Read**, so Fishtape can record each payment's Stripe fee and each payout to your bank (QuickBooks needs both to keep your books right): **PaymentIntents**, **Charges**, **Balance** (balance transactions; also **Balance transaction sources** if Stripe lists it) and **Payouts**. Leave everything else at **None**.
+4. If you use QuickBooks with Fishtape, also set these to **Read**, so Fishtape can record each payment's Stripe fee and each payout to your bank (QuickBooks needs both to keep your books right): **PaymentIntents**, **Charges**, **Balance** (balance transactions; also **Balance transaction sources** if Stripe lists it) and **Payouts**. Leave everything else at **None**.
 5. Create the key and copy it. It starts with `rk_live_`.
 6. In Fishtape, open **Integrations > Stripe** and paste it into **Stripe secret key**.
 
-Already made a key with only Checkout Sessions? Edit it in Stripe and add the four **Read** permissions; the key itself stays the same.
+Already made a key with only Checkout Sessions and now connecting QuickBooks? Edit it in Stripe and add the four **Read** permissions; the key itself stays the same. Fishtape asks Stripe again within a few hours for any fee or payout it could not read.
 
 You can use a full secret key (`sk_live_…`) instead, but a restricted key limits the damage if it ever leaks.
 
@@ -62,7 +62,7 @@ Want to practise first? Use test keys (`rk_test_…` and a test-mode webhook sec
 ## Good to know
 
 - Payments recorded by Stripe show method **card** and the Stripe payment reference. Refunds are done in Stripe; record them on the invoice by hand for now.
-- A minute or two after each payment, Fishtape reads Stripe's fee for it. With QuickBooks connected, the payment goes to a "Stripe" bank account in QuickBooks at its full amount, the fee as an expense, and each payout as a transfer to your bank, so the books match your bank deposits.
+- With QuickBooks connected, a minute or two after each payment Fishtape reads Stripe's fee for it. The payment goes to a "Stripe" bank account in QuickBooks at its full amount, the fee as an expense, and each payout as a transfer to your bank, so the books match your bank deposits.
 - If you press **Pay online** again, you get the same link, so printed invoices keep working.
 - Stripe retries a webhook for up to three days if Fishtape is unreachable, and Fishtape ignores repeats, so a payment is never recorded twice.
 - Fishtape never sees card numbers. Stripe handles the card details.

@@ -304,7 +304,7 @@ export default async function hqTenantRoutes(app, { config, db, email }) {
 
   app.post('/api/hq/tenants/:id/quickbooks/release', {
     config: hq,
-    schema: { tags, summary: 'Release a company\'s QuickBooks company so another Fishtape company can connect it (HQ admin; reason required; audited). The worker then revokes and deletes the tokens.', params: uuidParams('id'), body: reasonBody() },
+    schema: { tags, summary: 'Release a company\'s QuickBooks company so another Fishtape company can connect it (HQ admin; reason required; audited). The worker then deletes the tokens (revoked first only while no other company holds that QuickBooks company).', params: uuidParams('id'), body: reasonBody() },
   }, async (req) => {
     requireHqAdmin(req);
     const reason = needReason(req);

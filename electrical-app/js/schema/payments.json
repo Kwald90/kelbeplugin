@@ -129,6 +129,14 @@
             "null"
           ],
           "description": "What reached the Stripe balance (amount − fee), in integer cents."
+        },
+        "feeCurrency": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 3,
+          "description": "Currency of feeCents and netCents (ISO code, upper case), from Stripe's balance transaction. The books record only CAD fees."
         }
       },
       "additionalProperties": true

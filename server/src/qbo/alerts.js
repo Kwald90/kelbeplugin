@@ -135,7 +135,7 @@ export const RULES = [
   {
     kind: 'qbo_budget',
     title: 'QuickBooks read allowance',
-    steps: ['Open HQ > Developer > QuickBooks for the month\'s totals and the companies using the most.', 'Workspace at 70%: decide whether to buy Intuit\'s Silver tier before the 90% stop (look-ups and the 6-hourly catch-up stop for everyone).', 'A company at 50% of its own budget: look for a loop or heavy look-ups before it is paused at 150%.'],
+    steps: ['Open HQ > Developer > QuickBooks for the month\'s totals and the companies using the most.', 'Workspace at 70%: decide whether to buy Intuit\'s Silver tier before the 90% stop (look-ups and the 6-hourly catch-up stop for everyone).', 'A company at 50% or 80% of its own budget (look-ups stop for it at 80%): look for a loop or heavy look-ups before it is paused at 150%.'],
     async check(db, { env }) {
       const budgets = qboBudgets(env);
       const month = usageMonth();
@@ -155,9 +155,11 @@ export const RULES = [
       for (const r of rows) {
         const budget = tenantBudget(r, budgets);
         const n = Number(r.n);
-        if (n * 2 < budget) continue;
-        out.push({ key: `tenant:${r.tenant_id}:${month.slice(0, 7)}`, since: 'month', count: n, companies: [r.name],
-          text: `${r.name} has used ${n.toLocaleString('en-CA')} of its ${budget.toLocaleString('en-CA')} CorePlus reads this month (${Math.floor((n / budget) * 100)}%).` });
+        // 50% and 80% (contract 5.11): one email per step per month.
+        const tStep = n * 10 >= budget * 8 ? 80 : n * 2 >= budget ? 50 : null;
+        if (!tStep) continue;
+        out.push({ key: `tenant:${r.tenant_id}:${tStep}:${month.slice(0, 7)}`, since: 'month', count: n, companies: [r.name],
+          text: `${r.name} has used ${n.toLocaleString('en-CA')} of its ${budget.toLocaleString('en-CA')} CorePlus reads this month (${Math.floor((n / budget) * 100)}%).${tStep === 80 ? ' Its look-ups have stopped until the 1st.' : ''}` });
       }
       return out;
     },

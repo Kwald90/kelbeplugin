@@ -56,7 +56,7 @@ export default async function webhookRoutes(app, { config, db, records }) {
         const po = payoutFromStripe(session);
         const r = await recordStripePayout(tx, po);
         if (r.reason) return { ignored: true };
-        if (r.status === 'paid' && po.automatic) await enqueuePayoutFetch(tx, tenantId, po.id);
+        if (r.itemise) await enqueuePayoutFetch(tx, tenantId, po.id); // only for a company on QuickBooks
         return r;
       }
       // Only sessions Fishtape created for this company; the account may use Checkout for other things.

@@ -97,7 +97,7 @@ those anyway), never their customers or records. First steps are in each email a
 | `qbo_jobs_failing` | 5 or more `qbo_*` jobs failed for good in an hour | HQ > Health > Queue; worker running? Intuit up? Pause the companies concerned. |
 | `qbo_inbox_backlog` | An active company has had changes waiting more than 2 hours | Check the worker's QuickBooks pool and `qbo_dispatch`; look at the company's throttle and budget in HQ. |
 | `qbo_intuit_5xx` | More than 20 Intuit 5xx answers in 10 minutes | Intuit's status page; syncs retry with backoff. |
-| `qbo_budget` | The workspace at 70% and 90% of `QBO_READ_BUDGET`; a company at 50% of its own budget | Decide on Intuit's Silver tier before 90% (look-ups and the 6-hourly catch-up stop for everyone there); look for a loop or heavy look-ups at a company. |
+| `qbo_budget` | The workspace at 70% and 90% of `QBO_READ_BUDGET`; a company at 50% and at 80% of its own budget | Decide on Intuit's Silver tier before 90% (look-ups and the 6-hourly catch-up stop for everyone there); look for a loop or heavy look-ups at a company. |
 | `qbo_safety_brake` | Any company's sync stopped itself (500+ writes in an hour) | Read the company's counts, ask what changed, keep it paused from HQ if it looks like a bug. |
 | `qbo_realm_mismatch` | The sync refused rows written for another QuickBooks company | Treat as a bug: pause the company from HQ. |
 | `qbo_revoke_gave_up` | A refresh token still failed to revoke after 14 days | Ask the company to disconnect Fishtape in QuickBooks (Apps > My apps). |

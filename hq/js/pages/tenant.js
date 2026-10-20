@@ -144,7 +144,7 @@ export default {
     }
 
     async function qboRelease() {
-      const reason = await ui.promptDialog('Reason (shown in the company\'s audit log). The company is disconnected from QuickBooks and its tokens are revoked by the worker.', { title: `Release ${t.name}'s QuickBooks company`, okLabel: 'Release' });
+      const reason = await ui.promptDialog('Reason (shown in the company\'s audit log). The company is disconnected from QuickBooks. The worker then deletes its tokens, and revokes them at Intuit only if no other Fishtape company has connected that QuickBooks company meanwhile.', { title: `Release ${t.name}'s QuickBooks company`, okLabel: 'Release' });
       if (reason == null) return;
       act(() => post(`/api/hq/tenants/${id}/quickbooks/release`, { reason }), 'QuickBooks company released')();
     }

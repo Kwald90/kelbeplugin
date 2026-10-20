@@ -5,10 +5,13 @@
 // The QuickBooks sync registers one at start-up (docs/integrations/quickbooks.md 4.9, "Amount
 // due"), so an invoice whose QuickBooks tax differs by a cent is charged and settled at the
 // QuickBooks total. Stripe payouts land in stripe_payouts and wait in the QuickBooks outbox.
+// Stripe is read for the books (fees, payout items) only for a company that has connected
+// QuickBooks on a server where QuickBooks is on (booksInQbo); nothing else changes for the rest.
 import { docTotals } from '../../../electrical-app/js/lib/money.js';
 import { ID_RE } from '../services/records.js';
 import { notify } from '../services/notify.js';
 import { enqueue } from '../services/queue.js';
+import { qboEnabled } from '../qbo/alerts.js';
 import { PAYOUT_RE, payoutStatus } from './stripe.js';
 
 /** Company time zone by province, for the payment's date (YYYY-MM-DD). */
@@ -59,9 +62,17 @@ async function paidCents(tx, invoiceId) {
   return Number(rows[0].cents) || 0;
 }
 
+/** The parts of the amount due: docTotals total, payments, adjustment and what is still owing. */
+async function dueParts(tx, invoice) {
+  const totalCents = docTotals(invoice).totalCents;
+  const paid = await paidCents(tx, invoice.id);
+  const adjustment = await adjustmentCents(tx, invoice.id);
+  return { totalCents, paidCents: paid, adjustmentCents: adjustment, dueCents: totalCents - paid + adjustment };
+}
+
 /** What is still owing on an invoice (an object with its id): docTotals total − payments + adjustment. */
 export async function amountDueCents(tx, invoice) {
-  return docTotals(invoice).totalCents - await paidCents(tx, invoice.id) + await adjustmentCents(tx, invoice.id);
+  return (await dueParts(tx, invoice)).dueCents;
 }
 
 /**
@@ -73,10 +84,8 @@ export async function invoiceBalance(tx, invoiceId) {
   const { rows } = await tx.query('SELECT id, data, version FROM invoices WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL', [tx.tenantId, invoiceId]);
   if (!rows[0]) return null;
   const invoice = { ...rows[0].data, id: rows[0].id, version: rows[0].version };
-  const totalCents = docTotals(invoice).totalCents;
-  const paid = await paidCents(tx, invoiceId);
-  const adjustment = await adjustmentCents(tx, invoiceId);
-  return { invoice, totalCents, paidCents: paid, adjustmentCents: adjustment, balanceCents: totalCents - paid + adjustment };
+  const { dueCents, ...parts } = await dueParts(tx, invoice);
+  return { invoice, ...parts, balanceCents: dueCents };
 }
 
 /** Same rule as syncInvoiceStatus in the PWA (modules/invoices.js), on the amount due; void is never touched. */
@@ -90,16 +99,32 @@ export async function refreshInvoiceStatus(tx, records, p, who, invoiceId) {
   return { ...b, status: next };
 }
 
+// ---- the books ----------------------------------------------------------------------
+
+/**
+ * The company's QuickBooks connection row ({ state }), or null when QuickBooks is off on this
+ * server (QBO_ENVIRONMENT unset: no QuickBooks table is read, contract 2.1) or the company never
+ * connected it. Stripe fees and payout items are read only when this is set, so a company that
+ * does not use QuickBooks never needs the read permissions on its restricted key.
+ */
+export async function booksInQbo(tx, env = process.env) {
+  if (!qboEnabled(env)) return null;
+  return (await tx.query('SELECT state FROM qbo_connections WHERE tenant_id = $1', [tx.tenantId])).rows[0] || null;
+}
+
 // ---- Stripe payments ------------------------------------------------------------------
+
+export const feeFetchKey = (tenantId, paymentId) => `stripe_fee_fetch:${tenantId}:${paymentId}`;
 
 /**
  * Ask the worker to read the payment's Stripe fee (integrations/jobs.js stripe_fee_fetch).
- * Stripe settles a card fee within seconds; two minutes leaves room.
+ * Stripe settles a card fee within seconds; two minutes leaves room (`delayMs` 0 for the
+ * hourly catch-up).
  */
-export function enqueueFeeFetch(q, tenantId, paymentId) {
+export function enqueueFeeFetch(q, tenantId, paymentId, delayMs = 120_000) {
   return enqueue(q, {
-    kind: 'stripe_fee_fetch', tenantId, payload: { paymentId }, runAt: new Date(Date.now() + 120_000),
-    maxAttempts: 8, dedupeKey: `stripe_fee_fetch:${tenantId}:${paymentId}`,
+    kind: 'stripe_fee_fetch', tenantId, payload: { paymentId }, runAt: new Date(Date.now() + delayMs),
+    maxAttempts: 8, dedupeKey: feeFetchKey(tenantId, paymentId),
   });
 }
 
@@ -133,8 +158,9 @@ export async function recordStripePayment(tx, records, p, who, session, eventId)
   }, who);
   await refreshInvoiceStatus(tx, records, p, who, invoiceId);
   await notify(tx, { perm: 'invoices', kind: 'payment', title: `Card payment of $${(amountCents / 100).toFixed(2)} received online`, link: `#/invoices/${invoiceId}`, ref: `payment:${paymentId}` });
-  // The fee (stripe.feeCents and friends) is filled in by the worker, for the books.
-  if (paymentIntentId) await enqueueFeeFetch(tx, tx.tenantId, paymentId);
+  // The fee (stripe.feeCents and friends) is filled in by the worker, for the books. Payments made
+  // before QuickBooks was connected are picked up by the hourly catch-up (jobs.js).
+  if (paymentIntentId && await booksInQbo(tx)) await enqueueFeeFetch(tx, tx.tenantId, paymentId);
   return { recorded: true, paymentId };
 }
 
@@ -171,11 +197,9 @@ function cleanTxns(list) {
 /**
  * Queue a payout for QuickBooks the way the records hook queues a record (W3 hooks.js, same
  * SQL): one qbo_outbox row (collection stripePayouts, rank 70, actor stripe), and a qbo_sync
- * pass when the connection is active. Nothing happens without a QuickBooks connection row.
+ * pass when the connection (booksInQbo) is active.
  */
-async function queuePayoutForQbo(tx, payoutId) {
-  const conn = (await tx.query('SELECT state FROM qbo_connections WHERE tenant_id = $1', [tx.tenantId])).rows[0];
-  if (!conn) return false;
+async function queuePayoutForQbo(tx, payoutId, conn) {
   await tx.query(
     `INSERT INTO qbo_outbox (tenant_id, collection, record_id, op, actor_type, rank, not_before)
      VALUES ($1, 'stripePayouts', $2, 'upsert', 'stripe', 70, now() + interval '20 seconds')
@@ -193,9 +217,11 @@ async function queuePayoutForQbo(tx, payoutId) {
  * Store or update a payout seen on the company's Stripe webhook or read by the worker, and
  * queue it for QuickBooks once it can be booked: paid and itemised (balanceTxns read; manual
  * payouts cannot be itemised and go as they are), or failed after it was paid (the Transfer comes
- * out again). Pending and canceled payouts are only stored.
+ * out again). Pending and canceled payouts are only stored, and so is everything while the
+ * company is not on QuickBooks (booksInQbo). `itemise` says the worker should read the payout's
+ * balance transactions (stripe_payout_fetch).
  * @param {{ id: string, amountCents: number, currency: string, arrivalDate: string, status: string, automatic?: boolean, livemode: boolean, feeCents?: number|null, balanceTxns?: object[] }} payout
- * @returns {Promise<{ inserted: boolean, status?: string, queued?: boolean, reason?: string }>}
+ * @returns {Promise<{ inserted: boolean, status?: string, queued?: boolean, itemise?: boolean, reason?: string }>}
  */
 export async function recordStripePayout(tx, payout) {
   const id = payout?.id;
@@ -205,7 +231,14 @@ export async function recordStripePayout(tx, payout) {
   if (!/^[a-z]{3}$/.test(currency)) return { inserted: false, reason: 'no currency' };
   if (!DATE_RE.test(String(payout.arrivalDate || ''))) return { inserted: false, reason: 'no arrival date' };
 
-  const prev = (await tx.query('SELECT status, paid_seen, balance_txns, fee_cents FROM stripe_payouts WHERE tenant_id = $1 AND payout_id = $2 FOR UPDATE', [tx.tenantId, id])).rows[0];
+  // A placeholder row first: two events for a new payout (payout.failed and the fetch job, say)
+  // then wait on one row lock and see each other, instead of both inserting and the last one winning.
+  const created = await tx.query(
+    `INSERT INTO stripe_payouts (tenant_id, payout_id, amount_cents, currency, arrival_date, status, livemode)
+     VALUES ($1, $2, $3, $4, $5, 'pending', $6) ON CONFLICT (tenant_id, payout_id) DO NOTHING`,
+    [tx.tenantId, id, payout.amountCents, currency, payout.arrivalDate, Boolean(payout.livemode)]);
+  const prev = created.rowCount === 1 ? null
+    : (await tx.query('SELECT status, paid_seen, balance_txns, fee_cents FROM stripe_payouts WHERE tenant_id = $1 AND payout_id = $2 FOR UPDATE', [tx.tenantId, id])).rows[0];
   const status = nextStatus(prev?.status, payoutStatus(payout.status));
   const paidSeen = Boolean(prev?.paid_seen) || status === 'paid';
   const itemised = Array.isArray(payout.balanceTxns);
@@ -217,18 +250,15 @@ export async function recordStripePayout(tx, payout) {
   const automatic = payout.automatic !== false;
 
   await tx.query(
-    `INSERT INTO stripe_payouts (tenant_id, payout_id, amount_cents, currency, arrival_date, status, paid_seen, automatic, livemode,
-                                 payment_intent_ids, earliest_charge_at, balance_txns, fee_cents)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-     ON CONFLICT (tenant_id, payout_id) DO UPDATE SET
-       amount_cents = EXCLUDED.amount_cents, currency = EXCLUDED.currency, arrival_date = EXCLUDED.arrival_date,
-       status = EXCLUDED.status, paid_seen = stripe_payouts.paid_seen OR EXCLUDED.paid_seen, automatic = EXCLUDED.automatic,
-       livemode = EXCLUDED.livemode, payment_intent_ids = EXCLUDED.payment_intent_ids, earliest_charge_at = EXCLUDED.earliest_charge_at,
-       balance_txns = EXCLUDED.balance_txns, fee_cents = EXCLUDED.fee_cents, received_at = now()`,
+    `UPDATE stripe_payouts SET amount_cents = $3, currency = $4, arrival_date = $5, status = $6, paid_seen = $7, automatic = $8,
+       livemode = $9, payment_intent_ids = $10, earliest_charge_at = $11, balance_txns = $12, fee_cents = $13, received_at = now()
+      WHERE tenant_id = $1 AND payout_id = $2`,
     [tx.tenantId, id, payout.amountCents, currency, payout.arrivalDate, status, paidSeen, automatic, Boolean(payout.livemode),
       intents, earliest, JSON.stringify(txns), feeCents]);
 
-  const ready = (status === 'paid' && (!automatic || itemised || (prev?.balance_txns || []).length > 0)) || (status === 'failed' && paidSeen);
-  const queued = ready ? await queuePayoutForQbo(tx, id) : false;
-  return { inserted: !prev, status, queued };
+  const conn = await booksInQbo(tx);
+  const ready = (status === 'paid' && (!automatic || itemised || txns.length > 0)) || (status === 'failed' && paidSeen);
+  const queued = ready && conn ? await queuePayoutForQbo(tx, id, conn) : false;
+  const itemise = Boolean(conn) && status === 'paid' && automatic && !itemised && txns.length === 0;
+  return { inserted: !prev, status, queued, itemise };
 }

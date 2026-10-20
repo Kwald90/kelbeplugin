@@ -138,7 +138,7 @@ describe('QuickBooks alert rules', { skip }, () => {
     await t.superPool.query('DELETE FROM qbo_realms; DELETE FROM qbo_connections;');
   });
 
-  test('budget: the workspace at 70% and 90%, a company at half its budget', async () => {
+  test('budget: the workspace at 70% and 90%, a company at 50% and 80% of its budget', async () => {
     const use = (tenantId, coreplus, environment = 'production') => t.superPool.query(
       `INSERT INTO qbo_api_usage (month, tenant_id, environment, coreplus_calls) VALUES ($1, $2, $3, $4)
        ON CONFLICT (month, tenant_id, environment) DO UPDATE SET coreplus_calls = EXCLUDED.coreplus_calls`, [month, tenantId, environment, coreplus]);
@@ -156,6 +156,11 @@ describe('QuickBooks alert rules', { skip }, () => {
     f = await check('qbo_budget');
     assert.ok(f.some((x) => x.key === `workspace:70:${month.slice(0, 7)}`));
     assert.deepEqual(f.filter((x) => x.key.startsWith('tenant')).map((x) => x.companies[0]).sort(), ['Alpha Wiring', 'Delta Volts']);
+    await use(tenants[3], 4_000); // on trial: 80% of 5,000, its look-ups stop
+    f = await check('qbo_budget');
+    const delta = f.find((x) => x.companies[0] === 'Delta Volts');
+    assert.equal(delta.key, `tenant:${tenants[3]}:80:${month.slice(0, 7)}`, 'a step of its own, so it is emailed again');
+    assert.match(delta.text, /look-ups have stopped/);
     await use(tenants[0], 402_500); // 405,000 = 90%
     assert.ok((await check('qbo_budget')).some((x) => x.key === `workspace:90:${month.slice(0, 7)}`));
     assert.ok((await check('qbo_budget', { ...ENV, QBO_READ_BUDGET: '1000000' })).every((x) => !x.key.startsWith('workspace')), 'QBO_READ_BUDGET is honoured');

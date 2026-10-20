@@ -14,7 +14,7 @@ import { hostname } from 'node:os';
 import { migrationStatus } from '../migrate.js';
 import { hqAudit, hqUrl, iso } from '../services/hq-common.js';
 import { hasQboTables } from '../services/hq-tenants.js';
-import { INTUIT_READ_CAP, qboBudgets, qboEnabled, usageMonth } from '../qbo/alerts.js';
+import { INTUIT_READ_CAP, qboBudgets, qboEnabled, tenantBudget, usageMonth } from '../qbo/alerts.js';
 
 const RING = 100;
 const day = (d = new Date()) => d.toISOString().slice(0, 10);
@@ -142,9 +142,10 @@ async function hqDeveloperRoutes(app, { config, db }) {
       const states = {};
       for (const r of (await c.query("SELECT CASE WHEN state = 'paused' THEN 'paused:' || pause_reason ELSE state END AS s, count(*)::int AS n FROM qbo_connections GROUP BY 1")).rows) states[r.s] = r.n;
       const top = (await c.query(
-        `SELECT u.tenant_id, t.name, u.environment, sum(u.coreplus_calls)::bigint AS coreplus, sum(u.core_calls)::bigint AS core, sum(u.throttled)::int AS throttled, sum(u.errors)::int AS errors
+        `SELECT u.tenant_id, t.name, t.plan, t.billing_status, u.environment, sum(u.coreplus_calls)::bigint AS coreplus, sum(u.core_calls)::bigint AS core,
+                sum(u.throttled)::int AS throttled, sum(u.errors)::int AS errors
            FROM qbo_api_usage u JOIN tenants t ON t.id = u.tenant_id WHERE u.month = $1
-          GROUP BY 1, 2, 3 ORDER BY coreplus DESC, core DESC LIMIT 20`, [month])).rows;
+          GROUP BY 1, 2, 3, 4, 5 ORDER BY coreplus DESC, core DESC LIMIT 20`, [month])).rows;
       const events = (await c.query("SELECT kind, count(*)::int AS n, max(at) AS last_at FROM qbo_platform_events WHERE at > now() - interval '24 hours' GROUP BY kind ORDER BY n DESC")).rows;
       const revoke = (await c.query('SELECT count(*)::int AS n FROM qbo_revoke_pending')).rows[0].n;
       return {
@@ -152,7 +153,8 @@ async function hqDeveloperRoutes(app, { config, db }) {
         production: { ...prod, pct: Math.round((prod.coreplus / budgets.workspace) * 1000) / 10 },
         sandbox: totals.sandbox || { core: 0, coreplus: 0 },
         states,
-        top: top.map((r) => ({ tenantId: r.tenant_id, tenantName: r.name, environment: r.environment, coreplus: Number(r.coreplus), core: Number(r.core), throttled: r.throttled, errors: r.errors })),
+        // budget: the company's own (the trial one while it is on a free trial).
+        top: top.map((r) => ({ tenantId: r.tenant_id, tenantName: r.name, environment: r.environment, budget: tenantBudget(r, budgets), coreplus: Number(r.coreplus), core: Number(r.core), throttled: r.throttled, errors: r.errors })),
         events24h: events.map((e) => ({ kind: e.kind, count: e.n, lastAt: iso(e.last_at) })),
         revokePending: revoke,
       };

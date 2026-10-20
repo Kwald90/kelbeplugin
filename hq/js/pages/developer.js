@@ -172,7 +172,7 @@ export default {
             { key: 'co', label: 'Company', render: (r) => h('a', { href: `#/tenants/${r.tenantId}` }, r.tenantName), sort: (r) => r.tenantName },
             { key: 'env', label: 'Environment', render: (r) => r.environment },
             { key: 'reads', label: 'Reads', align: 'right', render: (r) => ui.fmtNum(r.coreplus), sort: (r) => r.coreplus },
-            { key: 'pct', label: 'Of its budget', align: 'right', render: (r) => (r.environment === 'production' ? `${Math.round((r.coreplus / q.tenantBudget) * 100)}%` : '—') },
+            { key: 'pct', label: 'Of its budget', align: 'right', render: (r) => (r.environment === 'production' ? `${Math.round((r.coreplus / r.budget) * 100)}%` : '—') },
             { key: 'writes', label: 'Writes', align: 'right', render: (r) => ui.fmtNum(r.core) },
             { key: 'thr', label: 'Throttled / errors', align: 'right', render: (r) => `${r.throttled} / ${r.errors}` },
           ],

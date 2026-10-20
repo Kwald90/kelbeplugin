@@ -220,6 +220,11 @@ describe('HQ developer and settings', { skip }, () => {
     assert.equal(r.body.states.active, 1);
     assert.equal(r.body.top[0].tenantName, 'Alpha Wiring');
     assert.equal(r.body.top[0].coreplus, 1430);
+    // Each company is measured against its own budget: the trial one while it is on a free trial.
+    await t.superPool.query("UPDATE tenants SET plan = 'trial', billing_status = 'trialing' WHERE id = $1", [A.tenantId]);
+    assert.equal((await hq(staff.token, '/api/hq/developer/quickbooks')).body.top[0].budget, 5000);
+    await t.superPool.query("UPDATE tenants SET plan = 'pro', billing_status = 'active' WHERE id = $1", [A.tenantId]);
+    assert.equal((await hq(staff.token, '/api/hq/developer/quickbooks')).body.top[0].budget, 20000);
     const text = JSON.stringify(r.body);
     for (const s of [COMPANY, RECORD, MESSAGE]) assert.ok(!text.includes(s), s);
     assert.equal((await hq(A.token, '/api/hq/developer/quickbooks')).status, 403);
