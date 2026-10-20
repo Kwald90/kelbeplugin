@@ -10,6 +10,9 @@
 !electrical-app/js/lib/tax.js
 !electrical-app/js/lib/workplan.js
 !electrical-app/js/lib/kpis.js
+!electrical-app/js/lib/drawing-costs.js
+!electrical-app/js/lib/drawing-collab.js
+!electrical-app/js/canvas/symbols.js
 !compliance/controls.yaml
 
 # Never send these into the build, even inside allowed folders.

@@ -35,14 +35,9 @@ WORKDIR /app/server
 # server's relative paths (../electrical-app/js/...) resolve exactly as in development.
 COPY --from=deps /app/server/node_modules ./node_modules
 COPY server/ ./
-COPY electrical-app/js/schema/ /app/electrical-app/js/schema/
-COPY electrical-app/js/brand.js /app/electrical-app/js/brand.js
-COPY electrical-app/js/plans.js /app/electrical-app/js/plans.js
-# The AI tools run the app's own CEC calculators and money/tax code (no imports outside lib/).
-COPY electrical-app/js/lib/cec/ /app/electrical-app/js/lib/cec/
-COPY electrical-app/js/lib/money.js electrical-app/js/lib/tax.js /app/electrical-app/js/lib/
-# Work-plan write rules and KPIs are shared with the PWA (auth/access.js, routes/v1/kpis.js).
-COPY electrical-app/js/lib/workplan.js electrical-app/js/lib/kpis.js /app/electrical-app/js/lib/
+# The PWA files the server imports (schemas, brand, plans, CEC/money/tax/work-plan/drawing libs).
+# Which files: the allow-list in .dockerignore, kept complete by server/test/docker-context.test.js.
+COPY electrical-app/js/ /app/electrical-app/js/
 # The HQ compliance page reads the control list (COMPLIANCE_CONTROLS_FILE).
 COPY compliance/controls.yaml /app/compliance/controls.yaml
 
