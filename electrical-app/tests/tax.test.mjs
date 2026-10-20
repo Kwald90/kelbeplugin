@@ -142,3 +142,32 @@ test('money prints Canadian English', () => {
   assert.equal(formatMoney(123450, { whole: true }), '$1,235');
   assert.equal(formatMoney(123450, { currency: 'USD' }), 'US$1,234.50');
 });
+
+test('PST/RST exempt, GST charged: offered in every PST/RST province, GST on everything', () => {
+  for (const p of ['BC', 'SK', 'MB']) {
+    assert.ok(T.treatmentsFor(p).includes('gst-only'), p);
+    assert.equal(T.treatmentsFor(p).at(-1), 'none', p); // "No tax" stays last
+  }
+  for (const p of ['ON', 'AB', 'QC', 'NS']) assert.ok(!T.treatmentsFor(p).includes('gst-only'), p);
+  // MB: $100 material + $50 labour, GST 5% = $7.50, no RST -> $157.50
+  const mb = docTotals(doc('MB', 'gst-only', [mat(10000), lab(5000)]));
+  assert.deepEqual(mb.taxes.map((x) => [x.id, x.cents]), [['GST', 750], ['RST', 0]]);
+  assert.equal(mb.totalCents, 15750);
+  assert.ok(byId(mb, 'RST').note.length > 0); // says why RST is not charged
+  assert.equal(T.describeTaxes(T.taxComponents({ province: 'SK', treatment: 'gst-only' })), 'GST 5%');
+  assert.equal(T.describeTaxes(T.taxComponents({ province: 'BC', treatment: 'gst-only' })), 'GST 5%');
+  // The default treatment is unchanged; a company may pick gst-only as its default
+  assert.equal(T.taxSetup({ company: { province: 'MB' } }).treatment, 'pst-all');
+  assert.equal(T.taxSetup({ company: { province: 'MB' }, tax: { treatment: 'gst-only' } }).treatment, 'gst-only');
+  assert.equal(T.newDocTax({ company: { province: 'MB' }, tax: { treatment: 'gst-only' } }, '2026-10-19').taxPct, 5);
+});
+
+test('"No tax" no longer suggests it for PST/RST licence holders, and names the reasons', () => {
+  for (const p of ['ON', 'BC', 'SK', 'MB']) {
+    const hint = T.treatmentHint('none', p);
+    assert.doesNotMatch(hint, /licensed contractor|quoting their PST/i, p);
+    assert.match(hint, /zero-rated, exempt or out-of-scope/, p);
+  }
+  assert.match(T.treatmentHint('none', 'MB'), /still pays GST/);
+  assert.deepEqual(T.TAX_NONE_REASONS.map((r) => r.id), ['zero', 'exempt', 'out_of_scope', 'relief']);
+});

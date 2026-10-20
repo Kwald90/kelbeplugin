@@ -120,17 +120,39 @@ export const TREATMENTS = {
     hint: 'Supplying and installing, or repairing, things that do not become part of the building (plug-in equipment, freestanding appliances). PST on parts and labour (Bulletin PST 301).',
     applies: { PST: ALL, RST: ALL },
   },
+  'gst-only': {
+    label: 'PST/RST exempt, GST charged',
+    hint: 'For a customer who quotes their PST/RST licence or exemption number (for example a contractor buying for resale): GST on everything, no PST/RST. Keep the number on file.',
+    applies: { PST: NONE, RST: NONE },
+    note: 'PST/RST exempt: the customer’s licence or exemption number is on file.',
+  },
   none: {
     label: 'No tax',
-    hint: 'Exempt customer or supply (for example a licensed contractor quoting their PST/RST number, or an exempt government or First Nations customer). Keep the proof on file.',
+    hint: 'No GST/HST and no provincial tax: a zero-rated, exempt or out-of-scope supply, or a customer with Indian Act relief. Pick why on the document and keep the proof on file.',
+    hints: {
+      BC: 'No GST and no PST: a zero-rated, exempt or out-of-scope supply, or a customer with Indian Act relief. Pick why on the document and keep the proof on file. A customer with a PST number still pays GST: use “PST/RST exempt, GST charged”.',
+      SK: 'No GST and no PST: a zero-rated, exempt or out-of-scope supply, or a customer with Indian Act relief. Pick why on the document and keep the proof on file. A customer with a PST number still pays GST: use “PST/RST exempt, GST charged”.',
+      MB: 'No GST and no RST: a zero-rated, exempt or out-of-scope supply, or a customer with Indian Act relief. Pick why on the document and keep the proof on file. A customer with an RST number still pays GST: use “PST/RST exempt, GST charged”.',
+    },
     applies: null,
   },
 };
 
+/**
+ * Why a document charges no tax (`taxNoneReason` on estimates and invoices). Each lands on
+ * different GST return lines, so the QuickBooks sync maps each to its own tax code.
+ */
+export const TAX_NONE_REASONS = [
+  { id: 'zero', label: 'Zero-rated supply' },
+  { id: 'exempt', label: 'Exempt supply' },
+  { id: 'out_of_scope', label: 'Out of scope (not a taxable supply in Canada)' },
+  { id: 'relief', label: 'Indian Act relief (or similar)' },
+];
+
 /** Treatments that make sense in a province, the first being the default. */
 export function treatmentsFor(province) {
-  if (province === 'BC') return ['real-property', 'tpp-service', 'separate-goods', 'none'];
-  if (province === 'SK' || province === 'MB') return ['pst-all', 'none'];
+  if (province === 'BC') return ['real-property', 'tpp-service', 'separate-goods', 'gst-only', 'none'];
+  if (province === 'SK' || province === 'MB') return ['pst-all', 'gst-only', 'none'];
   return ['standard', 'none'];
 }
 

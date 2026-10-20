@@ -1,0 +1,44 @@
+{
+  "_note": "qbo_reference lists for a Canadian (Manitoba) QuickBooks Online Plus company, as the reference refresh keeps them (contract 3.8). Shapes follow QBO API responses (minorversion 75); ids are the sandbox style.",
+  "agencies": [
+    { "Id": "1", "DisplayName": "Canada Revenue Agency", "LastFileDate": "2026-09-30" },
+    { "Id": "2", "DisplayName": "Manitoba Finance" },
+    { "Id": "3", "DisplayName": "Minister of Finance (Ontario)" }
+  ],
+  "rates": [
+    { "Id": "1", "Name": "GST", "RateValue": 5, "AgencyRef": { "value": "1" }, "Active": true, "EffectiveTaxRate": [{ "RateValue": 5, "EffectiveDate": "2008-01-01T00:00:00-08:00" }] },
+    { "Id": "2", "Name": "PST (MB)", "RateValue": 7, "AgencyRef": { "value": "2" }, "Active": true, "EffectiveTaxRate": [
+      { "RateValue": 8, "EffectiveDate": "2013-07-01T00:00:00-07:00", "EndDate": "2019-06-30T00:00:00-07:00" },
+      { "RateValue": 7, "EffectiveDate": "2019-07-01T00:00:00-07:00" }
+    ] },
+    { "Id": "3", "Name": "PST (MB) 8% old", "RateValue": 8, "AgencyRef": { "value": "2" }, "Active": true },
+    { "Id": "4", "Name": "Exempt", "RateValue": 0, "AgencyRef": { "value": "1" }, "Active": true },
+    { "Id": "5", "Name": "Zero-rated", "RateValue": 0, "AgencyRef": { "value": "1" }, "Active": true },
+    { "Id": "6", "Name": "Out of Scope", "RateValue": 0, "AgencyRef": { "value": "1" }, "Active": true },
+    { "Id": "8", "Name": "PST (MB) on purchases", "RateValue": 7, "AgencyRef": { "value": "2" }, "Active": true },
+    { "Id": "17", "Name": "HST ON", "RateValue": 13, "AgencyRef": { "value": "1" }, "Active": true }
+  ],
+  "codes": [
+    { "Id": "10", "Name": "GST/PST MB", "Active": true,
+      "SalesTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "1", "name": "GST" }, "TaxTypeApplicable": "TaxOnAmount", "TaxOrder": 0 }, { "TaxRateRef": { "value": "2", "name": "PST (MB)" }, "TaxTypeApplicable": "TaxOnAmount", "TaxOrder": 0 }] },
+      "PurchaseTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "1", "name": "GST" } }, { "TaxRateRef": { "value": "8", "name": "PST (MB) on purchases" } }] } },
+    { "Id": "11", "Name": "GST", "Active": true,
+      "SalesTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "1", "name": "GST" } }] },
+      "PurchaseTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "1", "name": "GST" } }] } },
+    { "Id": "12", "Name": "Exempt", "Active": true,
+      "SalesTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "4" } }] },
+      "PurchaseTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "4" } }] } },
+    { "Id": "13", "Name": "Zero-rated", "Active": true,
+      "SalesTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "5" } }] },
+      "PurchaseTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "5" } }] } },
+    { "Id": "14", "Name": "Out of Scope", "Active": true,
+      "SalesTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "6" } }] },
+      "PurchaseTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "6" } }] } },
+    { "Id": "15", "Name": "GST/PST MB (old)", "Active": true,
+      "SalesTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "1" } }, { "TaxRateRef": { "value": "3" } }] },
+      "PurchaseTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "1" } }, { "TaxRateRef": { "value": "3" } }] } },
+    { "Id": "16", "Name": "HST ON", "Active": true,
+      "SalesTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "17" } }] },
+      "PurchaseTaxRateList": { "TaxRateDetail": [{ "TaxRateRef": { "value": "17" } }] } }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "_note": "qbo_mappings for TG Electrical (Manitoba), as GET /api/v1/qbo/mappings returns them (contract 7.6). Ids point at reference.json, items.json and the chart of accounts below.",
+  "item": { "material": "21", "labour": "22", "other": "23", "markup": "24", "travel": "22", "deposit": "25" },
+  "taxCode": { "GST+RST|MB": "10", "GST": "11", "NONE|EXEMPT": "12", "NONE|ZERO": "13", "NONE|OOS": "14", "TAX": "10", "HST|ON": "16" },
+  "purchaseTaxCode": { "GST+RST|MB": "11", "GST": "11", "NONE": "12", "stripeFee": "12" },
+  "account": {
+    "income.default": "45", "expense.default": "71", "jobCost.material": "71", "jobCost.subcontract": "72", "jobCost.equipment": "73", "jobCost.other": "74",
+    "stripeClearing": "91", "stripeFees": "75", "stripePayoutBank": "92"
+  },
+  "paymentMethod": { "cash": "31", "check": "32", "card": "33", "e-transfer": "34", "transfer": "34" },
+  "depositTo": { "cash": "41", "check": "41", "card": "41", "e-transfer": "41", "transfer": "41" },
+  "paidFrom": { "card": "51", "cash": "52", "debit": "52", "cheque": "53", "transfer": "53" },
+  "option": { "jobsAsSubCustomers": true, "numbering": "fishtape", "syncFrom": "2026-10-01", "items": "on_use", "stripeVendorId": "703", "timeOwner": "fishtape" }
+}
