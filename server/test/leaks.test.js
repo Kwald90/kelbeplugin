@@ -145,7 +145,9 @@ describe('public endpoints and URLs', { skip }, () => {
       'clientId', 'jobId', 'status', 'stage', 'number', 'employeeId', 'leadId', 'sequenceId', 'relatedId', 'invoiceId', 'sku',
       'itemId', 'permitId', 'result', 'date', 'drawingId',
       // safety: an incident kind code and employee / record ids
-      'kind', 'ownerId', 'sourceId']);
+      'kind', 'ownerId', 'sourceId',
+      // work plans: GET /api/v1/workTasks?planId=, GET /api/v1/kpis?from=&to= (ids and YYYY-MM-DD only)
+      'planId', 'from', 'to']);
     for (const [path, ops] of Object.entries(spec.paths)) {
       for (const op of Object.values(ops)) {
         for (const p of op.parameters || []) {

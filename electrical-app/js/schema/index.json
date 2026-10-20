@@ -34,6 +34,10 @@
     "safetyInspections": "./safetyInspections.json",
     "siteOrientations": "./siteOrientations.json",
     "jobSafety": "./jobSafety.json",
+    "workPlans": "./workPlans.json",
+    "workTasks": "./workTasks.json",
+    "taskTemplates": "./taskTemplates.json",
+    "huddles": "./huddles.json",
     "auditLog": "./auditLog.json"
   }
 }

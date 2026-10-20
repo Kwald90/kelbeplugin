@@ -11,15 +11,16 @@ export const PERMS = [
   'dashboard', 'clients', 'leads', 'sequences', 'jobs', 'schedule', 'drawings', 'estimates', 'invoices',
   'inventory', 'employees', 'time', 'time-approve', 'sops', 'compliance', 'security', 'calcs', 'panels', 'settings',
   'safety',
+  'today', 'workplan', 'kpis',
 ];
 
 export const ROLES = {
   owner: { label: 'Owner', perms: PERMS },
   admin: { label: 'Admin', perms: PERMS },
   office: { label: 'Office', perms: PERMS.filter((p) => !['security', 'settings'].includes(p)) },
-  foreman: { label: 'Foreman', perms: ['dashboard', 'jobs', 'schedule', 'drawings', 'inventory', 'time', 'time-approve', 'sops', 'compliance', 'calcs', 'panels', 'safety'] },
-  electrician: { label: 'Electrician', perms: ['dashboard', 'jobs', 'drawings', 'time', 'sops', 'calcs', 'panels', 'compliance', 'safety'] },
-  apprentice: { label: 'Apprentice', perms: ['dashboard', 'jobs', 'drawings', 'time', 'sops', 'calcs', 'safety'] },
+  foreman: { label: 'Foreman', perms: ['dashboard', 'jobs', 'schedule', 'drawings', 'inventory', 'time', 'time-approve', 'sops', 'compliance', 'calcs', 'panels', 'safety', 'today', 'workplan', 'kpis'] },
+  electrician: { label: 'Electrician', perms: ['dashboard', 'jobs', 'drawings', 'time', 'sops', 'calcs', 'panels', 'compliance', 'safety', 'today'] },
+  apprentice: { label: 'Apprentice', perms: ['dashboard', 'jobs', 'drawings', 'time', 'sops', 'calcs', 'safety', 'today'] },
 };
 
 const MANAGER_ROLES = ['owner', 'admin', 'office', 'foreman'];

@@ -1,6 +1,8 @@
 // Server-side access rules per collection. Same roles and permission keys as the PWA
 // (auth/permissions.js), applied to every REST call and every sync mutation.
 import { AUDIT_COLLECTION, collectionDef } from '../collections.js';
+// Work tasks: the same rules the PWA applies offline (who may change what, photo evidence).
+import { mergeTask, taskWriteProblem } from '../../../electrical-app/js/lib/workplan.js';
 
 /**
  * @typedef {object} Principal
@@ -49,13 +51,39 @@ export function canWrite(p, coll) {
 }
 
 /**
- * Row filter for reads. Non-managers see only their own time entries.
- * @returns {null | { column: string, value: string|null }}
+ * Row filter for reads. Non-managers see only their own time entries and work tasks, and of
+ * their tasks only the published ones (`exclude`: rows whose column holds one of `values`).
+ * @returns {null | { column: string, value: string|null, exclude?: { column: string, field: string, values: string[] } }}
  */
 export function rowFilter(p, coll) {
   const def = collectionDef(coll);
-  if (def?.ownRows && p.kind !== 'api_key' && !p.isManager) return { column: 'employee_id', value: p.employeeId || null };
+  if (def?.ownRows && p.kind !== 'api_key' && !p.isManager) {
+    const f = { column: 'employee_id', value: p.employeeId || null };
+    const hide = def.ownRowsHide;
+    const col = hide && def.gen.find((x) => x.field === hide.field)?.col;
+    if (col) f.exclude = { column: col, field: hide.field, values: [...hide.values] };
+    return f;
+  }
   return null;
+}
+
+/** Does a row's data pass the row filter? (the same test as the SQL in services/records.js) */
+export function rowVisible(f, data, def) {
+  if (!f) return true;
+  const field = def.gen.find((x) => x.col === f.column)?.field;
+  if (f.value == null || data?.[field] !== f.value) return false;
+  if (f.exclude && f.exclude.values.includes(data?.[f.exclude.field])) return false;
+  return true;
+}
+
+/**
+ * The data to store for a write, when a collection merges instead of replacing: work tasks
+ * keep the foreman's fields from a worker's write and resolve progress by its own timestamp
+ * (lib/workplan.js mergeTask). Returns null for collections that store what was sent.
+ */
+export function mergeWrite(p, coll, existing, next) {
+  if (coll !== 'workTasks' || !existing || !next) return null;
+  return mergeTask(existing, next, { worker: p.kind !== 'api_key' && !p.isManager });
 }
 
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -73,6 +101,11 @@ function changedKeys(before, after) {
  * @param {object|null} next      new record data (null when deleting)
  */
 export function checkWriteRules(p, coll, existing, next) {
+  // Evidence is required on every path, API keys included; the rest is per person.
+  if (coll === 'workTasks') {
+    if (p.kind === 'api_key') return taskWriteProblem({ isManager: true, employeeId: null }, existing, next);
+    return taskWriteProblem({ isManager: p.isManager, employeeId: p.employeeId || null }, existing, next);
+  }
   if (p.kind === 'api_key') return null;
   const def = collectionDef(coll);
 

@@ -7,6 +7,7 @@
 // Collections added later carry `migration: 'NNNN'` in the registry and are left out of
 // 0003; their tables come from the same tableSql() in their own file:
 //   node scripts/gen-collections-sql.js --migration 0110 [--print]
+//   node scripts/gen-collections-sql.js --all     every file (0003 and each later one)
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { TABLE_COLLECTIONS, collectionDef } from '../src/collections.js';
@@ -136,7 +137,7 @@ GRANT SELECT ON record_history, sync_mutations TO fishtape_hq;
 }
 
 /** Later migrations that create collection tables: version -> file name. */
-export const LATER = { '0110': '0110_safety.sql' };
+export const LATER = { '0100': '0100_workplan.sql', '0110': '0110_safety.sql' };
 export const laterFile = (version) => fileURLToPath(new URL(`../migrations/${LATER[version]}`, import.meta.url));
 
 /** The tables of the collections whose registry entry says `migration: version`, made exactly like 0003's. */
@@ -148,7 +149,18 @@ export function generateLater(version) {
 ` + colls.map((c) => tableSql(collectionDef(c))).join('');
 }
 
+/** Every generated migration, 0003 first: [{ name, file, sql }] (test/unit.test.js checks them all). */
+export function outputs() {
+  const later = [...new Set(TABLE_COLLECTIONS.map((c) => collectionDef(c).migration).filter(Boolean))].sort();
+  for (const v of later) if (!LATER[v]) throw new Error(`collections use migration ${v}, which has no file in LATER`);
+  return [{ name: '0003', file: OUT, sql: generate() }, ...later.map((v) => ({ name: v, file: laterFile(v), sql: generateLater(v) }))];
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  if (process.argv.includes('--all')) {
+    for (const o of outputs()) { writeFileSync(o.file, o.sql); console.log(`wrote ${o.file}`); }
+    process.exit(0);
+  }
   const i = process.argv.indexOf('--migration');
   const version = i > 0 ? process.argv[i + 1] : null;
   if (version && !LATER[version]) throw new Error(`no later collections migration ${version}`);
