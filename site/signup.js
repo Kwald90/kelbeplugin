@@ -4,11 +4,9 @@
 // Tiers and prices come from the app's plans.js, the trial length and deposit from the API.
 import { PLANS, EXTRA_USER_CENTS, CURRENCY, monthlyCents } from '/js/plans.js';
 import { BRAND } from '/js/brand.js';
-import { appOrigin } from '/site/app-link.js';
+import { wireAppLinks } from '/site/app-link.js';
 
 const API = document.querySelector('meta[name="fishtape-api"]')?.content.replace(/\/$/, '') || '';
-// The app's origin: '' on one-host setups, app.fishtapehq.com from the apex (site/app-link.js).
-const APP = appOrigin();
 const SELF_SERVE = ['starter', 'pro', 'business'];
 const DRAFT_KEY = 'ft.signup.draft';
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,253}\.[^\s@]{2,63}$/;
@@ -36,7 +34,8 @@ const draft = {
 };
 
 for (const n of document.querySelectorAll('[data-brand]')) n.textContent = BRAND.name;
-for (const a of document.querySelectorAll('[data-app-link]')) a.href = `${APP}/#/sign-in`;
+// The plain "Sign in" links open the sign-in screen; links with their own path ("Try the demo") keep it.
+wireAppLinks(document, '/#/sign-in');
 $('year').textContent = String(new Date().getFullYear());
 document.title = `Start your free trial · ${BRAND.name}`;
 

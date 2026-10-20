@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 const mem = new Map();
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
 
-const { createTapDetector, gesturePrefs, getGesture, setGesture, hasGestureChoice, GESTURE_ACTION_IDS } = await import('../js/canvas/gestures.js');
+const { createTapDetector, gesturePrefs, getGesture, setGesture, hasGestureChoice, tapRollback, GESTURE_ACTION_IDS } = await import('../js/canvas/gestures.js');
 const { reconcilePrefs } = await import('../js/session.js');
 
 /**
@@ -107,4 +107,61 @@ test('gesture prefs sync like units and theme: local changes go up, the profile 
   // untouched defaults are not pushed to a profile that has none
   r = reconcilePrefs({ local: { units: null, theme: 'system', twoFingerTap: null, threeFingerTap: null, longPress: null }, server: {}, synced: null });
   assert.equal(Object.hasOwn(r.push, 'twoFingerTap'), false);
+});
+
+// The editor's undo model (canvas/editor.js): checkpoint() pushes a snapshot and clears redo; a
+// recognised tap takes back its first finger (tapRollback) and then runs the gesture.
+function miniEditor(items) {
+  const ed = { items: [...items], undo: [], redo: [], mark: null };
+  const snap = () => ({ json: JSON.stringify(ed.items) });
+  ed.checkpoint = () => { ed.undo.push(snap()); if (ed.undo.length > 80) ed.undo.shift(); ed.redo = []; };
+  ed.doUndo = () => { if (!ed.undo.length) return false; ed.redo.push(snap()); ed.items = JSON.parse(ed.undo.pop().json); return true; };
+  ed.doRedo = () => { if (!ed.redo.length) return false; ed.undo.push(snap()); ed.items = JSON.parse(ed.redo.pop().json); return true; };
+  ed.erase = (x) => { ed.checkpoint(); ed.items = ed.items.filter((i) => i !== x); };
+  ed.place = (x) => { ed.checkpoint(); ed.items.push(x); };
+  ed.fingerDown = () => { ed.mark = { undo: ed.undo.slice(), redo: ed.redo.slice() }; };
+  ed.tap = (act) => {
+    const back = tapRollback(ed.mark, ed.undo);
+    ed.mark = null;
+    if (back) { ed.items = JSON.parse(back.snap.json); ed.undo = back.undo; ed.redo = back.redo; }
+    return act === 'undo' ? ed.doUndo() : ed.doRedo();
+  };
+  return ed;
+}
+
+test('a two-finger tap whose first finger erased something undoes the last real erase', () => {
+  const ed = miniEditor(['a', 'b', 'c']);
+  ed.erase('a'); // what the person wants undone
+  ed.fingerDown(); ed.erase('b'); // the tap's first finger lands on other ink
+  ed.tap('undo');
+  assert.deepEqual(ed.items, ['a', 'b', 'c'], 'b is back and so is a');
+  assert.equal(ed.redo.length, 1);
+  ed.fingerDown(); ed.erase('c'); // a three-finger tap's first finger
+  assert.equal(ed.tap('redo'), true, 'redo history survives the tap');
+  assert.deepEqual(ed.items, ['b', 'c']);
+});
+
+test('a two-finger tap while placing symbols undoes the previous placement, not the one it made', () => {
+  const ed = miniEditor([]);
+  ed.place('s1'); ed.place('s2');
+  ed.fingerDown(); ed.place('s3');
+  ed.tap('undo');
+  assert.deepEqual(ed.items, ['s1']);
+  ed.fingerDown(); ed.place('s4');
+  ed.tap('undo');
+  assert.deepEqual(ed.items, []);
+});
+
+test('tap rollback: nothing to take back when the first finger changed nothing, and a full undo stack is kept whole', () => {
+  assert.equal(tapRollback(null, []), null);
+  const ed = miniEditor(['x']);
+  for (let i = 0; i < 80; i++) ed.place(`p${i}`);
+  ed.fingerDown();
+  assert.equal(tapRollback(ed.mark, ed.undo), null, 'a freehand finger commits nothing before lifting');
+  const oldest = ed.undo[0];
+  ed.place('stray'); // the 81st checkpoint drops the oldest
+  ed.tap('undo');
+  assert.equal(ed.undo[0], oldest, 'the dropped snapshot is back');
+  assert.equal(ed.undo.length, 79);
+  assert.deepEqual(ed.items, ['x', ...Array.from({ length: 79 }, (_, i) => `p${i}`)]);
 });

@@ -535,8 +535,14 @@ async function boot() {
     history.replaceState(null, '', `${location.pathname}${location.search}#/welcome`);
     return showGate('welcome');
   }
-  // A link from the website (app.fishtapehq.com/#/demo) opens the device-only demo straight away.
-  if (id === 'demo' && !session.isDemo()) { session.setDemo(true); history.replaceState(null, '', `${location.pathname}${location.search}#/dashboard`); }
+  // A link from the website (app.fishtapehq.com/#/demo) opens the device-only demo straight away,
+  // unless this device already belongs to a company (signed in, or a shared crew iPad): then the
+  // link is dropped and the app starts as usual. "Try the demo" on the sign-in screen still works.
+  if (id === 'demo' && !session.isDemo()) {
+    if (session.demoLinkAllowed()) session.setDemo(true);
+    else ui.toast('This device is set up for your company, so the demo link was ignored. Sign out to try the demo.', 'info', 5000);
+    history.replaceState(null, '', `${location.pathname}${location.search}#/dashboard`);
+  }
   if (session.isDemo()) return startDemo();
   const res = await session.load();
   if (res.state === 'signed-in') {

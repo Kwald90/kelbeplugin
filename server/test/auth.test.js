@@ -155,6 +155,17 @@ describe('login, MFA, lockout, sessions', { skip }, () => {
     assert.equal((await call(app, { url: '/api/v1/me', token: m.token })).status, 200);
   });
 
+  test('an account with no password (Google/Microsoft only) is told so: /me says hasPassword false, change answers no_password', async () => {
+    const m = await addMember(t, app, A.tenantId, { role: 'office' });
+    assert.equal((await call(app, { url: '/api/v1/me', token: m.token })).body.user.hasPassword, true);
+    await t.superPool.query('UPDATE users SET password_hash = NULL WHERE id = $1', [m.userId]);
+    assert.equal((await call(app, { url: '/api/v1/me', token: m.token })).body.user.hasPassword, false);
+    const r = await call(app, { method: 'POST', url: '/api/v1/auth/password/change', token: m.token, body: { currentPassword: 'anything at all', newPassword: 'a brand new passphrase' } });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error.code, 'no_password');
+    assert.doesNotMatch(r.body.error.message, /wrong/);
+  });
+
   test('forgot/reset: emailed link sets a new password once and signs everything out', async () => {
     const m = await addMember(t, app, A.tenantId, { role: 'office' });
     assert.equal((await call(app, { method: 'POST', url: '/api/v1/auth/password/forgot', body: { email: 'ghost@example.test' } })).status, 202);

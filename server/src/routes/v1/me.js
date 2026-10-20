@@ -2,8 +2,9 @@
 // and plan entitlements, and their own preferences. PATCH /api/v1/me/prefs saves the
 // preferences that follow a person across devices (units, theme, drawing-canvas finger gestures).
 //
-// Nothing here is secret: no tokens, hashes, MFA secrets or recovery codes, and only the
-// caller's own user and memberships. Every /api response is Cache-Control: no-store.
+// Nothing here is secret: no tokens, hashes (only whether a password is set), MFA secrets or
+// recovery codes, and only the caller's own user and memberships. Every /api response is
+// Cache-Control: no-store.
 import { ApiError } from '../../errors.js';
 import { appendAudit, requestFacts } from '../../services/audit.js';
 import { userMemberships } from '../../services/tenants.js';
@@ -41,12 +42,14 @@ export async function meBody(db, row) {
   const hasTenant = Boolean(row.tenant_id && role);
   const [memberships, prefsRow, plan] = await Promise.all([
     userMemberships(db, row.user_id),
-    db.query('SELECT prefs FROM users WHERE id = $1', [row.user_id]),
+    db.query('SELECT prefs, password_hash IS NOT NULL AS has_password FROM users WHERE id = $1', [row.user_id]),
     // Entitlements only once MFA is satisfied: before that the session can do nothing with them.
     hasTenant && state === 'ok' ? loadTenantPlan(db, row.tenant_id) : null,
   ]);
   return {
-    user: { id: row.user_id, email: row.email, displayName: row.display_name, platformRole: row.platform_role || null },
+    // hasPassword: false for a Google/Microsoft-only account (or one HQ cleared). The Account page
+    // then offers an emailed link to set one instead of a "change password" form that can't work.
+    user: { id: row.user_id, email: row.email, displayName: row.display_name, platformRole: row.platform_role || null, hasPassword: Boolean(prefsRow.rows[0]?.has_password) },
     session: { kind: row.kind, expiresAt: row.expires_at, mfa: state === 'ok' ? null : state, mfaEnrolled: Boolean(row.mfa_enrolled) },
     tenant: hasTenant ? {
       id: row.tenant_id, name: row.tenant_name, status: row.tenant_status, role, employeeId: row.employee_id || null,

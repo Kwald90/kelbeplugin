@@ -10,7 +10,7 @@ import { SYMBOLS, SYMBOL_ORDER, symbolPreview } from './symbols.js';
 import { createRooms, swallowNextClick, ROOM_ICON, CHECK_ICON, WAND_ICON } from './rooms.js';
 import { createStabilizer, clampSmooth } from './stabilizer.js';
 import { eraseStrokes, distToSeg, segSegDist } from './erase.js';
-import { createTapDetector, getGesture, actionLabel, gesturePanel, TAP } from './gestures.js';
+import { createTapDetector, getGesture, actionLabel, gesturePanel, tapRollback, TAP } from './gestures.js';
 import { session, savePref } from '../session.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 import {
@@ -573,6 +573,12 @@ export function openEditor(root, ctx, id) {
     d.texts.push({ id: uid(), layer: st.activeLayer, x: wx, y: wy, text: text.trim(), color: o.color, size: o.size });
     changed();
   }
+  /** The text tool at a point: edit the label there, or add one. */
+  function textAt(wx, wy) {
+    const hit = hitTest(d, wx, wy, 4 / z(), usable);
+    swallowNextClick();
+    if (hit?.kind === 'text') editText(hit.item); else addText(wx, wy);
+  }
   async function editText(t) {
     const text = await ui.promptDialog('Label text', { title: 'Edit label', value: t.text, okLabel: 'Save' });
     if (text == null) return;
@@ -597,9 +603,17 @@ export function openEditor(root, ctx, id) {
   // Finger gestures (./gestures.js): a two- or three-finger tap and a one-finger hold run the
   // person's chosen action. Palms never reach the detector, and the Pencil touching down cancels
   // any tap in progress. A tap's fingers start a pinch like any two fingers; if they turn out to
-  // be a tap, the view goes back to where it was.
+  // be a tap, the view goes back to where it was, and so does anything the first finger did with
+  // the tool before the others landed (in finger-drawing mode: an erase, a symbol, a move).
   const taps = createTapDetector();
-  let holdTimer = 0, tapView = null;
+  let holdTimer = 0, tapView = null, tapMark = null;
+
+  function takeBackTapFinger() {
+    const back = tapRollback(tapMark, undo);
+    tapMark = null;
+    if (!back) return;
+    restore(back.snap); undo = back.undo; redo = back.redo; changed();
+  }
 
   function runGesture(key, view0) {
     const act = getGesture(key);
@@ -635,7 +649,7 @@ export function openEditor(root, ctx, id) {
     if (pen) { taps.cancel(); clearTimeout(holdTimer); }
     if (touch) {
       const [tx, ty] = local(e);
-      if (!taps.active) tapView = st.view ? { ...st.view } : null;
+      if (!taps.active) { tapView = st.view ? { ...st.view } : null; tapMark = { undo: undo.slice(), redo: redo.slice() }; }
       taps.down(e.pointerId, tx, ty, e.timeStamp);
       clearTimeout(holdTimer);
       if (taps.active === 1 && getGesture('longPress') !== 'none') holdTimer = setTimeout(onHold, TAP.holdMs + 20);
@@ -703,9 +717,9 @@ export function openEditor(root, ctx, id) {
       }
       updateChrome();
     } else if (t === 'text') {
-      const hit = hitTest(d, wx, wy, 4 / z(), usable);
-      swallowNextClick();
-      if (hit?.kind === 'text') editText(hit.item); else addText(wx, wy);
+      // a finger waits for its lift: it may be the first finger of a two-finger tap
+      if (touch) op = { type: 'text', pid: e.pointerId, at: [wx, wy] };
+      else textAt(wx, wy);
     } else if (t === 'eraser') {
       op = { type: 'erase', pid: e.pointerId, cp: false, lastW: [wx, wy] };
       if (eraseSweep([wx, wy], [wx, wy])) changed();
@@ -828,7 +842,7 @@ export function openEditor(root, ctx, id) {
     if (e.pointerType === 'touch') {
       const n = e.type === 'pointercancel' ? (taps.cancel(), null) : taps.up(e.pointerId, e.timeStamp);
       if (!taps.active) clearTimeout(holdTimer);
-      if (n) { pinch = null; if (op?.type !== 'wire') op = null; wrap.classList.remove('panning'); runGesture(n === 2 ? 'twoFingerTap' : 'threeFingerTap', tapView); return; }
+      if (n) { pinch = null; if (op?.type !== 'wire') op = null; wrap.classList.remove('panning'); takeBackTapFinger(); runGesture(n === 2 ? 'twoFingerTap' : 'threeFingerTap', tapView); return; }
     }
     if (pinch) {
       if ([...pointers.values()].filter((p) => p.type === 'touch').length < 2) pinch = null;
@@ -845,6 +859,7 @@ export function openEditor(root, ctx, id) {
     // mouse stroke (iPadOS taking the stroke for Scribble or a system gesture) keeps what was drawn.
     const cancelled = e.type === 'pointercancel';
     if (cancelled && (cur.type === 'shape' || (cur.type === 'draw' && e.pointerType === 'touch'))) { requestFrame(); return; }
+    if (cur.type === 'text') { if (!cancelled) textAt(...cur.at); return; }
     if (cur.type === 'draw') {
       const s = cur.stroke;
       if (!cur.straight) cur.stab.end(cur.last); // catch up to the last sample, not e: a cancel's coordinates can be 0,0

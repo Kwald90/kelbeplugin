@@ -3,6 +3,7 @@
 // the web (cookies, same origin), against a fake fetch and a fake Capacitor bridge.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 const ORIGIN = 'https://tgelectrical.truecollarbuilt.com';
 const keychain = new Map();
@@ -141,4 +142,30 @@ test('web: same origin with the cookie, no mode, no token handling', async () =>
   await W.apiFetch('/api/v1/integrations', { credentials: 'same-origin', headers: { 'x-fishtape': '1' }, method: 'POST' });
   assert.deepEqual({ url: last().url, credentials: last().credentials, headers: last().headers }, { url: '/api/v1/integrations', credentials: 'same-origin', headers: { 'x-fishtape': '1' } });
   assert.deepEqual(keychain, before);
+});
+
+test('a #/demo link opens the demo only on a device no company uses (not signed in, not a crew iPad)', async () => {
+  const W = await import('../js/session.js?web');
+  const mem = new Map();
+  const realStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) },
+  });
+  try {
+    assert.equal(W.session.demoLinkAllowed(), true, 'a fresh device');
+    W.session.remember({ user: { id: 'u1' }, tenant: { id: 't1' } });
+    assert.equal(W.session.demoLinkAllowed(), false, 'signed in to a company');
+    W.session.forget();
+    assert.equal(W.session.demoLinkAllowed(), true, 'signed out');
+    W.session.setDevice({ id: 'd1', name: 'Truck iPad', tenantId: 't1' });
+    assert.equal(W.session.demoLinkAllowed(), false, 'a registered crew iPad');
+  } finally {
+    if (realStorage) Object.defineProperty(globalThis, 'localStorage', realStorage); else delete globalThis.localStorage;
+  }
+  // boot() asks first: the link alone never turns the demo on.
+  const src = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  const demoLink = src.slice(src.indexOf("if (id === 'demo'"), src.indexOf('if (session.isDemo()) return startDemo();'));
+  assert.match(demoLink, /if \(session\.demoLinkAllowed\(\)\) session\.setDemo\(true\);/);
+  assert.equal(demoLink.match(/setDemo\(true\)/g).length, 1);
 });

@@ -664,8 +664,20 @@ export default {
         put(pwMsg, note('Password changed. Your other devices are signed out.', 'success'));
       } catch (e) { put(pwMsg, note(e.message, 'danger')); }
     }));
-    const pwCard = card('Password', 'At least 12 characters. Changing it signs out your other devices.',
-      h('form', { class: 'stack', onSubmit: (e) => { e.preventDefault(); pwBtn.click(); } }, curPw, newPw, newPw2, pwMsg, h('div', { class: 'row' }, pwBtn)));
+    // No password yet (Google/Microsoft only, or HQ cleared it): there is no current password to
+    // type, so offer the emailed link (POST /api/v1/auth/password/forgot) that sets one.
+    const setPwBtn = ui.button('Email me a link to set one', { icon: 'key', disabled: offline || !me.user?.email });
+    setPwBtn.addEventListener('click', busyButton(setPwBtn, async () => {
+      put(pwMsg);
+      try {
+        await api.post('/api/v1/auth/password/forgot', { email: me.user.email });
+        put(pwMsg, note(`A link is on its way to ${me.user.email}. It works for one hour.`, 'success'));
+      } catch (e) { put(pwMsg, note(e.message, 'danger')); }
+    }));
+    const pwCard = me.user?.hasPassword === false
+      ? card('Password', 'You sign in with Google or Microsoft. Set a password to sign in with your email too.', pwMsg, h('div', { class: 'row' }, setPwBtn))
+      : card('Password', 'At least 12 characters. Changing it signs out your other devices.',
+        h('form', { class: 'stack', onSubmit: (e) => { e.preventDefault(); pwBtn.click(); } }, curPw, newPw, newPw2, pwMsg, h('div', { class: 'row' }, pwBtn)));
 
     const sync = syncPanel(app);
     root.append(ui.page({ title: 'Account', subtitle: `${acct.name}${me.user?.email ? ` · ${me.user.email}` : ''}`, actions: [
