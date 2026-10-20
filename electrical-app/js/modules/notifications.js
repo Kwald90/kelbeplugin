@@ -99,7 +99,7 @@ export function notifyBell(ui) {
     if (!btn.isConnected && started && btn.dataset.painted) return;
     btn.dataset.painted = '1';
     const n = unread();
-    ui.clear(btn).append(ui.icon(BELL, 22), n ? h('span', { class: 'notify-count', 'aria-hidden': 'true' }, n > 99 ? '99+' : String(n)) : null,
+    h(ui.clear(btn), null, ui.icon(BELL, 22), n ? h('span', { class: 'notify-count', 'aria-hidden': 'true' }, n > 99 ? '99+' : String(n)) : null,
       h('span', { class: 'tip' }, n ? `${n} unread notification${n === 1 ? '' : 's'}` : 'Notifications'));
     btn.setAttribute('aria-label', n ? `Notifications, ${n} unread` : 'Notifications');
   };
@@ -130,7 +130,7 @@ export function openPanel(ui) {
     ui.clear(body);
     const list = items();
     const n = unreadCount(list);
-    body.append(
+    h(body, null, // h() skips nulls; Element.append would print "null"
       h('div', { class: 'row' }, h('span', { class: 'muted grow' }, n ? `${n} unread` : 'All caught up'),
         n ? ui.button('Mark all read', { size: 'sm', variant: 'ghost', icon: 'check', onClick: () => markAllRead() }) : null),
       state.error && synced() ? h('div', { class: 'muted notify-offline' }, ui.icon('alert', 14), " Couldn't reach the server; showing what's on this device.") : null,

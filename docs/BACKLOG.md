@@ -35,8 +35,6 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** Sequences screen still says providers aren't connected and hides failed outbox items unless "Show sent" is on.
 - **dev** Facebook leads after a downgrade get a 403 and are lost once Meta stops retrying: store them and show them as locked instead.
 - **dev** Stripe refunds don't sync back; emailed invoices carry a summary and pay link but no PDF attachment.
-- **dev** Settings → Data: when signed in, "Wipe" means "download again" and restoring a backup is refused; reword the card.
-- **dev** Security screen shows only this device's log when signed in; read `/api/v1/auditLog`.
 - **dev** A dev script that serves the PWA with an `/api/` proxy to a local API (the E2E driver has one).
 - **dev** Photos and drawing underlays as data URLs: move to object storage. A dense 20-sheet plan set is about 140 MB held in memory and synced as whole records (each sheet up to ~7 MB).
 - **dev** Plan sets: the wire-runs plan picker still copies full drawings; job and client tabs list sheets one by one instead of grouped; read sheet numbers from the title block when a PDF has no page labels.
@@ -46,9 +44,12 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** BC jobs with mixed tax treatment need tax per line, not per document.
 - **dev** CEC Table 14 (other occupancies) not built: no reliable source found.
 - **dev** Client portal (homeowners/GCs view, sign and pay) once integrations are live.
+- **dev** QuickBooks Online API connection (OAuth, push customers/invoices/payments, pull payments back) instead of CSV files. Today: CSV export at `#/import/export` (formats in `docs/code/imports.md`).
+- **dev** Print the company logo (`settings.company.logo`, set in Settings and onboarding) on estimates and invoices (`js/lib/doc-view.js`).
+- **dev** Imports: undo only on the device that ran it (batches in local meta); a server-side import job for files over 20,000 rows; VERIFY QuickBooks export headers and CA tax code names with a real QuickBooks file.
+- **dev** Notifications: jobs assigned, time to approve and expiring items are worked out on each device; move them server-side (notify() on job/time writes) so the daily email includes them.
 - **dev** Production nginx: serve `site/` (pricing, Enterprise form) on the marketing domain once it's confirmed, and the status page on `status.` (today it returns the status JSON).
 - **dev** Google/Microsoft sign-in in the iOS app (hidden there today): native OIDC through `ASWebAuthenticationSession` with PKCE, and a server endpoint that returns a bearer session instead of a cookie.
-- **dev** A Settings screen for company API keys (create, scope, revoke). Today it's `POST /api/v1/api-keys` only, and the MCP guide points there.
 
 ## Process
 

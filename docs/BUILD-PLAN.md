@@ -204,7 +204,7 @@ Shared pieces already in the base branch, use them, don't fork them:
 
 Conventions:
 - **Migrations:** each workstream uses its own number range so files never collide: G 0010–0019, H 0020–0029,
-  I 0040–0049, J 0050–0059, portal 0060–0069. Platform tables get RLS like the rest if they hold tenant data.
+  I 0040–0049, J 0050–0059, portal 0060–0069, onboarding/import/notifications 0090–0099. Platform tables get RLS like the rest if they hold tenant data.
 - **Routes:** add your own Fastify plugin file and one `app.register(...)` line in `server/src/app.js` (the lead resolves the
   one-line merge conflicts). **Modules:** add your module file and one line in `electrical-app/js/modules/index.js`.
 - Every new endpoint: permission check, entitlement check where gated, audit event on writes, `Cache-Control: no-store`,

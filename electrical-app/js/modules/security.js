@@ -157,11 +157,10 @@ export default {
       body.append(h('div', { class: 'card log-filters' }, h('div', { class: 'form-grid' }, input('Action', 'action', 'e.g. record.delete'), input('Area', 'coll', 'e.g. invoices'),
         h('div', { class: 'field' }, h('span', null, 'Source'), ui.tabs([{ id: 'server', label: 'Company (server)' }, { id: 'device', label: 'This device' }], source, (t) => { source = t; draw(); })))), host);
       const paint = (err) => {
-        ui.clear(host).append(h('div', { class: 'row', style: { margin: '8px 0' } }, h('span', { class: 'muted' }, err ? err.message : `${rows.length} entries${cursor ? ' loaded' : ''}`), h('span', { class: 'grow' }),
+        h(ui.clear(host), null, h('div', { class: 'row', style: { margin: '8px 0' } }, h('span', { class: 'muted' }, err ? err.message : `${rows.length} entries${cursor ? ' loaded' : ''}`), h('span', { class: 'grow' }),
           rows.length ? ui.button('Export CSV', { icon: 'download', size: 'sm', onClick: () => {
             const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-            ui.download(`audit-log-${ui.today()}.csv`, [['when', 'who', 'kind', 'action', 'area', 'record', 'detail'].join(','), ...rows.map((a) => [a.at, a.actorLabel, a.actorType, a.action, a.collection, a.recordId, a.summary].map(esc).join(','))].join('
-'), 'text/csv');
+            ui.download(`audit-log-${ui.today()}.csv`, [['when', 'who', 'kind', 'action', 'area', 'record', 'detail'].join(','), ...rows.map((a) => [a.at, a.actorLabel, a.actorType, a.action, a.collection, a.recordId, a.summary].map(esc).join(','))].join('\n'), 'text/csv');
             store.log('export', `Audit log CSV (${rows.length} rows)`, 'auditLog');
           } }) : null),
         ui.table({
