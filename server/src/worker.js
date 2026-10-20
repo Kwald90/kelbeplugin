@@ -9,8 +9,9 @@ import { createAiHandlers, scheduleAiJobs } from './ai/jobs.js';
 import { HQ_HANDLERS } from './services/hq-jobs.js';
 import { PLATFORM_EMAIL_HANDLERS, schedulePlatformEmail } from './services/platform-email.js';
 import { SIGNUP_HANDLERS, scheduleSignupCleanup } from './services/signup.js';
+import { FINANCE_HANDLERS, scheduleFinanceJobs } from './services/hq-finance.js';
 
-Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS, PLATFORM_EMAIL_HANDLERS, SIGNUP_HANDLERS);
+Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS, PLATFORM_EMAIL_HANDLERS, SIGNUP_HANDLERS, FINANCE_HANDLERS);
 
 const HOUR = 3600_000;
 
@@ -36,6 +37,7 @@ async function main() {
           await scheduleAiJobs(db);
           await schedulePlatformEmail(db);
           await scheduleSignupCleanup(db);
+          await scheduleFinanceJobs(db);
         }
         const r = await runOnce(db, { workerId, handlers, log: { info: (m) => log('info', m), error: (m) => log('error', m) } });
         if (r) { log(r.outcome === 'done' ? 'info' : 'warn', `job ${r.kind} ${r.outcome}`, { jobId: r.id, ...(r.error ? { error: r.error } : {}) }); continue; }
