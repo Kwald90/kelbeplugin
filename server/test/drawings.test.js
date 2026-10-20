@@ -5,7 +5,7 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { skip, createTestDatabase } from './support/db.js';
-import { addMember, call, ownerTenant, startApp } from './support/app.js';
+import { addMember, apiKey, call, ownerTenant, startApp } from './support/app.js';
 
 let t, app, A, B, office, foreman, crew;
 const mut = (o) => ({ mid: `m-${Math.random().toString(36).slice(2)}`, baseVersion: null, ...o });
@@ -198,6 +198,92 @@ describe('cost impact: prices for money roles only', { skip }, () => {
     assert.equal(r.status, 200);
     assert.equal(r.body.ready, false);
     assert.equal(r.body.reason, 'no-job');
+  });
+});
+
+describe('API keys, bill rates and a change of money access', { skip }, () => {
+  test('an API key gets cost-impact prices only when its scopes cover where they come from', async () => {
+    const drawingsOnly = await apiKey(app, A.token, ['drawings:read'], 'plan viewer');
+    const r = await call(app, { url: '/api/v1/drawings/dw-1/cost-impact', token: drawingsOnly });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.prices, false);
+    assert.ok(!MONEY_KEYS.test(JSON.stringify(r.body)), JSON.stringify(r.body));
+    assert.equal((await call(app, { url: '/api/v1/items/i-rec', token: drawingsOnly })).status, 403, 'the same key reading the price book directly');
+    const everything = await apiKey(app, A.token, ['*:read'], 'reporting');
+    const all = await call(app, { url: '/api/v1/drawings/dw-1/cost-impact', token: everything });
+    assert.equal(all.status, 200, JSON.stringify(all.body));
+    assert.equal(all.body.prices, true);
+    assert.equal(all.body.estimate.labourRateCents, 9500);
+  });
+
+  test("bill rates (a T&M job's own, the company travel rate, an employee's) stay with money roles", async () => {
+    const job = await call(app, { method: 'PATCH', url: '/api/v1/jobs/job-1', token: A.token, body: { billingMode: 'tm', labourRateCents: 14500, travelRateCents: 12000, markupPct: 15 } });
+    assert.equal(job.status, 200, JSON.stringify(job.body));
+    assert.equal((await call(app, { method: 'PATCH', url: '/api/v1/settings/settings', token: A.token, body: { billing: { defaultMode: 'tm', travelRateCents: 9000 } } })).status, 200);
+    assert.equal((await call(app, { method: 'PATCH', url: '/api/v1/employees/emp-crew', token: A.token, body: { rateCents: 4000, billRateCents: 9800 } })).status, 200);
+
+    const crewJob = (await call(app, { url: '/api/v1/jobs/job-1', token: crew.token })).body;
+    assert.equal(crewJob.billingMode, 'tm');
+    for (const k of ['labourRateCents', 'travelRateCents', 'markupPct']) assert.ok(!(k in crewJob), k);
+    assert.equal(crewJob.pricesHidden, true);
+    const crewSettings = (await call(app, { url: '/api/v1/settings/settings', token: crew.token })).body;
+    assert.equal(crewSettings.billing.defaultMode, 'tm');
+    assert.ok(!('travelRateCents' in crewSettings.billing));
+    const crewEmp = (await call(app, { url: '/api/v1/employees/emp-crew', token: crew.token })).body;
+    assert.equal(crewEmp.name, 'Jackson Reid');
+    assert.ok(!('rateCents' in crewEmp) && !('billRateCents' in crewEmp));
+    const pulled = JSON.stringify(await pullAll(crew.token));
+    assert.ok(!/"(labourRateCents|travelRateCents|markupPct|rateCents|billRateCents)"/.test(pulled), 'no rate anywhere in a crew pull');
+    const foremanJob = (await call(app, { url: '/api/v1/jobs/job-1', token: foreman.token })).body;
+    assert.ok(!('labourRateCents' in foremanJob), 'a foreman without costs');
+
+    // A foreman without money access can't change them either.
+    assert.equal((await call(app, { method: 'PATCH', url: '/api/v1/jobs/job-1', token: foreman.token, body: { labourRateCents: 100, travelRateCents: null } })).status, 200);
+    const fs = (await call(app, { url: '/api/v1/settings/settings', token: foreman.token })).body;
+    assert.ok(!('travelRateCents' in fs.billing));
+    const bump = await pushOne(foreman.token, { collection: 'settings', id: 'settings', op: 'upsert', baseVersion: fs.version, data: { ...fs, nextNumbers: { ...fs.nextNumbers, job: fs.nextNumbers.job + 1 } } });
+    assert.equal(bump.status, 'ok', 'the stripped billing rate is not a settings change');
+    const owner = (await call(app, { url: '/api/v1/jobs/job-1', token: A.token })).body;
+    assert.equal(owner.labourRateCents, 14500);
+    assert.equal(owner.travelRateCents, 12000);
+    assert.equal(owner.markupPct, 15);
+    assert.equal((await call(app, { url: '/api/v1/settings/settings', token: A.token })).body.billing.travelRateCents, 9000);
+  });
+
+  test("a foreman given costs after their device synced doesn't wipe the prices it never got", async () => {
+    // The foreman's device pulled these while the company hid costs from foremen.
+    const job = (await call(app, { url: '/api/v1/jobs/job-1', token: foreman.token })).body;
+    const rec = (await call(app, { url: '/api/v1/items/i-rec', token: foreman.token })).body;
+    const jb = (await call(app, { url: '/api/v1/items/i-jb', token: foreman.token })).body;
+    assert.ok(job.pricesHidden && rec.pricesHidden && !('amountCents' in job.changeOrders[0]));
+    assert.equal((await call(app, { method: 'PATCH', url: '/api/v1/settings/settings', token: A.token, body: { foremanSeesCosts: true } })).status, 200);
+    try {
+      // Unchanged records are not pulled again; the foreman now writes from those copies.
+      const coNew = { id: 'co-new', title: 'Extra circuit', amountCents: 7000, status: 'pending', date: '2026-10-20' };
+      const rs = (await push(foreman.token, [
+        mut({ collection: 'jobs', id: 'job-1', op: 'upsert', baseVersion: job.version, data: { ...job, changeOrders: [...job.changeOrders, coNew] } }),
+        mut({ collection: 'items', id: 'i-rec', op: 'upsert', baseVersion: rec.version, data: { ...rec, name: 'Duplex receptacle 15A' } }),
+        mut({ collection: 'items', id: 'i-jb', op: 'upsert', baseVersion: jb.version, data: { ...jb, priceCents: 950 } }),
+      ])).body.results;
+      for (const x of rs) assert.equal(x.status, 'ok', JSON.stringify(x));
+      const ownerJob = (await call(app, { url: '/api/v1/jobs/job-1', token: A.token })).body;
+      const co = (id) => ownerJob.changeOrders.find((c) => c.id === id);
+      assert.equal(co('co-0').amountCents, 45000);
+      assert.equal(co('co-dw').amountCents, 4290);
+      assert.equal(co('co-dw').lines[0].unitCents, 1200);
+      assert.equal(co('co-new').amountCents, 7000, 'what they set themselves stays');
+      assert.equal(ownerJob.labourRateCents, 14500);
+      assert.ok(!('pricesHidden' in ownerJob));
+      const ownerRec = (await call(app, { url: '/api/v1/items/i-rec', token: A.token })).body;
+      assert.equal(ownerRec.name, 'Duplex receptacle 15A');
+      assert.equal(ownerRec.priceCents, 1200);
+      assert.equal(ownerRec.costCents, 245);
+      const ownerJb = (await call(app, { url: '/api/v1/items/i-jb', token: A.token })).body;
+      assert.equal(ownerJb.priceCents, 950, 'a price they typed in is kept');
+      assert.equal(ownerJb.costCents, 300);
+    } finally {
+      await call(app, { method: 'PATCH', url: '/api/v1/settings/settings', token: A.token, body: { foremanSeesCosts: false } });
+    }
   });
 });
 

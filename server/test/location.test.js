@@ -150,6 +150,28 @@ describe('consent and approvals', { skip }, () => {
     const self = await pushOne(w1.token, { collection: 'timeEntries', id: 'te-flag', op: 'upsert', baseVersion: 1, data: { ...flagged, flag: { ...flagged.flag, reviewedAt: iso() }, updatedAt: iso() } });
     assert.equal(self.status, 'rejected');
   });
+
+  test("an offline clock-out from a copy without the foreman's review is kept, and so is the review", async () => {
+    const open = { employeeId: 'emp-1', jobId: 'j1', kind: 'work', clockIn: iso(240), clockOut: null, breakMins: 0, approved: false,
+      flag: { kind: 'off-site', text: '3.1 km from the job site', distanceM: 3100 }, updatedAt: iso(240) };
+    assert.equal((await pushOne(w1.token, { collection: 'timeEntries', id: 'te-review', op: 'upsert', data: open })).status, 'ok');
+    // The foreman reviews the open entry while the worker's phone has no signal.
+    const review = { reviewedAt: iso(60), reviewedBy: 'emp-f', reviewNote: 'Picking up material' };
+    const rv = await pushOne(foreman.token, { collection: 'timeEntries', id: 'te-review', op: 'upsert', baseVersion: 1, data: { ...open, flag: { ...open.flag, ...review }, updatedAt: iso(60) } });
+    assert.equal(rv.status, 'ok', JSON.stringify(rv));
+    // The worker clocks out offline, from their copy (no review), and syncs later.
+    const out = await pushOne(w1.token, { collection: 'timeEntries', id: 'te-review', op: 'upsert', baseVersion: 1, data: { ...open, clockOut: iso(1), updatedAt: iso(1) } });
+    assert.equal(out.status, 'ok', JSON.stringify(out));
+    const stored = (await call(app, { url: '/api/v1/timeEntries/te-review', token: foreman.token })).body;
+    assert.ok(stored.clockOut, 'the clock-out reached the server');
+    assert.deepEqual({ reviewedAt: stored.flag.reviewedAt, reviewedBy: stored.flag.reviewedBy, reviewNote: stored.flag.reviewNote }, review);
+    // A worker still can't change the review itself.
+    const edit = await pushOne(w1.token, { collection: 'timeEntries', id: 'te-review', op: 'upsert', baseVersion: stored.version, data: { ...stored, flag: { ...stored.flag, reviewNote: 'all good', reviewedAt: iso() }, updatedAt: iso() } });
+    assert.equal(edit.status, 'ok');
+    const after = (await call(app, { url: '/api/v1/timeEntries/te-review', token: foreman.token })).body;
+    assert.equal(after.flag.reviewNote, 'Picking up material');
+    assert.equal(after.flag.reviewedAt, review.reviewedAt);
+  });
 });
 
 describe('retention', { skip }, () => {
@@ -212,6 +234,8 @@ describe('live crew map (opt-in)', { skip }, () => {
     assert.equal((await call(app, { method: 'PATCH', url: '/api/v1/settings/settings', token: A.token, body: { location: { liveCrewMap: true, retentionDays: 30, policyVersion: 3 } } })).status, 200);
     // emp-1 is on the clock with a recent point; emp-2 clocked out.
     assert.equal((await pushOne(w1.token, { collection: 'timeEntries', id: 'te-open', op: 'upsert', data: { employeeId: 'emp-1', jobId: 'j1', kind: 'work', clockIn: iso(30), clockOut: null, breakMins: 0, approved: false } })).status, 'ok');
+    // emp-1 agreed to the notice that says the map is on (version 3).
+    assert.equal((await pushOne(w1.token, { collection: 'locationConsents', id: 'lc-emp-1-v3', op: 'upsert', data: { employeeId: 'emp-1', policyVersion: 3, choice: 'granted', at: iso(3), via: 'web' } })).status, 'ok');
     assert.equal((await pushOne(w1.token, { collection: 'locationPoints', id: 'p-now', op: 'upsert', data: point('emp-1', { at: iso(2), timeEntryId: 'te-open', lat: 49.91 }) })).status, 'ok');
     assert.equal((await pushOne(w2.token, { collection: 'timeEntries', id: 'te-done', op: 'upsert', data: { employeeId: 'emp-2', clockIn: iso(30), clockOut: iso(10), breakMins: 0 } })).status, 'ok');
     const r = await call(app, { url: '/api/v1/location/live', token: foreman.token });
@@ -225,5 +249,46 @@ describe('live crew map (opt-in)', { skip }, () => {
     assert.equal(audit.rows.length, 1);
     // The map did not widen the foreman's own reads afterwards.
     assert.deepEqual((await call(app, { url: '/api/v1/locationPoints?limit=100', token: foreman.token })).body.data.map((x) => x.id), ['p-emp-f']);
+  });
+
+  test('only people who agreed to the current notice, and only points from after they agreed', async () => {
+    const live = async () => {
+      const r = await call(app, { url: '/api/v1/location/live', token: foreman.token });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      return r.body.crew.map((c) => [c.employeeId, c.lat]);
+    };
+    // emp-2 agreed under version 1 ("live crew map is off"), clocked in and recorded a point.
+    assert.equal((await pushOne(w2.token, { collection: 'locationConsents', id: 'lc-emp-2-v1', op: 'upsert', data: { employeeId: 'emp-2', policyVersion: 1, choice: 'granted', at: iso(60), via: 'web' } })).status, 'ok');
+    assert.equal((await pushOne(w2.token, { collection: 'timeEntries', id: 'te-open-2', op: 'upsert', data: { employeeId: 'emp-2', jobId: 'j1', kind: 'work', clockIn: iso(30), clockOut: null, breakMins: 0, approved: false } })).status, 'ok');
+    assert.equal((await pushOne(w2.token, { collection: 'locationPoints', id: 'p-w2-v1', op: 'upsert', data: point('emp-2', { at: iso(20), timeEntryId: 'te-open-2', lat: 49.92 }) })).status, 'ok');
+    assert.deepEqual(await live(), [['emp-1', 49.91]], 'a version-1 answer does not cover the map');
+    // emp-2 now agrees to version 3: the point taken before that still stays off the map.
+    assert.equal((await pushOne(w2.token, { collection: 'locationConsents', id: 'lc-emp-2-v3', op: 'upsert', data: { employeeId: 'emp-2', policyVersion: 3, choice: 'granted', at: iso(5), via: 'web' } })).status, 'ok');
+    assert.deepEqual(await live(), [['emp-1', 49.91]], 'points from before the answer stay off the map');
+    assert.equal((await pushOne(w2.token, { collection: 'locationPoints', id: 'p-w2-v3', op: 'upsert', data: point('emp-2', { at: iso(1), timeEntryId: 'te-open-2', lat: 49.93 }) })).status, 'ok');
+    assert.deepEqual(await live(), [['emp-1', 49.91], ['emp-2', 49.93]]);
+    // emp-1 changes their answer to no in the middle of the shift: off the map at once.
+    assert.equal((await pushOne(w1.token, { collection: 'locationConsents', id: 'lc-emp-1-v3', op: 'upsert', baseVersion: 1, data: { employeeId: 'emp-1', policyVersion: 3, choice: 'declined', at: iso(), via: 'web' } })).status, 'ok');
+    assert.deepEqual(await live(), [['emp-2', 49.93]]);
+  });
+});
+
+describe("an employee link never hands over someone's location history", { skip }, () => {
+  test('an owner cannot link themselves, or a new member, to an employee record with points another account recorded', async () => {
+    const members = (await call(app, { url: '/api/v1/members', token: A.token })).body.data;
+    const me = members.find((m) => m.userId === A.userId);
+    const worker = members.find((m) => m.userId === w2.userId);
+    assert.equal((await call(app, { method: 'PATCH', url: `/api/v1/members/${worker.id}`, token: A.token, body: { employeeId: null } })).status, 200);
+    const self = await call(app, { method: 'PATCH', url: `/api/v1/members/${me.id}`, token: A.token, body: { employeeId: 'emp-2' } });
+    assert.equal(self.status, 409, JSON.stringify(self.body));
+    assert.match(self.body.error.message, /location history/);
+    const added = await call(app, { method: 'POST', url: '/api/v1/members', token: A.token, body: { name: 'Stand In', role: 'electrician', employeeId: 'emp-2' } });
+    assert.equal(added.status, 409, JSON.stringify(added.body));
+    const l = await call(app, { url: '/api/v1/locationPoints?limit=100', token: A.token });
+    assert.deepEqual(l.body.data, [], 'the owner still reads no points');
+    // The person themselves can be linked again, and a record nobody recorded points for is free.
+    assert.equal((await call(app, { method: 'PATCH', url: `/api/v1/members/${worker.id}`, token: A.token, body: { employeeId: 'emp-2' } })).status, 200);
+    assert.equal((await call(app, { method: 'POST', url: '/api/v1/employees', token: A.token, body: { id: 'emp-o', name: 'Owner Self', role: 'owner' } })).status, 201);
+    assert.equal((await call(app, { method: 'PATCH', url: `/api/v1/members/${me.id}`, token: A.token, body: { employeeId: 'emp-o' } })).status, 200);
   });
 });

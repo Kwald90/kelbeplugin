@@ -11,10 +11,18 @@ import { registerDevice, revokeDevice } from '../../auth/devices.js';
 import { hashSecret, pinProblem, verifySecret } from '../../auth/passwords.js';
 import { DEVICE_COOKIE, createSession, cookieOptions } from '../../auth/sessions.js';
 import { issuePasswordLink } from '../../services/resets.js';
+import { pointsRecordedByOthers } from '../../services/location.js';
 import { deleteSecret, isSecretName, listSecrets, setSecret } from '../../services/secrets.js';
 import { authLimit, setSessionCookie, tenantCtx } from '../util.js';
 
 const uuidParam = { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } };
+
+/** Linking a member to an employee record whose location points another account recorded. */
+async function refuseLocationHandover(tx, employeeId, userId) {
+  if (await pointsRecordedByOthers(tx, employeeId, userId)) {
+    throw conflict('That employee record holds location history recorded by another person, which only they can see. Link it again once retention has removed it.');
+  }
+}
 const SCOPES = validScopes(COLLECTIONS);
 
 const memberView = (m) => ({
@@ -81,6 +89,7 @@ export default async function adminRoutes(app, { config, db, email }) {
       if (b.employeeId) {
         const taken = await tx.query('SELECT 1 FROM memberships WHERE tenant_id = $1 AND employee_id = $2', [tx.tenantId, b.employeeId]);
         if (taken.rows.length) throw conflict('That employee record is already linked to another member.');
+        await refuseLocationHandover(tx, b.employeeId, userId);
       }
       const { rows } = await tx.query(
         `INSERT INTO memberships (tenant_id, user_id, role, employee_id, status) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
@@ -110,6 +119,7 @@ export default async function adminRoutes(app, { config, db, email }) {
       if (b.employeeId) {
         const taken = await tx.query('SELECT 1 FROM memberships WHERE tenant_id = $1 AND employee_id = $2 AND id <> $3', [tx.tenantId, b.employeeId, cur.id]);
         if (taken.rows.length) throw conflict('That employee record is already linked to another member.');
+        if (b.employeeId !== cur.employee_id) await refuseLocationHandover(tx, b.employeeId, cur.user_id);
       }
       await tx.query(
         `UPDATE memberships SET role = COALESCE($3, role), employee_id = CASE WHEN $4 THEN $5 ELSE employee_id END,
