@@ -53,7 +53,9 @@
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .hero-sub { color: var(--hero-ink-soft); font-size: var(--fs-lg); line-height: var(--lh-lg); max-width: 34em; }
 .hero-ctas { display: flex; flex-wrap: wrap; gap: var(--s3); margin-top: var(--s2) !important; }
-.hero .site-btn { min-height: 48px; font-size: var(--fs-base); }
+/* Button basics repeated here so the HQ preview (no site.css) draws them the same. */
+.hero .site-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 var(--s5); border-radius: var(--r-pill);
+  border: 1px solid transparent; font: 600 var(--fs-base)/1 var(--font-sans); text-decoration: none; cursor: pointer; }
 .hero .hero-primary { background: var(--accent-fill); color: var(--on-accent); }
 .hero .hero-secondary { background: transparent; color: var(--hero-ink); border-color: var(--hero-line); }
 .hero .hero-secondary:hover { background: rgba(255, 255, 255, .08); }
@@ -98,3 +100,4 @@
 .hero.is-phone .hero-controls { top: var(--s2); bottom: auto; right: var(--s2); }
 .hero.hero-preview:not(.is-phone) .hero-headline { font-size: 30px; }
 .hero.hero-preview:not(.is-phone) .hero-inner { padding: var(--s4) var(--s5); }
+.hero.hero-preview .hero-controls { top: var(--s2); bottom: auto; right: var(--s2); }

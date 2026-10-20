@@ -126,14 +126,16 @@ export default {
       input.addEventListener('change', async () => {
         const files = [...input.files];
         input.value = '';
-        for (const f of files) {
+        let ok = 0;
+        for (const [i, f] of files.entries()) {
           try {
-            const m = await uploadFile(f, (p) => { status.textContent = `Uploading ${f.name}: ${Math.round(p * 100)}%`; });
+            const m = await uploadFile(f, (p) => { status.textContent = `Uploading ${i + 1} of ${files.length}, ${f.name}: ${Math.round(p * 100)}%`; });
             media.unshift(m);
-            status.textContent = `Uploaded ${f.name} → ${m.url}`;
-            ui.toast(`Uploaded ${f.name}`, 'success');
-          } catch (e) { status.textContent = ''; ui.toast(`${f.name}: ${errorText(e)}`, 'error', 6000); }
+            ok++;
+          } catch (e) { ui.toast(`${f.name}: ${errorText(e)}`, 'error', 6000); }
         }
+        status.textContent = ok ? `Uploaded ${ok} of ${files.length} file${files.length === 1 ? '' : 's'}.` : '';
+        if (ok) ui.toast(status.textContent, 'success');
         draw();
       });
       const up = list?.uploads;
@@ -210,7 +212,7 @@ export default {
         s.slides.forEach((sl, i) => {
           sl.overlay ||= {};
           const urlField = ([key, label, kind]) => {
-            const input = h('input', { name: `slides.${i}.${key}`, value: sl[key] || '', list: `hq-media-${kind}`, placeholder: kind === 'image' ? '/media/….jpg' : '/media/….mp4', maxlength: 500 });
+            const input = h('input', { name: `slides.${i}.${key}`, value: sl[key] || '', list: `hq-media-${kind}`, placeholder: kind === 'image' ? '/media/….jpg' : kind === 'webm' ? '/media/….webm' : '/media/….mp4', maxlength: 500 });
             input.addEventListener('input', () => { sl[key] = input.value.trim(); refresh(); });
             return h('label', { class: 'field' }, h('span', null, label), input);
           };
