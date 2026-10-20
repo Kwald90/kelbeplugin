@@ -133,6 +133,8 @@
               "integer",
               "null"
             ],
+            "minimum": -100000000000,
+            "maximum": 100000000000,
             "description": "Money in integer cents (CAD)."
           },
           "amountCents": {
@@ -140,6 +142,8 @@
               "integer",
               "null"
             ],
+            "minimum": -100000000000,
+            "maximum": 100000000000,
             "description": "Money in integer cents (CAD). round(qty x unitCents) unless typed."
           },
           "itemId": {
@@ -223,6 +227,8 @@
               "integer",
               "null"
             ],
+            "minimum": -100000000000,
+            "maximum": 100000000000,
             "description": "Money in integer cents (CAD)."
           }
         }
@@ -240,6 +246,8 @@
         "integer",
         "null"
       ],
+      "minimum": -100000000000,
+      "maximum": 100000000000,
       "description": "Money in integer cents (CAD), as printed on the bill."
     },
     "notes": {

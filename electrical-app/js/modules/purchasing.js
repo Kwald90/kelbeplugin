@@ -11,11 +11,12 @@ import {
   lineAmountCents, billTotals, isRefund, withSign, billStatusOf, billOutstanding, billProblems, suggestTaxes, newBill, enteredStatus,
   switchKind, newBillLine, editLine, receiptType, receiptProblem, purchasingAllowed,
   poLineCents, poTotalCents, poOpen, newPurchaseOrder, poProblems, poText, poBilled, billFromPo, orderableRequest, ordersFromRequests,
-  purchasingSummary, billMatches,
+  purchasingSummary, billMatches, nextPoNumber, parsePoNumber, poLineLocked, removePoLine, requestAfterPoCancel,
+  recordEditor, recordTooBig, tooBigMessage, blankBill, blankPurchaseOrder,
 } from '../lib/purchasing.js';
 import { moneyFormatter } from '../lib/money.js';
 import { PROVINCES } from '../lib/tax.js';
-import { debounce, pickItems } from '../lib/doc-view.js';
+import { pickItems } from '../lib/doc-view.js';
 import { downscaleImage } from '../lib/safety-capture.js';
 import { requestName, qtyText } from '../lib/materials.js';
 
@@ -241,7 +242,14 @@ function createBill(ctx) {
     : newBill({ kind, settings: store.settings(), today: ui.today(), vendorId: query.vendorId || null, jobId: query.jobId || null });
   if (!po && rec.vendorId && rec.kind === 'bill') rec.dueDate = dueFromTerms(store.get('vendors', rec.vendorId)?.terms, rec.date) || rec.dueDate;
   const created = store.add('bills', rec);
-  location.replace('#/purchasing/bills/' + created.id);
+  // fresh: backing out before filling anything in deletes it again (renderBill).
+  location.replace('#/purchasing/bills/' + created.id + (po ? '' : '?fresh=1'));
+}
+
+/** A shared "too big to sync" toast, at most every few seconds while the user keeps typing. */
+function tooBigToast(ui, coll) {
+  let last = 0;
+  return () => { if (Date.now() - last > 8000) { last = Date.now(); ui.toast(tooBigMessage(coll), 'error', 6000); } };
 }
 
 // ---------- bills and receipts: one ----------
@@ -260,9 +268,21 @@ function renderBill(root, ctx, id) {
   const money = moneyFormatter(store.settings());
   let refund = isRefund(doc);
   const sign = () => (doc.kind === 'receipt' && refund ? -1 : 1);
-  const save = debounce(() => { store.update('bills', id, strip(doc), { summary: billLabel(doc, vendorMap(store)) }); }, 450);
   const readOnly = () => doc.status === 'void';
-  const changed = () => { save(); drawTotals(); drawStatus(); };
+  // Saves only the fields typed into; status and kind go through setStatus and the kind switch, and
+  // a status that changes elsewhere (QuickBooks marks it paid, another office user voids it) is
+  // taken in here rather than written back over.
+  let wasReadOnly = readOnly();
+  const ed = recordEditor(store, 'bills', id, doc, {
+    summary: () => billLabel(doc, vendorMap(store)),
+    onTooBig: tooBigToast(ui, 'bills'),
+    onPulled: (fields) => {
+      if (fields.includes('kind') || readOnly() !== wasReadOnly) drawAll();
+      else { drawTitle(); drawStatus(); }
+    },
+    onRemoved: () => { ui.toast('This bill was deleted on another device', 'info', 4000); nav('#/purchasing'); },
+  });
+  const changed = (...fields) => { ed.touch(...fields); drawTotals(); drawStatus(); };
   const title = () => (doc.number ? `${kindLabel(doc)} ${doc.number}` : `New ${kindLabel(doc).toLowerCase()}`);
   const drawTitle = () => { const t = root.querySelector('.page-head h1'); if (t) t.textContent = title(); };
 
@@ -271,30 +291,37 @@ function renderBill(root, ctx, id) {
   const drawHeader = () => {
     const jobs = sortedJobs(store);
     const field = (label, control, span) => h('label', { class: ['field', span ? 'span-2' : null] }, h('span', null, label), control);
+    // Each control saves the field it is named for.
     const input = (name, type, value, onVal, extra = {}) => {
       const el = h('input', { name, type, value: value ?? '', readonly: readOnly(), ...extra });
-      el.addEventListener(type === 'date' ? 'change' : 'input', () => { onVal(el.value); changed(); });
+      el.addEventListener(type === 'date' ? 'change' : 'input', () => { onVal(el.value); changed(name); });
       return el;
     };
     const select = (name, value, options, onVal) => {
       const el = h('select', { name, disabled: readOnly() }, options.map((o) => h('option', { value: o.value, selected: String(o.value) === String(value ?? '') }, o.label)));
-      el.addEventListener('change', () => { onVal(el.value); changed(); });
+      el.addEventListener('change', () => { onVal(el.value); changed(name); });
       return el;
     };
-    const kind = select('kind', doc.kind, BILL_KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] })), (v) => {
-      Object.assign(doc, switchKind(doc, v));
+    // The kind switch saves at once, on its own (it sets the status too).
+    const kind = h('select', { name: 'kind', disabled: readOnly() }, BILL_KINDS.map((k) => h('option', { value: k, selected: k === doc.kind }, KIND_LABEL[k])));
+    kind.addEventListener('change', () => {
+      const patch = switchKind(doc, kind.value);
+      if (!Object.keys(patch).length) return;
+      ed.write(patch, { summary: `${billLabel(doc, vendorMap(store))} → ${doc.kind === 'receipt' ? 'bill' : 'receipt'}` });
       if (doc.kind !== 'receipt') refund = false;
-      drawTitle(); drawHeader(); drawLines(); drawTaxes();
+      drawAll();
     });
     const vendor = vendorSelect(ctx, { value: doc.vendorId, disabled: readOnly(), onPick: (v) => {
       doc.vendorId = v;
       const due = doc.kind === 'bill' && doc.status === 'draft' ? dueFromTerms(store.get('vendors', v)?.terms, doc.date) : null;
-      if (due) { doc.dueDate = due; drawHeader(); }
-      changed();
+      if (due) doc.dueDate = due;
+      drawHeader();
+      changed('vendorId', 'dueDate');
     } });
+    // QuickBooks links a bill only to its own supplier's orders.
     const pos = store.list('purchaseOrders').filter((p) => p.id === doc.purchaseOrderId || (p.status !== 'cancelled' && (!doc.vendorId || p.vendorId === doc.vendorId)));
     const total = moneyInput(ui, { name: 'totalCents', label: 'Total on the bill', value: doc.totalCents == null ? null : Math.abs(doc.totalCents), placeholder: 'as printed', readonly: readOnly(),
-      onValue: (c) => { doc.totalCents = c == null ? null : sign() * Math.abs(c); changed(); } });
+      onValue: (c) => { doc.totalCents = c == null ? null : sign() * Math.abs(c); changed('totalCents'); } });
     ui.clear(headerHost).append(h('div', { class: 'form-grid' },
       field('Kind', kind),
       field('Supplier', vendor),
@@ -304,14 +331,19 @@ function renderBill(root, ctx, id) {
         ? field('Due date', input('dueDate', 'date', doc.dueDate, (v) => { doc.dueDate = v || null; }))
         : field('Paid with', select('paidWith', doc.paidWith || 'card', PAID_WITH.map((p) => ({ value: p, label: PAID_WITH_LABEL[p] })), (v) => { doc.paidWith = v; })),
       field('Job', select('jobId', doc.jobId || '', [{ value: '', label: '— no job (overhead) —' }, ...jobs.map((j) => ({ value: j.id, label: jobLabel(j) }))], (v) => { doc.jobId = v || null; })),
-      field('Purchase order', select('purchaseOrderId', doc.purchaseOrderId || '', [{ value: '', label: '— none —' }, ...pos.map((p) => ({ value: p.id, label: `${p.number}${p.vendorId !== doc.vendorId ? ` · ${vendorName(store.get('vendors', p.vendorId))}` : ''}` }))], (v) => { doc.purchaseOrderId = v || null; })),
+      field('Purchase order', select('purchaseOrderId', doc.purchaseOrderId || '', [{ value: '', label: '— none —' }, ...pos.map((p) => ({ value: p.id, label: `${p.number}${p.vendorId !== doc.vendorId ? ` · ${vendorName(store.get('vendors', p.vendorId))}` : ''}` }))], (v) => {
+        doc.purchaseOrderId = v || null;
+        // No supplier yet: the order's supplier it is.
+        const p = v ? store.get('purchaseOrders', v) : null;
+        if (p?.vendorId && !doc.vendorId) { doc.vendorId = p.vendorId; ed.touch('vendorId'); drawHeader(); }
+      })),
       field('Tax province', select('taxProvince', doc.taxProvince || store.settings().company?.province || 'ON', PROVINCES.map((p) => ({ value: p.code, label: p.name })), (v) => { doc.taxProvince = v; })),
       field('Total on the bill', total),
       doc.kind === 'receipt'
         ? h('label', { class: 'field check span-2' }, h('input', { type: 'checkbox', name: 'refund', checked: refund, disabled: readOnly(), onChange: (e) => {
           refund = e.target.checked;
           Object.assign(doc, withSign(doc, refund ? -1 : 1));
-          drawTitle(); drawHeader(); drawLines(); drawTaxes(); changed();
+          drawTitle(); drawHeader(); drawLines(); drawTaxes(); changed('lines', 'taxes', 'totalCents');
         } }), h('span', null, 'Refund or credit from the supplier (money back)'))
         : null));
   };
@@ -327,7 +359,7 @@ function renderBill(root, ctx, id) {
       const set = (patch) => {
         doc.lines[i] = editLine(doc.lines[i], patch);
         if ('qty' in patch || 'unitCents' in patch) amount.value = ui.centsToInput(Math.abs(lineAmountCents(doc.lines[i])));
-        changed();
+        changed('lines');
       };
       const desc = h('input', { class: 'input', name: 'description', value: l.description || '', placeholder: 'What was bought', maxlength: '4000', readonly: readOnly(), 'aria-label': `Line ${i + 1} description` });
       desc.addEventListener('input', () => set({ description: desc.value }));
@@ -347,17 +379,17 @@ function renderBill(root, ctx, id) {
         h('label', { class: 'line-qty' }, h('span', { class: 'line-label' }, 'Qty'), qty),
         h('label', { class: 'line-unit' }, h('span', { class: 'line-label' }, 'Unit cost'), unit),
         h('label', { class: 'line-amt' }, h('span', { class: 'line-label' }, 'Amount'), amount),
-        readOnly() ? h('div') : h('div', { class: 'line-actions' }, ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: `Remove line ${i + 1}`, onClick: () => { doc.lines.splice(i, 1); drawLines(); changed(); } }))));
+        readOnly() ? h('div') : h('div', { class: 'line-actions' }, ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: `Remove line ${i + 1}`, onClick: () => { doc.lines.splice(i, 1); drawLines(); changed('lines'); } }))));
     });
     if (readOnly()) return;
     const full = doc.lines.length >= MAX_LINES;
     linesHost.append(h('div', { class: 'row lines-add' },
-      ui.button('Add line', { size: 'sm', icon: 'plus', disabled: full, onClick: () => { doc.lines.push(newBillLine({ jobId: null })); drawLines(); changed(); [...linesHost.querySelectorAll('.pu-line input[name=description]')].at(-1)?.focus(); } }),
+      ui.button('Add line', { size: 'sm', icon: 'plus', disabled: full, onClick: () => { doc.lines.push(newBillLine({ jobId: null })); drawLines(); changed('lines'); [...linesHost.querySelectorAll('.pu-line input[name=description]')].at(-1)?.focus(); } }),
       ui.button('From the price book', { size: 'sm', icon: 'box', disabled: full, onClick: () => pickItems(store, (it) => {
         if (doc.lines.length >= MAX_LINES) return;
         const unitCents = sign() * Math.abs(Number(it.costCents) || 0);
         doc.lines.push(newBillLine({ description: it.name, itemId: it.id, unitCents, amountCents: unitCents }));
-        drawLines(); changed();
+        drawLines(); changed('lines');
       }) })));
   };
 
@@ -367,19 +399,19 @@ function renderBill(root, ctx, id) {
     ui.clear(taxesHost);
     doc.taxes.forEach((t, i) => {
       const id = h('select', { name: 'taxId', disabled: readOnly(), 'aria-label': `Tax ${i + 1}` }, TAX_IDS.map((x) => h('option', { value: x, selected: t.id === x }, x)));
-      id.addEventListener('change', () => { doc.taxes[i] = { ...doc.taxes[i], id: id.value, label: id.value }; changed(); });
-      const cents = moneyInput(ui, { name: 'taxCents', label: `Tax ${i + 1} amount`, value: Math.abs(Number(t.cents) || 0), readonly: readOnly(), onValue: (c) => { doc.taxes[i] = { ...doc.taxes[i], cents: sign() * Math.abs(c || 0) }; changed(); } });
+      id.addEventListener('change', () => { doc.taxes[i] = { ...doc.taxes[i], id: id.value, label: id.value }; changed('taxes'); });
+      const cents = moneyInput(ui, { name: 'taxCents', label: `Tax ${i + 1} amount`, value: Math.abs(Number(t.cents) || 0), readonly: readOnly(), onValue: (c) => { doc.taxes[i] = { ...doc.taxes[i], cents: sign() * Math.abs(c || 0) }; changed('taxes'); } });
       taxesHost.append(h('div', { class: 'pu-tax-row', dataset: { tax: String(i) } }, id, cents,
-        readOnly() ? null : ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'x', title: `Remove tax ${i + 1}`, onClick: () => { doc.taxes.splice(i, 1); drawTaxes(); changed(); } })));
+        readOnly() ? null : ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'x', title: `Remove tax ${i + 1}`, onClick: () => { doc.taxes.splice(i, 1); drawTaxes(); changed('taxes'); } })));
     });
     if (!doc.taxes.length) taxesHost.append(h('p', { class: 'muted pu-note' }, 'No tax on this bill.'));
     if (readOnly()) return;
     taxesHost.append(h('div', { class: 'row' },
-      ui.button('Add tax', { size: 'sm', icon: 'plus', disabled: doc.taxes.length >= 4, onClick: () => { const used = new Set(doc.taxes.map((t) => t.id)); const next = TAX_IDS.find((x) => !used.has(x)) || 'GST'; doc.taxes.push({ id: next, label: next, cents: 0 }); drawTaxes(); changed(); } }),
+      ui.button('Add tax', { size: 'sm', icon: 'plus', disabled: doc.taxes.length >= 4, onClick: () => { const used = new Set(doc.taxes.map((t) => t.id)); const next = TAX_IDS.find((x) => !used.has(x)) || 'GST'; doc.taxes.push({ id: next, label: next, cents: 0 }); drawTaxes(); changed('taxes'); } }),
       ui.button(`Work out (${doc.taxProvince || store.settings().company?.province || 'ON'})`, { size: 'sm', variant: 'ghost', title: 'Fill in the province’s rates on the lines; check them against the bill', onClick: () => {
         const prov = doc.taxProvince || store.settings().company?.province || 'ON';
         doc.taxes = suggestTaxes(prov, doc.date || ui.today(), billTotals({ lines: doc.lines }).linesCents);
-        drawTaxes(); changed();
+        drawTaxes(); changed('taxes');
       } })),
       h('p', { class: 'muted pu-note' }, 'Enter the taxes exactly as printed on the bill.'));
   };
@@ -398,21 +430,19 @@ function renderBill(root, ctx, id) {
       t.mismatch ? h('div', { class: 'pu-mismatch', role: 'status', dataset: { mismatch: '1' } }, ui.icon('alert', 16),
         h('div', null, h('strong', null, 'Bill total doesn’t add up'),
           h('div', null, 'It is saved, but it won’t go to QuickBooks until the lines and taxes match the printed total (within 2 cents).'),
-          readOnly() ? null : ui.button(`Use ${money(t.computedCents)} as the total`, { size: 'sm', variant: 'ghost', onClick: () => { doc.totalCents = t.computedCents; drawHeader(); changed(); } })))
+          readOnly() ? null : ui.button(`Use ${money(t.computedCents)} as the total`, { size: 'sm', variant: 'ghost', onClick: () => { doc.totalCents = t.computedCents; drawHeader(); changed('totalCents'); } })))
         : null);
   };
 
   // ---- status ----
   const statusHost = h('div', { class: 'stack' });
   const setStatus = (status, extra = {}) => {
-    save.flush();
-    Object.assign(doc, { status, ...extra });
-    store.update('bills', id, { status, ...extra }, { summary: `${billLabel(doc, vendorMap(store))} → ${status}` });
-    drawTitle(); drawHeader(); drawLines(); drawTaxes(); drawTotals(); drawStatus(); drawReceipt();
+    ed.write({ status, ...extra }, { summary: `${billLabel(doc, vendorMap(store))} → ${status}` });
+    drawAll();
   };
   const drawStatus = () => {
     const st = billStatusOf(doc, ui.today());
-    const problems = billProblems(doc, { money });
+    const problems = billProblems(doc, { money, po: doc.purchaseOrderId ? store.get('purchaseOrders', doc.purchaseOrderId) : null });
     const blocking = problems.filter((p) => p.block);
     const enter = () => {
       if (blocking.length) { ui.toast(blocking[0].message, 'error', 4000); return; }
@@ -442,8 +472,9 @@ function renderBill(root, ctx, id) {
   const attach = (receipt) => {
     const problem = receiptProblem(receipt);
     if (problem) { ui.toast(problem, 'error', 4500); return; }
+    if (recordTooBig('bills', { ...store.get('bills', id), ...doc, receipt })) { ui.toast(tooBigMessage('bills'), 'error', 6000); return; }
     doc.receipt = receipt;
-    save(); save.flush();
+    ed.touch('receipt'); ed.flush();
     drawReceipt();
     ui.toast('Attached', 'success');
   };
@@ -464,7 +495,7 @@ function renderBill(root, ctx, id) {
     }
   };
   const drawReceipt = () => {
-    ui.clear(receiptHost);
+    ui.clear(receiptHost).append(h('h3', null, doc.kind === 'receipt' ? 'The receipt' : 'The bill'));
     const r = doc.receipt;
     const type = r ? receiptType(r.dataUrl) : null;
     if (type === 'application/pdf') {
@@ -483,19 +514,36 @@ function renderBill(root, ctx, id) {
       ui.button('Attach file', { size: 'sm', icon: 'upload', onClick: () => ui.pickFile('image/jpeg,image/png,application/pdf').then(fromFile) }),
       r ? ui.button('Remove', { size: 'sm', variant: 'ghost danger', onClick: async () => {
         if (!(await ui.confirmDialog('Remove the attached photo or PDF?', { okLabel: 'Remove' }))) return;
-        doc.receipt = null; save(); save.flush(); drawReceipt();
+        doc.receipt = null; ed.touch('receipt'); ed.flush(); drawReceipt();
       } }) : null));
   };
 
   const remove = async () => {
     if (!(await ui.confirmDialog(`Delete this ${doc.kind}? Voiding keeps a record; deleting doesn’t.`, { okLabel: 'Delete' }))) return;
-    save.flush();
+    ed.stop();
     store.remove('bills', id);
     ui.toast('Deleted');
     nav('#/purchasing');
   };
 
-  drawTitle(); drawHeader(); drawLines(); drawTaxes(); drawTotals(); drawStatus(); drawReceipt();
+  // ---- void banner and notes (read-only follows the status) ----
+  const voidHost = h('div');
+  const drawVoid = () => {
+    ui.clear(voidHost);
+    if (readOnly()) voidHost.append(h('div', { class: 'card money-void' }, ui.badge('void', 'neutral'), ' Void and read-only. Restore it to change it.'));
+  };
+  const notesHost = h('div', { class: 'card' });
+  const drawNotes = () => {
+    const t = h('textarea', { name: 'notes', rows: 3, maxlength: '2000', readonly: readOnly() }, doc.notes || '');
+    t.addEventListener('input', () => { doc.notes = t.value; changed('notes'); });
+    ui.clear(notesHost).append(h('label', { class: 'field' }, h('span', null, 'Notes (office only)'), t));
+  };
+  const drawAll = () => {
+    wasReadOnly = readOnly();
+    drawTitle(); drawVoid(); drawHeader(); drawLines(); drawTaxes(); drawNotes(); drawTotals(); drawStatus(); drawReceipt();
+  };
+
+  drawAll();
   const vendors = vendorMap(store);
   root.append(ui.page({
     title: title(),
@@ -504,17 +552,20 @@ function renderBill(root, ctx, id) {
   },
   h('div', { class: 'doc-layout' },
     h('div', { class: 'stack' },
-      readOnly() ? h('div', { class: 'card money-void' }, ui.badge('void', 'neutral'), ' Void and read-only. Restore it to change it.') : null,
+      voidHost,
       h('div', { class: 'card' }, headerHost),
       h('div', { class: 'card' }, h('h3', null, 'Lines'), linesHost),
       h('div', { class: 'card' }, h('h3', null, 'Taxes'), taxesHost),
-      h('div', { class: 'card' }, h('label', { class: 'field' }, h('span', null, 'Notes (office only)'),
-        (() => { const t = h('textarea', { name: 'notes', rows: 3, maxlength: '2000', readonly: readOnly() }, doc.notes || ''); t.addEventListener('input', () => { doc.notes = t.value; changed(); }); return t; })()))),
+      notesHost),
     h('aside', { class: 'doc-side stack' },
       h('div', { class: 'card' }, statusHost),
       h('div', { class: 'card' }, h('h3', null, 'Totals'), totalsHost),
-      h('div', { class: 'card' }, h('h3', null, doc.kind === 'receipt' ? 'The receipt' : 'The bill'), receiptHost)))));
-  return () => save.flush();
+      h('div', { class: 'card' }, receiptHost)))));
+  return () => {
+    ed.stop();
+    // "New bill" and straight back out: nothing was filled in, so nothing is kept.
+    if (ctx.query.fresh && blankBill(store.get('bills', id))) store.remove('bills', id);
+  };
 }
 
 /** Open the camera (rear camera on phones and iPads) for one photo. Resolves a File or null. */
@@ -712,12 +763,23 @@ function renderOrders(root, ctx) {
   return () => offs.forEach((f) => f());
 }
 
-/** The next PO number: store.nextNumber('po'), skipping any number a PO on this device already has. */
+/**
+ * Reserve the next PO number: the settings counter, but past any number a PO on this device
+ * already has (lib nextPoNumber), with one settings write.
+ */
 export function takePoNumber(store) {
-  const used = new Set(store.list('purchaseOrders').map((p) => p.number));
-  let n = store.nextNumber('po');
-  for (let i = 0; used.has(n) && i < 1000; i++) n = store.nextNumber('po');
-  return n;
+  const s = store.settings();
+  const { number, next } = nextPoNumber(s, store.list('purchaseOrders'));
+  store.update('settings', 'settings', { nextNumbers: { ...s.nextNumbers, po: next } }, { silent: true });
+  return number;
+}
+
+/** Give back the number of a PO that was deleted unused, when it was the last one handed out. */
+function returnPoNumber(store, number) {
+  const n = parsePoNumber(number);
+  const s = store.settings();
+  if (n == null || s.nextNumbers?.po !== n + 1 || store.list('purchaseOrders').some((p) => parsePoNumber(p.number) >= n)) return;
+  store.update('settings', 'settings', { nextNumbers: { ...s.nextNumbers, po: n } }, { silent: true });
 }
 
 function createOrder(ctx) {
@@ -727,7 +789,8 @@ function createOrder(ctx) {
   const job = rec.jobId ? store.get('jobs', rec.jobId) : null;
   if (job?.address) rec.shipTo = job.address;
   const created = store.add('purchaseOrders', rec);
-  location.replace('#/purchasing/orders/' + created.id);
+  // fresh: backing out before filling anything in deletes it again (renderOrder).
+  location.replace('#/purchasing/orders/' + created.id + '?fresh=1');
 }
 
 // ---------- purchase orders: one ----------
@@ -743,9 +806,18 @@ function renderOrder(root, ctx, id) {
   const doc = found;
   doc.lines = Array.isArray(doc.lines) ? doc.lines : [];
   const money = moneyFormatter(store.settings());
-  const save = debounce(() => { store.update('purchaseOrders', id, strip(doc), { summary: doc.number }); }, 450);
   const readOnly = () => ['closed', 'cancelled'].includes(doc.status);
-  const changed = () => { save(); drawSide(); };
+  // Saves only the fields typed into; status goes through setStatus, and QuickBooks closing the
+  // order (or another office user) is taken in here rather than written back over: POs only push,
+  // so writing 'open' back would reopen the order in QuickBooks.
+  let wasReadOnly = readOnly();
+  const ed = recordEditor(store, 'purchaseOrders', id, doc, {
+    summary: () => doc.number,
+    onTooBig: tooBigToast(ui, 'purchaseOrders'),
+    onPulled: () => { if (readOnly() !== wasReadOnly) drawAll(); else { drawLines(); drawSide(); } },
+    onRemoved: () => { ui.toast(`${doc.number || 'This order'} was deleted on another device`, 'info', 4000); nav('#/purchasing/orders'); },
+  });
+  const changed = (...fields) => { ed.touch(...fields); drawSide(); };
 
   const headerHost = h('div');
   const drawHeader = () => {
@@ -753,7 +825,7 @@ function renderOrder(root, ctx, id) {
     const field = (label, control, span) => h('label', { class: ['field', span ? 'span-2' : null] }, h('span', null, label), control);
     const input = (name, type, value, onVal, extra = {}) => {
       const el = h(type === 'textarea' ? 'textarea' : 'input', { name, ...(type === 'textarea' ? { rows: 2 } : { type, value: value ?? '' }), readonly: readOnly(), ...extra }, type === 'textarea' ? value || '' : null);
-      el.addEventListener(type === 'date' ? 'change' : 'input', () => { onVal(el.value); changed(); });
+      el.addEventListener(type === 'date' ? 'change' : 'input', () => { onVal(el.value); changed(name); });
       return el;
     };
     const job = h('select', { name: 'jobId', disabled: readOnly() }, h('option', { value: '' }, '— no job (shop stock) —'), jobs.map((j) => h('option', { value: j.id, selected: doc.jobId === j.id }, jobLabel(j))));
@@ -761,11 +833,11 @@ function renderOrder(root, ctx, id) {
       doc.jobId = job.value || null;
       const j = doc.jobId ? store.get('jobs', doc.jobId) : null;
       if (j?.address && !doc.shipTo) { doc.shipTo = j.address; drawHeader(); }
-      changed();
+      changed('jobId', 'shipTo');
     });
     ui.clear(headerHost).append(h('div', { class: 'form-grid' },
       field('Number', input('number', 'text', doc.number, (v) => { doc.number = v.slice(0, 40); }, { maxlength: '40' })),
-      field('Supplier', vendorSelect(ctx, { value: doc.vendorId, disabled: readOnly(), onPick: (v) => { doc.vendorId = v; changed(); } })),
+      field('Supplier', vendorSelect(ctx, { value: doc.vendorId, disabled: readOnly(), onPick: (v) => { doc.vendorId = v; changed('vendorId'); } })),
       field('Date', input('date', 'date', doc.date, (v) => { doc.date = v || null; })),
       field('Needed by', input('expectedDate', 'date', doc.expectedDate, (v) => { doc.expectedDate = v || null; })),
       field('Job', job),
@@ -779,10 +851,11 @@ function renderOrder(root, ctx, id) {
     const jobs = sortedJobs(store);
     const items = new Map(store.list('items').map((i) => [i.id, i]));
     const requests = new Map(store.list('materialRequests').map((r) => [r.id, r]));
+    const bills = store.list('bills', null, { omit: ['receipt'] });
     if (!doc.lines.length) linesHost.append(h('div', { class: 'lines-empty muted' }, 'No lines yet. Add what you are ordering, or make the order from the crew’s material requests.'));
     doc.lines.forEach((l, i) => {
       const amount = h('div', { class: 'line-amount num' }, money(poLineCents(l)));
-      const set = (patch) => { doc.lines[i] = { ...doc.lines[i], ...patch }; amount.textContent = money(poLineCents(doc.lines[i])); changed(); };
+      const set = (patch) => { doc.lines[i] = { ...doc.lines[i], ...patch }; amount.textContent = money(poLineCents(doc.lines[i])); changed('lines'); };
       const desc = h('input', { class: 'input', name: 'description', value: l.description || '', placeholder: 'What to order', maxlength: '4000', readonly: readOnly(), 'aria-label': `Line ${i + 1} description` });
       desc.addEventListener('input', () => set({ description: desc.value }));
       const qty = h('input', { class: 'input num', name: 'qty', type: 'number', step: 'any', min: '0', inputmode: 'decimal', value: l.qty ?? 1, readonly: readOnly(), 'aria-label': `Line ${i + 1} quantity` });
@@ -801,35 +874,50 @@ function renderOrder(root, ctx, id) {
         h('label', { class: 'line-qty' }, h('span', { class: 'line-label' }, 'Qty'), qty),
         h('label', { class: 'line-unit' }, h('span', { class: 'line-label' }, 'Unit cost'), cost),
         h('div', { class: 'line-amt' }, h('span', { class: 'line-label' }, 'Amount'), amount),
-        readOnly() ? h('div') : h('div', { class: 'line-actions' }, ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: `Remove line ${i + 1}`, onClick: () => { doc.lines.splice(i, 1); drawLines(); changed(); } }))));
+        // Bills point at PO lines by position: once placed, an order's lines are only added to.
+        readOnly() || poLineLocked(doc, bills, i) ? h('div') : h('div', { class: 'line-actions' }, ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: `Remove line ${i + 1}`, onClick: () => {
+          const out = removePoLine(doc, i, store.list('bills', null, { omit: ['receipt'] }));
+          if (out.error) { ui.toast(out.error, 'error', 4500); drawLines(); return; }
+          doc.lines = out.lines; drawLines(); changed('lines');
+        } }))));
     });
     if (readOnly()) return;
     const full = doc.lines.length >= MAX_LINES;
     linesHost.append(h('div', { class: 'row lines-add' },
-      ui.button('Add line', { size: 'sm', icon: 'plus', disabled: full, onClick: () => { doc.lines.push({ itemId: null, description: '', qty: 1, unit: 'ea', unitCents: 0, jobId: null, materialRequestIds: [] }); drawLines(); changed(); } }),
+      ui.button('Add line', { size: 'sm', icon: 'plus', disabled: full, onClick: () => { doc.lines.push({ itemId: null, description: '', qty: 1, unit: 'ea', unitCents: 0, jobId: null, materialRequestIds: [] }); drawLines(); changed('lines'); } }),
       ui.button('From the price book', { size: 'sm', icon: 'box', disabled: full, onClick: () => pickItems(store, (it) => {
         if (doc.lines.length >= MAX_LINES) return;
         doc.lines.push({ itemId: it.id, description: it.name, qty: 1, unit: it.unit || 'ea', unitCents: Math.abs(Number(it.costCents) || 0), jobId: null, materialRequestIds: [] });
-        drawLines(); changed();
+        drawLines(); changed('lines');
       }) })));
   };
 
   const sideHost = h('div', { class: 'stack' });
   const setStatus = (status, extra = {}) => {
-    save.flush();
-    Object.assign(doc, { status, ...extra });
-    store.update('purchaseOrders', id, { status, ...extra }, { summary: `${doc.number} → ${status}` });
-    drawHeader(); drawLines(); drawSide();
+    ed.write({ status, ...extra }, { summary: `${doc.number} → ${status}` });
+    drawAll();
   };
+  const reqIds = () => [...new Set(doc.lines.flatMap((l) => l.materialRequestIds || []))];
   const cancel = async () => {
-    const reqIds = [...new Set(doc.lines.flatMap((l) => l.materialRequestIds || []))];
-    const back = store.list('materialRequests', (r) => reqIds.includes(r.id) && r.status === 'ordered');
+    const ids = reqIds();
+    const back = store.list('materialRequests', (r) => ids.includes(r.id) && r.status === 'ordered');
     if (!(await ui.confirmDialog(`Cancel ${doc.number}?${back.length ? ` Its ${back.length} material request${back.length === 1 ? ' goes' : 's go'} back on the To order list.` : ''}`, { okLabel: 'Cancel order', title: 'Cancel the order?' }))) return;
-    for (const r of back) store.update('materialRequests', r.id, { status: 'sent', orderedAt: null }, { summary: `back to order: ${doc.number} cancelled` });
+    for (const r of back) store.update('materialRequests', r.id, requestAfterPoCancel(r), { summary: `back to order: ${doc.number} cancelled` });
     setStatus('cancelled');
   };
+  // Restoring a cancelled order puts its requests back on it, unless one has been ordered since.
+  const restore = () => {
+    const ids = reqIds();
+    const elsewhere = requestOrders(store);
+    const again = store.list('materialRequests', (r) => ids.includes(r.id) && orderableRequest(r) && !elsewhere.has(r.id));
+    const at = new Date().toISOString();
+    for (const r of again) store.update('materialRequests', r.id, { status: 'ordered', orderedAt: at }, { summary: `ordered on ${doc.number}` });
+    setStatus('draft');
+    const gone = ids.length - again.length;
+    if (gone) ui.toast(`${gone} of its material request${gone === 1 ? ' is' : 's are'} no longer waiting to be ordered: check the lines before placing it.`, 'info', 5000);
+  };
   const enterBill = () => {
-    save.flush();
+    ed.flush();
     const bills = store.list('bills', null, { omit: ['receipt'] });
     const draft = billFromPo(doc, { bills, settings: store.settings(), today: ui.today() });
     if (!draft.lines.length) { ui.toast('Everything on this order has been billed', 'info', 3500); return; }
@@ -838,7 +926,7 @@ function renderOrder(root, ctx, id) {
     nav('#/purchasing/bills/' + b.id);
   };
   const copyText = async () => {
-    save.flush();
+    ed.flush();
     const text = poText(doc, { vendor: store.get('vendors', doc.vendorId), company: store.settings().company?.name || '', jobs: jobMap(store), money });
     try { await navigator.clipboard.writeText(text); ui.toast('Copied: paste it into an email or the supplier’s order form', 'success', 3500); } catch { ui.download(`${doc.number || 'purchase-order'}.txt`, text, 'text/plain'); }
   };
@@ -860,7 +948,7 @@ function renderOrder(root, ctx, id) {
           poOpen(doc) ? ui.button('Close', { size: 'sm', onClick: () => setStatus('closed', { closedAt: new Date().toISOString() }) }) : null,
           st === 'closed' ? ui.button('Reopen', { size: 'sm', onClick: () => setStatus('open', { closedAt: null }) }) : null,
           ['draft', 'open', 'sent'].includes(st) ? ui.button('Cancel order', { size: 'sm', variant: 'ghost danger', onClick: cancel }) : null,
-          st === 'cancelled' ? ui.button('Restore', { size: 'sm', onClick: () => setStatus('draft') }) : null),
+          st === 'cancelled' ? ui.button('Restore', { size: 'sm', onClick: restore }) : null),
         ui.button('Copy for the supplier', { size: 'sm', variant: 'ghost', icon: 'copy', onClick: copyText }),
         doc.jobId ? ui.button('Open job', { size: 'sm', variant: 'ghost', icon: 'briefcase', href: '#/jobs/' + doc.jobId }) : null),
       h('div', { class: 'card' }, h('h3', null, 'Totals'), h('div', { class: 'totals' },
@@ -875,12 +963,19 @@ function renderOrder(root, ctx, id) {
   const remove = async () => {
     if (doc.status !== 'draft') { ui.toast('Only a draft can be deleted. Cancel the order instead; it stays on record.', 'error', 4000); return; }
     if (!(await ui.confirmDialog(`Delete ${doc.number}?`, { okLabel: 'Delete' }))) return;
-    save.flush();
+    ed.stop();
     store.remove('purchaseOrders', id);
     nav('#/purchasing/orders');
   };
 
-  drawHeader(); drawLines(); drawSide();
+  const bannerHost = h('div');
+  const drawBanner = () => {
+    ui.clear(bannerHost);
+    if (readOnly()) bannerHost.append(h('div', { class: 'card money-void' }, statusBadge(ui, doc.status, PO_STATUS_LABEL), ' This order is read-only.'));
+  };
+  const drawAll = () => { wasReadOnly = readOnly(); drawBanner(); drawHeader(); drawLines(); drawSide(); };
+
+  drawAll();
   root.append(ui.page({
     title: doc.number || 'Purchase order',
     subtitle: h('span', null, h('a', { href: '#/purchasing/orders' }, 'Purchase orders'), ' / ', vendorName(store.get('vendors', doc.vendorId))),
@@ -888,11 +983,16 @@ function renderOrder(root, ctx, id) {
   },
   h('div', { class: 'doc-layout' },
     h('div', { class: 'stack' },
-      readOnly() ? h('div', { class: 'card money-void' }, statusBadge(ui, doc.status, PO_STATUS_LABEL), ' This order is read-only.') : null,
+      bannerHost,
       h('div', { class: 'card' }, headerHost),
       h('div', { class: 'card' }, h('h3', null, 'Lines'), linesHost)),
     h('aside', { class: 'doc-side' }, sideHost))));
-  return () => save.flush();
+  return () => {
+    ed.stop();
+    // "New purchase order" and straight back out: nothing was filled in, so nothing is kept.
+    const cur = store.get('purchaseOrders', id);
+    if (ctx.query.fresh && blankPurchaseOrder(cur)) { store.remove('purchaseOrders', id); returnPoNumber(store, cur.number); }
+  };
 }
 
 // ---------- purchase orders from material requests (modules/materials.js) ----------
@@ -936,6 +1036,12 @@ export function purchaseOrderSheet(ctx, requests, { onDone } = {}) {
       ui.button('Create purchase order', { variant: 'primary', icon: 'check', onClick: () => {
         if ([...chosen.values()].some((v) => !v)) { ui.toast('Pick a supplier for every request', 'error'); return; }
         const groups = ordersFromRequests(list, (r) => chosen.get(r.id), { items, today: ui.today() });
+        // They are placed (open) at once, so they must be complete: a request with no quantity stops it.
+        const vendorsNow = vendorMap(store);
+        for (const g of groups) {
+          const problems = poProblems(g.order);
+          if (problems.length) { ui.toast(`${vendorName(vendorsNow.get(g.vendorId))}: ${problems[0]}`, 'error', 4500); return; }
+        }
         const at = new Date().toISOString();
         const me = auth.current?.()?.id || null;
         const made = [];

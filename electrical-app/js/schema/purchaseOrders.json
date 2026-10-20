@@ -122,6 +122,8 @@
               "integer",
               "null"
             ],
+            "minimum": 0,
+            "maximum": 100000000000,
             "description": "Money in integer cents (CAD)."
           },
           "jobId": {

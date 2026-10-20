@@ -1,13 +1,15 @@
 // Purchasing (js/lib/purchasing.js): bill totals and the 2-cent check, refunds as negative
 // receipts, statuses, POs from material requests, billing a PO, PO numbers, the module switch and
-// plan gate, and the three collections' registry entries and schemas.
+// plan gate, the three collections' registry entries and schemas, and the editors' saves (a status
+// pulled from QuickBooks is never written back over; PO lines that bills point at stay put).
 // Run: node --test electrical-app/tests/*.test.mjs
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as P from '../js/lib/purchasing.js';
 import * as M from '../js/lib/modules.js';
-import { COLLECTIONS, DEFAULT_SETTINGS } from '../js/store.js';
+import { COLLECTIONS, DEFAULT_SETTINGS, store } from '../js/store.js';
+import { enqueue } from '../js/sync.js';
 import { FEATURE_PLAN } from '../js/plans.js';
 
 const schema = (name) => JSON.parse(readFileSync(new URL(`../js/schema/${name}.json`, import.meta.url), 'utf8'));
@@ -358,5 +360,198 @@ describe('module switch, plan and registry', () => {
     assert.equal(schema('bills').properties.lines.maxItems, P.MAX_LINES);
     assert.deepEqual(schema('purchaseOrders').properties.status.enum, [...P.PO_STATUSES, null]);
     assert.equal(schema('vendors').properties.name.maxLength, 100);
+  });
+});
+
+describe('an open editor never writes a pulled status back', () => {
+  // The bill and PO editors autosave what is typed. Status changes elsewhere (QuickBooks marks a
+  // bill paid or closes a PO; another office user voids a bill): an autosave of the whole record
+  // would write the old status back, and the server's merge would take it from the device.
+  let n = 0;
+  const open = async () => {
+    await store.open({ kind: 'company', userId: 'u-1', tenantId: `t-pu-${++n}` });
+    store.track((c) => enqueue(store, c, { newMid: () => `mid-${n}-${store.queue.length}` }));
+  };
+  const synced = (coll, rec) => { store.applyRemote(coll, rec.id, rec, 3); return store.get(coll, rec.id); };
+  const spy = () => {
+    const patches = [];
+    return { patches, get: (c, i) => store.get(c, i), on: (c, fn) => store.on(c, fn), update: (c, i, p, o) => { patches.push(Object.keys(p)); return store.update(c, i, p, o); } };
+  };
+
+  test('the autosave patch is only what was typed, never status, its times or kind', () => {
+    const doc = { id: 'b1', kind: 'bill', status: 'open', notes: 'n', lines: [], sentAt: 'x', closedAt: 'y', createdAt: 'c', updatedAt: 'u' };
+    assert.deepEqual(P.editorPatch(doc, new Set(['notes'])), { notes: 'n' });
+    assert.equal(P.editorPatch(doc, new Set(['status', 'kind', 'sentAt', 'closedAt', 'id', 'updatedAt'])), null);
+    assert.deepEqual(P.editorPatch(doc, new Set(['status', 'lines'])), { lines: [] });
+  });
+
+  test('a bill marked paid by QuickBooks while open stays paid when the notes are typed into', async () => {
+    await open();
+    const doc = synced('bills', bill({ id: 'b-2231', number: 'INV-2231', status: 'open', lines: [line(1, 1000)], totalCents: 1000 }));
+    const s = spy();
+    const pulled = [];
+    const ed = P.recordEditor(s, 'bills', doc.id, doc, { ms: 10_000, onPulled: (f) => pulled.push(f) });
+    // The pull lands: Balance 0 in QuickBooks.
+    synced('bills', { ...store.get('bills', doc.id), status: 'paid' });
+    assert.equal(doc.status, 'paid', 'the editor takes the pulled status');
+    assert.deepEqual(pulled, [['status']], 'and redraws its status card');
+    doc.notes = 'Paid by cheque 1043';
+    ed.touch('notes');
+    ed.flush();
+    assert.deepEqual(s.patches, [['notes']], 'only the notes are saved');
+    assert.equal(store.get('bills', doc.id).status, 'paid');
+    assert.equal(store.get('bills', doc.id).notes, 'Paid by cheque 1043');
+    const q = store.queue.find((e) => e.id === doc.id);
+    assert.deepEqual(q.fields, ['notes'], 'the server merges only the notes from this device');
+    ed.stop();
+  });
+
+  test('a bill voided by another office user while open is not brought back to open', async () => {
+    await open();
+    const doc = synced('bills', bill({ id: 'b-void', status: 'open', lines: [line(1, 500)] }));
+    const ed = P.recordEditor(store, 'bills', doc.id, doc, { ms: 10_000 });
+    doc.lines = [line(2, 500)];
+    ed.touch('lines');
+    synced('bills', { ...store.get('bills', doc.id), status: 'void' });
+    ed.flush();
+    assert.equal(store.get('bills', doc.id).status, 'void');
+    assert.equal(store.get('bills', doc.id).lines[0].qty, 2);
+    ed.stop();
+  });
+
+  test('a PO closed in QuickBooks stays closed when it is edited (POs only push: open would reopen it there)', async () => {
+    await open();
+    const doc = synced('purchaseOrders', { id: 'po-5001', number: 'PO-5001', vendorId: 'v1', status: 'sent', sentAt: '2026-10-20T15:00:00.000Z', lines: [{ description: 'EMT', qty: 20, unitCents: 1000 }] });
+    const s = spy();
+    const ed = P.recordEditor(s, 'purchaseOrders', doc.id, doc, { ms: 10_000 });
+    synced('purchaseOrders', { ...store.get('purchaseOrders', doc.id), status: 'closed', closedAt: '2026-10-21T09:00:00.000Z' });
+    assert.equal(doc.status, 'closed');
+    assert.equal(doc.closedAt, '2026-10-21T09:00:00.000Z');
+    doc.notes = 'Back-ordered straps';
+    ed.touch('notes');
+    ed.stop();
+    assert.deepEqual(s.patches, [['notes']]);
+    assert.equal(store.get('purchaseOrders', doc.id).status, 'closed');
+    assert.equal(store.get('purchaseOrders', doc.id).sentAt, '2026-10-20T15:00:00.000Z');
+  });
+
+  test('status buttons write their own small patch, after what was typed', async () => {
+    await open();
+    const doc = synced('bills', bill({ id: 'b-st', status: 'draft', lines: [line(1, 100)] }));
+    const s = spy();
+    const ed = P.recordEditor(s, 'bills', doc.id, doc, { ms: 10_000 });
+    doc.number = 'INV-9'; ed.touch('number');
+    ed.write({ status: 'open' });
+    assert.deepEqual(s.patches, [['number'], ['status']]);
+    assert.equal(doc.status, 'open');
+    assert.equal(ed.edited, true);
+    ed.stop();
+  });
+
+  test('deleted on another device: onRemoved, and a pending save does nothing', async () => {
+    await open();
+    const doc = synced('bills', bill({ id: 'b-gone', status: 'draft' }));
+    let removed = 0;
+    const ed = P.recordEditor(store, 'bills', doc.id, doc, { ms: 10_000, onRemoved: () => removed++ });
+    doc.notes = 'x'; ed.touch('notes');
+    store.applyRemote('bills', doc.id, null, 4);
+    assert.equal(removed, 1);
+    assert.doesNotThrow(() => ed.stop());
+    assert.equal(store.get('bills', doc.id), null);
+  });
+
+  test('a save that leaves the record over the server limit says so', async () => {
+    await open();
+    const doc = synced('purchaseOrders', { id: 'po-big', number: 'PO-5009', status: 'draft', lines: [] });
+    let warned = 0;
+    const ed = P.recordEditor(store, 'purchaseOrders', doc.id, doc, { ms: 10_000, onTooBig: () => warned++ });
+    doc.lines = Array.from({ length: 20 }, () => ({ description: 'y'.repeat(4000), qty: 1, unitCents: 1 }));
+    ed.touch('lines'); ed.flush();
+    assert.equal(warned, 1);
+    ed.stop();
+  });
+});
+
+describe('PO lines that bills point at stay where they are', () => {
+  // A bill line points at its PO line by position (poLine.index, contract 3.5).
+  const po = (o = {}) => ({ id: 'po1', number: 'PO-5001', vendorId: 'v1', status: 'open', lines: [
+    { description: '3/4" EMT', qty: 20, unit: 'sticks', unitCents: 1000 },
+    { description: 'Two-hole strap', qty: 50, unit: 'ea', unitCents: 25 },
+  ], ...o });
+  const billFor = (p) => ({ ...P.billFromPo(p), id: 'b1', status: 'open' });
+
+  test('a placed order: no line can be removed (the EMT is back-ordered: set its quantity instead)', () => {
+    const p = po();
+    const b = billFor(p);
+    for (const i of [0, 1]) {
+      const out = P.removePoLine(p, i, [b]);
+      assert.match(out.error, /placed order/);
+      assert.equal(out.lines, p.lines, 'unchanged');
+    }
+    assert.ok(P.poLineLocked(po({ status: 'sent' }), [], 1), 'even with no bill yet: QuickBooks has the lines');
+  });
+
+  test('a draft keeps a line a bill points at, and every line before it', () => {
+    const p = po({ status: 'draft', lines: [...po().lines, { description: 'Box', qty: 4, unitCents: 300 }] });
+    const b = { id: 'b9', status: 'void', lines: [{ description: 'strap', qty: 50, unitCents: 25, poLine: { purchaseOrderId: 'po1', index: 1 } }] };
+    assert.match(P.removePoLine(p, 0, [b]).error, /bill points/, 'removing line 0 would move the strap line');
+    assert.match(P.removePoLine(p, 1, [b]).error, /bill points/);
+    const out = P.removePoLine(p, 2, [b]);
+    assert.equal(out.error, null);
+    assert.deepEqual(out.lines.map((l) => l.description), ['3/4" EMT', 'Two-hole strap']);
+    assert.equal(P.removePoLine(p, 0, [{ ...b, lines: [{ ...b.lines[0], poLine: { purchaseOrderId: 'other', index: 1 } }] }]).error, null, 'another order’s bill does not count');
+  });
+
+  test('adding a line keeps every bill pointing at the right PO line', () => {
+    const p = po();
+    const b = { ...billFor(p), lines: billFor(p).lines.map((l, i) => (i === 0 ? { ...l, qty: 12, amountCents: 12000 } : l)) };
+    const before = P.poBilled(p, [b]).lineQty;
+    const more = { ...p, lines: [...p.lines, { description: 'Connector', qty: 10, unitCents: 90 }] };
+    assert.deepEqual(P.poBilled(more, [b]).lineQty, [...before, 0]);
+    assert.deepEqual(P.billFromPo(more, { bills: [b] }).lines.map((l) => [l.description, l.qty, l.poLine.index]), [['3/4" EMT', 8, 0], ['Connector', 10, 2]]);
+  });
+});
+
+describe('purchasing details', () => {
+  test('a cancelled PO puts its requests back where they were: sent, or still requested', () => {
+    assert.deepEqual(P.requestAfterPoCancel({ status: 'ordered', sentAt: '2026-10-20T15:00:00.000Z', orderedAt: 'x' }), { status: 'sent', orderedAt: null });
+    assert.deepEqual(P.requestAfterPoCancel({ status: 'ordered', sentAt: null, orderedAt: 'x' }), { status: 'requested', orderedAt: null });
+  });
+
+  test('a bill links only to its own supplier’s PO (QuickBooks LinkedTxn)', () => {
+    const b = bill({ lines: [line(1, 100)], purchaseOrderId: 'po1' });
+    const p = (vendorId) => ({ id: 'po1', number: 'PO-5001', vendorId });
+    assert.ok(P.billProblems(b, { po: p('v2') }).some((x) => x.code === 'po_vendor' && x.block));
+    assert.deepEqual(P.billProblems(b, { po: p('v1') }).filter((x) => x.block), []);
+    assert.deepEqual(P.billProblems(b).filter((x) => x.block), []);
+  });
+
+  test('record size: the same limits as the server, and a message that says what to do', () => {
+    assert.equal(P.RECORD_MAX_BYTES.bills, 3 * 1024 * 1024);
+    assert.equal(P.recordTooBig('bills', { receipt: { dataUrl: 'data:image/jpeg;base64,' + 'A'.repeat(P.RECEIPT_MAX_CHARS) } }), false);
+    assert.equal(P.recordTooBig('bills', { receipt: { dataUrl: 'A'.repeat(P.RECEIPT_MAX_CHARS) }, lines: [{ description: 'é'.repeat(300_000) }] }), true, 'UTF-8 bytes, not characters');
+    assert.equal(P.recordBytes({ a: 'é' }), 10);
+    assert.match(P.tooBigMessage('bills'), /3 MB/);
+    assert.match(P.tooBigMessage('purchaseOrders'), /64 KB/);
+  });
+
+  test('money amounts are bounded in the schemas', () => {
+    const b = schema('bills').properties;
+    for (const f of [b.lines.items.properties.unitCents, b.lines.items.properties.amountCents, b.taxes.items.properties.cents, b.totalCents]) {
+      assert.equal(f.maximum, 1e11);
+      assert.equal(f.minimum, -1e11, 'refunds are negative');
+    }
+    const po = schema('purchaseOrders').properties.lines.items.properties.unitCents;
+    assert.deepEqual([po.minimum, po.maximum], [0, 1e11]);
+  });
+
+  test('an untouched new bill or PO is blank (backing out deletes it); anything filled in is kept', () => {
+    assert.ok(P.blankBill(P.newBill({ vendorId: 'v1', jobId: 'j1' })), 'a supplier or job from the link does not count');
+    assert.equal(P.blankBill({ ...P.newBill(), number: 'INV-1' }), false);
+    assert.equal(P.blankBill({ ...P.newBill(), lines: [line(1, 1)] }), false);
+    assert.equal(P.blankBill({ ...P.newBill(), status: 'open' }), false);
+    assert.equal(P.blankBill(null), false);
+    assert.ok(P.blankPurchaseOrder(P.newPurchaseOrder({ number: 'PO-5001', vendorId: 'v1' })));
+    assert.equal(P.blankPurchaseOrder({ ...P.newPurchaseOrder({ number: 'PO-5001' }), lines: [{ description: 'x', qty: 1 }] }), false);
   });
 });

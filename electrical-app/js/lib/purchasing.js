@@ -40,6 +40,8 @@ export const RECEIPT_TYPES = ['image/jpeg', 'image/png', 'application/pdf'];
 export const RECEIPT_MAX_CHARS = Math.floor(2.5 * 1024 * 1024);
 /** Receipt photos are downscaled to about this many bytes (still readable at 1600 px). */
 export const RECEIPT_PHOTO_BYTES = 900 * 1024;
+/** The largest record the server keeps, per collection (server/src/collections.js maxBytes). */
+export const RECORD_MAX_BYTES = { vendors: 16 * 1024, bills: 3 * 1024 * 1024, purchaseOrders: 64 * 1024 };
 
 /** settings.nextNumbers.po starts here (store.js DEFAULT_SETTINGS). */
 export const PO_START = 5001;
@@ -173,7 +175,7 @@ export const billOutstanding = (bill) => bill?.kind !== 'receipt' && bill?.statu
  * "Enter bill"/"Save receipt"; the rest are warnings (a total that doesn't add up can be saved,
  * but QuickBooks only gets it once it does).
  */
-export function billProblems(bill, { money = (c) => (c / 100).toFixed(2) } = {}) {
+export function billProblems(bill, { money = (c) => (c / 100).toFixed(2), po = null } = {}) {
   const out = [];
   const add = (code, message, block = false) => out.push({ code, message, block });
   if (!bill?.vendorId) add('no_vendor', 'Pick the supplier.', true);
@@ -187,6 +189,8 @@ export function billProblems(bill, { money = (c) => (c / 100).toFixed(2) } = {})
   const signs = new Set((bill?.lines || []).map(lineAmountCents).filter((c) => c !== 0).map(Math.sign));
   if (signs.size > 1) add('mixed_signs', 'Some lines are negative and some positive. A refund has every amount negative; enter the rest as its own receipt.', true);
   if (bill?.kind === 'bill' && bill.dueDate && bill.date && bill.dueDate < bill.date) add('due_before_date', 'The due date is before the bill date.');
+  // QuickBooks links a bill to a PO only when both are from the same supplier.
+  if (po && bill?.vendorId && po.vendorId && po.vendorId !== bill.vendorId) add('po_vendor', `${po.number || 'The purchase order'} is from another supplier. Pick that supplier, or another order.`, true);
   return out;
 }
 
@@ -249,6 +253,21 @@ export function receiptProblem(receipt) {
 /** Bytes of a base64 data URL. */
 export const dataUrlBytes = (u) => (typeof u === 'string' && u.includes(',') ? Math.floor(((u.length - u.indexOf(',') - 1) * 3) / 4) : 0);
 
+/** Bytes of a record as the server measures it (its JSON, UTF-8). */
+export const recordBytes = (rec) => new TextEncoder().encode(JSON.stringify(rec ?? null)).length;
+
+/** Is the record over what the server keeps for `coll` (it would be refused with too_large)? */
+export const recordTooBig = (coll, rec) => recordBytes(rec) > (RECORD_MAX_BYTES[coll] ?? Infinity);
+
+/** What the screens say when a record would be refused for its size. */
+export function tooBigMessage(coll) {
+  const max = RECORD_MAX_BYTES[coll];
+  const limit = max >= 1024 * 1024 ? `${Math.round(max / (1024 * 1024))} MB` : `${Math.round(max / 1024)} KB`;
+  return coll === 'bills'
+    ? `This bill would be over the ${limit} a record can hold, so it would not sync. Attach a smaller photo or PDF, or split the lines over two bills.`
+    : `This record would be over the ${limit} it can hold, so it would not sync. Shorten it, or split it in two.`;
+}
+
 // ---- purchase orders --------------------------------------------------------------------------
 
 export const poLineCents = (l) => Math.round(num(l?.qty) * num(l?.unitCents));
@@ -306,6 +325,28 @@ export function ordersFromRequests(requests, vendorFor, { items = new Map(), tod
     return { vendorId, requestIds: rs.map((r) => r.id), order: { ...newPurchaseOrder({ vendorId, jobId: commonJob(lines), today, shipTo }), status: 'open', lines } };
   });
 }
+
+/**
+ * Why line `index` of a PO cannot be removed, or null when it can. A bill line points at its PO
+ * line by position (poLine.index), so once the order has left draft its lines are only added to,
+ * and even a draft keeps a line that a bill (a void one too: it can be restored) points at, or any
+ * line before one.
+ */
+export function poLineLocked(po, bills = [], index = 0) {
+  if ((po?.status || 'draft') !== 'draft') return 'Lines on a placed order stay: bills point at them. Set the quantity to what you still want instead.';
+  const used = bills.some((b) => (b?.lines || []).some((l) => l?.poLine?.purchaseOrderId === po.id && Number.isInteger(l.poLine.index) && l.poLine.index >= index));
+  return used ? 'A bill points at this line or one after it. Set the quantity instead of removing the line.' : null;
+}
+
+/** The PO's lines without line `index`: { lines, error } (error set and lines unchanged when it is locked). */
+export function removePoLine(po, index, bills = []) {
+  const error = poLineLocked(po, bills, index);
+  const lines = po?.lines || [];
+  return error ? { lines, error } : { lines: lines.filter((_, i) => i !== index), error: null };
+}
+
+/** The change to a material request whose purchase order was cancelled: back where it was before it was ordered. */
+export const requestAfterPoCancel = (r) => ({ status: r?.sentAt ? 'sent' : 'requested', orderedAt: null });
 
 /** What stops a PO being placed: [message]. */
 export function poProblems(po) {
@@ -384,6 +425,86 @@ export function billFromPo(po, { bills = [], settings = {}, today = isoDay(new D
   const requestIds = [...new Set((po.lines || []).flatMap((l) => l.materialRequestIds || []))];
   return { ...newBill({ kind: 'bill', settings, today, vendorId: po.vendorId || null, jobId: po.jobId || null }), purchaseOrderId: po.id, lines, materialRequestIds: requestIds };
 }
+
+// ---- the bill and PO editors' saves -----------------------------------------------------------
+
+/**
+ * Fields an editor never autosaves. Status and its times change through their own buttons, each
+ * as its own small patch, and can change under an open editor (QuickBooks marks a bill paid or
+ * closes a PO; another office user voids a bill): an autosave of the whole record would write the
+ * old status back. `kind` changes through the kind switch.
+ */
+export const EDITOR_SKIP = ['id', 'createdAt', 'updatedAt', 'status', 'sentAt', 'closedAt', 'kind'];
+/** Fields an open editor takes from the record when they change elsewhere. */
+export const EDITOR_PULLED = ['status', 'sentAt', 'closedAt', 'kind'];
+
+/** The autosave patch: the fields the user changed (`touched`), never EDITOR_SKIP; null when none. */
+export function editorPatch(doc, touched) {
+  const patch = {};
+  for (const k of touched) if (!EDITOR_SKIP.includes(k)) patch[k] = doc[k] ?? null;
+  return Object.keys(patch).length ? patch : null;
+}
+
+/**
+ * Keeps an open editor's copy of a record (`doc`, edited in place) and the store in step.
+ * `touch(...fields)` marks fields as edited and saves just those after `ms`; `flush()` saves now;
+ * `write(patch)` saves a status or kind change at once, on its own; `stop()` flushes and stops
+ * listening. When the record's status (or kind) changes elsewhere, `doc` takes it and
+ * onPulled(fields) runs; when another device deletes it, onRemoved() runs. onTooBig() runs when a
+ * save leaves the record bigger than the server keeps. `store` is store.js's.
+ */
+export function recordEditor(store, coll, id, doc, { ms = 450, summary = null, onPulled = null, onRemoved = null, onTooBig = null } = {}) {
+  const touched = new Set();
+  let timer = null, edited = false;
+  const save = () => {
+    clearTimeout(timer); timer = null;
+    const patch = editorPatch(doc, touched);
+    touched.clear();
+    if (!patch || !store.get(coll, id)) return null;
+    const next = store.update(coll, id, patch, { summary: summary?.(doc) });
+    if (onTooBig && recordTooBig(coll, next)) onTooBig();
+    return next;
+  };
+  const same = (a, b) => (a ?? null) === (b ?? null);
+  const off = store.on(coll, (e) => {
+    if (e?.record?.id !== id) return;
+    if (e.type === 'remove') {
+      clearTimeout(timer); timer = null; touched.clear();
+      if (e.remote) onRemoved?.();
+      return;
+    }
+    const fields = EDITOR_PULLED.filter((k) => !same(e.record[k], doc[k]));
+    if (!fields.length) return;
+    for (const k of fields) doc[k] = e.record[k] ?? null;
+    onPulled?.(fields);
+  });
+  const flush = () => { if (timer || touched.size) save(); };
+  return {
+    touch(...fields) {
+      for (const k of fields) touched.add(k);
+      edited = true;
+      clearTimeout(timer);
+      timer = setTimeout(save, ms);
+    },
+    flush,
+    write(patch, opts = {}) {
+      flush();
+      Object.assign(doc, patch);
+      edited = true;
+      return store.get(coll, id) ? store.update(coll, id, patch, opts) : null;
+    },
+    get edited() { return edited; },
+    stop() { flush(); off(); },
+  };
+}
+
+/** A new bill nobody has filled in yet (backing out of "New bill" deletes it). */
+export const blankBill = (b) => Boolean(b) && (b.status || 'draft') === 'draft' && !(b.lines || []).length && !(b.taxes || []).length
+  && !String(b.number || '').trim() && !b.receipt && !String(b.notes || '').trim() && b.totalCents == null;
+
+/** A new purchase order nobody has filled in yet (backing out of "New purchase order" deletes it). */
+export const blankPurchaseOrder = (p) => Boolean(p) && (p.status || 'draft') === 'draft' && !(p.lines || []).length
+  && !String(p.notes || '').trim() && !p.expectedDate;
 
 // ---- lists ------------------------------------------------------------------------------------
 

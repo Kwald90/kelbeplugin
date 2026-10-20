@@ -404,6 +404,25 @@ try {
     return `refund stored as -$30.00; the list shows ${toPay} to pay`;
   });
 
+  await step('a status that changes while the bill is open is not written back', async () => {
+    // As if a QuickBooks pull marked the bill paid while the office had it open (a local stand-in:
+    // the server never hears of it), then the notes are typed into.
+    await own.goto(`/#/purchasing/bills/${billId}`);
+    await own.waitFor('!!document.querySelector("main textarea[name=notes]")', 'the bill');
+    await own.evaluate(`(() => { const s = kelbe.store, r = s.get("bills", ${J(billId)}); s.applyRemote("bills", r.id, { ...r, status: "paid" }, s.version("bills", r.id)); return true; })()`);
+    await own.waitFor('/Paid/.test(document.querySelector("main aside")?.innerText || "")', 'the pulled status on screen');
+    await own.fill('main textarea[name=notes]', 'Paid by cheque 1043');
+    await sleep(700);
+    const local = await own.evaluate(`(() => { const s = kelbe.store; return { status: s.get("bills", ${J(billId)}).status, fields: s.queue.filter((e) => e.id === ${J(billId)}).map((e) => e.fields) }; })()`);
+    if (local.status !== 'paid' || !local.fields.length || local.fields.some((f) => !f || f.includes('status'))) throw new Error(J(local));
+    await synced(own);
+    const b = (await row('SELECT data, status FROM bills WHERE tenant_id = $1 AND id = $2', [tg, billId]))[0];
+    if (b.data.notes !== 'Paid by cheque 1043' || b.status !== 'open') throw new Error(J({ notes: b.data.notes, status: b.status }));
+    // Back in step with the server for the steps after.
+    await own.evaluate(`(() => { const s = kelbe.store, r = s.get("bills", ${J(billId)}); s.applyRemote("bills", r.id, { ...r, status: "open" }, s.version("bills", r.id)); return true; })()`);
+    return `only ${J(local.fields)} went to the server; the bill stayed ${local.status} on screen`;
+  });
+
   await step('the electrician sees no purchasing at all', async () => {
     await signIn(sam, people.sam);
     if (await railHas(sam, 'purchasing')) throw new Error('Purchasing in the crew rail');
