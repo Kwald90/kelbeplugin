@@ -18,6 +18,7 @@ import { session, api, syncPrefs } from './session.js';
 import { createSync } from './sync.js';
 import { FEATURE_PLAN, hasFeature } from './plans.js';
 import { notifyBell } from './modules/notifications.js';
+import { moduleOn, linkOn, hrefModule, SWITCHES } from './lib/modules.js';
 
 const { h, icon } = ui;
 const put = (el, ...kids) => h(ui.clear(el), null, ...kids);
@@ -28,7 +29,7 @@ const MODULE_COLLECTIONS = {
   drawings: ['drawings'], panels: ['panels'], inventory: ['items', 'locations', 'stockMoves'],
   compliance: ['permits', 'inspections', 'certifications', 'checklists'], sequences: ['sequences', 'enrolments', 'outbox'],
   security: ['checklists'], wireruns: ['wireRuns'], bending: ['bends', 'benderProfiles'],
-  workplan: ['workPlans', 'workTasks', 'taskTemplates', 'huddles'],
+  workplan: ['workPlans', 'workTasks', 'taskTemplates', 'huddles'], materials: ['materialRequests'],
 };
 // Electricians and apprentices land on My day (their task list) instead of the dashboard.
 const FIELD_ROLES = ['electrician', 'apprentice'];
@@ -59,6 +60,45 @@ function restart(hash = 'dashboard') {
   history.replaceState(null, '', `${location.pathname}${location.search}#/${hash}`);
   location.reload();
 }
+
+// ---------- module switches (Settings → Modules) ----------
+
+// The switches, cached: store.settings() copies the whole record (logo included) on every call.
+let switchCache = null;
+const switchesNow = () => (switchCache ||= { modules: store.settings()?.modules ?? null });
+
+/** Has the company turned this screen on? Separate from the plan: a switch hides, a plan locks. */
+export function moduleEnabled(id) {
+  return moduleOn(switchesNow(), id);
+}
+
+/** The switch that hides a module, for the "turned off" page. */
+const switchFor = (id) => SWITCHES.find((s) => s.modules.includes(id)) || (id === 'inventory' ? SWITCHES.find((s) => s.id === 'inventory') : null);
+
+/**
+ * Links into turned-off modules disappear from every screen and sheet, whoever drew them
+ * (dashboard tiles, job tabs, notification rows, help articles). Screens also leave out their
+ * own buttons; this catches the rest.
+ */
+function sweepLinks(root) {
+  const settings = switchesNow();
+  if (!settings.modules) return;
+  const links = root.matches?.('a[href^="#/"]') ? [root] : [];
+  for (const a of [...links, ...(root.querySelectorAll?.('a[href^="#/"]') || [])]) {
+    if (a.closest('.rail, [data-keep-links]')) continue;
+    if (!linkOn(settings, a.getAttribute('href'))) a.remove();
+  }
+}
+let sweeper = null;
+function startSweeper() {
+  if (sweeper) return;
+  sweeper = new MutationObserver((records) => {
+    for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1) sweepLinks(n);
+  });
+  sweeper.observe(document.body, { childList: true, subtree: true });
+}
+let modulesKey = null;
+const currentModulesKey = () => JSON.stringify(switchesNow().modules);
 
 // ---------- plans ----------
 
@@ -104,7 +144,7 @@ function route() {
   if (['sign-in', 'reset-password', 'forgot-password', 'welcome'].includes(id)) { nav('dashboard'); return; }
   if (!landed) {
     landed = true;
-    if (id === 'dashboard' && FIELD_ROLES.includes(auth.role()) && auth.can('today') && moduleUnlocked('today')) { nav('today'); return; }
+    if (id === 'dashboard' && FIELD_ROLES.includes(auth.role()) && auth.can('today') && moduleUnlocked('today') && moduleEnabled('today')) { nav('today'); return; }
   }
   const mod = ALL.find((m) => m.id === id) || MODULES[0];
   if (typeof cleanup === 'function') { try { cleanup(); } catch (e) { console.error(e); } }
@@ -120,6 +160,15 @@ function route() {
     main.append(ui.page({ title: mod.title }, ui.empty({ icon: 'lock', title: 'No access', text: `Your role (${ROLES[auth.role()]?.label}) can't open ${mod.title}. Ask an owner or admin.` })));
     return;
   }
+  if (!moduleEnabled(mod.id)) {
+    const sw = switchFor(mod.id);
+    main.append(ui.page({ title: mod.title }, ui.empty({
+      icon: 'eye-off', title: `${sw?.label || mod.title} is turned off`,
+      text: auth.isAdmin() ? 'Your company turned this module off. Everything in it is kept; turn it back on to see it again.' : 'Your company turned this module off. Everything in it is kept. An owner or admin can turn it back on.',
+      action: auth.isAdmin() && auth.can('settings') ? ui.button('Settings → Modules', { variant: 'primary', icon: 'sliders', href: '#/settings?section=modules' }) : ui.button('Back to the dashboard', { href: '#/dashboard' }),
+    })));
+    return;
+  }
   const locked = !moduleUnlocked(mod.id);
   if (locked && !viewingLocked.has(mod.id)) {
     main.className = 'main';
@@ -127,7 +176,7 @@ function route() {
     return;
   }
   try {
-    cleanup = mod.render(main, { params, query, store, ui, auth, nav, route, app: shellApi });
+    cleanup = mod.render(main, { params, query, store, ui, auth, nav, route, app: shellApi, on: moduleEnabled });
     if (locked) main.prepend(readOnlyBanner(mod));
     const trial = trialBanner(mod);
     if (trial) main.prepend(trial);
@@ -144,7 +193,7 @@ function buildRail() {
   rail.append(h('a', { class: 'rail-logo', href: '#/dashboard', title: BRAND.name }, icon('zap', 22)));
   let lastGroup = null;
   for (const m of MODULES) {
-    if (m.hidden || !auth.can(m.perm)) continue;
+    if (m.hidden || !auth.can(m.perm) || !moduleEnabled(m.id)) continue;
     if (lastGroup && m.group !== lastGroup) rail.append(h('div', { class: 'rail-sep' }));
     lastGroup = m.group;
     const locked = !moduleUnlocked(m.id);
@@ -231,13 +280,14 @@ const WHEEL = [
   { label: 'Lead', icon: 'funnel', go: 'leads?new=1', perm: 'leads' },
   { label: 'Quote', icon: 'file-text', go: 'estimates/new', perm: 'estimates' },
   { label: 'Job', icon: 'briefcase', go: 'jobs?new=1', perm: 'jobs' },
+  { label: 'Material', icon: 'truck', go: 'materials?new=1', perm: 'jobs' },
   { label: 'Invoice', icon: 'receipt', go: 'invoices/new', perm: 'invoices' },
   { label: 'Calc', icon: 'calculator', go: 'calcs', perm: 'calcs' },
   { label: 'SOPs', icon: 'book', go: 'sops', perm: 'sops' },
 ];
 
 function buildWheel() {
-  const items = WHEEL.filter((w) => auth.can(w.perm) && moduleUnlocked(w.go.split(/[/?]/)[0]));
+  const items = WHEEL.filter((w) => auth.can(w.perm) && moduleUnlocked(w.go.split(/[/?]/)[0]) && moduleEnabled(hrefModule('#/' + w.go)));
   const scrim = h('div', { class: 'wheel-scrim', onClick: () => toggle(false) });
   const wheel = h('div', { class: 'wheel', 'aria-hidden': 'true' }, h('div', { class: 'wheel-disc' }));
   items.forEach((w, i) => {
@@ -269,6 +319,7 @@ function rebuild() {
   for (const el of document.querySelectorAll('.wheel, .wheel-scrim, .wheel-fab')) el.remove();
   main = h('main', { class: 'main', id: 'main' });
   shell = h('div', { class: 'app' }, buildRail(), main);
+  modulesKey = currentModulesKey();
   document.body.append(shell, ...buildWheel());
   route();
 }
@@ -387,7 +438,10 @@ async function startShell() {
     const btn = rail?.querySelector('[aria-label="Toggle dark mode"]');
     btn?.firstChild?.replaceWith(icon(isDark() ? 'sun' : 'moon', 20));
   }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  store.on('*', (e) => { if (e.type === 'reset') rebuild(); });
+  store.on('*', (e) => { if (e.type === 'reset') { switchCache = null; rebuild(); } });
+  // A module turned on or off (here or on another device): redraw the rail, wheel and screen.
+  store.on('settings', () => { switchCache = null; if (currentModulesKey() !== modulesKey) rebuild(); });
+  startSweeper();
   addEventListener('hashchange', route);
   document.getElementById('boot')?.remove();
   rebuild();
@@ -521,4 +575,4 @@ function askUnitsOnce() {
 boot();
 
 // Exposed for tests and the browser console.
-globalThis.kelbe = { store, auth, nav, MODULES, GROUPS, session, get sync() { return sync; } };
+globalThis.kelbe = { store, auth, nav, MODULES, GROUPS, session, moduleEnabled, get sync() { return sync; } };

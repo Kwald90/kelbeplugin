@@ -3,6 +3,8 @@ import { docTotals, invoicePaidCents, invoiceBalanceCents, invoiceStatus, moneyF
 import { newDocTax, taxComponents, TREATMENTS } from '../lib/tax.js';
 import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
 import { invoiceOnlineTools, payLinkBlock } from './integrations.js';
+import { moduleOn } from '../lib/modules.js';
+import { billingLabel } from '../lib/tm.js';
 
 const METHODS = ['e-transfer', 'cheque', 'card', 'cash', 'transfer'];
 
@@ -232,7 +234,8 @@ function renderDetail(root, ctx, id) {
         cur.status !== 'void' && bal > 0 ? ui.button('Record payment', { size: 'sm', variant: 'primary', icon: 'dollar', onClick: recordPayment }) : null,
         cur.status !== 'void' ? ui.button('Void', { size: 'sm', variant: 'ghost danger', onClick: voidIt }) : ui.button('Restore', { size: 'sm', onClick: () => { setStatus('draft'); syncInvoiceStatus(store, id); nav('#/invoices/' + id); } })),
       invoiceOnlineTools(ctx, cur, bal),
-      cur.estimateId ? ui.button('Source estimate', { size: 'sm', variant: 'ghost', icon: 'file-text', href: '#/estimates/' + cur.estimateId }) : null,
+      cur.estimateId && moduleOn(store.settings(), 'estimates') ? ui.button('Source estimate', { size: 'sm', variant: 'ghost', icon: 'file-text', href: '#/estimates/' + cur.estimateId }) : null,
+      cur.tm ? h('div', { class: 'muted', dataset: { tmInvoice: '1' } }, `${billingLabel('tm')}: ${(cur.tm.timeEntryIds || []).length} time entr${(cur.tm.timeEntryIds || []).length === 1 ? 'y' : 'ies'}, ${(cur.tm.stockMoveIds || []).length + (cur.tm.materialRequestIds || []).length} material record(s)${cur.tm.from || cur.tm.to ? `, ${cur.tm.from || '…'} to ${cur.tm.to || '…'}` : ''}. Voiding frees them to bill again.`) : null,
       cur.jobId ? ui.button('Open job', { size: 'sm', variant: 'ghost', icon: 'briefcase', href: '#/jobs/' + cur.jobId }) : null);
   };
   const drawPayments = () => {

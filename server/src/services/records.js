@@ -8,6 +8,7 @@ import { canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, restor
 import { appendAudit, auditRowToRecord, describeRecord } from './audit.js';
 import { assertCollectionWritable, loadTenantPlan } from './entitlements.js';
 import { afterTaskWrite } from './workplan-events.js';
+import { assertCollectionModuleOn, loadModuleSettings } from './modules.js';
 
 export const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const META_KEYS = ['id', 'version', 'changeSeq', 'deleted', 'tenantId'];
@@ -139,9 +140,16 @@ export function createRecords({ validator }) {
   // are refused (feature_not_in_plan); reads stay open. Loaded once per transaction, so a
   // sync push of 500 mutations reads the plan once.
   const planCache = new WeakMap();
+  // Module switches (Settings → Modules): writes into a turned-off module are refused
+  // (module_turned_off); reads stay open. Cached per transaction like the plan, and dropped when
+  // the transaction writes settings, so a push that turns a module back on can then write to it.
+  const moduleCache = new WeakMap();
   async function assertPlanAllows(tx, p, coll) {
     if (!planCache.has(tx)) planCache.set(tx, await loadTenantPlan(tx, tx.tenantId));
     assertCollectionWritable(planCache.get(tx), coll, p);
+    if (coll === 'settings') { moduleCache.delete(tx); return; }
+    if (!moduleCache.has(tx)) moduleCache.set(tx, await loadModuleSettings(tx));
+    assertCollectionModuleOn(moduleCache.get(tx), coll);
   }
 
   function checkRules(p, coll, existing, next) {

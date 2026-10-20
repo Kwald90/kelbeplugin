@@ -52,10 +52,13 @@ export default {
         h('option', { value: '' }, 'No job (shop / admin)'),
         activeJobs().map((j) => h('option', { value: j.id, selected: (j.crewIds || []).includes(me.id) && !open }, `${j.number} · ${j.title}`)));
       const note = h('input', { class: 'input', placeholder: 'Note (optional)', value: open?.note || '', 'aria-label': 'Note' });
+      // Travel is tracked on its own so time & material jobs can bill it at the travel rate.
+      const travel = h('input', { type: 'checkbox', name: 'travel', checked: Boolean(open?.travel) });
+      const travelBox = h('label', { class: 'field check' }, travel, h('span', null, 'Travel time'));
 
       const clockIn = () => {
         if (openEntry(me.id)) return;
-        store.add('timeEntries', { employeeId: me.id, jobId: jobSel.value || null, clockIn: new Date().toISOString(), clockOut: null, breakMins: 0, breakStart: null, note: note.value, approved: false });
+        store.add('timeEntries', { employeeId: me.id, jobId: jobSel.value || null, clockIn: new Date().toISOString(), clockOut: null, breakMins: 0, breakStart: null, note: note.value, approved: false, travel: travel.checked });
         ui.toast('Clocked in', 'success');
       };
       const clockOut = () => {
@@ -84,10 +87,11 @@ export default {
             h('div', { class: 'ops-clock-status' }, open ? (open.breakStart ? 'On break' : 'On the clock') : 'Off the clock',
               open ? h('span', { class: 'muted' }, ` since ${ui.fmtTime(open.clockIn)}`) : null),
             readout,
-            open ? h('div', { class: 'muted' }, job ? `${job.number} · ${job.title}` : 'No job', open.breakMins ? ` · ${open.breakMins} min break` : '') : h('div', { class: 'muted' }, `Hi ${me.name.split(' ')[0]} — pick a job and clock in.`))),
+            open ? h('div', { class: 'muted' }, job ? `${job.number} · ${job.title}` : 'No job', open.travel ? ' · travel' : '', open.breakMins ? ` · ${open.breakMins} min break` : '') : h('div', { class: 'muted' }, `Hi ${me.name.split(' ')[0]} — pick a job and clock in.`))),
         h('div', { class: 'ops-clock-controls' },
           open ? null : jobSel,
           note,
+          open ? null : travelBox,
           open
             ? h('div', { class: 'row' },
               ui.button(open.breakStart ? 'End break' : 'Start break', { icon: open.breakStart ? 'play' : 'stop', size: 'lg', onClick: toggleBreak }),
@@ -121,6 +125,7 @@ export default {
           { label: 'Clock in', name: 'clockIn', type: 'datetime-local', value: toLocalInput(entry?.clockIn) || `${addDays(week, 0)}T07:00`, required: true },
           { label: 'Clock out', name: 'clockOut', type: 'datetime-local', value: toLocalInput(entry?.clockOut) || (entry ? '' : `${addDays(week, 0)}T15:30`), hint: 'Leave blank if still on the clock' },
           { label: 'Break (minutes)', name: 'breakMins', type: 'number', min: '0', value: entry?.breakMins ?? 30 },
+          { label: 'Travel time', name: 'travel', type: 'checkbox', value: Boolean(entry?.travel), hint: 'Billed at the travel rate on time & material jobs' },
           { label: 'Note', name: 'note', value: entry?.note || '', span: true },
         ],
         danger: entry ? { label: 'Delete', onClick: () => store.remove('timeEntries', entry.id) } : null,
@@ -177,7 +182,7 @@ export default {
         ui.table({
           columns: [
             { key: 'day', label: 'Day', render: (t) => ui.fmtDate(t.clockIn, { weekday: 'short', month: 'short', day: 'numeric' }) },
-            { key: 'job', label: 'Job', render: (t) => { const j = store.get('jobs', t.jobId); return j ? h('a', { href: '#/jobs/' + j.id, onClick: (e) => e.stopPropagation() }, j.number) : h('span', { class: 'muted' }, '—'); } },
+            { key: 'job', label: 'Job', render: (t) => { const j = store.get('jobs', t.jobId); return h('span', null, j ? h('a', { href: '#/jobs/' + j.id, onClick: (e) => e.stopPropagation() }, j.number) : h('span', { class: 'muted' }, '—'), t.travel ? [' ', ui.badge('travel', 'info')] : null); } },
             { key: 'in', label: 'In – out', render: (t) => `${ui.fmtTime(t.clockIn)} – ${t.clockOut ? ui.fmtTime(t.clockOut) : 'open'}` },
             { key: 'break', label: 'Break', align: 'right', render: (t) => `${t.breakMins || 0}m` },
             { key: 'hours', label: 'Hours', align: 'right', render: (t) => entryHours(t).toFixed(2) },

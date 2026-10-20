@@ -16,6 +16,7 @@ import { aiSettings, monthUsage, monthUsageByFeature } from '../../ai/usage.js';
 import { acceptDraft, discardDraft, getDraft, listDrafts } from '../../ai/drafts.js';
 import { backgroundPrincipal, scanTenant } from '../../ai/background.js';
 import { tenantCtx, who } from '../util.js';
+import { requireModule } from '../../services/modules.js';
 
 const uuidParam = { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } };
 const tags = ['ai'];
@@ -99,8 +100,12 @@ export default async function aiRoutes(app, { db, records }) {
 
   // ---- conversations --------------------------------------------------------
 
+  // A company that turned the AI assistant off (Settings → Modules) can't start or continue a chat.
+  const aiOn = requireModule(db, 'assistant');
+
   app.post('/api/v1/ai/conversations', {
     config: session,
+    preHandler: aiOn,
     schema: {
       tags, summary: 'Start a conversation with the assistant or the CEC helper',
       body: {
@@ -132,6 +137,7 @@ export default async function aiRoutes(app, { db, records }) {
 
   app.post('/api/v1/ai/conversations/:id/messages', {
     config: session,
+    preHandler: aiOn,
     bodyLimit: 14 * MB,
     schema: {
       tags, summary: 'Send a message; the reply streams back as server-sent events',

@@ -3,6 +3,7 @@ import { docTotals, moneyFormatter } from '../lib/money.js';
 import { newDocTax } from '../lib/tax.js';
 import { mergeForTakeoff, sortSheets } from '../lib/plansets.js';
 import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
+import { moduleOn } from '../lib/modules.js';
 
 const STATUSES = ['draft', 'sent', 'accepted', 'declined'];
 
@@ -201,6 +202,8 @@ function renderDetail(root, ctx, id) {
   const doc = est;
   const money = moneyFormatter(store.settings());
   const save = debounce(() => { store.update('estimates', id, pick(doc)); }, 450);
+  // Invoicing or leads turned off (Settings → Modules): no buttons into them.
+  const on = (m) => (ctx.on ? ctx.on(m) : moduleOn(store.settings(), m));
   const changed = () => { totals.update(doc); save(); };
 
   const clients = store.list('clients').sort((a, b) => a.name.localeCompare(b.name));
@@ -239,7 +242,7 @@ function renderDetail(root, ctx, id) {
         st !== 'draft' ? ui.button('Back to draft', { size: 'sm', variant: 'ghost', onClick: () => setStatus('draft') }) : null),
       st === 'accepted' ? h('div', { class: 'row' },
         doc.jobId ? ui.button('Open job', { size: 'sm', icon: 'briefcase', href: '#/jobs/' + doc.jobId }) : ui.button('Create job', { size: 'sm', icon: 'briefcase', onClick: createJob }),
-        ui.button('Create invoice', { size: 'sm', icon: 'receipt', onClick: () => { save.flush(); nav('#/invoices/new?estimateId=' + id); } })) : null);
+        on('invoices') ? ui.button('Create invoice', { size: 'sm', icon: 'receipt', onClick: () => { save.flush(); nav('#/invoices/new?estimateId=' + id); } }) : null) : null);
   };
   const setStatus = (st) => { doc.status = st; save.flush(); store.update('estimates', id, { status: st }, { summary: `${doc.number} → ${st}` }); drawStatus(); ui.toast(`${doc.number} marked ${st}`, 'success'); };
   const createJob = () => {
@@ -257,7 +260,7 @@ function renderDetail(root, ctx, id) {
   };
   const accept = () => {
     setStatus('accepted');
-    if (doc.leadId) { const l = store.get('leads', doc.leadId); if (l && l.stage !== 'won') store.update('leads', l.id, { stage: 'won' }); }
+    if (doc.leadId && on('leads')) { const l = store.get('leads', doc.leadId); if (l && l.stage !== 'won') store.update('leads', l.id, { stage: 'won' }); }
     const s = ui.openSheet({
       title: 'Estimate accepted', dialog: true,
       body: h('p', { style: { margin: 0 } }, `${doc.number} is accepted. What next?`),
@@ -265,8 +268,8 @@ function renderDetail(root, ctx, id) {
         ui.button('Later', { variant: 'ghost', onClick: () => s.close() }),
         doc.jobId ? ui.button('Open job', { icon: 'briefcase', onClick: () => { s.close(); nav('#/jobs/' + doc.jobId); } })
           : ui.button('Create job', { icon: 'briefcase', onClick: () => { s.close(); createJob(); } }),
-        ui.button('Create invoice', { variant: 'primary', icon: 'receipt', onClick: () => { s.close(); nav('#/invoices/new?estimateId=' + id); } }),
-      ],
+        on('invoices') ? ui.button('Create invoice', { variant: 'primary', icon: 'receipt', onClick: () => { s.close(); nav('#/invoices/new?estimateId=' + id); } }) : null,
+      ].filter(Boolean),
     });
   };
   drawStatus();
@@ -289,7 +292,7 @@ function renderDetail(root, ctx, id) {
   const links = h('div', { class: 'row muted money-links' },
     doc.planSetId ? ui.button('Source plan set', { size: 'sm', variant: 'ghost', icon: 'layers', href: '#/drawings?set=' + encodeURIComponent(doc.planSetId) })
       : doc.drawingId ? ui.button('Source drawing', { size: 'sm', variant: 'ghost', icon: 'pen', href: '#/drawings/' + doc.drawingId }) : null,
-    doc.leadId ? ui.button('Lead', { size: 'sm', variant: 'ghost', icon: 'funnel', href: '#/leads' }) : null);
+    doc.leadId && on('leads') ? ui.button('Lead', { size: 'sm', variant: 'ghost', icon: 'funnel', href: '#/leads' }) : null);
 
   root.append(ui.page({
     title: `${doc.number}`,

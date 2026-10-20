@@ -102,6 +102,8 @@ export function mergeWrite(p, coll, existing, next) {
 export const MONEY_FIELDS = {
   items: ['priceCents', 'costCents'],
   settings: ['labourRateCents', 'markupPct'],
+  // the office's cost on a material request (crew file requests, never with prices)
+  materialRequests: ['costCents'],
 };
 
 /** Can this principal see prices and costs? */
@@ -142,7 +144,8 @@ function restoreMoney(coll, existing, next) {
   delete out.pricesHidden; // a read marker, never stored
   if (MONEY_FIELDS[coll]) {
     for (const k of MONEY_FIELDS[coll]) {
-      if (existing && k in existing) out[k] = existing[k]; else if (existing) delete out[k];
+      // A new record from a reader without money carries none either (a crew member's material request).
+      if (existing && k in existing) out[k] = existing[k]; else if (existing || coll === 'materialRequests') delete out[k];
     }
   }
   if (coll === 'jobs' && Array.isArray(out.changeOrders)) {
@@ -182,6 +185,9 @@ export function checkWriteRules(p, coll, existing, next) {
   if (p.kind === 'api_key') return null;
   const def = collectionDef(coll);
 
+  // Material requests: crew file their own, and change or withdraw them only until they are sent.
+  if (coll === 'materialRequests' && !p.isManager) return materialRequestRule(p, existing, next);
+
   // Time entries: non-managers write only their own, and cannot approve.
   if (def?.ownRows && !p.isManager) {
     if (!p.employeeId) return 'Your membership is not linked to an employee record, so you cannot record time.';
@@ -212,6 +218,22 @@ export function checkWriteRules(p, coll, existing, next) {
     const changed = changedKeys(existing, next);
     if (changed.some((k) => k !== 'nextNumbers')) return 'Changing settings needs the settings permission.';
   }
+  return null;
+}
+
+// ---- money and material requests ------------------------------------------------
+
+/** A non-manager's write to a material request: an error message, or null when allowed. */
+function materialRequestRule(p, existing, next) {
+  const me = p.employeeId;
+  if (!me) return 'Your membership is not linked to an employee record, so you cannot request material.';
+  if (existing && existing.employeeId !== me) return 'You can only change your own material requests.';
+  if (next && next.employeeId !== me) return 'Request material as yourself.';
+  if (existing && (existing.status || 'requested') !== 'requested') return 'This request has gone to the office; ask them to change it.';
+  if (!next) return null;
+  if (!['requested', 'cancelled'].includes(next.status || 'requested')) return 'Only the office marks requests sent, ordered or fulfilled.';
+  if (!same(existing?.costCents ?? null, next.costCents ?? null)) return 'Only the office sets costs.';
+  for (const k of ['batchId', 'sentAt', 'stockMoveId']) if (!same(existing?.[k] ?? null, next[k] ?? null)) return 'Only the office handles sent requests.';
   return null;
 }
 
