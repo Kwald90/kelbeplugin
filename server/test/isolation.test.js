@@ -7,6 +7,13 @@ import assert from 'node:assert/strict';
 import { skip, createTestDatabase } from './support/db.js';
 import { apiKey, call, ownerTenant, startApp } from './support/app.js';
 import { TABLE_COLLECTIONS, collectionDef } from '../src/collections.js';
+import { createFakeQbo, connectViaFake } from './support/fake-qbo.js';
+import { setFetch } from '../src/integrations/http.js';
+import { createRecords } from '../src/services/records.js';
+import { createValidator } from '../src/schemas.js';
+import { refreshReference } from '../src/qbo/reference.js';
+import { acquireLease, releaseLease } from '../src/qbo/lease.js';
+import { syncTenant } from '../src/qbo/engine.js';
 
 let t, app, A, B, keyA, keyAReadJobs, bIds;
 const SECRET = 'B-ONLY-SECRET';
@@ -325,5 +332,102 @@ describe('audit hash chain', { skip }, () => {
     } finally { c.release(); }
     const a = await t.db.withTenant({ tenantId: A.tenantId }, async (tx) => (await tx.query('SELECT * FROM audit_verify_chain($1)', [A.tenantId])).rows[0]);
     assert.equal(a.ok, false);
+  });
+});
+
+// ---- QuickBooks (docs/integrations/quickbooks.md 10.2) ------------------------------------------
+
+describe('QuickBooks: tenant A never reaches tenant B', { skip }, () => {
+  const fake = createFakeQbo();
+  const QBO_ENV = { QBO_ENVIRONMENT: 'sandbox', QBO_CLIENT_ID: fake.app.clientId, QBO_CLIENT_SECRET: fake.app.clientSecret, QBO_WEBHOOK_VERIFIER: 'iso-verifier' };
+  const realmA = '7700100000000001';
+  const realmB = '7700100000000002';
+  let qapp, qconfig, deps, conflictB;
+
+  const setUp = async (T, realmId) => {
+    fake.addCompany(realmId);
+    assert.equal((await connectViaFake(fake, { db: t.db, sealer: qapp.sealer, config: qconfig, tenantId: T.tenantId, userId: T.userId, realmId })).result, 'ok');
+    await refreshReference(deps, T.tenantId, { force: true });
+    await t.superPool.query(`UPDATE qbo_connections SET state = 'active', setup = '{"phase":"done"}'::jsonb, cdc_cursor = now() - interval '1 minute', time_cursor = now() WHERE tenant_id = $1`, [T.tenantId]);
+    await t.superPool.query('DELETE FROM qbo_outbox WHERE tenant_id = $1', [T.tenantId]);
+  };
+  const passFor = async (T) => {
+    await t.superPool.query("UPDATE qbo_outbox SET not_before = now() - interval '1 second' WHERE tenant_id = $1", [T.tenantId]);
+    const lease = await acquireLease(t.db, T.tenantId, 'iso');
+    try { return await syncTenant(deps, T.tenantId, { epoch: lease.epoch }); } finally { await releaseLease(t.db, T.tenantId, lease.epoch); }
+  };
+
+  before(async () => {
+    if (skip) return;
+    setFetch((u, i) => fake.fetch(u, i));
+    ({ app: qapp, config: qconfig } = await startApp(t, { env: QBO_ENV }));
+    deps = { db: t.db, sealer: qapp.sealer, config: qconfig, records: createRecords({ validator: createValidator(), config: qconfig }) };
+    await setUp(A, realmA);
+    await setUp(B, realmB);
+    // B: one client in QuickBooks, a log, a candidate and an open conflict, all carrying B's marker.
+    await call(qapp, { method: 'POST', url: '/api/v1/clients', token: B.token, body: { id: 'b-qbo-client', name: `${SECRET} QBO` } });
+    await passFor(B);
+    const link = (await t.superPool.query("SELECT * FROM qbo_links WHERE tenant_id = $1 AND record_id = 'b-qbo-client'", [B.tenantId])).rows[0];
+    assert.equal(link?.state, 'synced');
+    const { rows } = await t.superPool.query(
+      "INSERT INTO qbo_conflicts (tenant_id, link_id, kind, collection, record_id, label, fields) VALUES ($1, $2, 'fields', 'clients', 'b-qbo-client', $3, '[]') RETURNING id",
+      [B.tenantId, link.id, SECRET]);
+    conflictB = rows[0].id;
+    await t.superPool.query("INSERT INTO qbo_candidates (tenant_id, realm_hash, kind, fishtape_id, status, choice, qbo_summary) VALUES ($1, $2, 'customers', 'b-qbo-client', 'fishtape_only', 'skip', $3)",
+      [B.tenantId, link.realm_hash, JSON.stringify({ name: SECRET })]);
+  });
+  after(async () => { setFetch(null); await qapp?.close(); });
+
+  test("A's QuickBooks routes never show B's links, log, conflicts, candidates or status", async () => {
+    const urls = ['/api/v1/qbo/status', '/api/v1/qbo/log', '/api/v1/qbo/conflicts?status=open', '/api/v1/qbo/setup/matches', '/api/v1/qbo/records/status?collection=clients',
+      '/api/v1/qbo/records/clients/b-qbo-client', '/api/v1/qbo/checks', '/api/v1/qbo/mappings'];
+    for (const url of urls) {
+      const r = await call(qapp, { url, token: A.token });
+      assert.ok(r.status < 500, `${url}: ${r.status}`);
+      assert.ok(!mentionsSecret(r.body), `${url} shows B's data`);
+    }
+    const view = await call(qapp, { url: '/api/v1/qbo/records/clients/b-qbo-client', token: A.token });
+    assert.equal(view.body.state, null);
+    assert.equal((await call(qapp, { url: `/api/v1/qbo/conflicts/${conflictB}`, token: A.token })).status, 404);
+  });
+
+  test("A cannot resolve B's conflict, unlink B's record or link to B's QuickBooks objects", async () => {
+    const res = await call(qapp, { method: 'POST', url: `/api/v1/qbo/conflicts/${conflictB}/resolve`, token: A.token, body: { choice: 'quickbooks' } });
+    assert.equal(res.status, 404);
+    const un = await call(qapp, { method: 'DELETE', url: '/api/v1/qbo/records/clients/b-qbo-client/link', token: A.token });
+    assert.equal(un.status, 404);
+    const bLink = (await t.superPool.query("SELECT qbo_id, state FROM qbo_links WHERE tenant_id = $1 AND record_id = 'b-qbo-client'", [B.tenantId])).rows[0];
+    assert.equal(bLink.state, 'synced');
+    assert.equal((await t.superPool.query('SELECT status FROM qbo_conflicts WHERE id = $1', [conflictB])).rows[0].status, 'open');
+    // B's QuickBooks object is not in A's company: relinking A's record to its id reads A's own realm and finds nothing.
+    await call(qapp, { method: 'POST', url: '/api/v1/clients', token: A.token, body: { id: 'a-qbo-client', name: 'Alpha QBO' } });
+    const re = await call(qapp, { method: 'PUT', url: '/api/v1/qbo/records/clients/a-qbo-client/link', token: A.token, body: { qboId: String(Number(bLink.qbo_id) + 1000) } });
+    assert.equal(re.status, 404);
+  });
+
+  test("a webhook for B's realm never touches A's rows", async () => {
+    await t.superPool.query('UPDATE qbo_connections SET dirty_at = NULL WHERE tenant_id = ANY($1)', [[A.tenantId, B.tenantId]]);
+    fake.company(realmB).events.length = 0;
+    fake.create(realmB, 'TimeActivity', { NameOf: 'Employee', Hours: 1, Minutes: 0 });
+    const h = fake.signedWebhook(realmB, QBO_ENV.QBO_WEBHOOK_VERIFIER);
+    const r = await qapp.inject({ method: 'POST', url: '/api/v1/webhooks/qbo', headers: { 'content-type': 'application/json', 'intuit-signature': h.signature }, payload: h.raw });
+    assert.equal(r.statusCode, 200);
+    const conns = (await t.superPool.query('SELECT tenant_id, dirty_at FROM qbo_connections WHERE tenant_id = ANY($1)', [[A.tenantId, B.tenantId]])).rows;
+    assert.ok(conns.find((c) => c.tenant_id === B.tenantId).dirty_at);
+    assert.equal(conns.find((c) => c.tenant_id === A.tenantId).dirty_at, null);
+    assert.equal((await t.superPool.query('SELECT count(*)::int AS n FROM qbo_inbox WHERE tenant_id = $1', [A.tenantId])).rows[0].n, 0);
+  });
+
+  test("the app role, in A's transaction, can neither read nor write B's QuickBooks rows", async () => {
+    await t.db.withTenant({ tenantId: A.tenantId }, async (tx) => {
+      for (const table of ['qbo_links', 'qbo_conflicts', 'qbo_candidates', 'qbo_sync_log', 'qbo_mappings', 'qbo_outbox', 'qbo_connections']) {
+        const { rows } = await tx.query(`SELECT count(*)::int AS n FROM ${table} WHERE tenant_id = $1`, [B.tenantId]);
+        assert.equal(rows[0].n, 0, table);
+      }
+      const upd = await tx.query("UPDATE qbo_links SET state = 'unlinked' WHERE tenant_id = $1", [B.tenantId]);
+      assert.equal(upd.rowCount, 0);
+    });
+    await assert.rejects(t.db.withTenant({ tenantId: A.tenantId }, (tx) => tx.query(
+      "INSERT INTO qbo_outbox (tenant_id, collection, record_id, op, rank) VALUES ($1, 'clients', 'x', 'upsert', 10)", [B.tenantId])), /row-level security/);
   });
 });
