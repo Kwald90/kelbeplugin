@@ -309,10 +309,14 @@ export function linkButton(ui, t) {
   return null;
 }
 
+/** Evidence thumbnails; tapping one opens it large (browsers won't open data: URLs in a tab). */
 export function photoStrip(ui, photos) {
-  return ui.h('div', { class: 'wp-photos' }, (photos || []).filter((p) => p?.dataUrl).map((p, i) =>
-    ui.h('a', { href: p.dataUrl, target: '_blank', rel: 'noopener', class: 'wp-photo', title: p.takenAt ? ui.fmtDateTime(p.takenAt) : `Photo ${i + 1}` },
-      ui.h('img', { src: p.dataUrl, alt: `Evidence photo ${i + 1}`, loading: 'lazy' }))));
+  const { h } = ui;
+  const when = (p) => (p.takenAt ? ui.fmtDateTime(p.takenAt) : '');
+  return h('div', { class: 'wp-photos' }, (photos || []).filter((p) => p?.dataUrl).map((p, i) =>
+    h('button', { type: 'button', class: 'wp-photo', title: when(p) || `Photo ${i + 1}`, 'aria-label': `Open evidence photo ${i + 1}`,
+      onClick: () => ui.openSheet({ title: `Photo ${i + 1}${when(p) ? ` · ${when(p)}` : ''}`, wide: true, body: h('img', { src: p.dataUrl, alt: `Evidence photo ${i + 1}`, class: 'wp-photo-big' }) }) },
+    h('img', { src: p.dataUrl, alt: '', loading: 'lazy' }))));
 }
 
 /**

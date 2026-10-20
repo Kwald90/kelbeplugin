@@ -50,7 +50,8 @@
 .wp-actions .btn.lg { flex: 1 1 120px; min-height: 56px; font-size: var(--fs-base); }
 .wp-preview .wp-card { opacity: .9; }
 .wp-photos { display: flex; flex-wrap: wrap; gap: var(--s2); }
-.wp-photo { width: 84px; height: 84px; border-radius: var(--r-sm); overflow: hidden; border: 1px solid var(--border); display: block; }
+.wp-photo { width: 84px; height: 84px; padding: 0; border-radius: var(--r-sm); overflow: hidden; border: 1px solid var(--border); display: block; background: var(--surface-2); cursor: zoom-in; }
+.wp-photo-big { display: block; width: 100%; height: auto; border-radius: var(--r-md); }
 .wp-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .wp-reasons { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--s2); }
 .wp-reason { min-height: 52px; padding: var(--s2) var(--s3); border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
