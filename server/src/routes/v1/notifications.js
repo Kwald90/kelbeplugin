@@ -31,14 +31,14 @@ export default async function notificationRoutes(app, { db }) {
       tags, summary: 'Your notifications, newest first, with the unread count',
       querystring: {
         type: 'object', additionalProperties: false,
-        properties: { unread: { type: 'boolean', default: false }, limit: { type: 'integer', minimum: 1, maximum: 100, default: 30 }, cursor: { type: 'string', maxLength: 100 } },
+        properties: { status: { type: 'string', enum: ['all', 'unread'], default: 'all' }, limit: { type: 'integer', minimum: 1, maximum: 100, default: 30 }, cursor: { type: 'string', maxLength: 100 } },
       },
     },
   }, async (req) => inTenant(req, async (tx) => {
-    const { unread, limit, cursor } = req.query;
+    const { status, limit, cursor } = req.query;
     const params = [tx.tenantId];
     const where = ['tenant_id = $1'];
-    if (unread) where.push('read_at IS NULL');
+    if (status === 'unread') where.push('read_at IS NULL');
     if (cursor) {
       const m = CURSOR.exec(cursor);
       if (!m) throw badRequest('Invalid cursor.');

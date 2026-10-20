@@ -81,7 +81,7 @@ describe('notifications', { skip }, () => {
     assert.equal(mine.body.unread, 0);
     const all = await call(app, { method: 'PATCH', url: '/api/v1/notifications', token: A.token, body: { all: true, read: true } });
     assert.equal(all.body.updated, 2);
-    assert.equal((await list(A.token, '?unread=true')).body.data.length, 0);
+    assert.equal((await list(A.token, '?status=unread')).body.data.length, 0);
     const back = await call(app, { method: 'PATCH', url: '/api/v1/notifications', token: A.token, body: { ids: [(await list(A.token)).body.data[0].id], read: false } });
     assert.equal(back.body.unread, 1);
     const empty = await call(app, { method: 'PATCH', url: '/api/v1/notifications', token: A.token, body: { read: true } });
