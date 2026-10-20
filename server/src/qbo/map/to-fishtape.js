@@ -5,7 +5,9 @@
 // did not change keep everything Fishtape has on them (qty, unit price, kind, labour hours, change
 // order) through their QBO Line.Id pairing (meta.lineIds). Push-only collections return {}.
 import { lineCents, KINDS } from '../../../../electrical-app/js/lib/money.js';
-import { fishtapeToCanon, qboToCanon, linkInfo, normMethod, toCents, str, lossySuffix, isGenericItem, canonEqual } from './canon.js';
+import {
+  fishtapeToCanon, qboToCanon, linkInfo, normMethod, toCents, str, cut, lossySuffix, isGenericItem, canonEqual, LINE_DESC_MAX, LOSSY_ROOM,
+} from './canon.js';
 import { FIELD_RULES } from './merge.js';
 import { lineTaxKey, reverseTaxKey, taxesFromCodes } from './tax.js';
 
@@ -144,7 +146,12 @@ function linesPatch(collection, c, ctx, existing, report) {
     const kind = prev && prevCanon && prevCanon.itemRef === l.itemRef && KINDS.includes(prev.kind) ? prev.kind : (KINDS.includes(l.kind) ? l.kind : 'material');
     const itemId = l.itemRef && !isGenericItem(ctx, l.itemRef) ? fid(ctx, 'items', l.itemRef) : null;
     let description = l.description || '';
-    if (l.lossy && typeof l.lossy === 'object') { description = `${description}${lossySuffix(l.lossy.qty, l.lossy.unitPrice)}`.trim(); lossy.push(i); }
+    // The suffix goes inside Fishtape's 1,000 characters: the text before it is cut to leave LOSSY_ROOM.
+    if (l.lossy && typeof l.lossy === 'object') {
+      description = `${cut(description, LINE_DESC_MAX - LOSSY_ROOM) || ''}${lossySuffix(l.lossy.qty, l.lossy.unitPrice)}`.trim();
+      lossy.push(i);
+    }
+    description = description.slice(0, LINE_DESC_MAX);
     const line = { description, qty: l.qty, unitCents: l.unitCents, kind };
     if (itemId) line.itemId = itemId;
     if (prev) for (const k of ['labourHours', 'changeOrderId']) if (prev[k] != null) line[k] = prev[k];
@@ -214,11 +221,14 @@ function billPatch(c, ctx, existing, has) {
     const { meta } = linkInfo(ctx);
     const exIds = meta.lineIds && typeof meta.lineIds === 'object' ? meta.lineIds : {};
     const exIndexById = new Map(Object.entries(exIds).map(([i, id]) => [String(id), Number(i)]));
+    const exCanon = existing ? fishtapeToCanon('bills', existing, ctx).lines : [];
     p.lines = (c.lines || []).map((l) => {
       const j = l.lineId != null ? exIndexById.get(String(l.lineId)) : undefined;
       const prev = j != null ? existing?.lines?.[j] : null;
       const costType = (['material', 'subcontract', 'equipment', 'other'].find((t) => l.accountRef && String(acc[`jobCost.${t}`]) === String(l.accountRef))) || prev?.costType || 'material';
-      const jobId = l.customerRef ? fid(ctx, 'jobs', l.customerRef) : null;
+      // A job without a sub-customer goes out as its client: that client coming back keeps the job.
+      let jobId = l.customerRef ? fid(ctx, 'jobs', l.customerRef) : null;
+      if (!jobId && prev?.jobId && l.customerRef && exCanon[j]?.customerRef === l.customerRef) jobId = prev.jobId;
       const line = { description: l.description || '', qty: l.qty || 1, unitCents: l.qty ? Math.round(l.amountCents / l.qty) : l.amountCents, amountCents: l.amountCents, costType };
       const itemId = l.itemRef ? fid(ctx, 'items', l.itemRef) : null;
       if (itemId) line.itemId = itemId;
@@ -247,10 +257,12 @@ export function billStatusFromQbo(qboBill, existingStatus) {
 
 /**
  * What QBO settled on an invoice outside Fishtape's payments (4.9): (TotalAmt − Balance) minus the
- * QBO payment lines on this invoice that are linked to Fishtape payments. Never below 0.
+ * invoice's own Deposit (it has its own Fishtape payment, depositRecord) minus the QBO payment lines
+ * on this invoice that are linked to Fishtape payments. Never below 0. Pass payment lines only in
+ * `linkedPaymentLineCents`, never the deposit.
  */
 export function settlementCents(qboInvoice, linkedPaymentLineCents) {
-  const settled = toCents(qboInvoice?.TotalAmt) - toCents(qboInvoice?.Balance);
+  const settled = toCents(qboInvoice?.TotalAmt) - toCents(qboInvoice?.Balance) - toCents(qboInvoice?.Deposit ?? 0);
   const linked = (linkedPaymentLineCents || []).reduce((s, x) => s + (Math.round(Number(x)) || 0), 0);
   return Math.max(0, settled - linked);
 }
@@ -270,7 +282,12 @@ export function depositRecord(qboInvoice, invoiceId) {
 /**
  * Link meta from a QBO object just read or written (3.4): line pairing, lossy lines, the kept
  * GlobalTaxCalculation, balances, the exact name and type, and a payment's lines Fishtape does not own.
- * Pass `pushed` (canonToQbo's result) after a write so lines sent lossy stay listed.
+ * Pass `pushed` (canonToQbo's result) after a write so lines sent lossy stay listed and a payment's
+ * own excess (ownExcessCents) is known to the next push; without it the link's value is kept.
+ *
+ * lineIds and lossyLines are keyed by line position, and Fishtape lines have no ids: the engine must
+ * store this meta after every write and every pull of the pair, so a line inserted or removed in
+ * Fishtape is paired again before the next merge.
  */
 export function linkMetaFromQbo(entity, object, ctx = {}, { pushed = null } = {}) {
   const o = object || {};
@@ -310,6 +327,8 @@ export function linkMetaFromQbo(entity, object, ctx = {}, { pushed = null } = {}
     }
     meta.unappliedCents = o.UnappliedAmt != null ? toCents(o.UnappliedAmt) : unapplied;
     meta.foreignLines = foreign;
+    const excess = pushed && pushed.ownExcessCents != null ? pushed.ownExcessCents : linkInfo(ctx).meta.ownExcessCents;
+    meta.ownExcessCents = Math.min(Math.max(0, meta.unappliedCents), Math.max(0, Math.round(Number(excess) || 0)));
   }
   if (entity === 'Estimate' || entity === 'Invoice') meta.docNumber = str(o.DocNumber);
   return meta;

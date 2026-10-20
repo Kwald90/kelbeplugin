@@ -170,7 +170,9 @@ export function taxesFromCodes(keysByKind, { province = null, date = new Date(),
   const partFor = (id) => parts.find((p) => p.id === id) || (id === 'GST' ? gstPart : null);
   if (taxed.some((k) => parsed[k].ids.some((id) => !partFor(id)))) return fail({ taxProvince: prov });
 
-  // A treatment of the province that gives exactly these keys, the document's own first.
+  // A treatment of the province that gives exactly these keys, the document's own first. A new BC
+  // document with GST only is 'real-property' (BC's default, ahead of 'gst-only'): both charge the same
+  // taxes; only the label and note differ, and real-property contracts are the usual case for electricians.
   const order = [...new Set([existingTreatment, ...treatmentsFor(prov)].filter((t) => t && TREATMENTS[t] && t !== 'none'))];
   for (const t of order) {
     const comps = taxComponents({ province: prov, treatment: t, date });

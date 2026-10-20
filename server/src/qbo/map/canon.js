@@ -12,9 +12,11 @@
 //               paidFrom: {}, class: {}, department: {}, term: {}, option: {} }   (7.6)
 //   refs: { qboIdFor(collection, fishtapeId), fishtapeIdFor(collection, qboId), itemKind(qboItemId),
 //           itemType(qboItemId), and optionally clientOfJob(jobId) -> clientId,
-//           employeeEntity(employeeId) -> 'Employee'|'Vendor', poLineId(purchaseOrderId, index) -> QBO line id }
+//           employeeEntity(employeeId) -> 'Employee'|'Vendor', poLineId(purchaseOrderId, index) -> QBO line id,
+//           parentOf(qboCustomerId) -> the ParentRef of a QBO sub-customer or project, else null }
 //     fishtapeIdFor is called with Fishtape collection names ('clients', 'jobs', 'items', ...), which tell
-//     a client's customer from a job's sub-customer.
+//     a client's customer from a job's sub-customer. Without parentOf, a pulled document on a sub-customer
+//     that is not a linked job keeps the sub-customer as its client (customerFromQbo).
 //   link: the qbo_links row (snake_case or camelCase): { role, qbo_line, meta }
 //   optional: rates ({ codes, rates, agencies } from qbo_reference, for bill taxes), related ({ job } for
 //   time entry descriptions).
@@ -28,6 +30,12 @@ export const CUSTOMER_MEMO_MAX = 1000;
 export const DOC_NUMBER_MAX = 21;
 export const PAYMENT_REF_MAX = 21;
 export const NOTES_MAX = 4000;
+/** Fishtape's limit on an estimate or invoice line description (schema lines[].description); QBO allows 4000. */
+export const LINE_DESC_MAX = 1000;
+/** Room kept for a lossy suffix: lossy lines are compared, and written to Fishtape, cut to LINE_DESC_MAX − this. */
+export const LOSSY_ROOM = 60;
+/** Fishtape's limit on an item SKU (schema items.sku); QBO allows 100. */
+export const SKU_MAX = 80;
 
 // ---------------------------------------------------------------------------------------------
 // Small helpers shared by the mappers
@@ -114,7 +122,11 @@ export function genericItem(ctx, kind, { negative = false } = {}) {
   return str(items[kind]) || (kind === 'travel' ? str(items.labour) : null) || (kind === 'markup' ? str(items.material) : null) || null;
 }
 
-/** The Fishtape kind of a QBO item: generic item by name, else refs.itemKind, else Service = labour. */
+/**
+ * The Fishtape kind of a QBO item: generic item by name, else refs.itemKind, else Service = labour.
+ * refs.itemKind answers for an item linked to a Fishtape item ('material', the 4.7 rule) before the
+ * QBO type is looked at.
+ */
 export function kindOfItem(ctx, itemRef) {
   if (!itemRef) return 'other';
   const g = keyFor(maps(ctx, 'item'), itemRef, ['material', 'labour', 'other', 'markup', 'travel', 'deposit']);
@@ -155,6 +167,32 @@ function customerRefForJob(ctx, jobId, clientId) {
   return { clientRef: qboIdFor(ctx, 'clients', client), jobRef: null };
 }
 
+/**
+ * A QBO CustomerRef in Fishtape terms (4.7): a linked job's sub-customer is that job, a linked
+ * customer is that client, and any other sub-customer or project counts as its nearest linked
+ * ancestor (a job, else a client), else its top-level customer. Walks refs.parentOf (QBO nests
+ * sub-customers at most 5 levels deep).
+ * @returns {{ clientRef: string|null, jobRef: string|null }}
+ */
+export function customerFromQbo(ctx, qboCustomerId) {
+  const id = str(qboCustomerId);
+  if (!id) return { clientRef: null, jobRef: null };
+  const r = refs(ctx);
+  const isJob = (q) => Boolean(r.fishtapeIdFor?.('jobs', q));
+  const isClient = (q) => Boolean(r.fishtapeIdFor?.('clients', q));
+  if (isJob(id)) return { clientRef: null, jobRef: id };
+  if (isClient(id)) return { clientRef: id, jobRef: null };
+  let cur = id;
+  for (let depth = 0; depth < 5; depth += 1) {
+    const parent = str(r.parentOf?.(cur));
+    if (!parent || parent === cur) break;
+    if (isJob(parent)) return { clientRef: null, jobRef: parent };
+    if (isClient(parent)) return { clientRef: parent, jobRef: null };
+    cur = parent;
+  }
+  return { clientRef: cur, jobRef: null };
+}
+
 const isBusiness = (type) => type === 'commercial' || type === 'industrial';
 
 // ---------------------------------------------------------------------------------------------
@@ -179,7 +217,7 @@ export function fishtapeToCanon(collection, record, ctx = {}) {
       };
     case 'items':
       return {
-        name: str(qboName(r.name)), sku: cut(r.sku, 100), description: cut(r.description, NOTES_MAX),
+        name: str(qboName(r.name)), sku: cut(r.sku, SKU_MAX), description: cut(r.description, NOTES_MAX),
         priceCents: Math.round(Number(r.priceCents) || 0), costCents: Math.round(Number(r.costCents) || 0), active: r.active !== false,
       };
     case 'jobs':
@@ -264,7 +302,8 @@ function docToCanon(collection, r, ctx, meta) {
   };
   if (inv) { out.dueDate = day(r.dueDate); out.estimateRef = qboIdFor(ctx, 'estimates', r.estimateId); }
   else out.validUntil = day(r.validUntil);
-  out.extra = { totalCents: totals.totalCents, taxes: totals.taxes.map((t) => ({ id: t.id, pct: t.pct, cents: t.cents, baseCents: t.baseCents })) };
+  // The whole number, so a push can refuse one QBO would cut (error/number_too_long, 4.7).
+  out.extra = { numberFull: str(r.number), totalCents: totals.totalCents, taxes: totals.taxes.map((t) => ({ id: t.id, pct: t.pct, cents: t.cents, baseCents: t.baseCents })) };
   return out;
 }
 
@@ -281,7 +320,7 @@ function docLines(r, ctx, meta, totals = docTotals(r)) {
     const isLossy = lossy.has(i);
     const line = {
       itemRef: descOnly ? null : (l.itemId ? qboIdFor(ctx, 'items', l.itemId) : genericItem(ctx, kind, { negative: amountCents < 0 })),
-      kind, description: isLossy ? stripLossySuffix(l.description) : str(l.description), amountCents,
+      kind, description: cut(isLossy ? stripLossySuffix(l.description) : l.description, LINE_DESC_MAX), amountCents,
       taxCodeId: descOnly ? null : code(kind), qty, unitCents, lineId: str(ids[String(i)]),
     };
     if (isLossy) line.lossy = true;
@@ -401,7 +440,7 @@ export function qboToCanon(entity, object, ctx = {}) {
       };
     case 'Item':
       return {
-        name: nameBack(o.Name, meta), sku: cut(o.Sku, 100), description: cut(o.Description, NOTES_MAX),
+        name: nameBack(o.Name, meta), sku: cut(o.Sku, SKU_MAX), description: cut(o.Description, NOTES_MAX),
         priceCents: toCents(o.UnitPrice ?? 0), costCents: toCents(o.PurchaseCost ?? 0), active: o.Active !== false,
       };
     case 'Estimate':
@@ -463,6 +502,8 @@ const QBO_EST_STATUS = { Pending: 'pending', Accepted: 'accepted', Closed: 'acce
 /**
  * A QBO invoice voided in QBO (4.7): TotalAmt 0, every line amount 0 and PrivateNote starting
  * "Voided" (VERIFY a more reliable marker; a confirmed `voided` webhook also counts, W3).
+ * Its canonical lines are all zero: the engine must apply the void (status) before any merge of
+ * lines, or the zero lines would be written to Fishtape.
  */
 export function isVoidedInvoice(o) {
   if (!o) return false;
@@ -473,10 +514,9 @@ export function isVoidedInvoice(o) {
 
 function docFromQbo(entity, o, ctx, meta) {
   const inv = entity === 'Invoice';
-  const cust = ref(o.CustomerRef);
-  const isJob = cust && refs(ctx).fishtapeIdFor?.('jobs', cust);
+  const { clientRef, jobRef } = customerFromQbo(ctx, ref(o.CustomerRef));
   const out = {
-    number: cut(o.DocNumber, DOC_NUMBER_MAX), clientRef: isJob ? null : cust, jobRef: isJob ? cust : null,
+    number: cut(o.DocNumber, DOC_NUMBER_MAX), clientRef, jobRef,
     date: day(o.TxnDate), lines: salesLinesFromQbo(o, ctx, meta),
     status: inv ? (isVoidedInvoice(o) ? 'void' : 'open') : (QBO_EST_STATUS[o.TxnStatus] || 'pending'),
     notes: cut(o.CustomerMemo?.value, CUSTOMER_MEMO_MAX), title: stripMarker(o.PrivateNote),
@@ -521,13 +561,13 @@ function salesLinesFromQbo(o, ctx, meta) {
   const plain = [], markups = [];
   for (const l of flatSalesLines(o)) {
     if (l.DetailType === 'DescriptionOnly') {
-      plain.push({ itemRef: null, kind: 'other', description: str(l.Description), amountCents: 0, taxCodeId: null, qty: 0, unitCents: 0, lineId: str(l.Id) });
+      plain.push({ itemRef: null, kind: 'other', description: cut(l.Description, LINE_DESC_MAX), amountCents: 0, taxCodeId: null, qty: 0, unitCents: 0, lineId: str(l.Id) });
       continue;
     }
     if (l.DetailType === 'DiscountLineDetail') {
       const amount = -Math.abs(toCents(l.Amount));
       plain.push({
-        itemRef: genericItem(ctx, 'other', { negative: true }), kind: 'other', description: str(l.Description) || 'Discount', amountCents: amount,
+        itemRef: genericItem(ctx, 'other', { negative: true }), kind: 'other', description: cut(l.Description, LINE_DESC_MAX) || 'Discount', amountCents: amount,
         taxCodeId: ref(l.DiscountLineDetail?.TaxCodeRef), qty: 1, unitCents: amount, lineId: str(l.Id), discount: true,
       });
       continue;
@@ -546,7 +586,7 @@ function salesLinesFromQbo(o, ctx, meta) {
     }
     const index = plain.length;
     const line = {
-      itemRef, kind: kindOfItem(ctx, itemRef), description: lossyListed.has(index) ? stripLossySuffix(description) : description,
+      itemRef, kind: kindOfItem(ctx, itemRef), description: cut(lossyListed.has(index) ? stripLossySuffix(description) : description, LINE_DESC_MAX),
       amountCents, taxCodeId: ref(d.TaxCodeRef), qty: exact ? qty : 1, unitCents: exact ? unitCents : amountCents, lineId: str(l.Id),
     };
     if (!exact) line.lossy = { qty: d.Qty, unitPrice: d.UnitPrice };
@@ -599,7 +639,7 @@ function billFromQbo(kind, o, ctx) {
       const amount = net ? net[i] : toCents(l.Amount);
       return {
         itemRef: item ? ref(d.ItemRef) : null, accountRef: item ? null : ref(d.AccountRef), description: cut(l.Description, NOTES_MAX),
-        amountCents: sign * amount, taxCodeId: ref(d.TaxCodeRef), customerRef: ref(d.CustomerRef),
+        amountCents: sign * amount, taxCodeId: ref(d.TaxCodeRef), customerRef: customerOfLine(ctx, ref(d.CustomerRef)),
         qty: item ? Number(d.Qty ?? 1) || 0 : 1, unitCents: item ? sign * toCents(d.UnitPrice ?? 0) : sign * amount, lineId: str(l.Id),
       };
     }), taxLinesOf(o.TxnTaxDetail).filter((t) => t.cents).map((t) => {
@@ -610,6 +650,11 @@ function billFromQbo(kind, o, ctx) {
   };
 }
 
+/** A cost line's CustomerRef read back: a linked job, else the linked client it belongs to (customerFromQbo). */
+function customerOfLine(ctx, qboId) {
+  const c = customerFromQbo(ctx, qboId);
+  return c.jobRef || c.clientRef;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Comparison
@@ -623,7 +668,8 @@ function phoneCompare(v) {
 
 /**
  * The part of a canonical value that is compared. Equal keys mean "the same in both systems".
- * Lines compare { itemRef, description, amountCents, taxCodeId } (4.7); qty, unit price, kind and
+ * Lines compare { itemRef, description, amountCents, taxCodeId } (4.7), descriptions cut to
+ * Fishtape's 1,000 characters (LINE_DESC_MAX) on both sides; qty, unit price, kind and
  * QBO line ids are carried for writing but never compared (QBO knows a line's kind only through
  * its item and tax code).
  */
@@ -635,14 +681,19 @@ export function compareKey(collection, field, value) {
   if (field === 'sku') return String(value).trim().toUpperCase().replace(/\s+/g, '') || null;
   if (field === 'method' || field === 'paidWith') return value && typeof value === 'object' ? (value.ref ?? null) : value;
   if (field === 'employeeRef') return value && typeof value === 'object' ? `${value.nameOf}:${value.ref ?? ''}` : value;
-  if (field === 'taxes' && Array.isArray(value)) return value.reduce((s, t) => s + (Number(t.cents) || 0), 0);
+  // Bill taxes by id and amount, so GST changed to HST with the same cents is still a change.
+  if (field === 'taxes' && Array.isArray(value)) {
+    const pairs = value.filter((t) => Number(t.cents)).map((t) => [String(t.id ?? '').toUpperCase(), Math.round(Number(t.cents))]);
+    return pairs.sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1]);
+  }
   if (field === 'lines' && Array.isArray(value)) {
     // A bill's tax is its own money field (`taxes`, the printed recoverable amounts); its lines
     // carry the purchase code for writing only, since PST/RST is already in their amounts.
     if (collection === 'bills') return value.map((l) => [l.itemRef ?? null, l.accountRef ?? null, str(l.description), l.amountCents, l.customerRef ?? null]);
     if (collection === 'purchaseOrders') return value.map((l) => [l.itemRef ?? null, str(l.description), Math.round((Number(l.qty) || 0) * 100000), l.unitCents, l.customerRef ?? null]);
     if (collection === 'payoutFee') return value.map((l) => [str(l.description), l.amountCents]);
-    return value.map((l) => [l.itemRef ?? null, str(l.description), l.amountCents, l.taxCodeId ?? null]);
+    // A lossy line's text is compared without the room its suffix takes in Fishtape (LOSSY_ROOM).
+    return value.map((l) => [l.itemRef ?? null, l.lossy ? cut(l.description, LINE_DESC_MAX - LOSSY_ROOM) : str(l.description), l.amountCents, l.taxCodeId ?? null]);
   }
   if (typeof value === 'string') return value.trim() || null;
   return value;

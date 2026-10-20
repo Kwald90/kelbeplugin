@@ -6,10 +6,11 @@
 // Whenever Line is sent it is built from the current QBO lines matched by Line.Id: attributes
 // Fishtape does not model (ServiceDate, ClassRef, line DepartmentRef, BillableStatus of a billed
 // line) are copied onto the line sent. GlobalTaxCalculation of an existing object is sent back as
-// read. A payment's lines that Fishtape does not own are never changed (4.9).
+// read. A payment's lines that Fishtape does not own are never changed (4.9). On a full update,
+// PrivateNote keeps what QBO has beyond Fishtape's own text (privateNote).
 import {
-  str, cut, toCents, toDollars, linkInfo, localDay, lossySuffix, flatSalesLines, qboToCanon, canonEqual,
-  T5018_FIELD, CUSTOMER_MEMO_MAX, NOTES_MAX, DOC_NUMBER_MAX,
+  str, cut, toCents, toDollars, linkInfo, localDay, lossySuffix, flatSalesLines, qboToCanon, canonEqual, stripMarker,
+  T5018_FIELD, CUSTOMER_MEMO_MAX, NOTES_MAX, DOC_NUMBER_MAX, LINE_DESC_MAX,
 } from './canon.js';
 import { addressToQbo, qboName, stripNameSuffix } from './names.js';
 
@@ -72,6 +73,23 @@ function addressOrClear(address, had) {
   if (a) return had?.Id ? { Id: had.Id, ...a } : a;
   return had ? { ...(had.Id ? { Id: had.Id } : {}), Line1: '', City: '', CountrySubDivisionCode: '', PostalCode: '' } : undefined;
 }
+/**
+ * PrivateNote of a full update (5.5): the marker and Fishtape's own text in front, then whatever
+ * else QBO has there (a bookkeeper's memo is never dropped). An object pulled from QBO (no marker
+ * on the link) keeps its note exactly as it is.
+ */
+function privateNote(meta, ownParts, existing) {
+  const marker = str(meta?.marker);
+  if (!marker && existing) return existing.PrivateNote;
+  const own = [marker, ...ownParts.map(str)].filter(Boolean);
+  let rest = stripMarker(existing?.PrivateNote) || '';
+  for (const part of own.slice(marker ? 1 : 0)) {
+    if (rest === part) rest = '';
+    else if (rest.startsWith(`${part} · `)) rest = rest.slice(part.length + 3);
+  }
+  return [...own, str(rest)].filter(Boolean).join(' · ').slice(0, NOTES_MAX) || undefined;
+}
+
 const emailOf = (v, had) => (v ? { Address: v } : (had?.Address ? { Address: '' } : undefined));
 const phoneOf = (v, had) => (v ? { FreeFormNumber: String(v).slice(0, 30) } : (had?.FreeFormNumber ? { FreeFormNumber: '' } : undefined));
 
@@ -89,7 +107,10 @@ const phoneOf = (v, had) => (v ? { FreeFormNumber: String(v).slice(0, 30) } : (h
  * @param {number} [opts.invoiceBalanceCents] payments: the QBO invoice's current Balance (applied amount cap)
  * @param {string} [opts.previousInvoiceRef] payments: the invoice this payment applied to before (a moved payment)
  * @param {string} [opts.today] YYYY-MM-DD in the company zone (AcceptedDate); defaults from ctx.now
- * @returns {{ entity, body, sparse: boolean, lossyLines?: number[], totalChanged?: boolean, warnings: string[], error?: string }}
+ * @returns {{ entity, body, sparse: boolean, lossyLines?: number[], totalChanged?: boolean, ownExcessCents?: number, warnings: string[], error?: string }}
+ *   error 'number_too_long': an estimate or invoice number over 21 characters (4.7); body is null.
+ *   ownExcessCents (payments, money pushes): the amount this push left unapplied as credit. Keep it in
+ *   link meta (linkMetaFromQbo with `pushed`) so the next push does not count it twice.
  */
 export function canonToQbo(collection, canon, ctx = {}, opts = {}) {
   const { role } = linkInfo(ctx);
@@ -185,7 +206,11 @@ function docBody(collection, c, ctx, existing, want, opts, out) {
   const { meta } = linkInfo(ctx);
   const body = {};
   const numbering = option(ctx, 'numbering', feat(ctx, 'customTxnNumbers') === false ? 'quickbooks' : 'fishtape');
-  if (want('number') && numbering !== 'quickbooks' && c.number) body.DocNumber = c.number.slice(0, DOC_NUMBER_MAX);
+  if (want('number') && numbering !== 'quickbooks' && c.number) {
+    // QBO would cut a longer number: it is refused instead (4.7).
+    if (String(c.extra?.numberFull || c.number).length > DOC_NUMBER_MAX) { out.error = 'number_too_long'; out.body = null; return; }
+    body.DocNumber = c.number;
+  }
   if (want('clientRef') || want('jobRef')) body.CustomerRef = refOf(c.jobRef || c.clientRef);
   if (want('date')) body.TxnDate = c.date || undefined;
   if (inv && want('dueDate')) body.DueDate = c.dueDate || undefined;
@@ -226,6 +251,12 @@ const DETAIL_OWN = new Set(['ItemRef', 'Qty', 'UnitPrice', 'TaxCodeRef', 'TaxInc
 const unmodelledLine = (ex) => (ex ? Object.fromEntries(Object.entries(ex).filter(([k]) => !LINE_OWN.has(k))) : {});
 const unmodelledDetail = (ex, key) => (ex && ex[key] ? Object.fromEntries(Object.entries(ex[key]).filter(([k]) => !DETAIL_OWN.has(k))) : {});
 const qty5 = (q) => Math.round((Number(q) || 0) * 100000) / 100000;
+/** A line's text: QBO's own longer text while its first 1,000 characters (all Fishtape keeps) are unchanged. */
+function lineText(description, ex) {
+  const had = str(ex?.Description);
+  if (had && had.length > LINE_DESC_MAX && cut(had, LINE_DESC_MAX) === str(description)) return had;
+  return description;
+}
 
 function salesLines(collection, c, ctx, existing) {
   const entity = collection === 'invoices' ? 'Invoice' : 'Estimate';
@@ -246,7 +277,7 @@ function salesLines(collection, c, ctx, existing) {
     if (l.lossy && ex && exC && canonEqual(collection, 'lines', [l], [exC])) { out.push(clone(ex)); return; }
     const id = ex ? { Id: ex.Id } : {};
     if (l.itemRef == null && !l.amountCents) {
-      out.push({ ...id, DetailType: 'DescriptionOnly', Description: (l.description || '').slice(0, NOTES_MAX), DescriptionLineDetail: {} });
+      out.push({ ...id, DetailType: 'DescriptionOnly', Description: (lineText(l.description, ex) || '').slice(0, NOTES_MAX), DescriptionLineDetail: {} });
       return;
     }
     if (l.amountCents < 0 && !NEGATIVE_SALES_LINES) {
@@ -256,7 +287,7 @@ function salesLines(collection, c, ctx, existing) {
     const q = qty5(l.qty);
     const exact = !l.lossy && q !== 0 && Math.round(q * l.unitCents) === l.amountCents;
     const asIs = exact || (!STRICT_LINE_AMOUNTS && !l.lossy && q !== 0);
-    let description = l.description || '';
+    let description = lineText(l.description, ex) || '';
     if (!asIs && !l.lossy && !l.markup && q !== 0) {
       description = `${description}${lossySuffix(l.qty, l.unitCents / 100, { hours: l.kind === 'labour' })}`.trim();
       lossy.push(i);
@@ -282,8 +313,13 @@ const unappliedOf = (p) => (p ? (p.UnappliedAmt != null ? toCents(p.UnappliedAmt
  * this push owns, by QBO invoice id; an amount of 0 removes that line. Every other line (credit
  * memos, journals, unlinked invoices, other Fishtape payments) is kept as it is, and TotalAmt moves
  * by exactly the change in the owned lines (+ extraUnappliedCents), so the foreign lines and the
- * unapplied amount stay as they were whatever sign QBO gives credit lines. With keepTotal (a
- * Fishtape delete of one part), TotalAmt stays and the removed amount becomes unapplied.
+ * unapplied amount stay as they were whatever sign QBO gives credit lines. extraUnappliedCents may
+ * be negative (an excess of this payment's own that is no longer needed), never below minus the
+ * current unapplied amount. With keepTotal (a Fishtape delete of one part), TotalAmt stays and the
+ * removed amount becomes unapplied.
+ *
+ * TotalAmt is the current TotalAmt moved by the change rather than Σ owned + Σ foreign + unapplied
+ * (the 4.9 wording), because QBO subtracts credit-memo lines from TotalAmt; otherwise they agree.
  */
 export function rebuildPaymentLines(currentPayment, ownedLines, { extraUnappliedCents = 0, keepTotal = false } = {}) {
   const lines = currentPayment?.Line || [];
@@ -307,7 +343,8 @@ export function rebuildPaymentLines(currentPayment, ownedLines, { extraUnapplied
   }
   const after = sum([...owned.values()].filter((a) => a > 0));
   const current = currentPayment ? toCents(currentPayment.TotalAmt) : 0;
-  const total = keepTotal && currentPayment ? current : current + after - before + Math.max(0, Math.round(Number(extraUnappliedCents) || 0));
+  const extra = Math.max(-Math.max(0, unappliedOf(currentPayment)), Math.round(Number(extraUnappliedCents) || 0));
+  const total = keepTotal && currentPayment ? current : current + after - before + extra;
   return { Line: out, TotalAmt: toDollars(total) };
 }
 
@@ -331,7 +368,7 @@ function paymentBody(c, ctx, existing, want, opts, out) {
   body.TxnDate = c.date || undefined;
   if (c.method?.ref) body.PaymentMethodRef = { value: String(c.method.ref) }; else delete body.PaymentMethodRef;
   body.PaymentRefNum = setOrClear(c.reference, existing?.PaymentRefNum);
-  body.PrivateNote = [str(meta.marker), stripe ? str(c.extra?.paymentIntentId) : null].filter(Boolean).join(' · ') || undefined;
+  body.PrivateNote = privateNote(meta, [stripe ? c.extra?.paymentIntentId : null], existing);
   if (!existing) {
     const acc = stripe ? maps(ctx, 'account').stripeClearing : maps(ctx, 'depositTo')[c.method?.key];
     if (acc) body.DepositToAccountRef = { value: String(acc) };
@@ -344,11 +381,14 @@ function paymentBody(c, ctx, existing, want, opts, out) {
     const current = (existing?.Line || []).filter((l) => invoiceOf(l) === String(c.invoiceRef)).reduce((s, l) => s + toCents(l.Amount), 0);
     const cap = opts.invoiceBalanceCents == null ? Infinity : Math.max(0, Number(opts.invoiceBalanceCents) + current);
     const applied = Math.max(0, Math.min(c.amountCents, cap));
-    const excess = c.amountCents - applied;
+    const excess = Math.max(0, c.amountCents - applied);
     owned.push({ invoiceQboId: c.invoiceRef, amountCents: applied });
-    const rebuilt = rebuildPaymentLines(existing, owned, { extraUnappliedCents: excess });
+    // The excess an earlier push left is already in TotalAmt: only its change counts (4.9).
+    const prevExcess = existing ? Math.max(0, Math.round(Number(meta.ownExcessCents) || 0)) : 0;
+    const rebuilt = rebuildPaymentLines(existing, owned, { extraUnappliedCents: excess - prevExcess });
     body.Line = rebuilt.Line;
     body.TotalAmt = rebuilt.TotalAmt;
+    out.ownExcessCents = excess;
     if (excess > 0) out.warnings.push(`$${(excess / 100).toFixed(2)} left as credit in QuickBooks`);
   }
   out.totalChanged = Boolean(existing) && toCents(body.TotalAmt) !== toCents(existing.TotalAmt);
@@ -363,7 +403,7 @@ function paymentFeeBody(c, ctx, existing) {
   const ex = existing?.Line?.[0];
   return Object.assign(body, {
     PaymentType: 'Cash', AccountRef: refOf(acc.stripeClearing), EntityRef: option(ctx, 'stripeVendorId', null) ? { value: String(option(ctx, 'stripeVendorId')), type: 'Vendor' } : undefined,
-    TxnDate: c.date || undefined, PrivateNote: [str(meta.marker), c.extra?.chargeId ? `Stripe fee ${c.extra.chargeId}` : 'Stripe fee'].filter(Boolean).join(' · '),
+    TxnDate: c.date || undefined, PrivateNote: privateNote(meta, [c.extra?.chargeId ? `Stripe fee ${c.extra.chargeId}` : 'Stripe fee'], existing),
     Line: [{
       ...(ex?.Id ? { Id: ex.Id } : {}), DetailType: 'AccountBasedExpenseLineDetail', Amount: toDollars(c.amountCents), Description: 'Stripe fee',
       AccountBasedExpenseLineDetail: clean({ ...unmodelledDetail(ex, 'AccountBasedExpenseLineDetail'), AccountRef: refOf(acc.stripeFees), TaxCodeRef: refOf(ptc.stripeFee || ptc.NONE) }),
@@ -413,8 +453,11 @@ function billBody(c, ctx, existing) {
       TaxCodeRef: refOf(l.taxCodeId),
     };
     if (l.itemRef) {
-      const q = qty5(l.qty) || 1;
-      Object.assign(detail, { ItemRef: refOf(l.itemRef), Qty: q, UnitPrice: Math.round((amount / 100 / q) * 100000) / 100000 });
+      // Qty × UnitPrice must give Amount (fault 6000, STRICT_LINE_AMOUNTS); else Qty 1 at the amount.
+      let q = qty5(l.qty) || 1;
+      let unit = Math.round((amount / 100 / q) * 100000) / 100000;
+      if (STRICT_LINE_AMOUNTS && toCents(q * unit) !== amount) { q = 1; unit = toDollars(amount); }
+      Object.assign(detail, { ItemRef: refOf(l.itemRef), Qty: q, UnitPrice: unit });
     } else detail.AccountRef = refOf(l.accountRef);
     const line = { ...(ex ? { Id: ex.Id } : {}), DetailType: key, Amount: toDollars(amount), Description: l.description ? l.description.slice(0, NOTES_MAX) : undefined, [key]: clean(detail) };
     if (bill && l.poLine?.poRef) line.LinkedTxn = [clean({ TxnId: String(l.poLine.poRef), TxnType: 'PurchaseOrder', TxnLineId: l.poLine.poLineId || undefined })];
@@ -431,7 +474,7 @@ function poBody(c, ctx, existing) {
   Object.assign(body, {
     VendorRef: refOf(c.vendorRef), TxnDate: c.date || undefined, DueDate: c.dueDate || undefined,
     ShipAddr: addressOrClear(c.shipTo, existing?.ShipAddr), Memo: setOrClear(c.notes, existing?.Memo),
-    POStatus: c.status === 'closed' ? 'Closed' : 'Open', PrivateNote: str(meta.marker) || undefined,
+    POStatus: c.status === 'closed' ? 'Closed' : 'Open', PrivateNote: privateNote(meta, [], existing),
   });
   if (feat(ctx, 'purchaseCustomTxnNumbers') && c.number) body.DocNumber = c.number;
   const exLines = (existing?.Line || []).filter((l) => l.DetailType === 'ItemBasedExpenseLineDetail');
@@ -464,7 +507,7 @@ function transferBody(c, ctx, existing) {
   const body = existing ? fromExisting(existing) : {};
   return Object.assign(body, {
     FromAccountRef: refOf(c.fromRef), ToAccountRef: refOf(c.toRef), Amount: toDollars(c.amountCents), TxnDate: c.date || undefined,
-    PrivateNote: [str(meta.marker), c.extra?.payoutId ? `Stripe payout ${c.extra.payoutId}` : null].filter(Boolean).join(' · ') || undefined,
+    PrivateNote: privateNote(meta, [c.extra?.payoutId ? `Stripe payout ${c.extra.payoutId}` : null], existing),
   });
 }
 
@@ -477,7 +520,7 @@ function payoutFeeBody(c, ctx, existing) {
     PaymentType: 'Cash', AccountRef: refOf(acc.stripeClearing),
     EntityRef: option(ctx, 'stripeVendorId', null) ? { value: String(option(ctx, 'stripeVendorId')), type: 'Vendor' } : undefined,
     TxnDate: c.date || undefined,
-    PrivateNote: [str(meta.marker), c.extra?.payoutId ? `Stripe payout fees ${c.extra.payoutId}` : 'Stripe payout fees'].filter(Boolean).join(' · '),
+    PrivateNote: privateNote(meta, [c.extra?.payoutId ? `Stripe payout fees ${c.extra.payoutId}` : 'Stripe payout fees'], existing),
     Line: (c.lines || []).map((l) => ({
       DetailType: 'AccountBasedExpenseLineDetail', Amount: toDollars(l.amountCents), Description: l.description || 'Stripe fee',
       AccountBasedExpenseLineDetail: clean({ AccountRef: refOf(acc.stripeFees), TaxCodeRef: refOf(ptc.stripeFee || ptc.NONE) }),

@@ -50,6 +50,7 @@ const refs = {
   itemType: (q) => ITEM_TYPES[q] ?? null,
   clientOfJob: (j) => byId(F.jobs, j)?.clientId ?? null,
   employeeEntity: () => 'Employee',
+  parentOf: (q) => CUSTOMERS.find((x) => x.Id === String(q))?.ParentRef?.value ?? null,
 };
 const FEATURES = { salesTax: true, customTxnNumbers: true, discounts: true, classes: true, multicurrency: false, purchaseOrders: true, purchaseCustomTxnNumbers: false };
 const ctx = (collection, link = {}, extra = {}) => ({
@@ -508,6 +509,77 @@ test('cuts: notes to 1,000, numbers and references to 21, both sides alike', () 
   assert.ok(!('reference' in canonToFishtape('payments', { ...p }, ctx('payments'), { existing: { reference: 'E-TRANSFER CA1234567890XYZ' }, fields: ['reference'] })));
 });
 
+test('a document on a QBO project that is no linked job belongs to the parent\'s client (4.7)', () => {
+  const c = ctx('invoices');
+  const qbo = { ...Q.invoiceQboOnly, CustomerRef: { value: '64' } }; // "Prairie Homes Ltd:Basement suite wiring"
+  const R = qboToCanon('Invoice', qbo, c);
+  assert.equal(R.clientRef, '58');
+  assert.equal(R.jobRef, null);
+  const rec = canonToFishtape('invoices', R, c);
+  assert.equal(rec.clientId, 'c-prairie');
+  assert.ok(!rec.jobId);
+  // Stored like that, Fishtape's side is the same: no push of another CustomerRef, no conflict
+  const L = fishtapeToCanon('invoices', rec, c);
+  assert.ok(canonEqual('invoices', 'clientRef', L.clientRef, R.clientRef));
+  assert.ok(canonEqual('invoices', 'jobRef', L.jobRef, R.jobRef));
+  // A linked job's sub-customer is still the job; a deeper sub-customer finds its nearest linked parent
+  assert.deepEqual([qboToCanon('Invoice', { ...qbo, CustomerRef: { value: '59' } }, c)].map((x) => [x.clientRef, x.jobRef]), [[null, '59']]);
+  const deep = ctx('invoices', {}, { refs: { ...refs, parentOf: (q) => ({ 66: '65', 65: '59' })[q] ?? null } });
+  const d = qboToCanon('Invoice', { ...qbo, CustomerRef: { value: '66' } }, deep);
+  assert.deepEqual([d.clientRef, d.jobRef], [null, '59']);
+  // Bill lines costed to the project are costed to the client
+  const onProject = clone(Q.bill);
+  for (const l of onProject.Line) l.AccountBasedExpenseLineDetail.CustomerRef = { value: '64' };
+  assert.deepEqual(qboToCanon('Bill', onProject, ctx('bills')).lines.map((l) => l.customerRef), ['58', '58']);
+});
+
+test('line descriptions: QBO text over Fishtape\'s 1,000 characters is cut alike on both sides and never ping-pongs', () => {
+  const c = ctx('invoices');
+  const long = `Scope of work: ${'rough-in and finish '.repeat(80)}`.trim(); // 1,614 characters
+  const qbo = clone(Q.invoiceQboOnly);
+  qbo.Line[0].Description = long;
+  qbo.Line[0].SalesItemLineDetail.ItemRef = { value: '22' };
+  const R = qboToCanon('Invoice', qbo, c);
+  assert.equal(R.lines[0].description.length, 1000);
+  const rec = canonToFishtape('invoices', R, c);
+  assert.ok(rec.lines[0].description.length <= 1000);
+  const L = fishtapeToCanon('invoices', rec, c);
+  assert.ok(canonEqual('invoices', 'lines', L.lines, R.lines));
+  // Pushed back with a new price, QBO keeps its whole text
+  const linked = ctx('invoices', { meta: { lineIds: { 0: '1' } } });
+  const L2 = fishtapeToCanon('invoices', { ...rec, lines: [{ ...rec.lines[0], unitCents: 90000 }] }, linked);
+  const out = canonToQbo('invoices', L2, linked, { existing: qbo, fields: ['lines'] });
+  assert.equal(out.body.Line[0].Description, long);
+  assert.equal(out.body.Line[0].Amount, 900);
+  // A lossy line: the suffix fits inside the 1,000, and both sides still compare equal
+  const lossyQbo = clone(qbo);
+  Object.assign(lossyQbo.Line[0].SalesItemLineDetail, { Qty: 3, UnitPrice: 266.6667 });
+  const report = {};
+  const recL = canonToFishtape('invoices', qboToCanon('Invoice', lossyQbo, c), c, { report });
+  assert.ok(recL.lines[0].description.length <= 1000);
+  assert.match(recL.lines[0].description, / \(3 × \$266\.6667\)$/);
+  assert.deepEqual(report.lossyLines, [0]);
+  const lc = ctx('invoices', { meta: { lossyLines: [0], lineIds: { 0: '1' } } });
+  assert.ok(canonEqual('invoices', 'lines', fishtapeToCanon('invoices', recL, lc).lines, qboToCanon('Invoice', lossyQbo, lc).lines));
+  // SKUs to Fishtape's 80 characters
+  const sku = 'SQD-QO120-'.repeat(10);
+  assert.equal(qboToCanon('Item', { ...ITEMS[0], Sku: sku }, ctx('items')).sku.length, 80);
+  assert.ok(canonEqual('items', 'sku', fishtapeToCanon('items', { name: 'x', sku: sku.slice(0, 80) }, ctx('items')).sku, qboToCanon('Item', { ...ITEMS[0], Sku: sku }, ctx('items')).sku));
+});
+
+test('a number QBO would cut is refused (number_too_long), not sent cut', () => {
+  const c = ctx('invoices', { meta: INV_META });
+  const L = fishtapeToCanon('invoices', { ...byId(F.invoices, 'inv-3001'), number: 'INV-2026-PRAIRIE-HOMES-01' }, c);
+  const out = canonToQbo('invoices', L, c);
+  assert.equal(out.error, 'number_too_long');
+  assert.equal(out.body, null);
+  // An update that does not send the number goes through
+  assert.ok(!canonToQbo('invoices', L, c, { existing: Q.invoice, fields: ['notes'] }).error);
+  // Numbering by QuickBooks never sends one
+  const qb = ctx('invoices', { meta: INV_META }, { mappings: { ...M, option: { ...M.option, numbering: 'quickbooks' } } });
+  assert.ok(!canonToQbo('invoices', L, qb).error);
+});
+
 // ---------------------------------------------------------------------------------------------
 // Payments
 
@@ -572,6 +644,62 @@ test('rebuildPaymentLines: a delete of one part leaves the total and other lines
   assert.equal(s.unappliedCents, 50000);
 });
 
+test('a capped payment pushed again counts its own excess once: TotalAmt stays the money received', () => {
+  const c = ctx('payments', { qbo_line: '201', meta: { marker: 'Fishtape ref 1111aaaa2222' } });
+  const L = fishtapeToCanon('payments', { ...byId(F.payments, 'pay-1'), amountCents: 10000 }, c);
+  const created = canonToQbo('payments', L, c, { invoiceCustomerRef: '59', invoiceBalanceCents: 9999 });
+  assert.deepEqual(created.body.Line.map((l) => l.Amount), [99.99]);
+  assert.equal(created.body.TotalAmt, 100);
+  assert.equal(created.ownExcessCents, 1);
+  const qbo = asCreated(created.body, '950');
+  const meta = { ...c.link.meta, ...linkMetaFromQbo('Payment', qbo, c, { pushed: created }) };
+  assert.equal(meta.ownExcessCents, 1);
+  // A later pull keeps it; it never exceeds what is unapplied
+  assert.equal(linkMetaFromQbo('Payment', qbo, ctx('payments', { qbo_line: '201', meta })).ownExcessCents, 1);
+  assert.equal(linkMetaFromQbo('Payment', { ...qbo, UnappliedAmt: 0 }, ctx('payments', { qbo_line: '201', meta })).ownExcessCents, 0);
+  const c2 = ctx('payments', { qbo_line: '201', meta });
+  // The same amount again (every field, as after a conflict resolved for Fishtape): nothing moves
+  const again = canonToQbo('payments', L, c2, { existing: qbo, invoiceBalanceCents: 0 });
+  assert.equal(again.body.TotalAmt, 100);
+  assert.deepEqual(again.body.Line.map((l) => l.Amount), [99.99]);
+  assert.equal(again.totalChanged, false);
+  // $101.00 now: $1.01 left as credit, and the total is $101.00
+  const more = canonToQbo('payments', { ...L, amountCents: 10100 }, c2, { existing: qbo, fields: ['amountCents'], invoiceBalanceCents: 0 });
+  assert.equal(more.body.TotalAmt, 101);
+  assert.deepEqual(more.warnings, ['$1.01 left as credit in QuickBooks']);
+  assert.equal(more.ownExcessCents, 101);
+  // $90.00 now: the excess is released
+  const less = canonToQbo('payments', { ...L, amountCents: 9000 }, c2, { existing: qbo, fields: ['amountCents'], invoiceBalanceCents: 0 });
+  assert.equal(less.body.TotalAmt, 90);
+  assert.deepEqual(less.body.Line.map((l) => l.Amount), [90]);
+  assert.equal(less.ownExcessCents, 0);
+  // Never below the lines: an excess QBO already used elsewhere is not taken back twice
+  assert.equal(rebuildPaymentLines(Q.payment, [{ invoiceQboId: '201', amountCents: 100000 }], { extraUnappliedCents: -90000 }).TotalAmt, 1500);
+});
+
+test('a full update keeps QBO\'s PrivateNote: a pulled payment\'s memo, and anything after Fishtape\'s own text', () => {
+  const memo = 'Cheque 4471 – holdback release';
+  const pulled = { ...Q.payment, PrivateNote: memo };
+  const c = ctx('payments', { qbo_line: '201' }); // pulled from QBO: no marker
+  const L = { ...fishtapeToCanon('payments', byId(F.payments, 'pay-1'), c), reference: 'CHQ 4472' };
+  assert.equal(canonToQbo('payments', L, c, { existing: pulled, fields: ['reference'] }).body.PrivateNote, memo);
+  assert.equal(canonToQbo('payments', { ...L, amountCents: 110000 }, c, { existing: pulled, fields: ['amountCents'] }).body.PrivateNote, memo);
+  // Created by Fishtape: the marker stays in front, the bookkeeper's text after it stays too
+  const cm = ctx('payments', { qbo_line: '201', meta: { marker: 'Fishtape ref 1111aaaa2222' } });
+  const noted = { ...Q.payment, PrivateNote: `Fishtape ref 1111aaaa2222 · ${memo}` };
+  assert.equal(canonToQbo('payments', L, cm, { existing: noted, fields: ['reference'] }).body.PrivateNote, `Fishtape ref 1111aaaa2222 · ${memo}`);
+  assert.equal(canonToQbo('payments', L, cm, { existing: pulled, fields: ['reference'] }).body.PrivateNote, `Fishtape ref 1111aaaa2222 · ${memo}`);
+  assert.equal(canonToQbo('payments', L, cm, { existing: Q.payment, fields: ['reference'] }).body.PrivateNote, 'Fishtape ref 1111aaaa2222');
+  // Purchase orders and Stripe transfers alike
+  const pc = ctx('purchaseOrders', { meta: { marker: 'Fishtape ref 7f7f7f7f7f7f' } });
+  const po = canonToQbo('purchaseOrders', fishtapeToCanon('purchaseOrders', byId(F.purchaseOrders, 'po-5001'), pc), pc,
+    { existing: { ...Q.purchaseOrder, PrivateNote: 'Fishtape ref 7f7f7f7f7f7f · Backordered 2 weeks' } });
+  assert.equal(po.body.PrivateNote, 'Fishtape ref 7f7f7f7f7f7f · Backordered 2 weeks');
+  const tc = ctx('stripePayouts', { meta: { marker: 'Fishtape ref 5a5a5a5a5a5a' } });
+  const tr = canonToQbo('stripePayouts', fishtapeToCanon('stripePayouts', F.stripePayouts[0], tc), tc, { existing: { ...Q.transfer, PrivateNote: `${Q.transfer.PrivateNote} · Reconciled Oct` } });
+  assert.equal(tr.body.PrivateNote, 'Fishtape ref 5a5a5a5a5a5a · Stripe payout po_1Q2w3E4r5T6y7U8i · Reconciled Oct');
+});
+
 test('Stripe payments: gross into the clearing account, fee as a Purchase, settlement and deposits', () => {
   const pay = byId(F.payments, 'stripe-pi_3Q9aBcDeFgHiJkLmN0pQrStU');
   const c = ctx('payments', { qbo_line: '204', meta: { marker: 'Fishtape ref 2222bbbb3333' } });
@@ -598,6 +726,8 @@ test('Stripe payments: gross into the clearing account, fee as a Purchase, settl
   assert.equal(settlementCents(Q.invoice, [100000]), 25000);
   assert.equal(settlementCents(Q.invoice, [100000, 25000]), 0);
   assert.equal(settlementCents({ TotalAmt: 100, Balance: 100 }, [5000]), 0);
+  // The invoice's own Deposit has its own Fishtape payment (depositRecord): never counted again
+  assert.equal(settlementCents({ ...Q.invoice, Deposit: 200, Balance: 1633.84 }, [100000]), 25000);
   assert.deepEqual(settlementRecord({ invoiceId: 'inv-3001', cents: 25000, date: '2026-10-20' }),
     { invoiceId: 'inv-3001', amountCents: 25000, date: '2026-10-20', method: 'credit', source: 'quickbooks', reference: 'Credited or paid in QuickBooks' });
   assert.deepEqual(depositRecord({ ...Q.invoice, Deposit: 200 }, 'inv-3001'), { invoiceId: 'inv-3001', amountCents: 20000, date: '2026-10-15', method: 'transfer', reference: 'Deposit in QuickBooks' });
@@ -640,6 +770,21 @@ test('a Manitoba bill: GST-only code, RST spread into job cost, equal both ways'
   assert.equal(billStatusFromQbo({ ...Q.bill, Balance: 0 }, 'open'), 'paid');
   assert.equal(billStatusFromQbo({ ...Q.bill, Balance: 10 }, 'paid'), 'open');
   assert.equal(billStatusFromQbo(Q.bill, 'open'), null);
+  // Taxes compare by id and amount: GST changed to HST with the same cents is a change
+  assert.ok(!canonEqual('bills', 'taxes', [{ id: 'GST', cents: 7500 }], [{ id: 'HST', cents: 7500 }]));
+  assert.ok(canonEqual('bills', 'taxes', [{ id: 'GST', cents: 7500 }, { id: 'QST', cents: 0 }], [{ id: 'gst', cents: 7500 }]));
+  // Item lines: Qty × UnitPrice must give Amount, else Qty 1 at the amount
+  const items = canonToQbo('bills', { kind: 'bill', vendorRef: '701', lines: [
+    { itemRef: '21', description: 'Wire', qty: 3, amountCents: 1000 }, { itemRef: '21', description: 'Wire (m)', qty: 2000, amountCents: 100001 },
+  ], taxes: [] }, ctx('bills')).body.Line.map((l) => [l.ItemBasedExpenseLineDetail.Qty, l.ItemBasedExpenseLineDetail.UnitPrice, l.Amount]);
+  assert.deepEqual(items, [[3, 3.33333, 10], [1, 1000.01, 1000.01]]);
+  // With sub-customers off a job's cost goes to its client; that client coming back keeps the job
+  const off = ctx('bills', { meta: { lineIds: { 0: '1', 1: '2' } } }, { mappings: { ...M, option: { ...M.option, jobsAsSubCustomers: false } } });
+  const perLine = { ...bill, jobId: null, lines: bill.lines.map((l) => ({ ...l, jobId: 'job-1042' })) };
+  assert.deepEqual(fishtapeToCanon('bills', perLine, off).lines.map((l) => l.customerRef), ['58', '58']);
+  const Roff = clone(Q.bill);
+  for (const l of Roff.Line) l.AccountBasedExpenseLineDetail.CustomerRef = { value: '58' };
+  assert.deepEqual(canonToFishtape('bills', qboToCanon('Bill', Roff, off), off, { existing: perLine, fields: ['lines'] }).lines.map((l) => l.jobId), ['job-1042', 'job-1042']);
 });
 
 test('a long supplier number is cut to 21 and kept whole in the private note', () => {
