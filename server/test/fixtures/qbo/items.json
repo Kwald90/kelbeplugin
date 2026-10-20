@@ -1,0 +1,20 @@
+[
+  { "Id": "21", "SyncToken": "0", "Name": "Materials", "Type": "NonInventory", "Active": true, "UnitPrice": 0, "IncomeAccountRef": { "value": "45" }, "ExpenseAccountRef": { "value": "71" } },
+  { "Id": "22", "SyncToken": "0", "Name": "Labour", "Type": "Service", "Active": true, "UnitPrice": 95, "IncomeAccountRef": { "value": "45" } },
+  { "Id": "23", "SyncToken": "0", "Name": "Other charges", "Type": "Service", "Active": true, "UnitPrice": 0, "IncomeAccountRef": { "value": "45" } },
+  { "Id": "24", "SyncToken": "0", "Name": "Materials markup", "Type": "NonInventory", "Active": true, "UnitPrice": 0, "IncomeAccountRef": { "value": "45" } },
+  { "Id": "25", "SyncToken": "0", "Name": "Less deposit", "Type": "Service", "Active": true, "UnitPrice": 0, "IncomeAccountRef": { "value": "45" } },
+  {
+    "Id": "101", "SyncToken": "2", "domain": "QBO", "Name": "200A panel (Siemens)", "Sku": "PNL-200-SIE", "Description": "Siemens 200A 30/40 main breaker panel",
+    "Type": "NonInventory", "Active": true, "UnitPrice": 1250, "PurchaseCost": 890, "Taxable": true,
+    "IncomeAccountRef": { "value": "45", "name": "Sales" }, "ExpenseAccountRef": { "value": "71", "name": "Job materials" },
+    "MetaData": { "CreateTime": "2026-09-02T10:15:00-07:00", "LastUpdatedTime": "2026-09-30T10:15:00-07:00" }
+  },
+  {
+    "Id": "102", "SyncToken": "0", "Name": "LED pot light 4in", "Type": "Inventory", "Active": true, "UnitPrice": 38.5, "PurchaseCost": 17.25,
+    "TrackQtyOnHand": true, "QtyOnHand": 140, "InvStartDate": "2026-01-01", "AssetAccountRef": { "value": "13" }, "IncomeAccountRef": { "value": "45" }, "ExpenseAccountRef": { "value": "80" }
+  },
+  { "Id": "103", "SyncToken": "0", "Name": "Lighting", "Type": "Category", "Active": true },
+  { "Id": "104", "SyncToken": "0", "Name": "Service call", "Type": "Service", "Active": true, "UnitPrice": 129, "IncomeAccountRef": { "value": "45" } },
+  { "Id": "105", "SyncToken": "1", "Name": "Knob and tube removal", "Type": "Service", "Active": false, "UnitPrice": 0 }
+]

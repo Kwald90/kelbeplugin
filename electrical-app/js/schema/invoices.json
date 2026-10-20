@@ -140,6 +140,16 @@
         "null"
       ]
     },
+    "taxNoneReason": {
+      "enum": [
+        "zero",
+        "exempt",
+        "out_of_scope",
+        "relief",
+        null
+      ],
+      "description": "Why the document charges no tax: zero-rated, exempt supply, out of scope, or Indian Act (or similar) relief. Only meaningful on lines with no tax."
+    },
     "issueDate": {
       "type": [
         "string",

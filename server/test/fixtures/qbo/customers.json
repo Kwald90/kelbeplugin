@@ -1,0 +1,57 @@
+[
+  {
+    "Id": "58", "SyncToken": "3", "domain": "QBO", "sparse": false,
+    "DisplayName": "Prairie Homes Ltd", "CompanyName": "Prairie Homes Ltd", "PrintOnCheckName": "Prairie Homes Ltd",
+    "PrimaryEmailAddr": { "Address": "ap@prairiehomes.example" }, "PrimaryPhone": { "FreeFormNumber": "(204) 555-0142" },
+    "BillAddr": { "Id": "120", "Line1": "120 Main St", "City": "Winnipeg", "CountrySubDivisionCode": "MB", "PostalCode": "R3C 1A1", "Country": "CA" },
+    "Notes": "Net 30. Collections: call the office manager before day 45.",
+    "Job": false, "BillWithParent": false, "Balance": 1833.84, "BalanceWithJobs": 1833.84, "Taxable": true, "Active": true,
+    "CurrencyRef": { "value": "CAD", "name": "Canadian Dollar" }, "PreferredDeliveryMethod": "Print",
+    "MetaData": { "CreateTime": "2026-09-02T10:15:00-07:00", "LastUpdatedTime": "2026-10-15T09:01:12-07:00" }
+  },
+  {
+    "Id": "59", "SyncToken": "1", "domain": "QBO", "sparse": false,
+    "DisplayName": "J-1042 Panel upgrade 12 Elm", "FullyQualifiedName": "Prairie Homes Ltd:J-1042 Panel upgrade 12 Elm",
+    "Job": true, "Level": 1, "ParentRef": { "value": "58" }, "BillWithParent": true,
+    "BillAddr": { "Id": "121", "Line1": "12 Elm St", "City": "Steinbach", "CountrySubDivisionCode": "MB", "PostalCode": "R5G 1A1", "Country": "CA" },
+    "ShipAddr": { "Id": "122", "Line1": "12 Elm St", "City": "Steinbach", "CountrySubDivisionCode": "MB", "PostalCode": "R5G 1A1", "Country": "CA" },
+    "Balance": 1833.84, "Active": true,
+    "MetaData": { "CreateTime": "2026-10-02T08:00:00-07:00", "LastUpdatedTime": "2026-10-02T08:00:00-07:00" }
+  },
+  {
+    "Id": "60", "SyncToken": "0", "domain": "QBO",
+    "DisplayName": "Dana Smith", "GivenName": "Dana", "FamilyName": "Smith",
+    "PrimaryPhone": { "FreeFormNumber": "204-555-0199" },
+    "BillAddr": { "Id": "130", "Line1": "12 Elm St", "City": "Steinbach", "CountrySubDivisionCode": "MB", "PostalCode": "R5G 1A1" },
+    "Job": false, "Balance": 0, "Active": true,
+    "MetaData": { "CreateTime": "2025-04-11T12:00:00-07:00", "LastUpdatedTime": "2025-04-11T12:00:00-07:00" }
+  },
+  {
+    "Id": "61", "SyncToken": "0", "domain": "QBO",
+    "DisplayName": "Dana Smith (Brandon)", "GivenName": "Dana", "FamilyName": "Smith",
+    "BillAddr": { "Id": "131", "Line1": "44 Rosser Ave", "City": "Brandon", "CountrySubDivisionCode": "MB", "PostalCode": "R7A 0J1" },
+    "Job": false, "Balance": 0, "Active": true,
+    "MetaData": { "CreateTime": "2024-06-01T12:00:00-07:00", "LastUpdatedTime": "2024-06-01T12:00:00-07:00" }
+  },
+  {
+    "Id": "62", "SyncToken": "2", "domain": "QBO",
+    "DisplayName": "Kenora Lakeside Lodge", "CompanyName": "Kenora Lakeside Lodge",
+    "PrimaryEmailAddr": { "Address": "office@lakesidelodge.example" },
+    "BillAddr": { "Id": "140", "Line1": "8 Lakeshore Dr", "City": "Kenora", "CountrySubDivisionCode": "ON", "PostalCode": "P9N 1A1" },
+    "Job": false, "Balance": 904.00, "Active": true,
+    "MetaData": { "CreateTime": "2026-08-20T12:00:00-07:00", "LastUpdatedTime": "2026-10-05T12:00:00-07:00" }
+  },
+  {
+    "Id": "63", "SyncToken": "5", "domain": "QBO",
+    "DisplayName": "Old Brick Bakery (closed)", "CompanyName": "Old Brick Bakery",
+    "Job": false, "Balance": 0, "Active": false,
+    "MetaData": { "CreateTime": "2019-01-20T12:00:00-07:00", "LastUpdatedTime": "2023-03-01T12:00:00-07:00" }
+  },
+  {
+    "Id": "64", "SyncToken": "0", "domain": "QBO",
+    "DisplayName": "Basement suite wiring", "FullyQualifiedName": "Prairie Homes Ltd:Basement suite wiring",
+    "Job": true, "IsProject": true, "Level": 1, "ParentRef": { "value": "58" }, "BillWithParent": true,
+    "Balance": 0, "Active": true,
+    "MetaData": { "CreateTime": "2026-09-10T12:00:00-07:00", "LastUpdatedTime": "2026-09-10T12:00:00-07:00" }
+  }
+]

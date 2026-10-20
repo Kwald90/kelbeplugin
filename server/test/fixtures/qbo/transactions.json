@@ -1,0 +1,163 @@
+{
+  "_note": "QBO transactions of TG Electrical (Manitoba, GST 5% + PST/RST 7%), shaped like QBO API responses (minorversion 75). Amounts are worked by hand in qbo-map-unit.test.js.",
+  "invoice": {
+    "Id": "201", "SyncToken": "4", "domain": "QBO", "sparse": false,
+    "DocNumber": "INV-3001", "TxnDate": "2026-10-15", "DueDate": "2026-11-14",
+    "CustomerRef": { "value": "59", "name": "Prairie Homes Ltd:J-1042 Panel upgrade 12 Elm" },
+    "CustomerMemo": { "value": "Thank you for your business." },
+    "PrivateNote": "Fishtape ref 0123456789ab · Panel upgrade",
+    "BillEmail": { "Address": "ap@prairiehomes.example" },
+    "LinkedTxn": [{ "TxnId": "501", "TxnType": "Estimate" }, { "TxnId": "301", "TxnType": "Payment" }],
+    "GlobalTaxCalculation": "TaxExcluded", "EmailStatus": "NotSet", "PrintStatus": "NotSet",
+    "AllowOnlineCreditCardPayment": false, "AllowOnlineACHPayment": false,
+    "SalesTermRef": { "value": "3" }, "CurrencyRef": { "value": "CAD", "name": "Canadian Dollar" },
+    "Line": [
+      { "Id": "1", "LineNum": 1, "Description": "200A panel (Siemens)", "Amount": 1250.00, "DetailType": "SalesItemLineDetail",
+        "SalesItemLineDetail": { "ItemRef": { "value": "101", "name": "200A panel (Siemens)" }, "Qty": 1, "UnitPrice": 1250, "TaxCodeRef": { "value": "10" } } },
+      { "Id": "2", "LineNum": 2, "Description": "14/2 NMD90 wire (m)", "Amount": 216.75, "DetailType": "SalesItemLineDetail",
+        "SalesItemLineDetail": { "ItemRef": { "value": "21", "name": "Materials" }, "Qty": 75, "UnitPrice": 2.89, "TaxCodeRef": { "value": "10" } } },
+      { "Id": "3", "LineNum": 3, "Description": "Electrician labour", "Amount": 1140.00, "DetailType": "SalesItemLineDetail",
+        "SalesItemLineDetail": { "ItemRef": { "value": "22", "name": "Labour" }, "Qty": 12, "UnitPrice": 95, "TaxCodeRef": { "value": "10" }, "ServiceDate": "2026-10-14", "ClassRef": { "value": "900", "name": "Residential" } } },
+      { "Id": "4", "LineNum": 4, "Description": "Materials markup (10%)", "Amount": 146.68, "DetailType": "SalesItemLineDetail",
+        "SalesItemLineDetail": { "ItemRef": { "value": "24", "name": "Materials markup" }, "Qty": 1, "UnitPrice": 146.68, "TaxCodeRef": { "value": "10" } } },
+      { "Amount": 2753.43, "DetailType": "SubTotalLineDetail", "SubTotalLineDetail": {} }
+    ],
+    "TxnTaxDetail": {
+      "TotalTax": 330.41,
+      "TaxLine": [
+        { "Amount": 137.67, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "1" }, "PercentBased": true, "TaxPercent": 5, "NetAmountTaxable": 2753.43 } },
+        { "Amount": 192.74, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "2" }, "PercentBased": true, "TaxPercent": 7, "NetAmountTaxable": 2753.43 } }
+      ]
+    },
+    "TotalAmt": 3083.84, "Balance": 1833.84, "Deposit": 0,
+    "MetaData": { "CreateTime": "2026-10-15T09:00:00-07:00", "LastUpdatedTime": "2026-10-20T11:42:00-07:00" }
+  },
+  "estimate": {
+    "Id": "501", "SyncToken": "2", "domain": "QBO",
+    "DocNumber": "E-2001", "TxnDate": "2026-10-01", "ExpirationDate": "2026-10-31", "TxnStatus": "Accepted", "AcceptedDate": "2026-10-03",
+    "CustomerRef": { "value": "59" }, "PrivateNote": "Fishtape ref fedcba987654 · Panel upgrade quote",
+    "GlobalTaxCalculation": "TaxExcluded",
+    "Line": [
+      { "Id": "1", "LineNum": 1, "Description": "200A panel (Siemens)", "Amount": 1250.00, "DetailType": "SalesItemLineDetail",
+        "SalesItemLineDetail": { "ItemRef": { "value": "101" }, "Qty": 1, "UnitPrice": 1250, "TaxCodeRef": { "value": "10" } } },
+      { "Id": "2", "LineNum": 2, "Description": "Permit and inspection included", "DetailType": "DescriptionOnly", "DescriptionLineDetail": {} },
+      { "Id": "3", "LineNum": 3, "Description": "Fixture install", "Amount": 37.00, "DetailType": "SalesItemLineDetail",
+        "SalesItemLineDetail": { "ItemRef": { "value": "22" }, "Qty": 3, "UnitPrice": 12.3333, "TaxCodeRef": { "value": "10" } } },
+      { "Amount": 1287.00, "DetailType": "SubTotalLineDetail", "SubTotalLineDetail": {} }
+    ],
+    "TxnTaxDetail": { "TotalTax": 154.44, "TaxLine": [
+      { "Amount": 64.35, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "1" }, "PercentBased": true, "TaxPercent": 5, "NetAmountTaxable": 1287.00 } },
+      { "Amount": 90.09, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "2" }, "PercentBased": true, "TaxPercent": 7, "NetAmountTaxable": 1287.00 } }
+    ] },
+    "TotalAmt": 1441.44,
+    "MetaData": { "CreateTime": "2026-10-02T01:30:00Z", "LastUpdatedTime": "2026-10-03T16:00:00Z" }
+  },
+  "payment": {
+    "Id": "301", "SyncToken": "1", "domain": "QBO",
+    "TxnDate": "2026-10-20", "CustomerRef": { "value": "59" },
+    "PaymentMethodRef": { "value": "32" }, "PaymentRefNum": "CHQ 4471", "DepositToAccountRef": { "value": "41" },
+    "Line": [
+      { "Amount": 1000.00, "LinkedTxn": [{ "TxnId": "201", "TxnType": "Invoice" }] },
+      { "Amount": 600.00, "LinkedTxn": [{ "TxnId": "202", "TxnType": "Invoice" }] },
+      { "Amount": 150.00, "LinkedTxn": [{ "TxnId": "150", "TxnType": "Invoice" }] },
+      { "Amount": 250.00, "LinkedTxn": [{ "TxnId": "401", "TxnType": "CreditMemo" }] }
+    ],
+    "TotalAmt": 2000.00, "UnappliedAmt": 500.00, "ProcessPayment": false,
+    "MetaData": { "CreateTime": "2026-10-20T11:40:00-07:00", "LastUpdatedTime": "2026-10-20T11:42:00-07:00" }
+  },
+  "bill": {
+    "Id": "601", "SyncToken": "0", "domain": "QBO",
+    "VendorRef": { "value": "701", "name": "Westburne Winnipeg" }, "DocNumber": "WB-778812", "TxnDate": "2026-10-12", "DueDate": "2026-11-11",
+    "PrivateNote": "Fishtape ref 89abcdef0123 · Delivered to site", "GlobalTaxCalculation": "TaxExcluded",
+    "APAccountRef": { "value": "33", "name": "Accounts Payable (A/P)" },
+    "Line": [
+      { "Id": "1", "LineNum": 1, "Description": "14/2 NMD90 wire, 2 x 150 m", "Amount": 1284.00, "DetailType": "AccountBasedExpenseLineDetail",
+        "AccountBasedExpenseLineDetail": { "AccountRef": { "value": "71" }, "CustomerRef": { "value": "59" }, "BillableStatus": "NotBillable", "TaxCodeRef": { "value": "11" } } },
+      { "Id": "2", "LineNum": 2, "Description": "Breakers 15A x 10", "Amount": 321.00, "DetailType": "AccountBasedExpenseLineDetail",
+        "AccountBasedExpenseLineDetail": { "AccountRef": { "value": "71" }, "CustomerRef": { "value": "59" }, "BillableStatus": "NotBillable", "TaxCodeRef": { "value": "11" }, "ClassRef": { "value": "900" } } }
+    ],
+    "TxnTaxDetail": { "TotalTax": 75.00, "TaxLine": [
+      { "Amount": 75.00, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "1" }, "PercentBased": true, "TaxPercent": 5, "NetAmountTaxable": 1605.00 } }
+    ] },
+    "TotalAmt": 1680.00, "Balance": 1680.00,
+    "MetaData": { "CreateTime": "2026-10-12T15:30:00-07:00", "LastUpdatedTime": "2026-10-12T15:30:00-07:00" }
+  },
+  "purchaseInclusive": {
+    "Id": "602", "SyncToken": "0", "domain": "QBO",
+    "PaymentType": "CreditCard", "AccountRef": { "value": "51", "name": "Visa" }, "EntityRef": { "value": "702", "name": "Home Depot", "type": "Vendor" },
+    "TxnDate": "2026-10-16", "DocNumber": "HD-5501", "GlobalTaxCalculation": "TaxInclusive", "Credit": false,
+    "Line": [
+      { "Id": "1", "Description": "Wire nuts and staples", "Amount": 100.00, "DetailType": "AccountBasedExpenseLineDetail",
+        "AccountBasedExpenseLineDetail": { "AccountRef": { "value": "71" }, "CustomerRef": { "value": "59" }, "BillableStatus": "NotBillable", "TaxCodeRef": { "value": "10" }, "TaxInclusiveAmt": 112.00 } },
+      { "Id": "2", "Description": "Drill bits", "Amount": 20.00, "DetailType": "AccountBasedExpenseLineDetail",
+        "AccountBasedExpenseLineDetail": { "AccountRef": { "value": "74" }, "CustomerRef": { "value": "59" }, "BillableStatus": "NotBillable", "TaxCodeRef": { "value": "10" }, "TaxInclusiveAmt": 22.40 } }
+    ],
+    "TxnTaxDetail": { "TotalTax": 14.40, "TaxLine": [
+      { "Amount": 6.00, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "1" }, "PercentBased": true, "TaxPercent": 5, "NetAmountTaxable": 120.00 } },
+      { "Amount": 8.40, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "8" }, "PercentBased": true, "TaxPercent": 7, "NetAmountTaxable": 120.00 } }
+    ] },
+    "TotalAmt": 134.40,
+    "MetaData": { "CreateTime": "2026-10-16T18:00:00-07:00", "LastUpdatedTime": "2026-10-16T18:00:00-07:00" }
+  },
+  "purchaseCredit": {
+    "Id": "603", "SyncToken": "0", "domain": "QBO",
+    "PaymentType": "CreditCard", "AccountRef": { "value": "51" }, "EntityRef": { "value": "701", "type": "Vendor" }, "Credit": true,
+    "TxnDate": "2026-10-18", "GlobalTaxCalculation": "TaxExcluded",
+    "Line": [
+      { "Id": "1", "Description": "Returned breakers", "Amount": 50.00, "DetailType": "AccountBasedExpenseLineDetail",
+        "AccountBasedExpenseLineDetail": { "AccountRef": { "value": "71" }, "CustomerRef": { "value": "59" }, "BillableStatus": "NotBillable", "TaxCodeRef": { "value": "11" } } }
+    ],
+    "TxnTaxDetail": { "TotalTax": 2.50, "TaxLine": [
+      { "Amount": 2.50, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "1" }, "PercentBased": true, "TaxPercent": 5, "NetAmountTaxable": 50.00 } }
+    ] },
+    "TotalAmt": 52.50
+  },
+  "timeActivity": {
+    "Id": "901", "SyncToken": "0", "domain": "QBO",
+    "TxnDate": "2026-10-15", "NameOf": "Employee", "EmployeeRef": { "value": "81", "name": "Kelvin Waldner" },
+    "CustomerRef": { "value": "59" }, "ItemRef": { "value": "22" }, "BillableStatus": "NotBillable", "Taxable": false,
+    "Hours": 7, "Minutes": 30, "Description": "J-1042 Panel upgrade 12 Elm - Rough-in · Fishtape ref 0a1b2c3d4e5f",
+    "MetaData": { "CreateTime": "2026-10-16T08:00:00-07:00", "LastUpdatedTime": "2026-10-16T08:00:00-07:00" }
+  },
+  "transfer": {
+    "Id": "951", "SyncToken": "0", "domain": "QBO",
+    "FromAccountRef": { "value": "91", "name": "Stripe" }, "ToAccountRef": { "value": "92", "name": "Chequing" },
+    "Amount": 1557.84, "TxnDate": "2026-10-22", "PrivateNote": "Fishtape ref 5a5a5a5a5a5a · Stripe payout po_1Q2w3E4r5T6y7U8i",
+    "MetaData": { "CreateTime": "2026-10-22T08:00:00-07:00", "LastUpdatedTime": "2026-10-22T08:00:00-07:00" }
+  },
+  "purchaseOrder": {
+    "Id": "801", "SyncToken": "3", "domain": "QBO",
+    "VendorRef": { "value": "701" }, "TxnDate": "2026-10-05", "DueDate": "2026-10-09", "POStatus": "Closed",
+    "ShipAddr": { "Id": "160", "Line1": "12 Elm St", "City": "Steinbach", "CountrySubDivisionCode": "MB", "PostalCode": "R5G 1A1" },
+    "Memo": "Deliver to the side door", "PrivateNote": "Fishtape ref 7f7f7f7f7f7f",
+    "Line": [
+      { "Id": "1", "Description": "14/2 NMD90 wire (m)", "Amount": 1200.00, "DetailType": "ItemBasedExpenseLineDetail",
+        "ItemBasedExpenseLineDetail": { "ItemRef": { "value": "21" }, "Qty": 300, "UnitPrice": 4, "CustomerRef": { "value": "59" }, "BillableStatus": "NotBillable" } }
+    ],
+    "TotalAmt": 1200.00
+  },
+  "invoiceQboOnly": {
+    "Id": "203", "SyncToken": "0", "DocNumber": "1077", "TxnDate": "2026-10-08", "CustomerRef": { "value": "62" },
+    "GlobalTaxCalculation": "TaxExcluded",
+    "Line": [{ "Id": "1", "Description": "Service call", "Amount": 800.00, "DetailType": "SalesItemLineDetail", "SalesItemLineDetail": { "ItemRef": { "value": "104" }, "Qty": 1, "UnitPrice": 800, "TaxCodeRef": { "value": "16" } } }],
+    "TxnTaxDetail": { "TotalTax": 104.00, "TaxLine": [{ "Amount": 104.00, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "17" }, "PercentBased": true, "TaxPercent": 13, "NetAmountTaxable": 800 } }] },
+    "TotalAmt": 904.00, "Balance": 904.00
+  },
+  "invoiceRekeyed": {
+    "Id": "204", "SyncToken": "0", "DocNumber": "1078", "TxnDate": "2026-10-19", "CustomerRef": { "value": "60" },
+    "GlobalTaxCalculation": "TaxExcluded",
+    "Line": [{ "Id": "1", "Description": "Hot tub hookup", "Amount": 450.00, "DetailType": "SalesItemLineDetail", "SalesItemLineDetail": { "ItemRef": { "value": "22" }, "Qty": 1, "UnitPrice": 450, "TaxCodeRef": { "value": "10" } } }],
+    "TxnTaxDetail": { "TotalTax": 54.00, "TaxLine": [
+      { "Amount": 22.50, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "1" }, "PercentBased": true, "TaxPercent": 5, "NetAmountTaxable": 450 } },
+      { "Amount": 31.50, "DetailType": "TaxLineDetail", "TaxLineDetail": { "TaxRateRef": { "value": "2" }, "PercentBased": true, "TaxPercent": 7, "NetAmountTaxable": 450 } }
+    ] },
+    "TotalAmt": 504.00, "Balance": 504.00
+  },
+  "invoiceTaxInclusive": {
+    "Id": "205", "SyncToken": "0", "DocNumber": "1079", "TxnDate": "2026-10-19", "CustomerRef": { "value": "58" },
+    "GlobalTaxCalculation": "TaxInclusive",
+    "Line": [{ "Id": "1", "Description": "Doorbell repair", "Amount": 100.00, "DetailType": "SalesItemLineDetail", "SalesItemLineDetail": { "ItemRef": { "value": "22" }, "Qty": 1, "UnitPrice": 100, "TaxCodeRef": { "value": "10" }, "TaxInclusiveAmt": 112.00 } }],
+    "TxnTaxDetail": { "TotalTax": 12.00, "TaxLine": [] },
+    "TotalAmt": 112.00, "Balance": 112.00
+  }
+}

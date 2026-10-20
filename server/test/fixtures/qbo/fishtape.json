@@ -1,0 +1,120 @@
+{
+  "_note": "Fishtape records of TG Electrical (Manitoba) that pair with customers.json, items.json, vendors-employees.json and transactions.json. Invoice and estimate taxes are the MB pst-all components of electrical-app/js/lib/tax.js (GST 5% + RST 7% on everything).",
+  "clients": [
+    { "id": "c-prairie", "name": "Prairie Homes Ltd", "type": "commercial", "email": "AP@PrairieHomes.example", "phone": "204 555 0142", "address": "120 Main St, Winnipeg, MB R3C1A1", "notes": "Prefers invoices by email" },
+    { "id": "c-dana", "name": "Dana Smith", "type": "residential", "email": "", "phone": "", "address": "12 Elm St, Steinbach, MB R5G 1A1" },
+    { "id": "c-dana2", "name": "Dana Smith", "type": "residential" },
+    { "id": "c-redriver", "name": "Red River Builders", "type": "commercial", "email": "office@redriver.example" },
+    { "id": "c-old", "name": "Gone Quiet Ltd", "type": "commercial" }
+  ],
+  "jobs": [
+    { "id": "job-1042", "number": "J-1042", "title": "Panel upgrade 12 Elm", "clientId": "c-prairie", "address": "12 Elm St, Steinbach, MB R5G 1A1", "status": "in-progress" },
+    { "id": "job-1050", "number": "J-1050", "title": "Basement suite wiring", "clientId": "c-prairie", "status": "scheduled" },
+    { "id": "job-1060", "number": "J-1060", "title": "Shop lighting", "clientId": "c-redriver", "status": "lead" }
+  ],
+  "items": [
+    { "id": "item-panel", "name": "200A panel (Siemens)", "sku": "pnl-200-sie", "description": "Siemens 200A 30/40 main breaker panel", "priceCents": 125000, "costCents": 89000, "unit": "ea", "category": "Panels" },
+    { "id": "item-pot", "name": "LED Pot Light 4in", "priceCents": 3850, "costCents": 1725, "unit": "ea" },
+    { "id": "item-afci", "name": "Arc-fault breaker 15A", "sku": "AFCI-15", "priceCents": 8900, "costCents": 5200 }
+  ],
+  "vendors": [
+    { "id": "v-westburne", "name": "Westburne Winnipeg", "companyName": "Westburne Electric Supply", "email": "winnipeg@westburne.example", "phone": "204 555 0300", "address": "1580 Church Ave, Winnipeg, MB R2X 1G9", "accountNumber": "TG-44821", "t5018": false, "notes": "Branch 12" },
+    { "id": "v-guillevin", "name": "Guillevin Winnipeg", "email": "wpg@guillevin.example" }
+  ],
+  "employees": [
+    { "id": "emp-kelvin", "name": "Kelvin Waldner", "email": "Kelvin@TGelectrical.example", "role": "owner" },
+    { "id": "emp-jordan", "name": "Jordan Penner", "role": "electrician" },
+    { "id": "emp-sam", "name": "Sam Newhire", "role": "apprentice" }
+  ],
+  "estimates": [
+    {
+      "id": "est-2001", "number": "E-2001", "clientId": "c-prairie", "jobId": "job-1042", "title": "Panel upgrade quote", "status": "accepted",
+      "createdAt": "2026-10-02T01:30:00Z", "updatedAt": "2026-10-03T16:00:00Z", "validUntil": "2026-10-31", "markupPct": 0,
+      "taxProvince": "MB", "taxTreatment": "pst-all", "taxPct": 12,
+      "taxes": [
+        { "id": "GST", "label": "GST", "pct": 5, "applies": { "material": true, "labour": true, "other": true }, "note": "" },
+        { "id": "RST", "label": "RST", "pct": 7, "applies": { "material": true, "labour": true, "other": true }, "note": "" }
+      ],
+      "lines": [
+        { "itemId": "item-panel", "description": "200A panel (Siemens)", "qty": 1, "unitCents": 125000, "kind": "material", "labourHours": 6 },
+        { "description": "Permit and inspection included", "qty": 0, "unitCents": 0, "kind": "other" },
+        { "description": "Fixture install (3 × $12.3333)", "qty": 1, "unitCents": 3700, "kind": "labour" }
+      ]
+    }
+  ],
+  "invoices": [
+    {
+      "id": "inv-3001", "number": "INV-3001", "clientId": "c-prairie", "jobId": "job-1042", "estimateId": "est-2001", "title": "Panel upgrade",
+      "status": "partial", "issueDate": "2026-10-15", "dueDate": "2026-11-14", "notes": "Thank you for your business.", "markupPct": 10,
+      "taxProvince": "MB", "taxTreatment": "pst-all", "taxPct": 12,
+      "taxes": [
+        { "id": "GST", "label": "GST", "pct": 5, "applies": { "material": true, "labour": true, "other": true }, "note": "" },
+        { "id": "RST", "label": "RST", "pct": 7, "applies": { "material": true, "labour": true, "other": true }, "note": "" }
+      ],
+      "lines": [
+        { "itemId": "item-panel", "description": "200A panel (Siemens)", "qty": 1, "unitCents": 125000, "kind": "material", "labourHours": 6 },
+        { "description": "14/2 NMD90 wire (m)", "qty": 75, "unitCents": 289, "kind": "material" },
+        { "description": "Electrician labour", "qty": 12, "unitCents": 9500, "kind": "labour", "changeOrderId": "co-1" }
+      ]
+    },
+    {
+      "id": "inv-3010", "number": "INV-3010", "clientId": "c-dana", "status": "sent", "issueDate": "2026-10-17", "dueDate": "2026-11-16",
+      "taxProvince": "MB", "taxTreatment": "pst-all", "taxPct": 12,
+      "taxes": [
+        { "id": "GST", "label": "GST", "pct": 5, "applies": { "material": true, "labour": true, "other": true }, "note": "" },
+        { "id": "RST", "label": "RST", "pct": 7, "applies": { "material": true, "labour": true, "other": true }, "note": "" }
+      ],
+      "lines": [{ "description": "Hot tub hookup", "qty": 1, "unitCents": 45000, "kind": "labour" }]
+    },
+    {
+      "id": "inv-3011", "number": "INV-3011", "clientId": "c-redriver", "status": "sent", "issueDate": "2026-09-20",
+      "taxProvince": "MB", "taxTreatment": "gst-only", "taxPct": 5,
+      "taxes": [
+        { "id": "GST", "label": "GST", "pct": 5, "applies": { "material": true, "labour": true, "other": true }, "note": "" },
+        { "id": "RST", "label": "RST", "pct": 7, "applies": { "material": false, "labour": false, "other": false }, "note": "PST/RST exempt: the customer’s licence or exemption number is on file." }
+      ],
+      "lines": [{ "description": "Shop lighting materials", "qty": 1, "unitCents": 200000, "kind": "material" }]
+    },
+    {
+      "id": "inv-3012", "number": "INV-3012", "clientId": "c-redriver", "status": "paid", "issueDate": "2026-08-01", "taxPct": 0, "taxes": [],
+      "taxProvince": "MB", "taxTreatment": "none", "taxNoneReason": "relief",
+      "lines": [{ "description": "Band office repairs", "qty": 1, "unitCents": 50000, "kind": "labour" }]
+    },
+    { "id": "inv-3013", "number": "INV-3013", "clientId": "c-redriver", "status": "draft", "issueDate": "2026-10-19", "taxes": [], "lines": [] }
+  ],
+  "payments": [
+    { "id": "pay-1", "invoiceId": "inv-3001", "amountCents": 100000, "date": "2026-10-20", "method": "cheque", "reference": "CHQ 4471" },
+    { "id": "pay-2", "invoiceId": "inv-3002", "amountCents": 60000, "date": "2026-10-20", "method": "cheque", "reference": "CHQ 4471" },
+    { "id": "stripe-pi_3Q9aBcDeFgHiJkLmN0pQrStU", "invoiceId": "inv-3010", "amountCents": 50400, "date": "2026-10-18", "method": "card", "source": "stripe",
+      "reference": "pi_3Q9aBcDeFgHiJkLmN0pQrStU", "stripe": { "paymentIntentId": "pi_3Q9aBcDeFgHiJkLmN0pQrStU", "chargeId": "ch_3Q9aBcDeFgHiJkLm", "feeCents": 1492, "netCents": 48908 } }
+  ],
+  "bills": [
+    {
+      "id": "bill-1", "kind": "bill", "vendorId": "v-westburne", "number": "WB-778812", "date": "2026-10-12", "dueDate": "2026-11-11", "jobId": "job-1042",
+      "status": "open", "notes": "Delivered to site", "taxProvince": "MB", "totalCents": 168000,
+      "lines": [
+        { "description": "14/2 NMD90 wire, 2 x 150 m", "qty": 2, "unitCents": 60000, "amountCents": 120000, "costType": "material" },
+        { "description": "Breakers 15A x 10", "qty": 10, "unitCents": 3000, "amountCents": 30000, "costType": "material" }
+      ],
+      "taxes": [{ "id": "GST", "label": "GST", "cents": 7500 }, { "id": "RST", "label": "RST", "cents": 10500 }]
+    }
+  ],
+  "purchaseOrders": [
+    {
+      "id": "po-5001", "number": "PO-5001", "vendorId": "v-westburne", "jobId": "job-1042", "date": "2026-10-05", "expectedDate": "2026-10-09", "status": "sent",
+      "lines": [{ "description": "14/2 NMD90 wire (m)", "qty": 300, "unit": "m", "unitCents": 400, "materialRequestIds": ["mr-1"] }],
+      "shipTo": "12 Elm St, Steinbach, MB R5G 1A1", "notes": "Deliver to the side door"
+    }
+  ],
+  "timeEntries": [
+    { "id": "te-1", "employeeId": "emp-kelvin", "jobId": "job-1042", "clockIn": "2026-10-15T13:00:00Z", "clockOut": "2026-10-15T21:00:00Z", "breakMins": 30, "note": "Rough-in", "approved": true, "kind": "work" }
+  ],
+  "stripePayouts": [
+    { "payout_id": "po_1Q2w3E4r5T6y7U8i", "amount_cents": 155784, "currency": "cad", "arrival_date": "2026-10-22", "status": "paid", "automatic": true, "livemode": true,
+      "balance_txns": [
+        { "id": "txn_1", "type": "charge", "amountCents": 158000, "feeCents": 1492, "paymentIntentId": "pi_3Q9aBcDeFgHiJkLmN0pQrStU", "created": "2026-10-18T19:00:00Z" },
+        { "id": "txn_2", "type": "stripe_fee", "amountCents": -500, "feeCents": 0, "paymentIntentId": null, "created": "2026-10-19T00:00:00Z" },
+        { "id": "txn_3", "type": "adjustment", "amountCents": -1500, "feeCents": 1500, "paymentIntentId": null, "created": "2026-10-20T00:00:00Z" }
+      ] }
+  ]
+}

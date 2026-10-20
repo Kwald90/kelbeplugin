@@ -1,0 +1,20 @@
+{
+  "vendors": [
+    {
+      "Id": "701", "SyncToken": "4", "DisplayName": "Westburne Winnipeg", "CompanyName": "Westburne Electric Supply",
+      "PrimaryEmailAddr": { "Address": "winnipeg@westburne.example" }, "PrimaryPhone": { "FreeFormNumber": "204-555-0300" },
+      "BillAddr": { "Id": "301", "Line1": "1580 Church Ave", "City": "Winnipeg", "CountrySubDivisionCode": "MB", "PostalCode": "R2X 1G9" },
+      "AcctNum": "TG-44821", "T5018Eligible": false, "Notes": "Branch 12", "Balance": 1680.00, "Active": true, "Vendor1099": false,
+      "TermRef": { "value": "3" },
+      "MetaData": { "CreateTime": "2025-02-01T09:00:00-07:00", "LastUpdatedTime": "2026-10-12T15:30:00-07:00" }
+    },
+    { "Id": "702", "SyncToken": "0", "DisplayName": "Home Depot", "CompanyName": "The Home Depot", "Active": true, "Balance": 0 },
+    { "Id": "703", "SyncToken": "0", "DisplayName": "Stripe", "CompanyName": "Stripe Payments Canada, Ltd.", "Active": true, "Balance": 0 },
+    { "Id": "704", "SyncToken": "0", "DisplayName": "Sparky Subcontracting", "PrimaryEmailAddr": { "Address": "jo@sparky.example" }, "T5018Eligible": true, "Active": true, "Balance": 0 }
+  ],
+  "employees": [
+    { "Id": "81", "SyncToken": "1", "DisplayName": "Kelvin Waldner", "GivenName": "Kelvin", "FamilyName": "Waldner", "PrimaryEmailAddr": { "Address": "kelvin@tgelectrical.example" }, "Active": true },
+    { "Id": "82", "SyncToken": "0", "DisplayName": "Jordan Penner", "GivenName": "Jordan", "FamilyName": "Penner", "Active": true },
+    { "Id": "83", "SyncToken": "0", "DisplayName": "Former Apprentice", "GivenName": "Former", "FamilyName": "Apprentice", "Active": false }
+  ]
+}
