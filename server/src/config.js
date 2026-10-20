@@ -20,6 +20,15 @@ export function loadEnvFile(file = ENV_FILE) {
 const list = (v) => String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
 const int = (v, d) => (v === undefined || v === '' ? d : Number.parseInt(v, 10));
 
+/** The origin of an https URL (or http on localhost), else null. */
+function originOf(v) {
+  try {
+    const u = new URL(String(v || '').trim());
+    if (u.protocol === 'https:' || (u.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(u.hostname))) return u.origin;
+  } catch { /* not a URL */ }
+  return null;
+}
+
 /** A fixed, public development key: fine on a laptop, refused anywhere else. */
 const LOCAL_DEV_MASTER_KEY = createHash('sha256').update('fishtape-local-development-only').digest('base64');
 
@@ -43,7 +52,10 @@ export function readConfig(env = process.env) {
 
   if (deployed && !env.DATABASE_URL) throw new Error('DATABASE_URL is required');
 
-  const corsOrigins = [...new Set([publicOrigin, ...list(env.CORS_ORIGINS), 'capacitor://localhost'])];
+  // The public status page (STATUS_PUBLIC_URL, e.g. status.fishtapehq.com) posts subscribe,
+  // confirm and unsubscribe from its own host, so its origin passes the CSRF Origin check too.
+  const statusOrigin = originOf(env.STATUS_PUBLIC_URL);
+  const corsOrigins = [...new Set([publicOrigin, ...list(env.CORS_ORIGINS), ...(statusOrigin ? [statusOrigin] : []), 'capacitor://localhost'])];
 
   return {
     appEnv,

@@ -21,8 +21,8 @@ it serves, its own CSP (required by the contract).
 | `deploy/staging/nginx-http.conf`; top of `deploy/production/nginx/fishtape.conf` | `fishtape-staging-http.conf` | access log formats without query strings |
 
 The two header files must send the same CSP and Permissions-Policy; `check-csp.mjs` fails CI
-otherwise. Header files are installed by `install-nginx.sh`, not by `update.sh`: after a change,
-run `sudo deploy/<env>/install-nginx.sh` on each host.
+otherwise. Header files are installed by `install-nginx.sh`; each deploy (`update.sh`) runs it
+whenever the installed files differ from the release's. By hand: `sudo deploy/<env>/install-nginx.sh`.
 
 ## Response headers
 

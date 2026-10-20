@@ -61,7 +61,9 @@ curl -s https://status.fishtapehq.com/api/v1/status
 Then sign in to HQ and look at the developer health page (migrations current, queue lag, errors,
 last backup). Watch it for 30 minutes after anything touching sync or auth.
 
-If nginx files changed: `sudo /srv/fishtape/repo/deploy/production/install-nginx.sh`, then
+`update.sh` installs the nginx files whenever the installed ones differ from the release's (a
+failed install is a warning in the deploy record and is retried by the next deploy). To do it by
+hand: `sudo /srv/fishtape/repo/deploy/production/install-nginx.sh`, then
 `/srv/fishtape/repo/deploy/check-exposure.sh https://app.fishtapehq.com --production` (and
 `https://fishtapehq.com --marketing`, `https://status.fishtapehq.com --status`,
 `https://hq.fishtapehq.com --hq`). A new host name in DNS: `sudo .../issue-cert.sh` first.

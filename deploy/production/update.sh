@@ -11,9 +11,10 @@
 # 5. publish the static app, HQ console and public site (electrical-app/, hq/, site/) as
 #    /srv/fishtape/www/releases/<sha>, flip the `current` symlink atomically, and check
 #    app.fishtapehq.com through nginx (a failure here rolls back)
-# 6. check the apex, status. and hq. through nginx, then run deploy/check-exposure.sh on each:
-#    warnings only (the API and the app are already live and fine). hq. is skipped with a
-#    warning while it doesn't resolve or isn't on the certificate yet.
+# 6. install the nginx files when the installed ones differ from the release's, check the apex,
+#    status. and hq. through nginx, then run deploy/check-exposure.sh on each: warnings only (the
+#    API and the app are already live and fine; a failed nginx install is one too). hq. is skipped
+#    with a warning while it doesn't resolve or isn't on the certificate yet.
 # Any failure in 1-5 rolls back the containers and the symlink. Every run appends one JSON line to
 # /var/lib/fishtape-production/deploy-log.jsonl. Migrations are not rolled back: they must be
 # expand/contract (docs/compliance/change-management.md). There is no seed in production.
@@ -54,7 +55,7 @@ while [ $# -gt 0 ]; do
     --force) FORCE=1; shift ;;
     --skip-backup) SKIP_BACKUP=1; shift ;;
     --actor) ACTOR="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -234,6 +235,16 @@ site_check() { # host path... -> 0 when every path answers 2xx through nginx
   done
   return 0
 }
+# nginx: whenever the installed files differ from this release's (install-nginx.sh --check), install
+# them (nginx -t, then reload; the installer restores the previous files if that fails), so the
+# checks below test the new config. Deciding on what is installed, not on the git diff, means a
+# failed install (a missing certificate, a server-name conflict) is retried by the next deploy.
+if ! "$HERE/install-nginx.sh" --check >/dev/null 2>&1; then
+  say "nginx files differ from the installed ones: installing them"
+  if ! "$HERE/install-nginx.sh" > "$STATE_DIR/last-nginx-install.txt" 2>&1; then
+    warn "install-nginx.sh failed, the previous nginx config is still live; see $STATE_DIR/last-nginx-install.txt"
+  fi
+fi
 APEX_OK=0; STATUS_OK=0; HQ_OK=0
 if site_check "$APEX_HOST" / /pricing /api/v1/status; then APEX_OK=1; fi
 if site_check "$STATUS_HOST" / /api/v1/status /api/readyz; then STATUS_OK=1; fi
@@ -265,16 +276,6 @@ fi
       done; } || true
 
 say "done: production is on $TAG (${TARGET:0:12}) in $(( $(date +%s) - START ))s"
-
-# ---- 7b. nginx: when this release changed the nginx files, install them (nginx -t, then reload;
-#      install-nginx.sh restores the previous files if the test fails) so the checks below test
-#      the new config instead of reporting false failures against the old one. ----
-if [ "$PREV_SHA" != "$TARGET" ] && ! git_ diff --quiet "$PREV_SHA" "$TARGET" -- deploy/production/nginx deploy/production/logrotate-nginx 2>/dev/null; then
-  say "nginx files changed in this release: installing them"
-  if ! "$HERE/install-nginx.sh" > "$STATE_DIR/last-nginx-install.txt" 2>&1; then
-    say "WARNING: install-nginx.sh failed, the previous nginx config is still live; see $STATE_DIR/last-nginx-install.txt"
-  fi
-fi
 
 # ---- 8. exposure checks ----
 # Is anything sensitive served, is any header missing? Warns only (the release is live); the

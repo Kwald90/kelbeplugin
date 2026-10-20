@@ -132,7 +132,19 @@ export function classifyHttp(r) {
   return 'outage';
 }
 
-/** GET one URL with a timeout. Never throws: { code } or { code: 0, error }. */
+/**
+ * A probe result -> a status: classifyHttp, except that an HQ host name that does not resolve
+ * at all is `unknown`. Before launch hq. has no DNS yet (update.sh skips its checks too), and
+ * that must not show the public page as a major outage. Customers never use HQ.
+ * @param {string} id
+ * @param {{ code?: number|null, error?: string }} r
+ */
+export function probeStatus(id, r) {
+  if (id === 'hq' && r?.error === 'unresolved') return 'unknown';
+  return classifyHttp(r);
+}
+
+/** GET one URL with a timeout. Never throws: { code } or { code: 0, error } (timeout, unresolved, unreachable). */
 export async function probeHttp(url, { fetchImpl = globalThis.fetch, timeoutMs = 5000 } = {}) {
   try {
     const res = await fetchImpl(url, {
@@ -143,7 +155,8 @@ export async function probeHttp(url, { fetchImpl = globalThis.fetch, timeoutMs =
     try { await res.body?.cancel?.(); } catch { /* nothing to read */ }
     return { code: res.status };
   } catch (e) {
-    return { code: 0, error: e?.name === 'TimeoutError' || e?.name === 'AbortError' ? 'timeout' : 'unreachable' };
+    if (e?.name === 'TimeoutError' || e?.name === 'AbortError') return { code: 0, error: 'timeout' };
+    return { code: 0, error: e?.cause?.code === 'ENOTFOUND' ? 'unresolved' : 'unreachable' };
   }
 }
 
@@ -250,7 +263,7 @@ export async function runStatusProbes(db, deps) {
 
   await Promise.all(HTTP_COMPONENTS.map(async (id) => {
     if (!s.probes?.[id]) { results[id] = 'unknown'; return; }
-    results[id] = classifyHttp(await probeHttp(s.probes[id], { fetchImpl: deps.fetchImpl, timeoutMs: s.timeoutMs }));
+    results[id] = probeStatus(id, await probeHttp(s.probes[id], { fetchImpl: deps.fetchImpl, timeoutMs: s.timeoutMs }));
   }));
 
   const mail = mailSettings(config, env);

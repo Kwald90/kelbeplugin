@@ -5,6 +5,8 @@
 #
 #   sudo /srv/fishtape/repo/deploy/production/install-nginx.sh --acme-bootstrap   first run, before the certificate exists
 #   sudo /srv/fishtape/repo/deploy/production/install-nginx.sh                    full config (needs the "fishtape" certificate)
+#   sudo /srv/fishtape/repo/deploy/production/install-nginx.sh --check            exit 0 when the full config is installed as in
+#                                                                                 this checkout, 1 when it is not (changes nothing)
 #
 # It only writes Fishtape's own files (sites-available/fishtape-production.conf and its
 # sites-enabled/zz-fishtape-production.conf link, the fishtape-*.conf snippets, the logrotate
@@ -26,10 +28,12 @@ CERT=/etc/letsencrypt/live/fishtape/fullchain.pem
 command -v nginx >/dev/null || { echo "nginx not found" >&2; exit 1; }
 
 MODE=full
+CHECK=0
 case "${1:-}" in
   --acme-bootstrap) MODE=acme ;;
+  --check) CHECK=1 ;;
   "") ;;
-  -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
   *) echo "unknown option: $1" >&2; exit 2 ;;
 esac
 
@@ -50,6 +54,14 @@ else
   )
   LINK_SRC="$AVAIL/fishtape-production.conf"
   LINK_DST="$SITE_LINK"
+fi
+
+# --check: is every file installed exactly as in this checkout, and the site linked? update.sh
+# installs whenever not, so a failed or skipped install is retried by the next deploy.
+if [ "$CHECK" -eq 1 ]; then
+  for src in "${!FILES[@]}"; do cmp -s "$src" "${FILES[$src]}" || exit 1; done
+  [ "$(readlink "$LINK_DST" 2>/dev/null)" = "$LINK_SRC" ] || exit 1
+  exit 0
 fi
 
 mkdir -p /etc/nginx/snippets "$AVAIL" "$ENABLED" /var/www/certbot "$BACKUP_DIR"

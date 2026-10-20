@@ -12,12 +12,14 @@ import { COMPONENT_IDS, bucketOf, createStatusHandlers } from '../src/services/s
 
 const PUBLIC = '/api/v1/public/status';
 const STATUS_URL = 'https://status.fishtape.test/';
+// The status host posts from its own origin (status.js on STATUS_PUBLIC_URL).
+const FROM_STATUS = { origin: 'https://status.fishtape.test' };
 const DRAFT_TITLE = 'Draft: database failover rehearsal';
 const SECRET_BODY = 'Root cause: the primary ran out of disk at 03:12';
 let t, app, app30, admin, staff, owner;
 
 async function makeApp(status) {
-  const config = testConfig();
+  const config = testConfig({ STATUS_PUBLIC_URL: STATUS_URL });
   config.hq = { tlsCheck: false };
   config.status = { probes: null, hostStatusFile: '', publicUrl: STATUS_URL, ...status };
   const a = await buildApp({ config, db: t.db, oidcProviders: {}, logStream: logCapture().stream });
@@ -29,7 +31,7 @@ const hqCall = (method, url, body, who = admin) => call(app, { method, url, toke
 const events = async (action) => (await t.superPool.query('SELECT * FROM audit_events WHERE tenant_id IS NULL AND action = $1 ORDER BY seq', [action])).rows;
 const outbox = async (template) => (await t.superPool.query('SELECT to_address, subject, text_body FROM email_outbox WHERE template = $1 ORDER BY created_at', [template])).rows;
 const subscribe = (body, ip = '203.0.113.5', headers = {}) => app.inject({
-  method: 'POST', url: `${PUBLIC}/subscribe`, remoteAddress: ip, headers: { 'content-type': 'application/json', 'x-fishtape': '1', ...headers }, payload: JSON.stringify(body),
+  method: 'POST', url: `${PUBLIC}/subscribe`, remoteAddress: ip, headers: { 'content-type': 'application/json', 'x-fishtape': '1', ...FROM_STATUS, ...headers }, payload: JSON.stringify(body),
 });
 const inHours = (h) => new Date(Date.now() + h * 3_600_000).toISOString();
 
@@ -261,14 +263,17 @@ describe('email subscriptions', { skip }, () => {
     assert.ok(!bad.body.includes('not-an-email'));
     const noCsrf = await app.inject({ method: 'POST', url: `${PUBLIC}/subscribe`, remoteAddress: '203.0.113.8', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ email: 'x@example.test' }) });
     assert.equal(noCsrf.statusCode, 403);
+    const otherSite = await subscribe({ email: 'x@example.test' }, '203.0.113.8', { origin: 'https://evil.example' });
+    assert.equal(otherSite.statusCode, 403);
+    assert.equal(JSON.parse(otherSite.body).error.code, 'csrf_failed');
     const codes = [];
     for (let i = 0; i < 6; i++) codes.push((await subscribe({ email: `flood${i}@example.test` }, '198.51.100.9')).statusCode);
     assert.deepEqual(codes, [202, 202, 202, 202, 429, 429]);
   });
 
   test('confirm: 200 once, then invalid_token; junk tokens 400', async () => {
-    assert.equal((await call(app, { method: 'POST', url: `${PUBLIC}/confirm`, body: { token: confirmToken } })).status, 200);
-    const again = await call(app, { method: 'POST', url: `${PUBLIC}/confirm`, body: { token: confirmToken } });
+    assert.equal((await call(app, { method: 'POST', url: `${PUBLIC}/confirm`, body: { token: confirmToken }, headers: FROM_STATUS })).status, 200);
+    const again = await call(app, { method: 'POST', url: `${PUBLIC}/confirm`, body: { token: confirmToken }, headers: FROM_STATUS });
     assert.equal(again.status, 400);
     assert.equal(again.body.error.code, 'invalid_token');
     assert.equal((await call(app, { method: 'POST', url: `${PUBLIC}/confirm`, body: { token: 'nope' } })).body.error.code, 'invalid_token');
@@ -303,8 +308,8 @@ describe('email subscriptions', { skip }, () => {
     assert.equal(d.body.notified, null);
     assert.equal((await outbox('status-notice')).length, 2);
 
-    // Unsubscribe: always 200, and the row is gone.
-    assert.equal((await call(app, { method: 'POST', url: `${PUBLIC}/unsubscribe`, body: { token: m[1] } })).status, 200);
+    // Unsubscribe (from the emailed link on the status host): always 200, and the row is gone.
+    assert.equal((await call(app, { method: 'POST', url: `${PUBLIC}/unsubscribe`, body: { token: m[1] }, headers: FROM_STATUS })).status, 200);
     assert.equal((await call(app, { method: 'POST', url: `${PUBLIC}/unsubscribe`, body: { token: m[1] } })).status, 200);
     assert.equal((await call(app, { method: 'POST', url: `${PUBLIC}/unsubscribe`, body: { token: 'x'.repeat(43) } })).status, 200);
     assert.equal((await t.superPool.query("SELECT count(*)::int AS n FROM status_subscribers WHERE email = 'pat@example.test'")).rows[0].n, 0);

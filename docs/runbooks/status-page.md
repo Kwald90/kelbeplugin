@@ -42,7 +42,9 @@ writes `probes` into `host-status.json` (the HTTP code of each public URL from t
 answer). While that file is under 20 minutes old, a failing host probe makes that component worse
 for the run (never better). Production probes app.fishtapehq.com, its `/api/readyz`,
 hq.fishtapehq.com/api/healthz, fishtapehq.com and status.fishtapehq.com; staging probes
-tgelectrical.truecollarbuilt.com, its `/api/readyz` and `/site/index.html`.
+tgelectrical.truecollarbuilt.com, its `/api/readyz` and `/site/index.html`. While
+hq.fishtapehq.com has no DNS record yet (before launch), neither the host nor the worker counts
+it as an outage: HQ shows unknown until the name resolves.
 
 Each run adds one check per component with a known status to `status_daily` (per UTC day) and
 updates `status_latest` (`changed_at` moves only when the status changes). Rows older than

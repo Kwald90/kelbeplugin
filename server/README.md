@@ -107,7 +107,7 @@ All listed with comments in [`.env.example`](.env.example). The important ones:
 | `MIGRATE_DATABASE_URL` | `fishtape_owner`, for `npm run migrate`. |
 | `HQ_DATABASE_URL` | `fishtape_hq` (BYPASSRLS), for `/api/hq/*` reads across tenants. Optional. |
 | `PUBLIC_ORIGIN` | The PWA origin, e.g. `https://tgelectrical.truecollarbuilt.com`. Used for CORS, CSRF origin checks, cookies, OIDC redirects and email links. |
-| `CORS_ORIGINS` | Extra origins. `capacitor://localhost` (iOS app) is always allowed. |
+| `CORS_ORIGINS` | Extra origins. `capacitor://localhost` (iOS app) and the origin of `STATUS_PUBLIC_URL` (the status page posts subscriptions from there) are always allowed. |
 | `SECRETS_MASTER_KEY` | base64, 32 bytes. Encrypts TOTP secrets and tenant secrets (envelope). Losing it makes those unreadable; rotate by re-wrapping. |
 | `GOOGLE_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET` | Turn each sign-in provider on. |
 | `LOG_LEVEL`, `GIT_SHA` | pino level; commit shown in status and HQ health. |
