@@ -16,14 +16,31 @@ export async function enqueue(q, job) {
   return rows[0]?.id ?? null;
 }
 
-/** Claim the next due job, or null. */
-export async function claim(db, workerId) {
+/** Job kinds run by the QuickBooks worker pool only (docs/integrations/quickbooks.md 5.8). */
+export const QBO_KIND_PATTERN = 'qbo\\_%';
+
+/**
+ * Claim the next due job, or null. `kinds` limits the claim to kinds matching any of these LIKE
+ * patterns, `excludeKinds` skips kinds matching any of them (the general loop never takes qbo_*
+ * jobs, the QuickBooks loop takes nothing else).
+ * @param {{ kinds?: string[], excludeKinds?: string[] }} [opts]
+ */
+export async function claim(db, workerId, { kinds = null, excludeKinds = null } = {}) {
+  const params = [workerId];
+  let filter = '';
+  if (Array.isArray(kinds) && kinds.length) { params.push(kinds); filter += ` AND kind LIKE ANY($${params.length}::text[])`; }
+  if (Array.isArray(excludeKinds) && excludeKinds.length) { params.push(excludeKinds); filter += ` AND NOT (kind LIKE ANY($${params.length}::text[]))`; }
   const { rows } = await db.query(
     `UPDATE jobs_queue SET status = 'running', locked_at = now(), locked_by = $1, attempts = attempts + 1
-      WHERE id = (SELECT id FROM jobs_queue WHERE status = 'queued' AND run_at <= now()
+      WHERE id = (SELECT id FROM jobs_queue WHERE status = 'queued' AND run_at <= now()${filter}
                    ORDER BY run_at, id FOR UPDATE SKIP LOCKED LIMIT 1)
-      RETURNING *`, [workerId]);
+      RETURNING *`, params);
   return rows[0] || null;
+}
+
+/** A long job is still alive: reclaimStuck (15 minutes) leaves it running. */
+export async function heartbeat(db, jobId) {
+  await db.query("UPDATE jobs_queue SET locked_at = now() WHERE id = $1 AND status = 'running'", [jobId]);
 }
 
 export async function complete(db, id) {
@@ -92,8 +109,8 @@ export async function scheduleRecurring(db) {
  * Run at most one job. Returns what happened (for tests and logs).
  * @returns {Promise<null | { id: number, kind: string, outcome: 'done'|'retry'|'failed', result?: unknown }>}
  */
-export async function runOnce(db, { workerId = 'worker', handlers = HANDLERS, log = console } = {}) {
-  const job = await claim(db, workerId);
+export async function runOnce(db, { workerId = 'worker', handlers = HANDLERS, log = console, kinds = null, excludeKinds = null } = {}) {
+  const job = await claim(db, workerId, { kinds, excludeKinds });
   if (!job) return null;
   const handler = handlers[job.kind];
   try {

@@ -6,6 +6,14 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { skip, createTestDatabase } from './support/db.js';
 import { call, ownerTenant, startApp } from './support/app.js';
+import { hqUser, startHqApp } from './support/hq.js';
+import { createFakeQbo } from './support/fake-qbo.js';
+import { setFetch } from '../src/integrations/http.js';
+import { createRecords } from '../src/services/records.js';
+import { createValidator } from '../src/schemas.js';
+import { enqueue, runOnce } from '../src/services/queue.js';
+import { refreshReference } from '../src/qbo/reference.js';
+import { createQboHandlers } from '../src/qbo/jobs.js';
 
 let t, app, A, client;
 const PII = { name: 'Jenna Leakwood', email: 'jenna.leak@example.com', phone: '780-555-0199' };
@@ -156,6 +164,8 @@ describe('public endpoints and URLs', { skip }, () => {
       'timeEntryId', 'at',
       // purchasing: GET /api/v1/bills?vendorId=&purchaseOrderId= (record ids)
       'vendorId', 'purchaseOrderId',
+      // QuickBooks: record ids (comma list), log outcomes and match choices are codes; searches are POST bodies (7.8)
+      'ids', 'outcome', 'choice',
       // HQ Mail: "Show images" for one message (0|1), not data.
       'images']);
     for (const [path, ops] of Object.entries(spec.paths)) {
@@ -165,5 +175,89 @@ describe('public endpoints and URLs', { skip }, () => {
         }
       }
     }
+  });
+});
+
+// ---- QuickBooks (docs/integrations/quickbooks.md 10.2) ------------------------------------------
+
+describe('QuickBooks: no token, realm id, verifier, ticket or customer name escapes', { skip }, () => {
+  const fake = createFakeQbo();
+  const VERIFIER = 'verifier-LEAKCHECK-7731';
+  const REALM = '9876543219876543';
+  const NAME = 'Zebulon Quixotic-Leakname';
+  const env = { QBO_ENVIRONMENT: 'sandbox', QBO_CLIENT_ID: fake.app.clientId, QBO_CLIENT_SECRET: fake.app.clientSecret, QBO_WEBHOOK_VERIFIER: VERIFIER };
+  let qapp, qconfig, qlogs, L, seen;
+  const tokens = () => [...fake.state.refresh.keys(), ...fake.state.access.keys()];
+  // The ticket is in the connect URL and the interstitial's form by design; it must never reach a log.
+  const forbiddenText = () => [REALM, VERIFIER, fake.app.clientSecret, ...tokens()];
+
+  before(async () => {
+    if (skip) return;
+    setFetch((u, i) => fake.fetch(u, i));
+    ({ app: qapp, config: qconfig, logs: qlogs } = await startHqApp(t, { env: { ...env, LOG_LEVEL: 'info' } }));
+    L = await ownerTenant(t, qapp, 'Leakcheck Books Ltd');
+    fake.addCompany(REALM, { name: 'Leakcheck QBO' });
+    seen = [];
+  });
+  after(async () => { setFetch(null); await qapp?.close(); });
+
+  test('connect, start, callback, status, look-ups and failures carry no secret in bodies, headers or logs', async () => {
+    const bodies = [];
+    const keep = (r) => { bodies.push(JSON.stringify(r.headers), r.body); return r; };
+    const tk = keep(await qapp.inject({ method: 'POST', url: '/api/v1/qbo/connect', headers: { authorization: `Bearer ${L.token}`, 'content-type': 'application/json' }, payload: { returnTo: 'app' } }));
+    const startUrl = new URL(JSON.parse(tk.body).url);
+    const ticket = startUrl.searchParams.get('ticket');
+    seen.push(ticket);
+    keep(await qapp.inject({ method: 'GET', url: `${startUrl.pathname}${startUrl.search}` }));
+    const post = keep(await qapp.inject({ method: 'POST', url: '/api/v1/qbo/oauth/start', headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: `ticket=${ticket}` }));
+    const flow = post.cookies.find((c) => c.name === 'ft_qbo_flow').value;
+    seen.push(flow);
+    const back = await fake.authorize(post.headers.location, { realmId: REALM });
+    seen.push(back.code, back.state);
+    const code = back.code;
+    const cb = new URL(back.url);
+    keep(await qapp.inject({ method: 'GET', url: `${cb.pathname}${cb.search}`, cookies: { ft_qbo_flow: flow } }));
+    // A failing callback (replayed state) and a failing start (a made-up ticket) log no realm and no ticket.
+    keep(await qapp.inject({ method: 'GET', url: `${cb.pathname}${cb.search}`, cookies: { ft_qbo_flow: flow } }));
+    const bogus = randomBytes(32).toString('base64url');
+    seen.push(bogus);
+    keep(await qapp.inject({ method: 'GET', url: `/api/v1/qbo/oauth/start?ticket=${bogus}` }));
+    keep(await qapp.inject({ method: 'POST', url: '/api/v1/qbo/oauth/start', headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: `ticket=${bogus}` }));
+    keep(await qapp.inject({ method: 'GET', url: '/api/v1/qbo/status', headers: { authorization: `Bearer ${L.token}` } }));
+    await t.superPool.query("UPDATE qbo_connections SET state = 'active', setup = '{\"phase\":\"done\"}'::jsonb, cdc_cursor = now() WHERE tenant_id = $1", [L.tenantId]);
+    keep(await qapp.inject({ method: 'POST', url: '/api/v1/qbo/lookup/customers', headers: { authorization: `Bearer ${L.token}`, 'content-type': 'application/json' }, payload: { q: 'Le' } }));
+    keep(await qapp.inject({ method: 'POST', url: '/api/v1/webhooks/qbo', headers: { 'content-type': 'application/json', 'intuit-signature': 'bad' }, payload: '[]' }));
+    const text = bodies.join('\n') + qlogs.text();
+    for (const s of [...forbiddenText(), code]) assert.ok(s && !text.includes(s), `leaked: ${String(s).slice(0, 12)}...`);
+    for (const s of seen) assert.ok(s && !qlogs.text().includes(s), `logged: ${String(s).slice(0, 12)}...`);
+    assert.ok(!qlogs.text().includes('realmId='), 'no realmId in a logged request line');
+  });
+
+  test("a forced duplicate-name failure never puts the customer's name in jobs_queue, worker output or HQ", async () => {
+    const records = createRecords({ validator: createValidator(), config: qconfig });
+    const handlers = createQboHandlers({ sealer: qapp.sealer, config: qconfig, records });
+    await refreshReference({ db: t.db, sealer: qapp.sealer, config: qconfig }, L.tenantId, { force: true });
+    await call(qapp, { method: 'POST', url: '/api/v1/clients', token: L.token, body: { id: 'leak-client', name: NAME } });
+    const detail = `The name supplied already exists. : Another customer is using "${NAME}"`;
+    fake.failNext({ count: 30, status: 400, code: '6240', message: 'Duplicate Name Exists Error', detail, match: (c) => c.method === 'POST' && c.path === 'customer' });
+    // Then the CDC call itself fails with the name in Intuit's text, failing the whole job.
+    fake.failNext({ count: 30, status: 400, code: '6000', message: 'A business validation error', detail: `Bad name ${NAME}`, match: (c) => c.path === 'cdc' });
+    await t.superPool.query("UPDATE qbo_outbox SET not_before = now() - interval '1 second' WHERE tenant_id = $1", [L.tenantId]);
+    await t.superPool.query("DELETE FROM jobs_queue WHERE kind LIKE 'qbo\\_%'");
+    await enqueue(t.db, { kind: 'qbo_sync', tenantId: L.tenantId, dedupeKey: `leak-sync-${Date.now()}` });
+    const out = [];
+    const r = await runOnce(t.db, { workerId: 'leak', handlers, kinds: ['qbo\\_%'], log: { info: (m) => out.push(m), error: (m) => out.push(m) } });
+    assert.ok(r, 'a job ran');
+    out.push(JSON.stringify(r));
+    const lastErrors = (await t.superPool.query("SELECT last_error FROM jobs_queue WHERE kind LIKE 'qbo\\_%'")).rows.map((x) => x.last_error || '');
+    assert.ok(lastErrors.some((e) => e.length), 'the job failed with a message');
+    assert.ok(lastErrors.every((e) => !e.includes('Zebulon') && !e.includes('Leakname')), lastErrors.join(' | '));
+    assert.ok(!out.join(' ').includes('Leakname'), 'worker output');
+    fake.state.faults.length = 0;
+    const staff = await hqUser(t, qapp, 'hq_staff');
+    const hq = await call(qapp, { url: `/api/hq/tenants/${L.tenantId}`, token: staff.token });
+    assert.equal(hq.status, 200, JSON.stringify(hq.body));
+    assert.ok(!JSON.stringify(hq.body).includes('Leakname'));
+    assert.ok(!JSON.stringify(hq.body).includes(REALM));
   });
 });

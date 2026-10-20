@@ -50,8 +50,21 @@ import kpiRoutes from './routes/v1/kpis.js';
 import materialRoutes from './routes/v1/materials.js';
 import drawingRoutes from './routes/v1/drawings.js';
 import locationRoutes from './routes/v1/location.js';
+import qboConnectRoutes from './routes/v1/qbo-connect.js';
+import qboWebhookRoutes from './routes/v1/qbo-webhook.js';
+import qboRoutes from './routes/v1/qbo.js';
+import { registerAmountDueAdjuster } from './integrations/payments.js';
+import { amountDueAdjustment } from './qbo/engine.js';
 
 const MB = 1024 * 1024;
+
+let qboAdjusterOn = false;
+/** Register the QuickBooks amount-due adjuster with W6's seam, once per process. */
+export function registerQboAdjuster() {
+  if (qboAdjusterOn) return;
+  qboAdjusterOn = true;
+  registerAmountDueAdjuster(amountDueAdjustment);
+}
 /** Sync pushes may carry one maximum-size record plus a normal batch. */
 export const SYNC_BODY_LIMIT = MAX_RECORD_BYTES + 8 * MB;
 const REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
@@ -78,7 +91,10 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   });
 
   const providers = oidcProviders ?? createOidcProviders(config);
-  const records = createRecords({ validator });
+  const records = createRecords({ validator, config });
+  // The QuickBooks amount-due adjustment (docs/integrations/quickbooks.md 4.9): an invoice whose QuickBooks
+  // tax differs by a cent is owed at the QuickBooks total. Registered once per process.
+  if (config.qbo?.enabled) registerQboAdjuster();
   const stats = { since: new Date().toISOString(), total5xx: 0, total4xx: 0, byRoute: new Map() };
   app.decorate('sealer', createSealer(config.secretsMasterKey));
   app.decorate('db', db);
@@ -213,6 +229,9 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(materialRoutes, deps);
   await app.register(drawingRoutes, deps);
   await app.register(locationRoutes, deps);
+  await app.register(qboConnectRoutes, deps);
+  await app.register(qboWebhookRoutes, deps);
+  await app.register(qboRoutes, deps);
   await app.register(hqTenantRoutes, deps);
   await app.register(hqComplianceRoutes, deps);
   await app.register(hqBillingRoutes, deps);
