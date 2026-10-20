@@ -146,9 +146,11 @@ describe('scan and matches (6.3)', { skip }, () => {
     await choose(T, [{ id: custAcme.id, fieldChoices: { phone: 'fishtape' } }]);
     await t.db.withTenant({ tenantId: T.tenantId }, async (tx) => assertReadyToApply(tx, await loadConnection(tx)));
 
-    // Apply in small chunks; a create whose answer is lost is resolved by adopt-by-search.
-    fake.failNext({ drop: true, match: (c) => c.method === 'POST' && c.path === 'invoice' && c.realmId === T.realmId });
+    // Apply in small chunks; the documents' batch lands but its answer is lost: each item is resolved
+    // one by one by adopt-by-search, never re-sent blind.
+    fake.failNext({ drop: true, match: (c) => c.method === 'POST' && c.path === 'batch' && c.realmId === T.realmId });
     const done = await applyAll(T, { budgetMs: 250 });
+    assert.ok(fake.calls.some((c) => c.path === 'batch' && c.realmId === T.realmId && c.dropped), 'documents went out in a batch');
     assert.equal(done.phase, 'done');
     const c = await t.db.withTenant({ tenantId: T.tenantId }, loadConnection);
     assert.equal(c.state, 'active');

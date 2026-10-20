@@ -17,7 +17,7 @@ import { assertEpoch } from './lease.js';
 import {
   makeRun, txWrite, getLink, insertLink, updateLink, loadRecord, ctxFor, optionOf, taxFiledThrough, monthStart, timeUp, zoneOf, loadMappings,
 } from './engine.js';
-import { processRecord } from './push.js';
+import { processRecord, createBatch } from './push.js';
 import { createFromRemote, settle } from './pull.js';
 import { openReview } from './conflicts.js';
 import { fishtapeToCanon, qboToCanon, toCents, localDay, str } from './map/canon.js';
@@ -37,6 +37,8 @@ const CHOICES_OF = {
   payments: ['link', 'create_in_qbo', 'create_in_fishtape', 'skip'],
 };
 const SCAN_EVERY_MS = 15 * 60_000;
+/** Creates per batch call (Intuit's pages say 10 or 30; VERIFY, 11.4 item 8). */
+export const BATCH_MAX = 10;
 const DOC_KINDS = new Set(['estimates', 'invoices']);
 const ref = (r) => (r && typeof r === 'object' ? str(r.value) : str(r));
 const daysBefore = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
@@ -524,21 +526,44 @@ async function linkCandidate(run, c, obj) {
 }
 
 /** Phases 2 to 6: creates both ways, oldest first, each under the create protocol. */
+/** Mark a create_in_qbo candidate from its link. */
+async function markSent(run, c, state) {
+  const collection = COLLECTION_OF[c.kind];
+  const link = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, collection, c.fishtape_id));
+  if (link?.qbo_id) await markCandidate(run, c);
+  else await markCandidate(run, c, { error: link?.last_error || `Not sent (${link?.reason || state}).` });
+}
+
 async function applyCreates(run, kinds) {
+  // Documents go to QuickBooks in batches of 10, oldest first (6.4); each item keeps the create protocol.
+  let batch = [];
+  const flush = async () => {
+    if (!batch.length) return;
+    const list = batch;
+    batch = [];
+    const states = await createBatch(run, list.map((b) => b.prepared));
+    for (const b of list) await markSent(run, b.c, states[b.c.fishtape_id] || 'error');
+  };
   for (;;) {
     const rows = await pending(run, kinds, ['create_in_qbo', 'create_in_fishtape']);
     if (!rows.length) break;
     for (const c of rows) {
-      if (timeUp(run)) return true;
+      if (timeUp(run)) { await flush(); return true; }
       const collection = COLLECTION_OF[c.kind];
+      if (batch.length && (batch.length >= BATCH_MAX || batch[0].c.kind !== c.kind)) await flush();
       try {
         if (c.choice === 'create_in_qbo') {
           if ((c.reasons || []).includes('filed_period') && !c.confirmed) { await markCandidate(run, c, { error: 'Not ticked: dated in a filed GST period.' }); continue; }
-          const state = await processRecord(run, collection, c.fishtape_id, { asDependency: true, force: Boolean(c.confirmed), actorType: 'user', sendNow: true });
-          const link = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, collection, c.fishtape_id));
-          if (link?.qbo_id) await markCandidate(run, c);
-          else await markCandidate(run, c, { error: link?.last_error || `Not sent (${link?.reason || state}).` });
+          const docs = DOC_KINDS.has(c.kind);
+          const r = await processRecord(run, collection, c.fishtape_id, { asDependency: true, force: Boolean(c.confirmed), actorType: 'user', sendNow: true, prepareOnly: docs });
+          if (r && typeof r === 'object' && r.prepared) {
+            if (r.prepared.done) await markSent(run, c, r.prepared.done);
+            else batch.push({ c, prepared: r.prepared });
+            continue;
+          }
+          await markSent(run, c, r);
         } else {
+          await flush();
           const entity = ENTITY_OF[c.kind];
           const obj = (await readMany(run, entity, [c.qbo_id])).get(String(c.qbo_id));
           if (!obj) { await markCandidate(run, c, { error: 'Not found in QuickBooks any more.' }); continue; }
@@ -556,7 +581,9 @@ async function applyCreates(run, kinds) {
         await markCandidate(run, c, { error: e.message });
       }
     }
+    await flush();
   }
+  await flush();
   // After the payments: the settlement step for every linked invoice (4.9).
   if (kinds.includes('payments')) {
     const invLinks = await run.db.withTenant({ tenantId: run.tenantId }, async (tx) => (await tx.query(

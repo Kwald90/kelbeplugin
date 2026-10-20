@@ -9,7 +9,7 @@
 // a QBO id (a crash), is resolved by adopt-by-search before any retry, so a retried create never
 // makes a second object.
 import { lineCents } from '../../../electrical-app/js/lib/money.js';
-import { QboError } from './client.js';
+import { QboError, classifyQboFault, faultOf } from './client.js';
 import { writeLog } from './log.js';
 import { recordLabel } from './log.js';
 import { upsertOutbox } from './hooks.js';
@@ -159,6 +159,8 @@ export async function processRecord(run, collection, id, o = {}) {
   }
 
   let state;
+  // The wizard gathers prepared creates into batches (createBatch); everything before the send is the same.
+  if (creating && o.prepareOnly) return { prepared: await prepareCreate(run, collection, record, link, { ...o, row, label }) };
   if (creating) state = await createRemote(run, collection, record, link, { ...o, row, label });
   else state = await reconcile(run, link, { record, row, stale: o.stale, held: o.held, force: o.force, direction: 'push' });
 
@@ -347,43 +349,10 @@ function canonForCreate(run, collection, d, ctx) {
  * @returns {Promise<string>} link state
  */
 export async function createRemote(run, collection, record, link, o = {}) {
-  const role = o.role || 'main';
-  const d = record.data;
-  const row = o.row || null;
-  const label = o.label || recordLabel(collection, d);
-  const entity = entityFor(collection, { kind: d.kind }, role);
-  if (run.shadow) {
-    await shadowLog(run, { direction: 'push', action: 'create', collection, recordId: record.id, qboEntity: entity, label, message: `Would create a QuickBooks ${entity}` });
-    return 'pending';
-  }
-  // 1. The pending link, committed before anything is sent.
-  if (!link || !link.meta?.createRequestId) {
-    link = await txWrite(run, async (tx) => {
-      const cur = link ? await getLinkById(tx, link.id) : await getLink(tx, collection, record.id, role);
-      const id = cur?.id || (await import('node:crypto')).randomUUID();
-      const meta = { ...(cur?.meta || {}), marker: markerFor(id), createRequestId: requestIdFor([run.tenantId, id, 'create']), createStartedAt: new Date().toISOString() };
-      delete meta.dependsOn;
-      if (cur) return updateLink(tx, run, cur.id, { state: 'pending', reason: null, qbo_entity: entity, meta });
-      return insertLink(tx, run, { id, collection, record_id: record.id, role, qbo_entity: entity, state: 'pending', owner: role === 'fee' || ['jobs', 'purchaseOrders', 'timeEntries', 'stripePayouts'].includes(collection) ? 'fishtape' : 'both', meta });
-    });
-  } else if (link.qbo_entity !== entity) {
-    link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { qbo_entity: entity }));
-  }
-  const ctx = ctxFor(run, link, collection, await relatedOf(run, collection, d));
-  const L = canonForCreate(run, collection, d, ctx);
-  const opts = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => writeOpts(run, tx, collection, d, null));
-  const build = canonToQbo(collection, L, ctx, { existing: null, displayName: link.meta?.sendName || undefined, ...opts });
-  if (build.error) {
-    await holdLink(run, { link, collection, recordId: record.id, entity, role, row, state: 'error', reason: build.error, message: build.error === 'number_too_long' ? 'The number is longer than QuickBooks allows (21 characters).' : 'QuickBooks cannot take this document as it is.', label });
-    return 'error';
-  }
-
-  // 4. A create that may already have landed (a crash, a timeout) is looked for first.
-  if (link.meta?.sent) {
-    const found = await adoptBySearch(run, link, entity, build.body);
-    if (found) return finishCreate(run, link, collection, record, found, build, { row, label, L, adopted: true });
-  }
-
+  const prep = await prepareCreate(run, collection, record, link, o);
+  if (prep.done) return prep.done;
+  const { entity, build, L, row, label } = prep;
+  link = prep.link;
   checkBrake(run);
   await txWrite(run, (tx) => updateLink(tx, run, link.id, { meta: { ...link.meta, sent: true } })).then((l) => { link = l; });
   let obj;
@@ -417,6 +386,92 @@ export async function createRemote(run, collection, record, link, o = {}) {
   }
   countWrite(run);
   return finishCreate(run, link, collection, record, obj, build, { row, label, L });
+}
+
+/**
+ * Steps 1 to 4 of the create protocol (5.3): the pending link committed first (marker, stable
+ * request id), the body, and a search for an earlier send that may have landed. Returns
+ * { done: state } when nothing is left to send, else what the send needs.
+ */
+export async function prepareCreate(run, collection, record, link, o = {}) {
+  const role = o.role || 'main';
+  const d = record.data;
+  const row = o.row || null;
+  const label = o.label || recordLabel(collection, d);
+  const entity = entityFor(collection, { kind: d.kind }, role);
+  if (run.shadow) {
+    await shadowLog(run, { direction: 'push', action: 'create', collection, recordId: record.id, qboEntity: entity, label, message: `Would create a QuickBooks ${entity}` });
+    return { done: 'pending' };
+  }
+  // 1. The pending link, committed before anything is sent.
+  if (!link || !link.meta?.createRequestId) {
+    link = await txWrite(run, async (tx) => {
+      const cur = link ? await getLinkById(tx, link.id) : await getLink(tx, collection, record.id, role);
+      const id = cur?.id || (await import('node:crypto')).randomUUID();
+      const meta = { ...(cur?.meta || {}), marker: markerFor(id), createRequestId: requestIdFor([run.tenantId, id, 'create']), createStartedAt: new Date().toISOString() };
+      delete meta.dependsOn;
+      if (cur) return updateLink(tx, run, cur.id, { state: 'pending', reason: null, qbo_entity: entity, meta });
+      return insertLink(tx, run, { id, collection, record_id: record.id, role, qbo_entity: entity, state: 'pending', owner: role === 'fee' || ['jobs', 'purchaseOrders', 'timeEntries', 'stripePayouts'].includes(collection) ? 'fishtape' : 'both', meta });
+    });
+  } else if (link.qbo_entity !== entity) {
+    link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { qbo_entity: entity }));
+  }
+  const ctx = ctxFor(run, link, collection, await relatedOf(run, collection, d));
+  const L = canonForCreate(run, collection, d, ctx);
+  const opts = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => writeOpts(run, tx, collection, d, null));
+  const build = canonToQbo(collection, L, ctx, { existing: null, displayName: link.meta?.sendName || undefined, ...opts });
+  if (build.error) {
+    await holdLink(run, { link, collection, recordId: record.id, entity, role, row, state: 'error', reason: build.error, message: build.error === 'number_too_long' ? 'The number is longer than QuickBooks allows (21 characters).' : 'QuickBooks cannot take this document as it is.', label });
+    return { done: 'error' };
+  }
+  // 4. A create that may already have landed (a crash, a timeout) is looked for first.
+  if (link.meta?.sent) {
+    const found = await adoptBySearch(run, link, entity, build.body);
+    if (found) return { done: await finishCreate(run, link, collection, record, found, build, { row, label, L, adopted: true }) };
+  }
+  return { link, entity, build, L, row, label, record, collection };
+}
+
+/**
+ * The wizard's bulk create (5.8): up to 10 prepared creates (never two that depend on each other) in
+ * one batch call, each under the create protocol on its own: its link committed pending, its bId its
+ * own create request id. A batch that fails or times out is never re-sent: each item is resolved one
+ * by one (adopt-by-search, then a single retry). Returns the state per record id.
+ */
+export async function createBatch(run, prepared) {
+  const out = {};
+  if (!prepared.length) return out;
+  await txWrite(run, async (tx) => {
+    for (const p of prepared) p.link = await updateLink(tx, run, p.link.id, { meta: { ...p.link.meta, sent: true } });
+  });
+  for (let i = 0; i < prepared.length; i++) checkBrake(run);
+  let answers = null;
+  try {
+    answers = await run.client.batch(prepared.map((p) => ({ bId: p.link.meta.createRequestId, operation: 'create', [p.entity]: p.build.body })));
+    for (let i = 0; i < prepared.length; i++) countWrite(run);
+  } catch (e) {
+    const stop = passStopFor(e);
+    if (stop && stop.reason !== 'writes_off') throw stop;
+    answers = null;
+  }
+  for (const p of prepared) {
+    const a = answers?.find((x) => x.bId === p.link.meta.createRequestId);
+    if (a && a[p.entity]) { out[p.record.id] = await finishCreate(run, p.link, p.collection, p.record, a[p.entity], p.build, { row: p.row, label: p.label, L: p.L }); continue; }
+    if (a?.Fault) {
+      const f = faultOf(a);
+      const c = classifyQboFault({ status: 400, faultCode: f?.code, detail: f?.detail, message: f?.message });
+      if (c.kind === 'duplicate_number' || c.kind === 'duplicate_name') {
+        out[p.record.id] = await createRemote(run, p.collection, p.record, p.link, { row: p.row, label: p.label });
+        continue;
+      }
+      await linkFailure(run, p.link, p.row, new QboError(c.kind, { variant: c.variant, retry: c.retry, faultCode: f?.code, detail: null }), { action: 'create', collection: p.collection, recordId: p.record.id, label: p.label });
+      out[p.record.id] = 'error';
+      continue;
+    }
+    // No answer for this item: resolved one by one (the link has `sent`, so adopt-by-search runs first).
+    out[p.record.id] = await createRemote(run, p.collection, p.record, p.link, { row: p.row, label: p.label });
+  }
+  return out;
 }
 
 /** The snapshot after a create (5.3 step 3): QBO's answer, Fishtape's value where both agree. */
