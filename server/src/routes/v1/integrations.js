@@ -1,4 +1,4 @@
-// /api/v1/integrations: each company connects its own Stripe, Resend, Twilio, Facebook and
+// /api/v1/integrations: each company connects its own Stripe, Resend or SendGrid, Twilio, Facebook and
 // Anthropic accounts (owner/admin), tests them, and disconnects them. Keys go in once and are
 // never returned: responses carry hints (…abcd) only. Plus the actions built on them:
 // "Pay online" links for invoices, emailing an invoice or estimate, and the public pay page.
@@ -14,6 +14,7 @@ import { ProviderError } from '../../integrations/http.js';
 import { EMAIL_RE, PROVIDERS, PROVIDER_IDS, providerFor, webhookUrl } from '../../integrations/providers.js';
 import { createCheckoutSession, testStripe } from '../../integrations/stripe.js';
 import { testResend } from '../../integrations/resend.js';
+import { testSendgrid } from '../../integrations/sendgrid.js';
 import { testTwilio, toE164 } from '../../integrations/twilio.js';
 import { subscribePage, testFacebook } from '../../integrations/facebook.js';
 import { testAnthropic } from '../../integrations/anthropic.js';
@@ -30,6 +31,7 @@ const providerParam = { type: 'object', required: ['provider'], properties: { pr
 const TESTS = {
   stripe: (s) => testStripe({ secretKey: s['stripe.secret_key'] }),
   resend: (s) => testResend({ apiKey: s['resend.api_key'], from: s['resend.from'] }),
+  sendgrid: (s) => testSendgrid({ apiKey: s['sendgrid.api_key'], from: s['sendgrid.from'] }),
   twilio: (s) => testTwilio({ accountSid: s['twilio.account_sid'], authToken: s['twilio.auth_token'], from: s['twilio.from'] }),
   facebook: (s, cfg) => testFacebook({ pageToken: s['facebook.page_token'], appSecret: s['facebook.app_secret'], pageId: cfg.pageId || null }),
   anthropic: (s) => testAnthropic({ apiKey: s['anthropic.api_key'] }),
@@ -232,7 +234,11 @@ export default async function integrationRoutes(app, { config, db, records }) {
     const tenant = await loadTenantPlan(db, req.principal.tenantId);
     return db.withTenant(tenantCtx(req.principal), async (tx) => {
       const ready = async (provider, feature) => Boolean(tenant && tenantHas(tenant, feature)) && hasRequired(provider, await providerSecrets(tx, sealer, provider));
-      return { payments: await ready('stripe', 'payments.online'), email: await ready('resend', 'integrations.email'), sms: await ready('twilio', 'integrations.sms') };
+      return {
+        payments: await ready('stripe', 'payments.online'),
+        email: (await ready('sendgrid', 'integrations.email')) || (await ready('resend', 'integrations.email')),
+        sms: await ready('twilio', 'integrations.sms'),
+      };
     });
   });
 
@@ -308,7 +314,9 @@ export default async function integrationRoutes(app, { config, db, records }) {
     if (!canRead(p, collection) || !canWrite(p, 'outbox')) throw forbidden(`You cannot send ${collection}.`);
     const ctx = tenantCtx(p);
     const result = await db.withTenant(ctx, async (tx) => {
-      if (!hasRequired('resend', await providerSecrets(tx, sealer, 'resend'))) throw notConnected('Email (Resend)');
+      if (!hasRequired('sendgrid', await providerSecrets(tx, sealer, 'sendgrid')) && !hasRequired('resend', await providerSecrets(tx, sealer, 'resend'))) {
+        throw notConnected('Email (SendGrid or Resend)');
+      }
       const doc = await records.getRecord(tx, p, collection, id);
       const settings = await companySettings(tx);
       const company = settings.company || {};

@@ -1,4 +1,4 @@
-// The five providers a company can connect, what each needs and which plan feature
+// The providers a company can connect, what each needs and which plan feature
 // unlocks it. Secret names come from services/secrets.js (SECRETS); `config` fields are
 // not secret and live in integration_settings.config.
 import { SECRETS } from '../services/secrets.js';
@@ -44,6 +44,21 @@ export const PROVIDERS = {
       { name: 'resend.api_key', required: true, placeholder: 're_…',
         check: (v) => (/^re_[A-Za-z0-9_]{10,}$/.test(v) ? null : 'A Resend API key starts with re_.') },
       { name: 'resend.from', required: true, placeholder: 'TG Electrical <office@yourdomain.ca>',
+        check: (v) => (senderAddress(v) ? null : 'Use an address like office@yourdomain.ca, or a name and address: TG Electrical <office@yourdomain.ca>.') },
+    ],
+    config: {
+      replyTo: (v) => (v === '' || v == null || (typeof v === 'string' && EMAIL_RE.test(v)) ? null : 'Reply-to must be an email address.'),
+    },
+    webhook: null,
+  },
+  // The alternative to Resend for company email. When both are connected, SendGrid sends.
+  sendgrid: {
+    id: 'sendgrid', label: 'SendGrid', feature: 'integrations.email',
+    blurb: 'Another way to send follow-up sequences, invoices and estimates from your own address. Connect SendGrid or Resend, not both.',
+    secrets: [
+      { name: 'sendgrid.api_key', required: true, placeholder: 'SG.…',
+        check: (v) => (/^SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}$/.test(v) ? null : 'A SendGrid API key starts with SG. and has two more parts separated by a dot.') },
+      { name: 'sendgrid.from', required: true, placeholder: 'TG Electrical <office@yourdomain.ca>',
         check: (v) => (senderAddress(v) ? null : 'Use an address like office@yourdomain.ca, or a name and address: TG Electrical <office@yourdomain.ca>.') },
     ],
     config: {

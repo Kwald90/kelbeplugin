@@ -143,7 +143,9 @@ describe('public endpoints and URLs', { skip }, () => {
     const spec = (await call(app, { url: '/api/v1/openapi.json' })).body;
     const allowed = new Set(['limit', 'cursor', 'includeDeleted', 'version', 'since', 'link', 'collection', 'recordId', 'action',
       'clientId', 'jobId', 'status', 'stage', 'number', 'employeeId', 'leadId', 'sequenceId', 'relatedId', 'invoiceId', 'sku',
-      'itemId', 'permitId', 'result', 'date', 'drawingId']);
+      'itemId', 'permitId', 'result', 'date', 'drawingId',
+      // HQ Mail: "Show images" for one message (0|1), not data.
+      'images']);
     for (const [path, ops] of Object.entries(spec.paths)) {
       for (const op of Object.values(ops)) {
         for (const p of op.parameters || []) {
