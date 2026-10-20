@@ -86,7 +86,8 @@ function startForm() {
   }
   function drawOptions() {
     for (const n of document.querySelectorAll('[data-trial-days]')) n.textContent = String(opts.trialDays);
-    for (const n of document.querySelectorAll('[data-deposit]')) n.textContent = money(opts.depositCents);
+    // Always with cents ("$1.00"), so it reads as a deposit rather than a price.
+    for (const n of document.querySelectorAll('[data-deposit]')) n.textContent = (opts.depositCents / 100).toLocaleString('en-CA', { style: 'currency', currency: CURRENCY });
   }
   form.addEventListener('change', drawSummary);
   fields.users.addEventListener('input', drawSummary);

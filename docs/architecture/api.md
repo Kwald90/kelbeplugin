@@ -88,6 +88,24 @@ Passwords: 12–256 characters, not the email, not one repeated character. Login
 5 in a row lock the account for 15 minutes (`423 account_locked`); unknown emails and wrong
 passwords get the same answer and take the same time.
 
+## Self-serve sign-up
+
+The form is `site/signup.html`; the flow and the Stripe facts it relies on are in
+`server/src/services/signup.js`.
+
+| method and path | auth | body / notes |
+| --- | --- | --- |
+| `GET /api/v1/public/signup` | public | `{ open, trialDays, depositCents, currency, plans, maxUsers, termsVersion }` |
+| `POST /api/v1/public/signup` | public; 10 per IP and 100 overall per hour (`SIGNUP_RATE_LIMIT_*`, always on) | `{ companyName, province, name, email, password, plan, users, acceptTerms: true, website? }` → 201 `{ url }` (Stripe Checkout: plan + extra users, `TRIAL_DAYS` trial, $1.00 CAD deposit charged now). `website` is a honeypot (looks accepted, nothing stored). 409 `email_in_use`, 409 `signup_pending`, 400 `weak_password`, 503 `signup_unavailable`. A second try with the same email replaces the open one. |
+| `POST /api/v1/public/signup/welcome` | public (auth rate limit) | `{ token, mode? }` from the welcome email's `#/welcome?token=` link, once, 7 days → `{ mfa, expiresAt, token? }`; verifies the email and starts a session (owners then set up TOTP) |
+| `GET /api/hq/signups` | HQ staff | `?status=` one of pending, completed, expired, abandoned, failed → `{ data[], byStatus, stripeConfigured }` |
+
+The signed `POST /api/v1/webhooks/platform-stripe` handles `checkout.session.completed`,
+`.async_payment_succeeded`, `.expired` and `.async_payment_failed` for sessions whose metadata
+carries `fishtape_signup_id`: company + owner + trialing subscription, welcome email, then a
+−$1.00 CAD customer balance credit so the deposit comes off the first invoice. Idempotent per
+event id and per session. Codes added: `signup_pending` (409), `signup_unavailable` (503).
+
 ## Company administration
 
 | method and path | auth | notes |

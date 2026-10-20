@@ -5,6 +5,7 @@
 import { PLANS, PLAN_IDS, FEATURE_PLAN, EXTRA_USER_CENTS, monthlyCents, planRank } from '../plans.js';
 import { apiFetch } from '../session.js';
 import { openExternal } from '../lib/native.js';
+import { trialDaysLeft } from '../lib/trial.js';
 
 /** Plain names for plans.js feature keys (pricing page and this screen). */
 export const FEATURE_LABELS = {
@@ -81,7 +82,8 @@ export default {
           h('span', null, ` Update your card before ${ui.fmtDate(i.graceEndsAt)} to keep ${i.planName}. After that the account drops to Starter (your data stays).`),
           i.hasCustomer ? h('div', null, ui.button('Update payment method', { size: 'sm', variant: 'danger solid', onClick: portal })) : null)));
       } else if (i.onTrial && i.trialEndsAt) {
-        const left = ui.daysUntil(i.trialEndsAt);
+        // Same count as the app-wide trial banner (lib/trial.js); -1 once the trial has ended.
+        const left = new Date(i.trialEndsAt) > new Date() ? trialDaysLeft(i) : -1;
         body.append(h('div', { class: ['billing-banner', left <= 7 ? 'warning' : 'info'] }, ui.icon('clock', 20), h('div', null,
           h('strong', null, left >= 0 ? `Free trial: ${left} day${left === 1 ? '' : 's'} left` : 'Your trial has ended'),
           h('span', null, left < 0 ? ' You are on Starter features. Pick a plan to unlock the rest.'
