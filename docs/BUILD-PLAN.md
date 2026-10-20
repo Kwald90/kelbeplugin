@@ -293,6 +293,30 @@ Part of the Time clock (every plan). Docs: `docs/field/timesheets.md`; privacy i
 - API: `GET /api/v1/location/live` (opt-in crew map). Worker job `location_retention` (daily).
 - iOS: `FishtapeGeofence` plugin + `@capacitor/geolocation` (`docs/mobile/README.md`).
 
+### QuickBooks (migrations 0150-0159)
+
+Two-way sync with each company's own QuickBooks Online (Canada), plan feature `quickbooks` (Pro),
+plus the new purchasing feature (`vendors`, `bills`, `purchaseOrders`; feature `purchasing`, Pro).
+The contract is [docs/integrations/quickbooks.md](integrations/quickbooks.md): decisions, the exact
+DDL of `0150_qbo.sql`, entity mapping, the sync engine, routes, screens, security, tests, and six
+workstreams with their file ownership (section 12). It is the single source of truth: if code
+needs to differ, the contract changes first in the owning workstream's branch.
+
+- Migrations: `0150_qbo.sql` (hand-written, W1), `0151_purchasing.sql` (generated, W5); 0152-0159
+  reserved for fixes.
+- Merge order: W1 platform, W2 mapping library, W5 purchasing, W6 Stripe/HQ/alerts/docs, W3 engine
+  and API, W4 PWA screens.
+- Platform env vars: `QBO_ENVIRONMENT` (empty = off), `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`,
+  `QBO_WEBHOOK_VERIFIER(_PREVIOUS)`, `QBO_WRITES` (platform kill switch), the read budgets,
+  `WORKER_QBO_CONCURRENCY` (a separate worker pool for `qbo_*` jobs).
+- Stripe for the books (W6): each Stripe payment's fee is read into `payments.stripe`
+  (`stripe_fee_fetch`), payout webhooks land in `stripe_payouts` and are itemised from Stripe's
+  balance transactions (`stripe_payout_fetch`); the amount due (pay link and invoice status) is one
+  seam, `amountDueCents`, that the QuickBooks sync adjusts. HQ shows health (counts only), pause and
+  release; `qbo_alerts` emails HQ. Support: [runbooks/quickbooks-support.md](runbooks/quickbooks-support.md).
+- Outside the code: Kelvin's checklist (contract 1.3) and open questions (section 13), in the
+  BACKLOG.
+
 ## Definition of done (every workstream)
 
 - Tests with `node:test` next to the existing ones; run `node --test electrical-app/tests/*.test.mjs` (and `server` tests for A) and they pass.

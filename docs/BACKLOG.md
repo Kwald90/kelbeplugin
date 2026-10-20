@@ -54,7 +54,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** BC jobs with mixed tax treatment need tax per line, not per document.
 - **dev** CEC Table 14 (other occupancies) not built: no reliable source found.
 - **dev** Client portal (homeowners/GCs view, sign and pay) once integrations are live.
-- **dev** QuickBooks Online API connection (OAuth, push customers/invoices/payments, pull payments back) instead of CSV files. Today: CSV export at `#/import/export` (formats in `docs/code/imports.md`).
+- **dev** QuickBooks Online two-way sync: being built from [the contract](integrations/quickbooks.md) (see "QuickBooks Online" below). The CSV export at `#/import/export` stays for Starter (formats in `docs/code/imports.md`).
 - **dev** Print the company logo (`settings.company.logo`, set in Settings and onboarding) on estimates and invoices (`js/lib/doc-view.js`).
 - **dev** Imports: undo only on the device that ran it (batches in local meta); a server-side import job for files over 20,000 rows; VERIFY QuickBooks export headers and CA tax code names with a real QuickBooks file.
 - **dev** Notifications: jobs assigned, time to approve and expiring items are worked out on each device; move them server-side (notify() on job/time writes) so the daily email includes them.
@@ -81,10 +81,27 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **legal** Counsel to confirm the consent model by province (may an employer require location on the clock?) and the notice wording.
 - **dev** Try the geofence plugin on an iPhone: permission prompts, background relaunch, force-quit, reboot, battery over a day.
 - **dev** Wagepoint: check "Fill my Wagepoint template" against a real downloaded template (income-code header names).
-- **dev** QuickBooks Online (Canada) has no hours import: push approved time through the API (TimeActivity) once the QBO connection exists; VERIFY that Canadian payroll reads it.
+- **dev** QuickBooks Online (Canada) has no hours import: approved time goes through the API as TimeActivity with the QuickBooks sync (contract 4.11); VERIFY that Canadian payroll reads it (contract 11.4 item 7).
 - **dev** Overtime cases not automated: SK holiday weeks (32 h) and 10-hour-day schedules, NS construction (110 h per 2 weeks) and apprentices, Ontario averaging.
 - **dev** A shift past midnight counts on the day it started; split it if a province or agreement needs that.
 - **dev** Flag implausible fixes (accuracy exactly 0 m, impossible speed) as possible spoofing (TM-LOC-04).
+
+## QuickBooks Online (2026-10-20)
+
+Contract: [docs/integrations/quickbooks.md](integrations/quickbooks.md). Support: [runbooks/quickbooks-support.md](runbooks/quickbooks-support.md).
+
+- **K** The checklist in contract section 1.3: Intuit developer account and the **Fishtape** app (accounting scope only), a Canadian sandbox company (Plus), development redirect URI and webhook on staging, the four `QBO_*` values on staging with `set-env.sh` (after W1 merges), TG Electrical's QuickBooks settings (custom transaction numbers on, the GST/PST MB code at 5% + 7%, Projects, Payroll, Time), and later the production app details and the App Assessment Questionnaire.
+- **K** The open questions in contract section 13. The code uses the stated defaults until they are answered (for example: two-step sign-in for every QuickBooks change, sub-customers for jobs, Stripe through a "Stripe" clearing account, a practice week in shadow mode, the assistant may read synced records with disclosure).
+- **K** Hosting region of staging (DreamHost, probably US) and of production before production Intuit keys go anywhere; record it in [vendor-management.md](compliance/vendor-management.md#intuit-quickbooks-online).
+- **K** Intuit's annual security review and a vulnerability scan within 2 weeks when Intuit asks: add both to the compliance calendar once the app is approved.
+- **K** Whether to buy Intuit's Silver tier when HQ warns at 70% of the 500,000 monthly reads (free Builder tier until then; about CA$425 a month, VERIFY).
+- **legal** TG's accountant: Manitoba RST on supplier bills not recoverable (default), the tax code for Stripe fees (default none), the QuickBooks codes for each "no tax" reason, the Stripe clearing account and the Stripe cutover date, payroll hours from Fishtape or QuickBooks Time, the pay-period lock.
+- **legal** Terms and privacy policy (`site/terms.html`, `site/privacy.html`): name Intuit QuickBooks as a service the customer connects, disclose that Fishtape's assistant reads records that sync with QuickBooks, carry "QuickBooks and Intuit are trademarks of Intuit Inc.", and be on a public URL (Intuit needs both URLs).
+- **dev** Run the sandbox VERIFY list (contract 11.4) and record the answers in the contract before go-live.
+- **dev** Client portal rule (contract 1.2, TM-QBO-07): before any portal route serves records, it must hide documents in `needs_review` and documents created by the QuickBooks pull until an office user releases them.
+- **dev** Companies already connected to Stripe that connect QuickBooks must add the read permissions (PaymentIntents, Charges, Balance, Payouts) to their restricted key and the `payout.*` events to their webhook (`electrical-app/guides/stripe.md`), or fees and payouts never reach QuickBooks. Stripe is read for the books only for a company on QuickBooks; a refused read turns its Stripe card to "error", and the hourly `integrations_housekeeping` asks again (each payment or payout at most every 6 hours, for 90 days) once the key is fixed. A softer warning on the card instead of "error" would be kinder.
+- **dev** Stripe refunds and disputes are not booked: a payout that holds one goes to review and the bookkeeper enters it by hand (contract 4.9).
+- **dev** `stripe_payouts` has no purge before the tenant is deleted (kept 7 years like payments); add one when payments get a retention rule.
 
 ## Process
 

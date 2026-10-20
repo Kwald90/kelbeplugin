@@ -14,11 +14,13 @@ import { ProviderError } from '../../integrations/http.js';
 import { verifyStripeEvent } from '../../integrations/stripe.js';
 import { fetchLead, mapLead, verifyFacebook } from '../../integrations/facebook.js';
 import { optKeyword, toE164, verifyTwilio } from '../../integrations/twilio.js';
-import { recordStripePayment } from '../../integrations/payments.js';
+import { payoutFromStripe, recordStripePayment, recordStripePayout } from '../../integrations/payments.js';
+import { enqueuePayoutFetch } from '../../integrations/jobs.js';
 import { createFacebookLead } from '../../integrations/leads.js';
 import { firstSeen, getSettings, optIn, optOut, providerSecrets, setStatus, systemPrincipal, systemWho, touchEvent } from '../../integrations/state.js';
 
 const invalidSignature = () => new ApiError(400, 'invalid_signature', 'The webhook signature is not valid.');
+const PAYOUT_EVENTS = new Set(['payout.paid', 'payout.failed', 'payout.canceled', 'payout.updated']);
 const tenantParam = { type: 'object', required: ['tenantId'], properties: { tenantId: { type: 'string', maxLength: 64 } } };
 
 /** @param {import('fastify').FastifyInstance} app */
@@ -35,7 +37,8 @@ export default async function webhookRoutes(app, { config, db, records }) {
   const raw = (req) => (typeof req.body === 'string' ? req.body : '');
   const secretOf = (tenantId, name) => db.withTenant({ tenantId }, (tx) => getSecret(tx, sealer, name));
 
-  // ---- Stripe: checkout.session.completed / async_payment_succeeded -> payments record ----
+  // ---- Stripe: checkout.session.completed / async_payment_succeeded -> payments record;
+  //      payout.* -> stripe_payouts (itemised by the worker, then booked in QuickBooks) ----
   app.post('/api/v1/webhooks/stripe/:tenantId', opts, async (req) => {
     const { tenantId } = req.params;
     if (!isUuid(tenantId)) throw invalidSignature();
@@ -48,6 +51,14 @@ export default async function webhookRoutes(app, { config, db, records }) {
     const out = await db.withTenant({ tenantId }, async (tx) => {
       if (!(await firstSeen(tx, 'stripe', event.id, event.type))) return { duplicate: true };
       await touchEvent(tx, 'stripe');
+      // Payouts of the company's own account (the endpoint and its secret are the company's).
+      if (session.object === 'payout' && PAYOUT_EVENTS.has(event.type)) {
+        const po = payoutFromStripe(session);
+        const r = await recordStripePayout(tx, po);
+        if (r.reason) return { ignored: true };
+        if (r.itemise) await enqueuePayoutFetch(tx, tenantId, po.id); // only for a company on QuickBooks
+        return r;
+      }
       // Only sessions Fishtape created for this company; the account may use Checkout for other things.
       if (session.object !== 'checkout.session' || session.metadata?.fishtape_tenant !== tenantId) return { ignored: true };
       const paid = (event.type === 'checkout.session.completed' && session.payment_status === 'paid') || event.type === 'checkout.session.async_payment_succeeded';

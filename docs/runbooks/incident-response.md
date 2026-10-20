@@ -38,8 +38,15 @@ something real (a secret, Kelvin's data), which is SEV2.
 | bad deploy | [rollback.md](rollback.md) |
 | outage | check `deploy/check-exposure.sh`, `docker compose ps`, `/api/readyz`, disk (`df -h`), certificate (`host-status.json`) |
 | GitHub account compromise | revoke sessions and PATs, rotate deploy keys and environment secrets, check recent pushes and tags |
+| QuickBooks sync writing wrong data (a sync loop, a mapping or merge bug, the safety brake firing for several companies) | `QBO_WRITES=off` first (`set-env.sh <env> QBO_WRITES`, then `sudo docker compose up -d api worker`): nothing is written to any company's QuickBooks, edits wait in the outbox, pulls continue. Then HQ > each company concerned > **Pause QuickBooks sync** (reason required), so the office cannot resume it. Details: [quickbooks-support.md](quickbooks-support.md#stop-everything) |
+| QuickBooks credentials leaked or Intuit alerts us | rotate `QBO_CLIENT_SECRET` ([rotate-secrets.md](rotate-secrets.md#quickbooks-intuit-app-client-secret)); stolen refresh tokens stop working only when revoked, so with a database or backup leak treat every connected company as exposed and ask each to disconnect and reconnect |
 
 SQL above runs as the superuser inside the container: `sudo docker compose exec postgres psql -U postgres -d fishtape`.
+
+QuickBooks alerts (`qbo_*`, emailed to `HQ_NOTIFY_EMAIL`) and their first steps are listed in
+[logging-monitoring.md](../compliance/logging-monitoring.md#quickbooks-alerts). A wrong write in a
+company's books is an incident for that company (SEV3, SEV2 if several companies): tell them what
+was written and when, from their sync log; Fishtape never edits QuickBooks by hand for them.
 
 ## Then
 

@@ -1,7 +1,8 @@
 // /api/hq/tenants*: companies for HQ. List and search, detail, create (+ owner invite),
 // suspend/reactivate, plan/trial/overrides, export, delete in two steps (export first,
-// then a grace period before the worker purges), and audited, time-boxed, read-only
-// support access. HQ admins change things; HQ staff look and support.
+// then a grace period before the worker purges), audited, time-boxed, read-only support
+// access, and QuickBooks pause/resume (HQ staff) and release (HQ admin). HQ admins change
+// things; HQ staff look and support.
 import { ApiError, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { isCollection } from '../collections.js';
 import { PLAN_IDS } from '../../../electrical-app/js/plans.js';
@@ -11,10 +12,22 @@ import { issuePasswordLink } from '../services/resets.js';
 import { createBilling } from '../services/billing.js';
 import { enqueuePurge } from '../services/hq-jobs.js';
 import { hqActor, hqAudit, hqSettings, iso, requireHqAdmin, uuidParams } from '../services/hq-common.js';
-import { activeGrant, exportTenant, listTenants, loadTenant, searchTenants, supportReadable, supportRecords, tenantDetail, tenantView } from '../services/hq-tenants.js';
+import { activeGrant, exportTenant, hasQboTables, listTenants, loadTenant, qboHealth, searchTenants, supportReadable, supportRecords, tenantDetail, tenantView } from '../services/hq-tenants.js';
 import { requestFacts } from '../services/audit.js';
+import { enqueue } from '../services/queue.js';
 
 const PLAN_VALUES = ['trial', ...PLAN_IDS];
+
+/**
+ * Run the QuickBooks housekeeping for one company now: for a closed or released company it
+ * revokes the grant at Intuit and finishes the disconnect (qbo_token_housekeeping, W1).
+ * Nothing when the company never connected QuickBooks.
+ */
+async function enqueueQboClose(c, tenantId) {
+  if (!(await hasQboTables(c))) return null;
+  if (!(await c.query('SELECT 1 FROM qbo_connections WHERE tenant_id = $1', [tenantId])).rows.length) return null;
+  return enqueue(c, { kind: 'qbo_token_housekeeping', tenantId, payload: { tenantId }, maxAttempts: 5, dedupeKey: `qbo_token_housekeeping:${tenantId}` });
+}
 
 /** @param {import('fastify').FastifyInstance} app */
 export default async function hqTenantRoutes(app, { config, db, email }) {
@@ -201,6 +214,8 @@ export default async function hqTenantRoutes(app, { config, db, email }) {
                 delete_after = now() + make_interval(days => $4), updated_at = now()
           WHERE id = $1 RETURNING delete_after`, [t.id, req.body.reason.trim(), req.principal.userId, settings.deleteGraceDays]);
       await enqueuePurge(c, t.id, rows[0].delete_after);
+      // End the company's QuickBooks grant now (revoke and disconnect), long before the purge.
+      await enqueueQboClose(c, t.id);
       await hqAudit(c, req, t.id, {
         action: 'hq.tenant_delete_requested', collection: 'tenants', recordId: t.id,
         summary: `Fishtape closed this company; its data will be deleted after ${iso(rows[0].delete_after).slice(0, 10)}. Reason: ${req.body.reason.trim()}`.slice(0, 500),
@@ -219,6 +234,91 @@ export default async function hqTenantRoutes(app, { config, db, email }) {
                 delete_after = NULL, updated_at = now() WHERE id = $1`, [t.id]);
       await hqAudit(c, req, t.id, { action: 'hq.tenant_restore', collection: 'tenants', recordId: t.id, summary: 'Fishtape cancelled the deletion and reopened this company' });
       return tenantView(await loadTenant(c, t.id));
+    });
+  });
+
+  // ---- QuickBooks: pause / resume and release (docs/integrations/quickbooks.md 2.9) ------
+  // HQ writes only the columns migration 0150 grants it. lease_epoch is bumped to a value no
+  // worker holds (the time in ms, above any epoch counted up since the last bump), so a pass
+  // still running stops before its next write without HQ reading the column.
+
+  const reasonBody = (extra = {}) => ({
+    type: 'object', required: ['reason', ...Object.keys(extra)], additionalProperties: false,
+    properties: { ...extra, reason: { type: 'string', minLength: 1, maxLength: 500 } },
+  });
+  const needReason = (req) => {
+    const reason = req.body.reason.trim();
+    if (reason.length < 5) throw badRequest('Give a reason (at least 5 characters).');
+    return reason;
+  };
+  async function qboConnection(c, tenantId) {
+    if (!(await hasQboTables(c))) throw conflict('QuickBooks is not set up on this server.');
+    const row = (await c.query('SELECT state, state_before, pause_reason FROM qbo_connections WHERE tenant_id = $1 FOR UPDATE', [tenantId])).rows[0];
+    if (!row) throw notFound('This company has no QuickBooks connection.');
+    return row;
+  }
+  const BUMP_EPOCH = "lease_epoch = (extract(epoch FROM clock_timestamp()) * 1000)::bigint, lease_until = NULL, updated_at = now()";
+
+  app.post('/api/hq/tenants/:id/quickbooks/pause', {
+    config: hq,
+    schema: { tags, summary: 'Pause or resume a company\'s QuickBooks sync (HQ; reason required; audited in the company\'s log). Only HQ can resume an HQ pause.', params: uuidParams('id'), body: reasonBody({ paused: { type: 'boolean' } }) },
+  }, async (req) => {
+    const reason = needReason(req);
+    return db.withHq(async (c) => {
+      const t = await mustExist(c, req.params.id);
+      const cur = await qboConnection(c, t.id);
+      const from = { state: cur.state, pauseReason: cur.pause_reason };
+      if (req.body.paused) {
+        if (cur.pause_reason === 'hq') return qboHealth(c, t);
+        if (!['setup', 'active', 'paused'].includes(cur.state)) throw conflict('Only a connected company can be paused. This one needs to reconnect or is disconnected.');
+        await c.query(`UPDATE qbo_connections SET state = 'paused', state_before = $2, pause_reason = 'hq', paused_since = COALESCE(paused_since, now()), ${BUMP_EPOCH} WHERE tenant_id = $1`,
+          [t.id, cur.state]);
+      } else {
+        if (cur.state !== 'paused' || cur.pause_reason !== 'hq') throw conflict('QuickBooks sync is not paused by Fishtape for this company.');
+        const back = cur.state_before || 'active';
+        // A company that was already paused (by itself, its plan or the brake) goes back to that pause.
+        const prior = back === 'paused' ? await priorPauseReason(c, t.id) : null;
+        await c.query(
+          `UPDATE qbo_connections SET state = $2, state_before = NULL, pause_reason = $3, paused_since = CASE WHEN $2 = 'paused' THEN paused_since END, updated_at = now()
+            WHERE tenant_id = $1`, [t.id, back, prior]);
+        // The next pass runs the Fishtape-side sweep first (2.5); start it now rather than at the next dispatch.
+        if (back === 'active') await enqueue(c, { kind: 'qbo_sync', tenantId: t.id, payload: { reason: 'hq_resume' }, dedupeKey: `qbo_sync:${t.id}` });
+      }
+      await hqAudit(c, req, t.id, {
+        action: 'hq.qbo.pause', collection: 'qbo_connections', recordId: t.id,
+        summary: `${req.body.paused ? 'Fishtape paused QuickBooks sync' : 'Fishtape resumed QuickBooks sync'}: ${reason}`.slice(0, 500),
+        meta: { paused: req.body.paused, from },
+      });
+      return qboHealth(c, t);
+    });
+  });
+
+  /** The pause an HQ pause covered, from that pause's own audit event (the connection keeps no second reason). */
+  async function priorPauseReason(c, tenantId) {
+    const { rows } = await c.query(
+      `SELECT meta->'from'->>'pauseReason' AS reason FROM audit_events
+        WHERE tenant_id = $1 AND action = 'hq.qbo.pause' AND meta->>'paused' = 'true' ORDER BY seq DESC LIMIT 1`, [tenantId]);
+    const r = rows[0]?.reason;
+    return ['user', 'plan', 'budget', 'tenant_budget', 'brake'].includes(r) ? r : 'user';
+  }
+
+  app.post('/api/hq/tenants/:id/quickbooks/release', {
+    config: hq,
+    schema: { tags, summary: 'Release a company\'s QuickBooks company so another Fishtape company can connect it (HQ admin; reason required; audited). The worker then deletes the tokens (revoked first only while no other company holds that QuickBooks company).', params: uuidParams('id'), body: reasonBody() },
+  }, async (req) => {
+    requireHqAdmin(req);
+    const reason = needReason(req);
+    return db.withHq(async (c) => {
+      const t = await mustExist(c, req.params.id);
+      const cur = await qboConnection(c, t.id);
+      await c.query(`UPDATE qbo_connections SET state = 'disconnected', state_before = NULL, pause_reason = NULL, paused_since = NULL, ${BUMP_EPOCH} WHERE tenant_id = $1`, [t.id]);
+      await c.query('DELETE FROM qbo_realms WHERE tenant_id = $1', [t.id]);
+      await enqueueQboClose(c, t.id);
+      await hqAudit(c, req, t.id, {
+        action: 'hq.qbo.release', collection: 'qbo_connections', recordId: t.id,
+        summary: `Fishtape released this company's QuickBooks connection: ${reason}`.slice(0, 500), meta: { from: { state: cur.state, pauseReason: cur.pause_reason } },
+      });
+      return qboHealth(c, t);
     });
   });
 

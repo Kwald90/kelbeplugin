@@ -115,6 +115,21 @@ backup made the same way.
 | Breach records | Encrypted evidence store | 3 years (law requires at least 24 months) | Deleted |
 | CASL consent and unsubscribe records | Postgres | While messages are sent to the contact, plus 3 years | Deleted |
 | Fishtape's own billing and tax records | Stripe, accounting records | 6 years (Canada Revenue Agency) | Deleted |
+| QuickBooks tokens and company id (`tenant_secrets`, internal names) | Postgres (encrypted) | While connected | Revoked at Intuit and deleted at disconnect; a failed revoke is retried from `qbo_revoke_pending` for at most 14 days, then deleted |
+| QuickBooks links, snapshots, mappings, reference lists, queued changes, conflicts, candidates and the connection row | Postgres | While connected | Deleted at once on "Delete QuickBooks data now", else 30 days after disconnect (`qbo_purge`, hourly); with the tenant |
+| QuickBooks sync log | Postgres | 90 days | Deleted by `qbo_purge` |
+| Processed QuickBooks webhook events (`qbo_inbox`) | Postgres | 30 days after processing | Deleted by `qbo_purge` |
+| Resolved QuickBooks conflicts | Postgres | 90 days | Deleted by `qbo_purge` |
+| QuickBooks wizard candidates | Postgres | 30 days after the scan that wrote them, applied or not | Deleted by `qbo_purge` |
+| QuickBooks connect tickets, OAuth states and takeover offers | Postgres | Until used, or 10 minutes (tickets 120 s) | Deleted on use; expired rows deleted hourly; with the user who started them |
+| QuickBooks call counts (`qbo_api_usage`) | Postgres | 13 months | Deleted by `qbo_purge` |
+| QuickBooks platform events (`qbo_platform_events`, no customer data) | Postgres | 30 days | Deleted by `qbo_purge` |
+| Stripe payouts (`stripe_payouts`: amounts, dates, balance-transaction ids, no customer data) | Postgres | 7 years, like payments; kept when QuickBooks is disconnected (they are Stripe data) | Deleted with the tenant (no earlier purge yet) |
+| Records that came from QuickBooks (clients, invoices, payments, bills) | Postgres, devices | As tenant business records (first row) | As tenant business records |
+
+Every QuickBooks table cascades when the tenant is deleted; closing a company disconnects
+QuickBooks (with revoke) first. Backups keep deleted rows until they age out (about 8 weeks), as
+for all tenant data.
 
 Tenants decide how long to keep their own business records (for example, CRA expects business
 records to be kept six years). Fishtape keeps them while the account is active and provides an export
@@ -135,3 +150,4 @@ Staging pre-deploy backups are optional. RPO of 24 hours is accepted until WAL a
 | date | reviewer | result | notes |
 | --- | --- | --- | --- |
 | 2026-10-19 | Kelvin Waldner | First version | Drafted with an AI agent; adopted when Kelvin merges it. |
+| 2026-10-20 | Kelvin Waldner | QuickBooks rows | Retention of the QuickBooks sync tables and Stripe payouts (contract 10.4). |

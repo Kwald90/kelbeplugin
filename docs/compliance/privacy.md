@@ -164,6 +164,30 @@ location a condition of using the clock (today it is the worker's choice).
 Tenants should tell their crews before turning location on, keep the policy text accurate for their
 province and any collective agreement, and not use it for anything the notice doesn't say.
 
+## QuickBooks Online
+
+A tenant can connect its own QuickBooks Online company (contract:
+[docs/integrations/quickbooks.md](../integrations/quickbooks.md)). Data then flows both ways, only
+because the tenant asked for it: customers, products and services, estimates, invoices, payments,
+supplier bills and receipts, purchase orders, and approved time (hours, job and the employee's name).
+The tenant is the organization in control of that data on both sides; Fishtape is its service
+provider, and uses the data only to run the sync.
+
+| question | what Fishtape does |
+| --- | --- |
+| Who can see it | Office roles only (owner, admin, office). Nothing from QuickBooks is stored on records field crews read: QuickBooks ids, sync state and settings live in office-only tables, and QuickBooks customer notes are never pulled. HQ sees counts and states only, never the company's QuickBooks data. |
+| Who can change it | Every change that reaches QuickBooks through Fishtape needs a person signed in with two-step verification; money written by an API key or the assistant waits for an office user's approval. |
+| The assistant | Records that sync with QuickBooks (clients, invoices, bills, payments) are ordinary Fishtape records, and Fishtape's assistant, MCP and the tenant's API keys can read them like any other record. QuickBooks' own data (sync tables, look-up results) is never given to them. This is **disclosed** to Intuit, in the terms and the public privacy notice, and on the connect screen ("Fishtape's assistant can read your Fishtape records, including those that sync with QuickBooks"). If Intuit's review asks for opt-in, opt-in per company becomes the rule (contract, open question 13.11). |
+| Security | Tokens and the QuickBooks company id are encrypted (AES-256-GCM, key outside the database) and never shown, logged or sent to HQ. |
+| Disconnect and deletion | Disconnecting revokes Fishtape's access at Intuit at once. Links, sync history, mappings, reference lists and queued changes are deleted at once if the tenant ticks "delete now", else after 30 days. Records that came from QuickBooks stay the tenant's own Fishtape records (like any import). Closing a Fishtape account disconnects QuickBooks first. Backups age out in about 8 weeks. Retention: [backup-retention.md](backup-retention.md#data-retention-schedule). |
+| Where it lives | On the Fishtape server whose hosting region was given to Intuit ([vendor-management.md](vendor-management.md#intuit-quickbooks-online)). Intuit's own processing is under its terms with the tenant. |
+| Requests | A person's request about data in the tenant's books goes to the tenant (section above). Correcting a record in Fishtape syncs to QuickBooks. |
+
+The public privacy notice and the terms (`site/privacy.html`, `site/terms.html`) must name Intuit
+QuickBooks as a service the customer connects, carry the AI disclosure above, and the line
+"QuickBooks and Intuit are trademarks of Intuit Inc." (checklist step 8 of the contract; a lawyer's
+final text).
+
 
 ## CASL
 
@@ -204,3 +228,4 @@ None for legal duties. Process changes go through [information-security.md](info
 | --- | --- | --- | --- |
 | 2026-10-19 | Kelvin Waldner | First version | Drafted with an AI agent; adopted when Kelvin merges it. Needs a review by privacy counsel before launch. |
 | 2026-10-20 | Kelvin Waldner | Location while clocked in | New section for GPS time tracking, drafted with an AI agent. Counsel to confirm the consent model for each province before launch. |
+| 2026-10-20 | Kelvin Waldner | QuickBooks Online | New section: two-way sync at the tenant's request, the AI disclosure, deletion on disconnect. |

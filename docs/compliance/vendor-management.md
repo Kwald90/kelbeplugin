@@ -44,6 +44,7 @@ or data is exposed if the vendor fails), medium (a feature stops), low.
 | Stripe | Fishtape's own subscriptions; tenant invoice payments use tenants' own accounts | Tenant billing contacts; card data stays with Stripe | Confidential | To confirm | High (billing) | PCI DSS attestation, SOC 2 report, DPA | Required | 2027-06 |
 | Twilio | SMS, with tenants' own keys | Customer phone numbers, message text | Confidential | To confirm | Medium | SOC 2 report or ISO 27001, DPA | Required (tenant accounts: tenant's duty) | 2027-06 |
 | Resend | Email, with tenants' own keys; system email to confirm | Email addresses, message content | Confidential | To confirm | Medium | SOC 2 report, DPA | Required | 2027-06 |
+| Intuit (QuickBooks Online) | Two-way sync with each tenant's own QuickBooks Online company. Fishtape holds the platform app credentials (client id and secret, webhook verifier) under the Intuit Developer Terms; each tenant connects its own company over OAuth | The tenant's customers, products and services, estimates, invoices, payments, supplier bills and receipts, purchase orders, employee time (hours, job, employee name); both ways, at the tenant's request | Confidential | US company; QuickBooks Canada data location to confirm. Fishtape's side: record the hosting region of every server that holds QuickBooks data (below) | High (for tenants who connect) | Intuit Developer Terms and the app's approved App Assessment Questionnaire; Intuit's security and privacy statements; the annual Intuit security review and a vulnerability scan when Intuit asks (within 2 weeks) | Required (Intuit developer account) | 2027-06, and at Intuit's annual security review |
 | Meta (Facebook Lead Ads) | Lead webhooks into tenants' CRM | Lead names, contact details, form answers (inbound); page tokens | Confidential | To confirm | Medium | Platform terms, data-processing terms | Required | 2027-06 |
 | Apple | Developer account, App Store, TestFlight | App builds, developer account details | Internal | To confirm | Medium | Developer program terms | Required | 2027-06 |
 | Google | OAuth sign-in | User name and email returned at sign-in | Confidential | To confirm | Medium | ISO 27001 or SOC 2 report | Required | 2027-06 |
@@ -84,6 +85,37 @@ match the access review. Save notes and documents in the evidence bundle. Update
 Export what Fishtape needs, delete the rest at the vendor and ask for confirmation, revoke keys and
 OAuth grants, remove the account, update the table, the asset inventory and the sub-processor list.
 
+### Intuit (QuickBooks Online)
+
+The integration is documented in [docs/integrations/quickbooks.md](../integrations/quickbooks.md).
+Unlike the tenant-supplied keys below, Fishtape is Intuit's developer here: the app (named
+Fishtape, private and unlisted) and its production keys are Fishtape's, approved by Intuit through
+its App Assessment Questionnaire. Each tenant authorizes the app for its own QuickBooks company and
+can disconnect it from either side at any time.
+
+- **What Fishtape answered Intuit** (keep a copy of the questionnaire in the evidence bundle):
+  tokens and realm ids encrypted with AES-256-GCM under a key held outside the database; data used
+  only to run the sync; deletion on disconnect (30 days, or at once on request); every user who can
+  change QuickBooks data through Fishtape signs in with two-step verification; the assistant can
+  read Fishtape records that sync with QuickBooks, and this is disclosed (privacy policy, terms,
+  connect screen).
+- **Commitments that recur**: Intuit's annual security review and questionnaire, and a vulnerability
+  scan within 2 weeks when Intuit asks. Both are in the compliance calendar.
+- **Hosting region of each server that holds QuickBooks data.** Intuit asks where the data lives;
+  the answer must match the server that really holds it, and production Intuit keys go only on a
+  server in that region.
+
+  | server | provider | region | QuickBooks keys | confirmed |
+  | --- | --- | --- | --- | --- |
+  | Staging (208.113.210.97) | DreamHost | To confirm (probably US) | Development (sandbox) only, until this row is confirmed and matches Intuit's answer | No |
+  | Production (`app.fishtapehq.com`) | dotmoose | To confirm (Canada preferred) | Production, once the questionnaire is approved | No |
+
+- **Cost**: the free Builder tier covers 500,000 QuickBooks reads a month for the whole workspace
+  (all servers using the production keys share it). HQ warns at 70%; buying the Silver tier is
+  Kelvin's call then.
+- **Offboarding Intuit**: disconnect every tenant (revokes their grants), delete the app's keys in
+  the portal, delete the app.
+
 ## Tenant-supplied keys: shared responsibility
 
 Each tenant signs up with Stripe, Twilio, Resend, Meta or Anthropic itself and enters its own keys in
@@ -116,3 +148,4 @@ until the onboarding checks for a host are done, or Kelvin records a risk accept
 | date | reviewer | result | notes |
 | --- | --- | --- | --- |
 | 2026-10-19 | Kelvin Waldner | First version | Drafted with an AI agent; adopted when Kelvin merges it. |
+| 2026-10-20 | Kelvin Waldner | Intuit added | QuickBooks Online sync; hosting regions to confirm before production keys. |
