@@ -252,6 +252,8 @@ export default async function authRoutes(app, { config, db, email: mailer, oidcP
   }, async (req) => {
     const s = req.auth.session;
     const { rows } = await db.query('SELECT password_hash, email FROM users WHERE id = $1', [s.user_id]);
+    // Google/Microsoft-only accounts have no password to check: point them at the emailed link.
+    if (rows[0] && !rows[0].password_hash) throw new ApiError(409, 'no_password', 'Your account has no password yet. Ask for an emailed link to set one.');
     if (!(await verifySecret(rows[0]?.password_hash, req.body.currentPassword))) throw new ApiError(401, 'invalid_credentials', 'Your current password is wrong.');
     const problem = passwordProblem(req.body.newPassword, rows[0].email);
     if (problem) throw new ApiError(400, 'weak_password', problem);
