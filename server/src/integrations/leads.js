@@ -5,6 +5,7 @@
 // queue them a second time.
 import { ID_RE } from '../services/records.js';
 import { companySettings } from './payments.js';
+import { notify } from '../services/notify.js';
 
 const DAY = 86400000;
 
@@ -50,6 +51,7 @@ export async function createFacebookLead(tx, records, p, who, mapped, { sequence
   const lead = await records.createRecord(tx, p, 'leads', {
     id: leadId, ...mapped, source: 'facebook', stage: 'new', valueCents: 0, clientId: null, nextActionAt: today,
   }, who);
+  await notify(tx, { perm: 'leads', kind: 'lead', title: 'New lead from Facebook', link: '#/leads', ref: `lead:${leadId}` });
 
   let enrolled = false;
   let queued = 0;

@@ -14,6 +14,7 @@ import { ANTHROPIC_SECRET, anthropicClient, requestParams, upstreamError } from 
 import { aiSettings, assertUnderCap, recordUsage } from './usage.js';
 import { companySettings } from './data.js';
 import { getSecret } from '../services/secrets.js';
+import { notify, MANAGER_ROLES } from '../services/notify.js';
 
 const DAY = 86_400_000;
 export const BACKGROUND_ACTOR = { type: 'agent', id: 'background', label: 'Fishtape background agent' };
@@ -252,6 +253,7 @@ export async function scanTenant({ db, sealer, records, aiCfg, tenantId, now = n
       await tx.query('UPDATE ai_suggestions SET outbox_id = $3 WHERE tenant_id = $1 AND id = $2', [tx.tenantId, ins.rows[0].id, rec.id]);
       created++;
     }
+    if (created) await notify(tx, { role: MANAGER_ROLES, kind: 'ai_suggestion', title: `${created} new AI suggestion${created === 1 ? '' : 's'} to review`, link: '#/assistant/suggestions', ref: `ai:${day}` });
     const result = { findings: plan.total, created, aiDrafts };
     await tx.query("UPDATE ai_agent_runs SET finished_at = now(), result = $3 WHERE tenant_id = $1 AND kind = 'background' AND run_day = $2", [tx.tenantId, day, result]);
     return result;

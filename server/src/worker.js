@@ -8,6 +8,7 @@ import { INTEGRATION_HANDLERS, scheduleIntegrationJobs } from './integrations/jo
 import { createAiHandlers, scheduleAiJobs } from './ai/jobs.js';
 import { HQ_HANDLERS } from './services/hq-jobs.js';
 import { PLATFORM_EMAIL_HANDLERS, schedulePlatformEmail } from './services/platform-email.js';
+import { createNotificationHandlers, scheduleNotificationDigest } from './routes/v1/notifications.js';
 
 Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS, PLATFORM_EMAIL_HANDLERS);
 
@@ -18,7 +19,7 @@ async function main() {
   const config = readConfig();
   const db = createDb({ app: createPool(config.databaseUrl, { max: config.worker.concurrency + 1, applicationName: 'fishtape-worker' }) });
   const workerId = `${hostname()}:${process.pid}`;
-  const handlers = { ...HANDLERS, ...createAiHandlers({ config }) };
+  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }) };
   const log = (level, msg, extra = {}) => process.stdout.write(JSON.stringify({ level, time: Date.now(), workerId, msg, ...extra }) + '\n');
   let stopping = false;
   let lastHousekeeping = 0;
@@ -34,6 +35,7 @@ async function main() {
           await scheduleIntegrationJobs(db);
           await scheduleAiJobs(db);
           await schedulePlatformEmail(db);
+          await scheduleNotificationDigest(db);
         }
         const r = await runOnce(db, { workerId, handlers, log: { info: (m) => log('info', m), error: (m) => log('error', m) } });
         if (r) { log(r.outcome === 'done' ? 'info' : 'warn', `job ${r.kind} ${r.outcome}`, { jobId: r.id, ...(r.error ? { error: r.error } : {}) }); continue; }

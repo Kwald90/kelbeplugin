@@ -33,6 +33,7 @@ import integrationRoutes from './routes/v1/integrations.js';
 import webhookRoutes from './routes/v1/webhooks.js';
 import aiRoutes from './routes/v1/ai.js';
 import mcpRoutes from './routes/mcp.js';
+import notificationRoutes from './routes/v1/notifications.js';
 
 const MB = 1024 * 1024;
 /** Sync pushes may carry one maximum-size record plus a normal batch. */
@@ -188,6 +189,7 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(webhookRoutes, deps);
   await app.register(aiRoutes, deps);
   await app.register(mcpRoutes, deps);
+  await app.register(notificationRoutes, deps);
   await app.register(hqTenantRoutes, deps);
   await app.register(hqComplianceRoutes, deps);
   await app.register(hqBillingRoutes, deps);
