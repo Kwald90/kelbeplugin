@@ -1,11 +1,11 @@
 // Invoices & payments (S18): list with ageing, builder, payments, print.
-import { docTotals, invoicePaidCents, invoiceBalanceCents, invoiceStatus, moneyFormatter, combinedPct } from '../lib/money.js';
+import { docTotals, invoicePaidCents, invoiceShown, moneyFormatter, combinedPct } from '../lib/money.js';
 import { newDocTax, taxComponents, TREATMENTS } from '../lib/tax.js';
 import { lineEditor, taxEditor, totalsPanel, previewDocument, clientName } from '../lib/doc-view.js';
 import { invoiceOnlineTools, payLinkBlock } from './integrations.js';
 import { moduleOn } from '../lib/modules.js';
 import { billingLabel, restoreConflicts } from '../lib/tm.js';
-import { qboBadge, noTaxReasonPicker, isSettlementPayment, SETTLEMENT_LABEL, settlementNote, lookupAction, needsNoTaxReason, keepsServerPaid, nextInvoiceStatus, docEditor } from '../lib/qbo-ui.js';
+import { qboBadge, noTaxReasonPicker, isSettlementPayment, isQuickBooksPayment, SETTLEMENT_LABEL, DEPOSIT_LABEL, settlementNote, lookupAction, needsNoTaxReason, nextInvoiceStatus, docEditor } from '../lib/qbo-ui.js';
 
 const METHODS = ['e-transfer', 'cheque', 'card', 'cash', 'transfer'];
 
@@ -23,17 +23,8 @@ export default {
   },
 };
 
-/**
- * Status and balance as the invoice screens show them. A 'paid' the server set at the QuickBooks
- * total (its own tax rounding, docs/integrations/quickbooks.md 4.8) stays paid with a balance of 0,
- * although a cent or two is left by Fishtape's arithmetic (lib/qbo-ui.js keepsServerPaid).
- */
-export function invoiceShown(store, inv) {
-  if (inv.status === 'void') return { status: 'void', balanceCents: 0 };
-  const paid = invoicePaidCents(store, inv.id);
-  if (keepsServerPaid(inv, paid, docTotals(inv).totalCents)) return { status: 'paid', balanceCents: 0 };
-  return { status: invoiceStatus(store, inv), balanceCents: invoiceBalanceCents(store, inv) };
-}
+// Status and balance as the screens show them: lib/money.js invoiceShown (QuickBooks' tax rounding, 4.8).
+export { invoiceShown };
 
 /**
  * Recompute the stored status from payments (never touches void). `moneyChanged` false (an edit
@@ -273,11 +264,11 @@ function renderDetail(root, ctx, id) {
   const drawPayments = () => {
     ui.clear(paymentsHost);
     const pays = store.list('payments', (p) => p.invoiceId === id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-    // A settlement payment (credit memos or journals applied in QuickBooks, contract 4.9) is written
-    // only by the QuickBooks sync: shown read-only, never edited or deleted here.
-    paymentsHost.append(pays.length ? h('div', { class: 'list' }, pays.map((p) => (isSettlementPayment(p)
+    // A settlement payment (credit memos or journals applied in QuickBooks, contract 4.9) and a
+    // QuickBooks deposit (4.7) are written only by the QuickBooks sync: read-only here.
+    paymentsHost.append(pays.length ? h('div', { class: 'list' }, pays.map((p) => (isQuickBooksPayment(p)
       ? h('div', { class: 'list-row', dataset: { settlement: '1' } },
-        h('div', { class: 'grow' }, h('div', { class: 'title num' }, money(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), SETTLEMENT_LABEL].filter(Boolean).join(' · '))),
+        h('div', { class: 'grow' }, h('div', { class: 'title num' }, money(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), isSettlementPayment(p) ? SETTLEMENT_LABEL : DEPOSIT_LABEL].filter(Boolean).join(' · '))),
         settlementNote(ui))
       : h('div', { class: 'list-row' },
         h('div', { class: 'grow' }, h('div', { class: 'title num' }, money(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), p.method, p.reference].filter(Boolean).join(' · '))),
@@ -306,7 +297,7 @@ function renderDetail(root, ctx, id) {
   };
   const recordPayment = () => {
     save.flush();
-    const bal = invoiceBalanceCents(store, store.get('invoices', id));
+    const bal = invoiceShown(store, store.get('invoices', id)).balanceCents;
     ui.formSheet({
       title: `Record payment · ${doc.number}`,
       submitLabel: 'Record payment',
@@ -325,14 +316,15 @@ function renderDetail(root, ctx, id) {
     });
   };
   drawStatus(); drawPayments();
-  // Payments that arrive from the server (Stripe, another device, a QuickBooks settlement).
+  // Payments that arrive from the server (Stripe, another device, a QuickBooks settlement), and
+  // local ones too: a payment sheet opened before this screen redrew saves through the old screen.
   const offPayments = store.on('payments', (e) => {
-    if (e?.remote && e.record?.invoiceId === id) { refreshPaid(); drawStatus(); drawPayments(); }
+    if (e?.record?.invoiceId === id) { refreshPaid(); drawStatus(); drawPayments(); }
   });
 
   const remove = async () => {
     // Credited or paid in QuickBooks (4.9): that payment is QuickBooks', so the invoice stays; void it.
-    if (store.count('payments', (p) => p.invoiceId === id && isSettlementPayment(p))) {
+    if (store.count('payments', (p) => p.invoiceId === id && isQuickBooksPayment(p))) {
       ui.toast(`${doc.number} has a payment credited or paid in QuickBooks, which can't be deleted from Fishtape. Void the invoice instead.`, 'error', 6000);
       return;
     }
@@ -350,7 +342,7 @@ function renderDetail(root, ctx, id) {
     subtitle: h('span', null, h('a', { href: '#/invoices' }, 'Invoices'), ' / ', clientOrJob(store, doc)),
     actions: [
       // `extra` is a getter so the preview and the printout each get their own pay-link node.
-      ui.button('Print / PDF', { icon: 'printer', onClick: () => { save.flush(); previewDocument({ kind: 'Invoice', doc, store, paidCents: paid(), get extra() { return payLinkBlock(store, id, docTotals(doc).totalCents - paid()); } }); } }),
+      ui.button('Print / PDF', { icon: 'printer', onClick: () => { save.flush(); previewDocument({ kind: 'Invoice', doc, store, paidCents: paid(), get extra() { return payLinkBlock(store, id, invoiceShown(store, { ...doc, id }).balanceCents); } }); } }),
       ui.button('', { icon: 'trash', variant: 'ghost danger', title: 'Delete invoice', onClick: remove }),
     ],
   },

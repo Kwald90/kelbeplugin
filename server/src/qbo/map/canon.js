@@ -596,14 +596,27 @@ function salesLinesFromQbo(o, ctx, meta) {
   return [...plain, ...markups];
 }
 
+/**
+ * A Fishtape payment's amount in QuickBooks is its own line plus the excess its push left unapplied
+ * (4.9, meta.ownExcessCents, never more than the payment's unapplied amount): a payment of $1,200 on a
+ * $1,120 balance is $1,200 on both sides, so a later QuickBooks edit never writes $1,120 back.
+ */
+function ownExcessOf(o, ctx) {
+  const own = Math.max(0, Math.round(Number(linkInfo(ctx).meta.ownExcessCents) || 0));
+  if (!own) return 0;
+  const unapplied = o.UnappliedAmt != null ? toCents(o.UnappliedAmt) : toCents(o.TotalAmt) - (o.Line || []).reduce((s, l) => s + toCents(l.Amount), 0);
+  return Math.min(Math.max(0, unapplied), own);
+}
+
 function paymentFromQbo(o, ctx, qboLine) {
   const invoiceLines = (o.Line || []).map((l) => ({ l, inv: str((l.LinkedTxn || []).find((t) => t.TxnType === 'Invoice')?.TxnId) })).filter((x) => x.inv);
   let hit = qboLine ? invoiceLines.find((x) => x.inv === qboLine) : invoiceLines[0];
   if (!hit && qboLine && invoiceLines.length === 1) hit = invoiceLines[0]; // the line moved to another invoice
   const pmRef = ref(o.PaymentMethodRef);
   const pm = maps(ctx, 'paymentMethod');
+  const excess = hit && qboLine && hit.inv === qboLine ? ownExcessOf(o, ctx) : 0;
   return {
-    invoiceRef: hit ? hit.inv : null, amountCents: hit ? toCents(hit.l.Amount) : 0, date: day(o.TxnDate),
+    invoiceRef: hit ? hit.inv : null, amountCents: hit ? toCents(hit.l.Amount) + excess : 0, date: day(o.TxnDate),
     method: { ref: pmRef, key: keyFor(pm, pmRef, ['check', 'cash', 'card', 'e-transfer', 'transfer', 'other']) || (pmRef ? 'other' : null) },
     reference: cut(o.PaymentRefNum, PAYMENT_REF_MAX),
     extra: { totalCents: toCents(o.TotalAmt), unappliedCents: o.UnappliedAmt == null ? null : toCents(o.UnappliedAmt), depositTo: ref(o.DepositToAccountRef) },

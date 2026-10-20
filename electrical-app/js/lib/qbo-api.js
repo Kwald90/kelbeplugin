@@ -32,6 +32,9 @@ const rec = (collection, id) => {
   if (!QBO_COLLECTIONS.includes(collection)) throw new Error(`Not a QuickBooks collection: ${collection}`);
   return `${BASE}/records/${enc(collection)}/${enc(id)}`;
 };
+/** Employees are linked to QuickBooks (4.5) but never sent: link and unlink only. */
+const LINK_ONLY = ['employees'];
+const linkPath = (collection, id) => (LINK_ONLY.includes(collection) ? `${BASE}/records/${enc(collection)}/${enc(id)}/link` : `${rec(collection, id)}/link`);
 
 /** QuickBooks ids are digits only (7.8); anything else never reaches a URL. */
 const qboIdOf = (id) => {
@@ -80,8 +83,10 @@ export const qboApi = {
   /** Retry (no options), "Send to QuickBooks now" ({ force: true }) or "Send to QuickBooks as new" ({ asNew: true }). */
   pushRecord: (collection, id, { force = false, asNew = false } = {}) => accepted(request('POST', `${rec(collection, id)}/sync`, { ...(force ? { force: true } : {}), ...(asNew ? { asNew: true } : {}) })),
   renumber: (collection, id) => request('POST', `${rec(collection, id)}/renumber`),
-  link: (collection, id, qboId) => request('PUT', `${rec(collection, id)}/link`, { qboId: qboIdOf(qboId) }),
-  unlink: (collection, id) => request('DELETE', `${rec(collection, id)}/link`),
+  link: (collection, id, qboId) => request('PUT', linkPath(collection, id), { qboId: qboIdOf(qboId) }),
+  unlink: (collection, id) => request('DELETE', linkPath(collection, id)),
+  /** Records waiting to be sent (link state blocked), newest first, with the reason (7.5). */
+  waiting: ({ limit } = {}) => request('GET', `${BASE}/waiting${query({ limit })}`),
   checks: ({ cursor, limit } = {}) => request('GET', `${BASE}/checks${query({ cursor, limit })}`),
   log: ({ cursor, limit, outcome, collection, recordId } = {}) => request('GET', `${BASE}/log${query({ cursor, limit, outcome, collection, recordId })}`),
 

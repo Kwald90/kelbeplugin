@@ -274,8 +274,11 @@ describe('push and pull', { skip }, () => {
     const T = await setupTenant('Conflict Electric');
     await create(T, 'clients', { id: 'c-cf', name: 'Conflict Client' });
     await create(T, 'invoices', invoice({ id: 'inv-cf', number: 'INV-3010', clientId: 'c-cf' }));
+    assert.equal((await conn(T)).last_push_at, null);
     await pass(T);
     const l = await link(T, 'invoices', 'inv-cf');
+    const pushedAt = (await conn(T)).last_push_at;
+    assert.ok(pushedAt, 'a pass that wrote to QuickBooks records when (Status lastPushAt)');
     const q = fake.get(T.realmId, 'Invoice', l.qbo_id);
     // QuickBooks: the bookkeeper changes the first line's amount.
     const lines = q.Line.filter((x) => x.DetailType === 'SalesItemLineDetail');
@@ -293,6 +296,7 @@ describe('push and pull', { skip }, () => {
     assert.equal(fake.get(T.realmId, 'Invoice', l.qbo_id).TotalAmt, 453.6, "QuickBooks keeps the bookkeeper's lines");
     const res = await withLeaseDo(T, (epoch) => resolveConflict(deps, T.tenantId, open[0].id, { choice: 'fishtape' }, whoOf(T.p), { epoch }));
     assert.equal(res.status, 'resolved');
+    assert.ok(new Date((await conn(T)).last_push_at) > new Date(pushedAt), 'resolving wrote to QuickBooks: lastPushAt moves');
     const after = fake.get(T.realmId, 'Invoice', l.qbo_id);
     assert.equal(after.TotalAmt, Math.round((100 + 380) * 1.12 * 100) / 100, 'Fishtape lines written to QuickBooks');
     assert.equal((await link(T, 'invoices', 'inv-cf')).state, 'synced');
@@ -493,6 +497,23 @@ describe('safety brake, shadow mode, origin', { skip }, () => {
     assert.equal(writes(T.realmId).length, before, 'no QuickBooks write');
     assert.equal(await link(T, 'clients', 'c-sh'), undefined, 'no link');
     assert.equal((await outbox(T)).length, 1, 'the outbox row stays');
+    // Paced like a live week: the row looked at waits an hour, the pull is recorded (the cursor stays),
+    // so the every-minute dispatcher queues neither a pass nor a CDC for this tenant.
+    const cursorBefore = (await conn(T)).cdc_cursor;
+    await t.superPool.query("UPDATE qbo_connections SET dirty_at = now() - interval '1 minute', last_pull_at = NULL WHERE tenant_id = $1", [T.tenantId]);
+    await pass(T);
+    const row = (await outbox(T))[0];
+    assert.ok(new Date(row.not_before) > new Date(Date.now() + 50 * 60_000), `not_before ${row.not_before}`);
+    const c = await conn(T);
+    assert.ok(c.last_pull_at, 'the pull is recorded');
+    assert.equal(c.last_push_at, null, 'practice mode wrote nothing');
+    assert.equal(c.dirty_at, null, "the webhook's dirty mark is cleared");
+    assert.equal(String(c.cdc_cursor), String(cursorBefore), 'the cursor does not move in shadow');
+    await t.superPool.query("DELETE FROM jobs_queue WHERE tenant_id = $1 AND kind IN ('qbo_sync', 'qbo_cdc') AND status = 'queued'", [T.tenantId]);
+    await t.superPool.query("UPDATE qbo_connections SET last_check_at = now(), ref_refreshed_at = now() WHERE tenant_id = $1", [T.tenantId]);
+    await dispatch(t.db);
+    const queuedJobs = (await t.superPool.query("SELECT kind FROM jobs_queue WHERE tenant_id = $1 AND kind IN ('qbo_sync', 'qbo_cdc') AND status = 'queued'", [T.tenantId])).rows;
+    assert.deepEqual(queuedJobs, [], 'no pass every minute in practice mode');
     const shadow = await logs(T, "outcome = 'shadow'");
     assert.ok(shadow.some((x) => x.action === 'create' && x.collection === 'clients'));
     // A QuickBooks-side customer edit is not pulled in shadow either.

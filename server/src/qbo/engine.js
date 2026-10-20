@@ -25,7 +25,7 @@ import { assertEpoch, FencedError } from './lease.js';
 import { recordLabel, errorText, writeLog, writeShadowLog, writesLastHour } from './log.js';
 import { QBO_RANK, upsertOutbox } from './hooks.js';
 import { fishtapeToCanon, qboToCanon, isVoidedInvoice, canonEqual, str, toCents } from './map/canon.js';
-import { canonToQbo, entityFor } from './map/to-qbo.js';
+import { canonToQbo, entityFor, purchaseSign } from './map/to-qbo.js';
 import { canonToFishtape, linkMetaFromQbo } from './map/to-fishtape.js';
 import { threeWayMerge, canonCollection, fieldsOf, conflictRows, MONEY_RECORD_KEYS, PUSH_ONLY_COLLECTIONS } from './map/merge.js';
 import { expectedTax, lineTaxKey, kindsUsed, taxMismatchMessage, compareTax, taxOverride, needsTaxReason } from './map/tax.js';
@@ -227,10 +227,26 @@ async function realmMismatch(run) {
 
 /** The mapper context for one link (3.4 meta, the role and line). */
 export function ctxFor(run, link, collection, extra = {}) {
-  return { ...run.ctx, collection, link: link ? { role: link.role, qbo_line: link.qbo_line, meta: link.meta || {}, qbo_id: link.qbo_id } : { role: 'main', meta: {} }, ...extra };
+  return { ...run.ctx, collection, link: link ? { role: link.role, qbo_line: paymentLineOf(link), meta: link.meta || {}, qbo_id: link.qbo_id } : { role: 'main', meta: {} }, ...extra };
 }
 
-export const timeUp = (run) => Date.now() > run.deadline;
+/**
+ * The invoice line a payment link owns (4.9). A link written before its line was recorded has the
+ * invoice in its snapshot; every check that finds a Fishtape payment by its line uses this.
+ */
+export function paymentLineOf(link) {
+  if (!link) return '';
+  if (link.qbo_line) return link.qbo_line;
+  return link.qbo_entity === 'Payment' && (link.role || 'main') === 'main' ? str(link.snapshot?.invoiceRef) || '' : (link.qbo_line ?? '');
+}
+
+/**
+ * The worker is stopping (SIGTERM on a deploy): every pass ends at its next step as if out of time,
+ * so it releases its claims and its lease and queues its continuation instead of being killed mid-way.
+ */
+let shuttingDown = false;
+export const markShutdown = (on = true) => { shuttingDown = Boolean(on); };
+export const timeUp = (run) => shuttingDown || Date.now() > run.deadline;
 
 // ---- transactions and the brake -------------------------------------------------------------------
 
@@ -339,11 +355,11 @@ export async function finishOutbox(tx, run, row) {
     [tx.tenantId, row.collection, row.record_id, run.epoch]);
 }
 
-/** Keep the outbox row for a later retry. */
+/** Keep the outbox row for a later retry; the row counts its own tries (for a record with no link yet, 5.8). */
 export async function deferOutbox(tx, run, row, at) {
   if (!row || run.shadow) return;
   await tx.query(
-    `UPDATE qbo_outbox SET not_before = $5, claimed_until = NULL, claimed_epoch = NULL
+    `UPDATE qbo_outbox SET not_before = $5, claimed_until = NULL, claimed_epoch = NULL, attempts = LEAST(attempts + 1, 1000)
       WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 AND claimed_epoch = $4`,
     [tx.tenantId, row.collection, row.record_id, run.epoch, at]);
 }
@@ -407,10 +423,24 @@ export async function linkFailure(run, link, row, e, { action = 'update', collec
     validation: ['error', e?.variant === 'amount' ? 'amount_rule' : 'validation'], permission: ['error', 'permission'],
     not_found: ['error', 'not_found'], duplicate_name: ['error', 'duplicate_name'], duplicate_number: ['error', 'duplicate_number'],
   }[kind];
-  const attempts = (link?.attempts || 0) + 1;
+  // A failure before the record's pending link exists (a dependency, a hold, a mapper fault) counts on
+  // its outbox row, so it too stops after the last backoff step instead of retrying every minute.
+  const attempts = (link ? link.attempts || 0 : Number(row?.attempts) || 0) + 1;
   const retry = !permanent && (e instanceof QboError ? e.retry !== false : true) && attempts < BACKOFF_MIN.length;
   const message = errorText(e);
   await txWrite(run, async (tx) => {
+    if (!link && !retry && row && row.op !== 'delete' && collection && recordId) {
+      // Given up: the record gets a link in error, so the office sees it and can Retry.
+      const rec = await loadRecord(tx, collection, recordId);
+      if (rec && !rec.deleted && !(await getLink(tx, collection, recordId))) {
+        await insertLink(tx, run, {
+          collection, record_id: recordId, qbo_entity: entityFor(collection, { kind: rec.data?.kind }), state: permanent ? permanent[0] : 'error',
+          reason: permanent ? permanent[1] : (kind === 'other' ? 'error' : kind), owner: ['jobs', 'purchaseOrders', 'timeEntries', 'stripePayouts'].includes(collection) ? 'fishtape' : 'both',
+        });
+        const l = await getLink(tx, collection, recordId);
+        if (l) await updateLink(tx, run, l.id, { attempts, last_error: message ? message.slice(0, 500) : null });
+      }
+    }
     if (link) {
       const state = retry ? (link.state === 'synced' || link.state === 'pending' ? link.state : 'pending') : permanent ? permanent[0] : 'error';
       await updateLink(tx, run, link.id, {
@@ -439,7 +469,7 @@ async function featureMissing(run, collection) {
 }
 
 /** Set a link to blocked or needs_review (or error) with a reason and finish the outbox row. */
-export async function holdLink(run, { link, collection, recordId, entity, role = 'main', row, state, reason, message = null, dependsOn = null, owner, label, review = null }) {
+export async function holdLink(run, { link, collection, recordId, entity, role = 'main', row, state, reason, message = null, dependsOn = null, owner, label, review = null, originActor = null }) {
   if (run.shadow) {
     await shadowLog(run, { direction: 'push', action: 'hold', collection, recordId, label, message: `Would wait: ${reason}` });
     return null;
@@ -448,6 +478,10 @@ export async function holdLink(run, { link, collection, recordId, entity, role =
     let l = link ? await getLinkById(tx, link.id) : await getLink(tx, collection, recordId, role);
     const meta = { ...(l?.meta || {}) };
     if (dependsOn) meta.dependsOn = dependsOn; else delete meta.dependsOn;
+    // The outbox row (and with it who made the change) goes with this hold. A writer the origin rule
+    // holds for review is kept on the link, so the later re-queue (a feature back on, a mapping
+    // change, Retry) still goes to review instead of being sent as the system (5.2).
+    if (originActor) meta.originActor = originActor;
     if (l) l = await updateLink(tx, run, l.id, { state, reason, last_error: message, meta, ...(owner ? { owner } : {}) });
     else l = await insertLink(tx, run, { collection, record_id: recordId, role, qbo_entity: entity, state, reason, meta, owner, ...(message ? {} : {}) });
     if (message && l) l = await updateLink(tx, run, l.id, { last_error: message.slice(0, 500) });
@@ -540,8 +574,10 @@ export async function taxAfterWrite(run, link, collection, record, obj, { reques
     date = record.issueDate || undefined;
     entity = collection === 'invoices' ? 'Invoice' : 'Estimate';
   } else if (collection === 'bills' && L) {
-    // Purchases: QuickBooks must hold the recoverable tax printed on the bill (4.8).
-    const taxes = (L.taxes || []).map((t) => ({ id: t.id, pct: t.pct, cents: t.cents, baseCents: 0 }));
+    // Purchases: QuickBooks must hold the recoverable tax printed on the bill (4.8). A supplier refund
+    // is a Credit purchase with positive amounts (billBody): its tax is compared and sent the same way.
+    const sign = purchaseSign(L);
+    const taxes = (L.taxes || []).map((t) => ({ id: t.id, pct: t.pct, cents: sign * t.cents, baseCents: 0 }));
     totals = { taxes, taxCents: taxes.reduce((s, t) => s + t.cents, 0) };
     codeIds = [run.ctx.mappings.purchaseTaxCode?.[L.extra?.taxKey]].filter(Boolean);
     date = L.date || undefined;
@@ -615,15 +651,24 @@ export async function reconcile(run, link, o = {}) {
 
   // A payment's line that left its invoice (4.9): gone (a void, an unapply) is a remote delete; moved to
   // another invoice is a conflict on the invoice, never read as a delete plus a create.
-  if (collection === 'payments' && link.role === 'main' && link.qbo_entity === 'Payment' && link.qbo_line) {
+  const ownLine = collection === 'payments' && link.role === 'main' && link.qbo_entity === 'Payment' ? paymentLineOf(link) : '';
+  if (ownLine) {
     const invLines = (obj.Line || []).filter((l) => (l.LinkedTxn || []).some((t) => t.TxnType === 'Invoice') && toCents(l.Amount));
-    const mine = invLines.find((l) => l.LinkedTxn.some((t) => t.TxnType === 'Invoice' && String(t.TxnId) === String(link.qbo_line)));
-    if (!mine) {
-      if (invLines.length === 1 && B?.invoiceRef === link.qbo_line && String(record.data.invoiceId || '') && run.ctx.refs.qboIdFor('invoices', record.data.invoiceId) === link.qbo_line) {
+    const mine = invLines.find((l) => l.LinkedTxn.some((t) => t.TxnType === 'Invoice' && String(t.TxnId) === String(ownLine)));
+    // The one line left belongs to another Fishtape payment on the same QuickBooks payment: this
+    // payment's line was removed, not moved (a cheque for two invoices with one line taken off).
+    const remainInv = invLines.length === 1 ? String((invLines[0].LinkedTxn.find((t) => t.TxnType === 'Invoice') || {}).TxnId || '') : '';
+    const sibling = !mine && remainInv && await run.db.withTenant({ tenantId: run.tenantId }, async (tx) => (await linksByRemote(tx, 'Payment', link.qbo_id))
+      .some((l) => l.id !== link.id && l.collection === 'payments' && l.role === 'main' && !['unlinked', 'deleted_local', 'deleted_remote'].includes(l.state) && paymentLineOf(l) === remainInv));
+    const movable = !mine && invLines.length === 1 && !sibling;
+    const moved = movable && B?.invoiceRef === ownLine && String(record.data.invoiceId || '') && run.ctx.refs.qboIdFor('invoices', record.data.invoiceId) === ownLine;
+    // A person chose a side on the move (force): the merge reads the moved line and writes that choice.
+    if (!mine && !(movable && o.force)) {
+      if (moved) {
         if (run.shadow) return 'conflict';
         await txWrite(run, async (tx) => {
           await updateLink(tx, run, link.id, { state: 'conflict' });
-          await openConflict(tx, run, link, { kind: 'fields', label, reason: 'payment_moved', fields: [{ field: 'invoiceRef', label: 'Invoice', base: `QuickBooks #${link.qbo_line}`, fishtape: `QuickBooks #${link.qbo_line}`, quickbooks: `QuickBooks #${(invLines[0].LinkedTxn.find((t) => t.TxnType === 'Invoice') || {}).TxnId}` }] });
+          await openConflict(tx, run, link, { kind: 'fields', label, reason: 'payment_moved', fields: [{ field: 'invoiceRef', label: 'Invoice', base: `QuickBooks #${ownLine}`, fishtape: `QuickBooks #${ownLine}`, quickbooks: `QuickBooks #${remainInv}` }] });
           await finishOutbox(tx, run, row);
         });
         run.stats.conflicts++;
@@ -829,14 +874,16 @@ export async function reconcile(run, link, o = {}) {
     let state = keepState ? link.state : 'synced';
     let owner = link.owner;
     let reason = keepState ? link.reason : null;
-    if (report.taxShape && link.owner !== 'quickbooks') { state = 'needs_review'; owner = 'quickbooks'; reason = 'tax_shape'; }
+    // Only a hold this call makes opens the tax_shape review. A held link keeps its own review text.
+    let taxShapeNow = false;
+    if (report.taxShape && link.owner !== 'quickbooks') { state = 'needs_review'; owner = 'quickbooks'; reason = 'tax_shape'; taxShapeNow = true; }
     const updated = await updateLink(tx, run, link.id, {
       ...(collection === 'payments' && link.role === 'main' && link.qbo_entity === 'Payment' && result.merged.invoiceRef ? { qbo_line: String(result.merged.invoiceRef) } : {}),
       snapshot: { ...result.merged, ...Object.fromEntries(deferred.map((f) => [f, R[f] ?? null])), extra: L.extra }, sync_token: written?.SyncToken ?? link.sync_token, qbo_updated_at: lastUpdated(written),
       fishtape_version: patchedVersion ?? record.version, state, reason, owner, attempts: 0, last_error: null, next_attempt_at: null,
       meta: newMeta, prev_values: prevValues,
     });
-    if (state === 'needs_review') await openReview(tx, run, updated, { reason, label, message: 'QuickBooks uses tax codes Fishtape cannot show exactly on this document.' });
+    if (taxShapeNow) await openReview(tx, run, updated, { reason, label, message: 'QuickBooks uses tax codes Fishtape cannot show exactly on this document.' });
     if (link.state === 'conflict') await closeConflict(tx, link.id, 'system');
     if (link.state !== 'synced' && state === 'synced') await requeueDependents(tx, link);
     await finishOutbox(tx, run, row);
@@ -913,12 +960,14 @@ async function outboxWaiting(run, link) {
 async function remoteHolds(run, link, collection, doc, L, R, B, toRemote, obj) {
   const filed = taxFiledThrough(run.ctx.features, run.ctx.mappings);
   const money = ['lines', 'date', 'taxes', 'number', 'amountCents'];
+  // A void takes the whole invoice out of the GST return (4.8): a money change like any other.
+  const voiding = collection === 'invoices' && toRemote.includes('status') && L.status === 'void';
   if (DOCS.has(collection) && toRemote.includes('lines') && needsTaxReason(doc)) {
     return { state: 'blocked', reason: 'tax_reason', message: 'Pick why this has no tax.' };
   }
   if ((DOCS.has(collection) || collection === 'bills') && filed) {
     const dates = [L.date, B?.date, R.date].filter(Boolean);
-    if (dates.some((d) => d <= filed) && toRemote.some((f) => money.includes(f))) {
+    if (dates.some((d) => d <= filed) && (voiding || toRemote.some((f) => money.includes(f)))) {
       return { state: 'needs_review', reason: 'filed_period', message: 'This changes a GST period already filed.' };
     }
   }
@@ -1050,15 +1099,35 @@ export async function syncTenant(deps, tenantId, o = {}) {
   const run = await makeRun(deps, tenantId, { epoch: o.epoch, budgetMs: o.budgetMs, purpose: o.purpose || 'sync', workerId: o.workerId });
   const empty = { pushed: 0, pulled: 0, conflicts: 0, errors: 0, shadow: 0 };
   if (!run) return { ...empty, skipped: 'not_connected' };
+  try {
+    return await syncPass(run, deps, tenantId, o, empty);
+  } finally {
+    await stampPush(run);
+  }
+}
+
+/**
+ * Record when this run last wrote to QuickBooks (Status lastPushAt, HQ health). Every write goes
+ * through the client, which notes its last successful Core call; a failure here never fails the pass.
+ */
+export async function stampPush(run) {
+  const at = run?.client?.wroteAt;
+  if (!at) return;
+  await run.db.withTenant({ tenantId: run.tenantId }, (tx) => tx.query(
+    'UPDATE qbo_connections SET last_push_at = GREATEST(COALESCE(last_push_at, $2), $2) WHERE tenant_id = $1', [run.tenantId, at]), { write: true }).catch(() => {});
+}
+
+async function syncPass(run, deps, tenantId, o, empty) {
   if (run.conn.state !== 'active') return { ...empty, skipped: run.conn.state };
   // Out of practice mode with the wizard's remaining phases still to run: they go first (6.4).
   if (!run.shadow && ['shadow_linked', 'apply_queued', 'applying'].includes(run.conn.setup?.phase)) return { ...empty, skipped: 'setup' };
   const direction = o.direction || 'both';
   let more = false;
   try {
-    if (o.sweep) await runSweep(deps, tenantId, { run });
+    if (o.sweep && (await runSweep(deps, tenantId, { run })).more) run.sweepMore = true;
     const pulls = direction !== 'push' && await pullAllowed(run);
     if (pulls) await runPull(run, { full: Boolean(o.full) });
+    else if (direction !== 'push') run.pullSkipped = true; // over the read budget: the caller backs off
     if (direction !== 'pull' && !timeUp(run)) more = await runPush(run);
     if (direction === 'both' && pulls && run.wrote && !timeUp(run)) await runPull(run, {});
     if (timeUp(run)) more = true;
@@ -1074,7 +1143,7 @@ export async function syncTenant(deps, tenantId, o = {}) {
     throw e;
   }
   await releaseClaims(run);
-  return { ...run.stats, more };
+  return { ...run.stats, more, ...(run.sweepMore ? { sweepMore: true } : {}), ...(run.pullSkipped ? { pullSkipped: true } : {}) };
 }
 
 /**
@@ -1154,8 +1223,11 @@ export async function reconcileLink(deps, tenantId, linkId, { remote = null, for
  * Push one record now (Send now, Retry, Send as new). `asNew` replaces an unlinked tombstone with a
  * fresh create. Takes no lease itself: the caller holds it.
  */
-export async function pushRecord(deps, tenantId, collection, id, { force = false, asNew = false, epoch } = {}) {
-  const run = await makeRun(deps, tenantId, { epoch, purpose: 'sync' });
+export async function pushRecord(deps, tenantId, collection, id, o = {}) {
+  const run = await makeRun(deps, tenantId, { epoch: o.epoch, purpose: 'sync' });
+  try { return await pushRecordRun(run, deps, tenantId, collection, id, o); } finally { await stampPush(run); }
+}
+async function pushRecordRun(run, deps, tenantId, collection, id, { force = false, asNew = false, epoch } = {}) {
   assertActive(run);
   if (asNew) {
     await txWrite(run, async (tx) => {
@@ -1171,7 +1243,10 @@ export async function pushRecord(deps, tenantId, collection, id, { force = false
     `UPDATE qbo_outbox SET claimed_until = now() + interval '5 minutes', claimed_epoch = $4
       WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 RETURNING *`, [tx.tenantId, collection, id, run.epoch])).rows[0] || null);
   try {
-    return await processRecord(run, collection, id, { force, sendNow: force, actorType: 'user', ...(row ? { row, stale: row.stale, held: row.held } : {}) });
+    // Without force the waiting row keeps its own actor, so an API key's, the assistant's or a field
+    // user's edit still goes to origin review (5.2); force is the office approving it (7.5).
+    const actorType = force ? 'user' : (row?.actor_type || 'user');
+    return await processRecord(run, collection, id, { force, sendNow: force, actorType, ...(row ? { row, stale: row.stale, held: row.held } : {}) });
   } catch (e) {
     if (row) await run.db.withTenant({ tenantId }, (tx) => tx.query('UPDATE qbo_outbox SET claimed_until = NULL, claimed_epoch = NULL WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 AND claimed_epoch = $4', [tenantId, collection, id, run.epoch])).catch(() => {});
     if (e instanceof BrakeError) { await tripBrake(run, e.count); return 'paused'; }
@@ -1192,9 +1267,18 @@ export async function amountDueAdjustment(tx, invoiceId) {
   return Number.isInteger(n) ? n : 0;
 }
 
-/** Enqueue the next part of a long pass under its own key (the running job holds qbo_sync:<id>, 5.8). */
-export function enqueueContinuation(q, tenantId) {
-  return enqueue(q, { kind: 'qbo_sync', tenantId, dedupeKey: `qbo_sync:${tenantId}:cont`, runAt: new Date(Date.now() + 5_000), maxAttempts: 5 });
+/**
+ * The next key of a job chain: `<base>:cont`, or `<base>:cont2` when the running job holds `:cont`.
+ * A running job keeps its own dedupe key taken, so a chain that always used one key would end at
+ * its second link (5.8).
+ */
+export function nextKey(base, runningKey = null) {
+  return runningKey === `${base}:cont` ? `${base}:cont2` : `${base}:cont`;
+}
+
+/** Enqueue the next part of a long pass under its own key (the running job holds its key, 5.8). */
+export function enqueueContinuation(q, tenantId, runningKey = null, { payload = undefined, delayMs = 5_000 } = {}) {
+  return enqueue(q, { kind: 'qbo_sync', tenantId, payload, dedupeKey: nextKey(`qbo_sync:${tenantId}`, runningKey), runAt: new Date(Date.now() + delayMs), maxAttempts: 5 });
 }
 
 export { entityFor };

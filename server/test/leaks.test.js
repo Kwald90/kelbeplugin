@@ -208,8 +208,10 @@ describe('QuickBooks: no token, realm id, verifier, ticket or customer name esca
     const startUrl = new URL(JSON.parse(tk.body).url);
     const ticket = startUrl.searchParams.get('ticket');
     seen.push(ticket);
-    keep(await qapp.inject({ method: 'GET', url: `${startUrl.pathname}${startUrl.search}` }));
-    const post = keep(await qapp.inject({ method: 'POST', url: '/api/v1/qbo/oauth/start', headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: `ticket=${ticket}` }));
+    const page = keep(await qapp.inject({ method: 'GET', url: `${startUrl.pathname}${startUrl.search}` }));
+    const pre = page.cookies.find((c) => c.name === 'ft_qbo_pre').value;
+    seen.push(pre);
+    const post = keep(await qapp.inject({ method: 'POST', url: '/api/v1/qbo/oauth/start', headers: { 'content-type': 'application/x-www-form-urlencoded' }, cookies: { ft_qbo_pre: pre }, payload: `ticket=${ticket}` }));
     const flow = post.cookies.find((c) => c.name === 'ft_qbo_flow').value;
     seen.push(flow);
     const back = await fake.authorize(post.headers.location, { realmId: REALM });

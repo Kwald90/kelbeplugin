@@ -313,7 +313,7 @@ needs to differ, the contract changes first in the owning workstream's branch.
   (`stripe_fee_fetch`), payout webhooks land in `stripe_payouts` and are itemised from Stripe's
   balance transactions (`stripe_payout_fetch`); the amount due (pay link and invoice status) is one
   seam, `amountDueCents`, that the QuickBooks sync adjusts. HQ shows health (counts only), pause and
-  release; `qbo_alerts` emails HQ. Support: [runbooks/quickbooks-support.md](runbooks/quickbooks-support.md).
+  release; `hq_qbo_alerts` (in the general pool) emails HQ. Support: [runbooks/quickbooks-support.md](runbooks/quickbooks-support.md).
 - Outside the code: Kelvin's checklist (contract 1.3) and open questions (section 13), in the
   BACKLOG.
 

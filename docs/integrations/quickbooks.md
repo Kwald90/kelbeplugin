@@ -1,10 +1,13 @@
 # QuickBooks Online two-way sync: the contract
 
-Status: contract, revision 2, 2026-10-20. Nothing here is built yet. Implementers in parallel worktrees
-build from this file alone. If the code needs to differ from it, change this file first (in the owning
-workstream's branch) and say so in the merge report. Revision 2 folds in an accounting/data-integrity
-review and a security/operations review; findings that were not taken are listed with reasons in
-section 14.
+Status: revision 3, 2026-10-20: **built**. Six workstreams built it from revision 2 and an integrator
+merged them; the code runs against the fake QuickBooks server (11.1) until Intuit keys exist. Revision 3
+makes this file say what the code does: where the code differed from revision 2 and the code was right,
+the text here was changed, and section 15 lists every such change by section with its reason. Kelvin's
+decisions stand (QuickBooks Online only, full two-way, everything in release 1, Pro and up; the defaults
+of section 13). From now on a change to the integration changes this file in the same commit. Revision 2
+folded in an accounting/data-integrity review and a security/operations review; findings that were not
+taken are listed with reasons in section 14.
 
 Words used here:
 
@@ -221,6 +224,13 @@ Fixed values: authorize `https://appcenter.intuit.com/connect/oauth2`, token
 
 With `QBO_ENVIRONMENT` unset, every QBO code path returns before touching the database (the records
 hook included). Edits made while it is unset are picked up later by the Fishtape-side sweep (5.12).
+Two jobs run anyway: `qbo_token_housekeeping` (it still disconnects closed tenants and retries their
+revokes) and `qbo_purge` (retention, 10.4); with no `qbo_*` rows they only open one tenant transaction
+each. The amount-due adjuster (4.9) is registered only when QuickBooks is on. A half-set server
+(`QBO_ENVIRONMENT` set but the client id or secret missing) reports `enabled = false` rather than failing
+at start-up (`set-env.sh` sets one value at a time); a bad `QBO_ENVIRONMENT` or `QBO_WRITES` value fails
+start-up. Functions that take a config accept the whole server config or `config.qbo`, which also
+carries `publicOrigin`, `tokenTimeoutMs` (15 s) and `scope`.
 
 ### 2.2 Connect (OAuth 2.0 authorization code)
 
@@ -239,11 +249,18 @@ OAuth "connect someone else's books to my tenant" attack. So it uses a one-time 
    /api/v1/qbo/oauth/start?ticket=` (public) does **not** consume the ticket. It checks the ticket
    exists, is unexpired and in stage `ticket`; for `returnTo: 'web'` it also requires an `ft_session`
    cookie belonging to the ticket's user (else the `state_invalid` result). It answers a small static
-   **interstitial** page (headers as the done page, plus `form-action 'self'` in the CSP): "Connect
+   **interstitial** page (headers as the done page, plus `form-action 'self' https://appcenter.intuit.com`
+   in the CSP; browsers apply `form-action` to the 302 that answers the POST, so `'self'` alone would
+   block the redirect to Intuit; tests use `QBO_OAUTH_BASE`): "Connect
    QuickBooks to the Fishtape company **<tenant name>**, requested by **<user email>**", a Connect button
-   and a Cancel link. The button POSTs the ticket in a hidden field to `POST /api/v1/qbo/oauth/start`
-   (public, `csrf: false`; the single-use ticket is the CSRF token). The POST consumes the ticket once:
-   it must exist, be unexpired and in stage `ticket`. It generates `state` (32 random bytes, base64url)
+   and a Cancel link. The page also sets `ft_qbo_pre=<pre-flow>` (32 random bytes; HttpOnly, Secure,
+   **SameSite=Strict**, `Path=/api/v1/qbo/oauth`, Max-Age 120) and stores `sha256(pre-flow)` on the
+   ticket. The button POSTs the ticket in a hidden field to `POST /api/v1/qbo/oauth/start` (public,
+   `csrf: false`). The POST consumes the ticket once: it must exist, be unexpired, in stage `ticket`,
+   carry the `ft_qbo_pre` cookie whose hash the ticket holds, not come from another site
+   (`Sec-Fetch-Site`, when sent, is `same-origin`) and, for `web`, come with the issuer's session. A
+   ticket alone (an attacker's own) therefore cannot be auto-submitted from another site past the
+   interstitial (TM-QBO-01). The pre-flow cookie is cleared. It generates `state` (32 random bytes, base64url)
    and `flow` (32 random bytes), stores
    `sha256(state)`, `sha256(flow)` and, when PKCE is on, the sealed PKCE verifier; moves the row to stage
    `authorizing` with a new 10-minute expiry; sets cookie `ft_qbo_flow=<flow>` (HttpOnly, Secure,
@@ -257,8 +274,7 @@ OAuth "connect someone else's books to my tenant" attack. So it uses a one-time 
    It checks, in order, and stops at the first failure:
    - the state row exists, stage `authorizing`, unexpired, and `sha256(cookie ft_qbo_flow)` equals its
      flow hash (else `state_invalid`); the row is deleted now (single use);
-   - for `web`, when an `ft_session` cookie is present it must belong to the same user (else
-     `state_invalid`);
+   - for `web`, the `ft_session` cookie must belong to the same user (else `state_invalid`);
    - the user is still an active owner or admin of that tenant and the tenant is entitled (else
      `forbidden` / `plan`);
    - Intuit sent `error` instead of `code` (the user cancelled): `denied`;
@@ -284,29 +300,34 @@ OAuth "connect someone else's books to my tenant" attack. So it uses a one-time 
 4. **Done page.** `GET /api/v1/qbo/oauth/done?result=` (public) returns a tiny static HTML page with no
    data: "QuickBooks is connected. Go back to Fishtape." (or the error in words, from a fixed table).
    Headers: `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'`, `Cache-Control:
-   no-store`. The iOS app polls `GET /api/v1/qbo/status` every 3 seconds while the browser is open and
-   closes it when the state changes.
+   no-store`. The iOS app polls `GET /api/v1/qbo/status` every 3 seconds while the browser is open (for
+   at most ten minutes) and reloads when the state changes, closing the Safari sheet with
+   `closeExternal()` (`electrical-app/js/lib/native.js`, Capacitor `Browser.close`).
 
 PKCE: Intuit's pages do not document PKCE for confidential clients. Before W1 merges, someone reads the
 discovery document (`https://developer.api.intuit.com/.well-known/openid_configuration`) by hand once
 and records the answer in 11.4 (tests never call real Intuit URLs). If it lists
 `code_challenge_methods_supported` containing `S256`, set the constant `QBO_PKCE = true` in
 `server/src/qbo/oauth.js`, else `false`. The state/flow binding above is the CSRF protection either way.
+**Recorded 2026-10-20:** the discovery document lists no `code_challenge_methods_supported`, so
+`QBO_PKCE = false`. The PKCE code path is built and the fake server supports it.
 
 Residual risk (threat model TM-QBO-01): an attacker sends a fresh ticket URL (their own tenant) to a
 QuickBooks admin of another company. Within 120 seconds that admin must open it, read past the
 interstitial that names the attacker's Fishtape company and email, press Connect and approve Intuit's
-consent screen. Only then would the admin's company connect to the attacker's tenant. Tickets are
-single use, expire in 120 s and are only issued to MFA-verified owners and admins; `web` tickets need the
-issuing user's own session at start; the connect notification names the QuickBooks company to every
-office user.
+consent screen. Only then would the admin's company connect to the attacker's tenant. A page that
+auto-submits the ticket cannot skip the interstitial: the POST needs the interstitial's own SameSite=Strict
+pre-flow cookie. Tickets are single use, expire in 120 s and are only issued to MFA-verified owners and
+admins; `web` tickets need the issuing user's own session at start, at the POST and at the callback; the
+connect notification names the QuickBooks company to every office user.
 
 ### 2.3 Token storage
 
 Stored with `services/secrets.js` `setSecret` (envelope AES-256-GCM, AAD bound to tenant and name).
 Three new names, marked `internal: true`. For an internal name `isSecretName(name)` returns **false**, so
-the existing `GET`, `PUT` and `DELETE /api/v1/secrets/:name` routes (`routes/v1/admin.js`) answer 400
-`Unknown secret name` without any change to `admin.js`, and `listSecrets` never lists them. QBO code
+the existing `PUT` and `DELETE /api/v1/secrets/:name` routes (`routes/v1/admin.js`) answer 400
+`Unknown secret name` without any change to `admin.js`, and `listSecrets` never lists them. There is no
+`GET /api/v1/secrets/:name` route, so a read of these names answers 404. QBO code
 reads and writes them through `getSecret`/`setSecret`/`deleteSecret` with the option `{ internal: true }`;
 without that option those functions refuse internal names.
 
@@ -397,7 +418,33 @@ push, which also catches writes made while QBO was unset on the server or that b
 
 Plan changes: a tenant whose effective plan drops below Pro is set to `paused/plan` by the next sync job
 (it checks `tenantHas(t, 'quickbooks')` at the start); an upgrade resumes it the same way. Data and
-tokens are kept (for at most 60 days, 2.4). `paused_since` records when any pause began.
+tokens are kept (for at most 60 days, 2.4). `paused_since` records when the current pause reason began:
+it restarts when the reason changes (so the 60-day plan clock starts at the plan pause) and is kept when
+the same reason repeats.
+
+**Pause rules** (W1 `connection.js` `setPaused`, `PAUSE_ORDER`):
+
+- Precedence `hq` > `brake` > `plan` > `budget` > `tenant_budget` > `user`. A weaker pause never replaces
+  a stronger one: a `user` pause request on an HQ pause answers 409 `qbo_pause_locked`; other weaker
+  requests change nothing (sync is already off). `hq` is lifted only by HQ.
+- Resuming with reason R lifts only a pause of reason R; `user` also lifts `brake`. The office pause route
+  answers 409 `qbo_pause_locked` for `hq`, `plan`, `budget` and `tenant_budget` pauses. A `brake` pause
+  stores the tripped count in `brake_allow_count`; resuming needs `allowCount` ≥ that count (else 409
+  `qbo_brake_count` with `details.count`) and opens an allow hour (`brake_allow_until` = now + 1 hour)
+  during which the brake limit is 500 + `brake_allow_count` (5.8).
+- A pause survives `reconnect_needed`: `markReconnectNeeded` keeps `pause_reason`, `paused_since` and the
+  real `state_before`, and a reconnect returns to `paused` when `pause_reason` is set.
+- The resume target (`RESUME_STATE_SQL`) is `state_before` when it is `setup` or `active`; otherwise
+  `active` when `setup.phase = 'done'`, else `setup`.
+- Every move back to `active` queues `qbo_sync` with payload `{ sweep: true }` under its own dedupe key
+  `qbo_sync:<tenantId>:sweep` (`connection.js` `enqueueSync`; HQ resume too), so a plain `qbo_sync`
+  already queued under `qbo_sync:<tenantId>` never swallows the sweep. The `qbo_sync` handler also runs
+  the sweep for payload `reason: 'hq_resume'` and when `fishtape_cursor` is null.
+- While paused (any reason) or in `setup`, sync is off for the API too: conflict choices and API actions
+  that call Intuit answer 409 `qbo_paused` (with `details.pauseReason`) or `qbo_not_ready` (W3
+  `engine.js` `assertActive`, shared by the job and API paths). Only unlink, a merged-conflict unlink and
+  the choices that never call QuickBooks run (5.6). Relinking (`PUT …/link`) reads QuickBooks, so it is
+  refused while paused.
 
 Tenant lifecycle: the dispatcher and every `qbo_*` handler work only on tenants whose `tenants.status`
 is `active` (5.8). `qbo_token_housekeeping` disconnects, with revoke and purge, every connection whose
@@ -409,7 +456,8 @@ a `suspended` tenant is not synced and is auto-disconnected after 60 days (2.4).
 ### 2.6 Reconnect
 
 Same flow as 2.2 with `reconnect: true`, allowed in states `reconnect_needed`, `paused`, `active` and
-`disconnected` (before purge). The new realm and environment must equal the stored ones; otherwise
+`disconnected` (before purge); in `setup` `POST /api/v1/qbo/connect` answers 409
+`qbo_reconnect_not_allowed`. The new realm and environment must equal the stored ones; otherwise
 `wrong_company`, and the revoke rule of 2.2 decides whether the new token is revoked. After success:
 state returns to what it was before (`active` or `setup`; from `disconnected`, `active` if the wizard had
 been applied, else `setup`), and a `qbo_sync` job runs the Fishtape-side sweep (5.12), then CDC from
@@ -422,10 +470,16 @@ been applied, else `setup`), and a `qbo_sync` job runs the Fishtape-side sweep (
 
 1. Fence the engine: increment `lease_epoch` and clear `lease_until`, so a pass still running stops
    before its next write (5.8 checks the epoch on every write).
-2. Revoke the refresh token at Intuit (15 s timeout). If the revoke fails, the sealed refresh token is
-   moved to the platform table `qbo_revoke_pending` (3.2) and `qbo_token_housekeeping` retries it daily
-   for 14 days (then deletes it and logs `revoke_gave_up`). The token is never just dropped while the
-   grant may still be live.
+2. Revoke the refresh token at Intuit (15 s timeout), but only when `qbo_realm_owner(realm_hash)` is
+   null or this tenant; when another tenant holds the realm the revoke is skipped (nothing queued) and
+   the secrets are just deleted. If the revoke fails, the sealed refresh token is moved, with its
+   `realm_hash`, to the platform table `qbo_revoke_pending` (3.2) and `qbo_token_housekeeping` retries it
+   daily for 14 days (then deletes it and logs `revoke_gave_up`). A retry deletes the row **without**
+   revoking (counted `held`) while `qbo_realms` holds that realm again (the same company reconnected
+   within 30 days, or another tenant after an HQ release): the revoke may end the whole grant. The token is
+   never just dropped while the grant may still be live. Before a `SECRETS_MASTER_KEY` rotation, drain
+   `qbo_revoke_pending` (run `qbo_token_housekeeping` until it is empty): its tokens are sealed under the
+   master key and `scripts/qbo-rehash.js` cannot re-seal them.
 3. Delete the three secrets, delete the `qbo_realms` row and queued `qbo_*` jobs for the tenant
    (`DELETE FROM jobs_queue WHERE tenant_id = $1 AND kind LIKE 'qbo_%' AND status = 'queued'`).
    `qbo_outbox` rows are **kept** (a reconnect of the same company pushes them); they go at purge.
@@ -507,12 +561,24 @@ company to a throwaway trial) must not lock TG out for good.
   Intuit's consent already proves QuickBooks admin rights over the books.
 - **HQ release.** HQ can release a realm from a tenant (`POST /api/hq/tenants/:id/quickbooks/release`,
   audited `hq.qbo.release`, reason required). With HQ's grants (3.2) it sets that tenant's connection to
-  `disconnected` (bumping `lease_epoch`) and deletes its `qbo_realms` row, in one transaction. The
-  tenant's next `qbo_token_housekeeping` run sees a `disconnected` connection that still has secrets and
-  finishes 2.7 (revoke, delete secrets).
+  `disconnected` (bumping `lease_epoch`) and deletes its `qbo_realms` row, in one transaction, and queues
+  `qbo_token_housekeeping` for that tenant (`{ tenantId, payload: { tenantId }, dedupeKey:
+  'qbo_token_housekeeping:<id>' }`, as the HQ close action does). That run sees a `disconnected`
+  connection that still has secrets and finishes 2.7: it revokes only when `qbo_realm_owner(realm_hash)`
+  is null or this tenant (another tenant may have connected the same company right after the release,
+  TM-QBO-12), otherwise discards the tokens; it deletes the secrets and sets `disconnected_at` and
+  `purge_after`, which HQ has no grant to write. The per-company run works on closed tenants too, as an
+  exception to the active-only rule of 5.8. Release needs an **HQ admin** (it is destructive); pause and
+  resume are open to HQ staff.
 - **HQ pause.** `POST /api/hq/tenants/:id/quickbooks/pause` `{ paused }` (audited `hq.qbo.pause`) sets
   `paused/hq` (keeping `state_before`, bumping `lease_epoch`), or puts back `state_before`. Only HQ can resume an `hq`
-  pause.
+  pause. Only `setup`, `active` and `paused` connections can be HQ-paused (`reconnect_needed` answers 409).
+  An HQ pause over the company's own pause records the earlier reason in the `hq.qbo.pause` audit meta
+  (`from: { state, pauseReason }`); the HQ resume gives that pause back (default `user`). A resume to
+  `active` queues the sweep under `qbo_sync:<tenantId>:sweep` (2.5).
+- **Epoch bump by HQ.** HQ sets `lease_epoch` to the clock time in milliseconds rather than `lease_epoch +
+  1` (written before HQ had SELECT on the column). That value is larger than and different from any epoch a
+  worker holds, so the engine's fencing compares epochs by **equality only**, never by order.
 
 ---
 
@@ -594,6 +660,8 @@ CREATE POLICY qbo_api_usage_read ON qbo_api_usage FOR SELECT USING (true);
 CREATE POLICY qbo_api_usage_insert ON qbo_api_usage FOR INSERT WITH CHECK (tenant_id = app_tenant_id());
 CREATE POLICY qbo_api_usage_update ON qbo_api_usage FOR UPDATE USING (tenant_id = app_tenant_id())
   WITH CHECK (tenant_id = app_tenant_id());
+-- Retention (13 months, 10.4): qbo_purge deletes a tenant's old months under withTenant.
+CREATE POLICY qbo_api_usage_delete ON qbo_api_usage FOR DELETE USING (tenant_id = app_tenant_id());
 
 -- Refresh tokens whose revoke failed (disconnect, purge, tenant close). Survives tenant deletion on
 -- purpose (no FK), so a live grant is never forgotten. Retried daily for 14 days.
@@ -601,6 +669,9 @@ CREATE TABLE qbo_revoke_pending (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   environment   text NOT NULL CHECK (environment IN ('sandbox', 'production')),
   token_sealed  text NOT NULL CHECK (length(token_sealed) <= 2000),   -- sealed with AAD 'qbo-revoke:' || id
+  -- The realm the token was for. A retry never revokes while a tenant holds that realm again (the same
+  -- company reconnected, or another tenant after an HQ release): the revoke may end the whole grant.
+  realm_hash    bytea CHECK (realm_hash IS NULL OR length(realm_hash) = 32),
   attempts      integer NOT NULL DEFAULT 0,
   next_try_at   timestamptz NOT NULL DEFAULT now(),
   created_at    timestamptz NOT NULL DEFAULT now()
@@ -611,7 +682,7 @@ CREATE TABLE qbo_revoke_pending (
 CREATE TABLE qbo_platform_events (
   id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   at          timestamptz NOT NULL DEFAULT now(),
-  kind        text NOT NULL CHECK (kind ~ '^[a-z_]{2,40}$'),
+  kind        text NOT NULL CHECK (kind ~ '^[a-z][a-z0-9_]{1,39}$'),   -- digits allowed: intuit_5xx
   -- platform_credentials, invalid_grant, reconnect_needed, webhook_signature, intuit_5xx, safety_brake,
   -- realm_mismatch, revoke_gave_up, budget_threshold
   environment text CHECK (environment IN ('sandbox', 'production')),
@@ -865,7 +936,7 @@ GRANT SELECT, INSERT, DELETE ON qbo_realms TO fishtape_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON qbo_oauth_states, qbo_revoke_pending TO fishtape_app;
 GRANT SELECT, INSERT, DELETE ON qbo_platform_events TO fishtape_app;
 GRANT SELECT ON qbo_platform_events TO fishtape_hq;
-GRANT SELECT, INSERT, UPDATE ON qbo_api_usage TO fishtape_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON qbo_api_usage TO fishtape_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON qbo_connections, qbo_links, qbo_outbox, qbo_inbox, qbo_conflicts,
   qbo_sync_log, qbo_mappings, qbo_reference, qbo_candidates, stripe_payouts TO fishtape_app;
 
@@ -873,9 +944,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON qbo_connections, qbo_links, qbo_outbox, 
 GRANT SELECT ON qbo_api_usage TO fishtape_hq;
 GRANT SELECT (tenant_id, environment) ON qbo_realms TO fishtape_hq;
 GRANT DELETE ON qbo_realms TO fishtape_hq;                                   -- HQ release (2.9)
+-- lease_epoch is read by the HQ pause and release (SET lease_epoch = lease_epoch + 1).
 GRANT SELECT (tenant_id, environment, state, state_before, pause_reason, paused_since, reconnect_reason,
   features, connected_at, refresh_expires_at, refresh_hard_expires_at, last_pull_at, last_push_at,
-  last_webhook_at, last_check_at, throttled_until, disconnected_at) ON qbo_connections TO fishtape_hq;
+  last_webhook_at, last_check_at, throttled_until, disconnected_at, lease_epoch) ON qbo_connections TO fishtape_hq;
 GRANT UPDATE (state, state_before, pause_reason, paused_since, lease_epoch, lease_until, updated_at)
   ON qbo_connections TO fishtape_hq;                                         -- HQ pause and release (2.9)
 GRANT SELECT (tenant_id, collection, state, reason, updated_at) ON qbo_links TO fishtape_hq;
@@ -1082,7 +1154,8 @@ No QBO fields are added to any existing record. The only existing-record changes
 
 `listSecrets` skips `internal` names and `isSecretName` returns false for them (2.3), so the generic
 secret routes refuse them; a W1 test sends `GET`, `PUT` and `DELETE /api/v1/secrets/qbo.refresh_token`
-(and the other two) as an owner and expects 400 with nothing stored or deleted. `providers.js` is **not** changed: QBO is not a paste-the-key
+(and the other two) as an owner and expects 400 for `PUT` and `DELETE` and 404 for `GET` (there is no read
+route), with nothing stored, deleted or returned. `providers.js` is **not** changed: QBO is not a paste-the-key
 provider and has no `PROVIDERS` entry, so `GET /api/v1/integrations` and `PUT /integrations/:provider`
 never touch these names. The `integration_settings` and `integration_events` CHECK constraints are not
 changed either; QBO keeps its own status tables.
@@ -1115,7 +1188,7 @@ Direction: **both** (two-way), **push** (Fishtape to QBO only), **pull** (QBO to
 
 | Fishtape | QBO | Direction | Created in QBO when | Created in Fishtape when |
 | --- | --- | --- | --- | --- |
-| `clients` | `Customer` (top level) | both | a client is created after connect, or the wizard says so | a new active top-level QBO customer appears, or a pulled document needs it |
+| `clients` | `Customer` (top level) | both | a client is created after connect, or the wizard says so | a pulled document needs it; with `importCustomers: 'all'` also when a new active top-level QBO customer appears (under the default `'active'` a new customer alone creates nothing) |
 | `jobs` | `Customer` with `Job: true` (sub-customer) | push (+ link to existing projects) | first needed by a pushed estimate, invoice, bill, PO or time entry, when the option `jobsAsSubCustomers` is on | never (wizard can link) |
 | `items` | `Item` (NonInventory on create) | both | first used on a pushed document (option `items: 'on_use'`, default) or always (`'all'`) | a new active Service, NonInventory or Inventory item appears (Category and Group ignored) |
 | `employees` | `Employee` (or `Vendor` for subcontractors) | link | never | never |
@@ -1296,12 +1369,21 @@ Pulled QBO lines become Fishtape lines:
   `round(materialCents × markupPct / 100)` for the record's current `markupPct`, it stays as
   `markupPct`; otherwise `markupPct` becomes 0 and the line becomes a material line.
 - `DescriptionOnly`: a Fishtape line with `kind: 'other'`, qty 0, unitCents 0 and the text.
-- `DiscountLineDetail`: an `other` line, qty 1, negative amount, description "Discount".
+- `DiscountLineDetail`: an `other` line, qty 1, negative amount, keeping QBO's description (a fixed
+  "Discount" would never compare equal with what Fishtape pushes when `NEGATIVE_SALES_LINES` is false).
 - `SubTotalLineDetail`: ignored. `GroupLineDetail`: each inner line as above.
 
-Comparison and merge use the **canonical line** `{ itemRef, kind, description, amountCents, taxCodeId }`
+Comparison and merge use the **canonical line** `{ itemRef, description, amountCents, taxCodeId }`
 (qty and unit price are not compared; the amount is the money; the tax is compared as the QBO `TaxCode`
-id the line's key maps to, 4.8). For lines listed in `meta.lossyLines` the canonical description strips
+id the line's key maps to, 4.8). The canonical line also carries `kind`, `qty`, `unitCents` and `lineId`,
+but `kind` is not compared: QBO knows a line's kind only through its item and tax code, and comparing an
+inferred kind would make push and pull fight over linked price-book items. On a pull an unchanged line
+keeps Fishtape's own `kind`, `qty`, `labourHours` and `changeOrderId` through `meta.lineIds`. Bill lines
+compare without `taxCodeId` (a bill's tax is its own `taxes` field, compared as sorted `[id, cents]`
+pairs, and PST/RST is spread into the line amounts on both sides). Sales line descriptions are cut to
+1,000 characters (`LINE_DESC_MAX`) on both sides; lossy lines compare cut to 940 so the suffix always fits
+(`LOSSY_ROOM` 60); item SKUs are cut to 80. `meta.lineIds` and `meta.lossyLines` are keyed by line
+position, so the engine stores `linkMetaFromQbo` after every write and every pull. For lines listed in `meta.lossyLines` the canonical description strips
 the " (<Qty> × $<UnitPrice>)" suffix, so the lossy pull never ping-pongs, and a lossy line is never
 pushed back unless its amount, item or tax changed (then it is sent as qty 1 with the plain
 description).
@@ -1586,7 +1668,10 @@ Method keys are normalised before any mapping lookup: `cheque` and `check` are o
   + the registered adjustment) and uses it in `refreshInvoiceStatus` (paid when ≤ 0) and for the Stripe
   pay-link amount. W3 registers the adjustment through `registerAmountDueAdjuster(fn)` at start-up: for an
   invoice whose link has `meta.taxDeltaCents`, it returns that delta, so the customer is charged the QBO
-  total and a $1,120.00 QBO payment marks a $1,120.01 Fishtape invoice paid.
+  total and a $1,120.00 QBO payment marks a $1,120.01 Fishtape invoice paid. The server's status is the
+  one that counts: devices keep a server-set `paid` when at most 2 cents per charged tax rate is left and
+  the device changed no money, and otherwise use plain arithmetic (`lib/qbo-ui.js` `keepsServerPaid`,
+  `nextInvoiceStatus`; 15.4).
 
 **Stripe payments** (Fishtape payments with `source: 'stripe'`), the clearing-account pattern:
 
@@ -1761,7 +1846,8 @@ money values kept out of the record (below). The hook:
 6. upserts `qbo_outbox (collection, record_id, op, stale, held, actor_type, rank, not_before = now() +
    20 s)`. On conflict: keep the earliest `enqueued_at`; `stale = old OR new`; `held` = old merged with
    new; `op` = the new op; `actor_type` = the new one unless the old one is `api_key` or `agent` (a burst
-   that includes an API-key or agent write stays held for review); move `not_before` to now + 20 s;
+   that includes an API-key or agent write stays held for review), or the old one is `field_user` and the
+   new one `system` (the sweep or the wizard re-queueing a field user's record); move `not_before` to now + 20 s;
    clear `claimed_until` (a newer edit must not be deleted by the pass that claimed the older one, 5.3);
 7. when the connection is `active` (shadow mode included): enqueues `qbo_sync` with
    `dedupeKey: 'qbo_sync:<tenantId>'`, `runAt: now + 20 s`, `tenantId`, in the same transaction (the
@@ -1787,8 +1873,12 @@ upsert is not fresh, the collection is in the list above and the tenant has a `q
    `m.data` differs from the `record_history` row at `baseVersion` (when that row exists; else fall back
    to whole-record LWW plus the stale revert guard of 5.5).
 2. For each such field that is a **money** field (W2 `MONEY_RECORD_KEYS[collection]`, the record keys
-   behind the money fields of 5.5): if any `record_history` version after `baseVersion` was written by
-   `system:qbo` and changed that key, the device's value is **not** applied. The server value stays, and
+   behind the money fields of 5.5): if a QuickBooks pull wrote that key after `baseVersion`
+   (`qbo_links.meta.pulledKeys`: record key → the version the pull wrote; `record_history` keeps only
+   `overwritten` and `rejected` rows, so it cannot be scanned for every `system:qbo` version) and the
+   server value differs from the device's, the device's value is **not** applied. Every `system:qbo`
+   patch or delete also writes an `overwritten` history row of the version it replaces, so a device's
+   `baseVersion` can still be diffed in step 1. The server value stays, and
    the device value goes into `held` (`{ <key>: deviceValue }`) for the hook. The engine then opens a
    `fields` conflict with base = the value before the pull (`prev_values`), fishtape = the device value,
    quickbooks = R. This runs whatever the latest `updated_by` is (an office edit after the pull does not
@@ -1849,6 +1939,11 @@ the next pass). A crash leaves the claim to expire and the row is processed agai
    filterable, 11.4).
 5. Fault **6140** (duplicate DocNumber) or **6240** (duplicate name) on a link that has
    `createRequestId`: adopt-by-search first; only then the rules of 4.7 (Renumber) and 4.2 (names).
+   After a create that definitely did not land (6140, or the tax delete-again of 4.8) the request id
+   carries a generation (`meta.createGen`; generation 0 keeps the form above), so the next create is a
+   new request.
+6. A dependency pushed first on behalf of another record follows the origin rule with its **own**
+   outbox row's `actor_type` (`system` when it has none).
 
 **Updates, deletes and voids** send `?requestid=` = `requestIdFor([tenantId, link.id, op,
 fishtape_version, sync_token])`. A retry after a timeout reuses it. If the record changed in between,
@@ -1874,10 +1969,13 @@ A pull pass:
    Invoice,Payment,Bill,Purchase,PurchaseOrder,Deposit,Transfer&changedSince=<cdc_cursor − 2 min>`. Every
    CDC call asks for every entity and starts at the cursor, so a lost webhook for one entity is still
    caught by the next pass whatever triggered it (one call either way, so CorePlus use is the same).
-   More than 1,000 objects: split the window in halves until each call returns under 1,000. A cursor
-   older than 29 days triggers a **full reconcile**: query each entity page by page and reconcile all
-   links; linked ids missing from the results are read by id, and "not found" (or `status: 'Deleted'`)
-   is a delete.
+   More than 1,000 objects: CDC has no end time, so the next call starts from the newest
+   `LastUpdatedTime` seen (at most 20 calls a pass); invoice settlement waits until the last page (4.9). A
+   cursor older than 29 days triggers a **full reconcile**: each CDC entity except Deposit and Transfer is
+   queried, in rank order, for `MetaData.LastUpdatedTime >= <old cursor − 2 min>` (all pages, up to
+   50,000) and handled like a CDC batch, created objects included; then linked ids not seen are read by
+   id, and "not found" (or `status: 'Deleted'`) is a delete. The cursor moves only when the reconcile
+   finishes.
 2. **Echoes** (loop prevention, second layer, no read needed): an object whose `SyncToken` equals the
    link's `sync_token` is our own write coming back; nothing is written.
 3. **TimeActivity** (not in CDC): read by id (`select * from TimeActivity where Id in (...)`) for its inbox
@@ -1889,7 +1987,11 @@ A pull pass:
    Payment, Bill, Purchase, Deposit; TimeActivity; Transfer), then by `MetaData.LastUpdatedTime`. For
    each, first the checks that only set state: void detection (4.7), tax-inclusive (4.8). Then:
    - Linked: reconcile (5.5) with R = the object; then, for an invoice, the settlement step (4.9) and
-     `meta.qboBalanceCents`/`qboTotalCents`.
+     `meta.qboBalanceCents`/`qboTotalCents`. Settlement and the deposit payment run at the end of the
+     batch (every CDC page of the pass, or the whole full reconcile), after the batch's payments are
+     linked, so a payment is never also counted as a settlement.
+   - Not linked but carrying a pending link's marker (names: a pending create's exact name): adopted into
+     that link with B = null (**adopt-from-pull**, 5.3), never created a second time.
    - `status: 'Deleted'`: the delete rules of section 4.
    - Not linked: the creation rules of section 4.1 (create the Fishtape record and a link with
      `snapshot` = its canonical form), or ignore and log `skipped` at debug level.
@@ -1980,7 +2082,10 @@ snapshot moves past it. Device money values held by `records.js` (`held`, 5.2) a
 A `fields` conflict stores `[{ field, label, base, fishtape, quickbooks }]` (display values: money in
 cents, lines as a short list) and sets the link to `conflict`. While open, neither side is written for
 that record; later changes on either side re-run the merge, and if L and R become equal the conflict
-closes itself (`resolved`, `resolved_by: 'system'`).
+closes itself (`resolved`, `resolved_by: 'system'`). While a conflict is open, device values held for it
+(`qbo_outbox.held`, then `qbo_links.meta.held` once the outbox row is consumed, which happens when the
+conflict opens) count as L in every re-merge; the conflict closes only when L with the held values equals
+R, and held values equal to R are written to the record.
 
 Other kinds: `review` (`needs_review` links: tax shape, totals differ, tax inclusive, filed period, pay
 period locked, origin, payout items, wizard differences, name taken), `deleted` (deleted or voided on one
@@ -1996,10 +2101,20 @@ Resolve (`POST /api/v1/qbo/conflicts/:id/resolve`):
   documents QBO's lines and tax are replaced; for `origin`, `filed_period`, `payroll_locked` and
   `payout_items` it is the approval that sends the held write); `'quickbooks'` keeps `owner =
   'quickbooks'` (or drops the held write) and closes the conflict; `'unlink'` leaves a tombstone (below).
+  `'quickbooks'` on an `origin`, `filed_period` or `payroll_locked` review of a linked record returns
+  Fishtape to QuickBooks' values: B = L on the differing fields, then a forced merge writes QuickBooks'
+  values into Fishtape as `system:qbo`, so the dropped edit is never sent later. Push-only collections
+  (`purchaseOrders`, `timeEntries`, `jobs`) cannot be pulled back: they keep their values with
+  `meta.originRejected`, and every later send opens an origin review until someone approves (`'fishtape'`
+  or Send now with `force`). That choice makes no Intuit call for a push-only record, so it runs while
+  paused.
   For `name_taken`: `'link'` (link to the QBO customer) or `'create'` (create with a suffix).
 - `deleted`: `'restore'` (recreate on the side that deleted; a voided invoice is re-created as a new QBO
   invoice with a new number) or `'delete'` (delete or void on the other side, under 4.7 and 4.9 rules).
-- `merged`: `'unlink'` with `recordId` of the Fishtape record to unlink.
+- `merged`: `'unlink'` with `recordId`, one of the conflict's `recordIds` (both Fishtape records the merge
+  folded together; any other id is 400). Unlinking the conflict's own record leaves the other linked to
+  the record QuickBooks kept; unlinking the other one moves this link to the kept record (state
+  `synced`), as an uncontested merge does. No Intuit call either way.
 
 **Unlink** (from a resolution or `DELETE …/link`, 7.5) never deletes the link row: it becomes a
 tombstone (state `unlinked`, owner `none`, `qbo_id` kept for reference). No later Fishtape edit creates a
@@ -2105,7 +2220,11 @@ re-queues blocked links.
   outcome `shadow`, action, collection, record and the changed field names; links, snapshots and
   cursors do not move (the outbox rows stay, so switching to live sends them). The wizard in shadow
   applies phase 1 (links) only (6.4); switching to live runs the remaining phases. Recommended for a
-  first tenant's first week (checklist step 12).
+  first tenant's first week (checklist step 12). Shadow is paced like a live week: a pass moves the
+  `not_before` of the outbox rows it looked at one hour on (a newer edit makes its row due in 20 s;
+  going live makes every row due at once), and a shadow pull records `last_pull_at` and clears
+  `dirty_at` without moving the cursor, so the one-minute dispatcher does not queue a pass and a CDC
+  for the tenant every minute.
 
 ### 5.9 Webhook ingress
 
@@ -2146,6 +2265,13 @@ manager's iPad, offline, changes the invoice's notes.
    LWW by edit time decide; the stale revert guard then sees `dueDate` equal to `prev_values.dueDate` and
    does not push it back; because `dueDate` is an auto field, R wins and Fishtape is patched back to
    QBO's date.
+
+**PWA requirement (W4):** every editor of a synced collection sends `fields` = only the fields the person
+changed (the invoice and estimate `docEditor`, the purchasing `recordEditor`; `store.update` derives
+`fields` from the patch keys). A write whose `baseVersion` equals the server's version (fresh) stores the
+device's whole record by design, so an editor must never write fields it did not change, such as a
+status it last saw. The editors redraw when another device or QuickBooks changes a shown field; a field
+changed on both sides at the same moment takes the other side's value with a toast.
 
 Example 2, same money field: the bookkeeper changes INV-3001's lines in QuickBooks; the pull patches
 Fishtape. A foreman's iPad, offline with the old copy, also edited `lines`. On its stale push,
@@ -2410,7 +2536,11 @@ down), 404 `not_found`, 400 `validation_failed`.
 
 `state` is `not_connected` when there is no row. `companyName` is the QBO company name (office users
 may see it). `waitingOffline` counts outbox rows held while sync is off. `writesEnabled` is false when
-`QBO_WRITES=off`. The result `realm_in_use` adds `"takeoverOffer": true` for an admin with an open offer.
+`QBO_WRITES=off`. `takeoverOffer` (true for an admin with an open offer after `realm_in_use`) is sent
+in every response, also when there is no row. `setup` also carries `errors` and `finishedAt` (set when a
+scan or apply run finished; the PWA stops polling on it, since a finished scan's phase `scanned` still
+contains "scan"). A `brake` pause adds `brake: { count }` (the tripped count to allow). `features` also
+carries `taxFiledThrough` and `province` (2.8).
 
 ### 7.3 Webhook (route file `server/src/routes/v1/qbo-webhook.js`)
 
@@ -2423,7 +2553,7 @@ may see it). `waitingOffline` counts outbox rows held while sync is off. `writes
 | Method and path | Level | Request | Response |
 | --- | --- | --- | --- |
 | `POST /api/v1/qbo/setup/scan` | office | | 202 `{ setup }`; 429 `qbo_throttled` within 15 minutes of the last scan |
-| `GET /api/v1/qbo/setup/matches?kind=&status=&choice=&q=&cursor=&limit=` | office | | `{ data: [Candidate], cursor, more, counts }` |
+| `GET /api/v1/qbo/setup/matches?kind=&status=&choice=&cursor=&limit=` | office | | `{ data: [Candidate], cursor, more, counts }`; no `q`: candidate labels are customer names, and names never go in a URL (7.8). `counts` is `{ <status>: n }` |
 | `PUT /api/v1/qbo/setup/matches` | office | `{ choices: [{ id, choice, qboId?, fishtapeId?, fieldChoices?: { field: 'fishtape'\|'quickbooks' }, confirmed?: boolean }] }` (max 500) or `{ bulk: { kind, status, choice } \| { kind, fieldsFrom: 'fishtape'\|'quickbooks' } }` | `{ updated }` |
 | `GET /api/v1/qbo/setup/plan` | office | | `{ phases: [{ kind, link, createInQbo, createInFishtape, skip }], warnings: [{ code, message, count }], numbers: { invoice: { qboHighest, fishtapeNext }, estimate: {...} } }` |
 | `POST /api/v1/qbo/setup/apply` | office | `{ raiseNumbers?: boolean }` | 202 `{ setup }` |
@@ -2454,10 +2584,11 @@ their own company, not the realm id.
 | --- | --- | --- | --- |
 | `POST /api/v1/qbo/sync` | office | `{ direction: 'both'\|'push'\|'pull' }` | 202 `{ queued: true }`; `push` at most once a minute, `both`/`pull` at most once every 5 minutes per tenant (else 429 `qbo_throttled`, 5.11) |
 | `GET /api/v1/qbo/records/status?collection=&ids=` | office | `ids` comma list, max 200; omitted = every link of the collection | `{ data: { "<recordId>": RecordState } }` |
-| `GET /api/v1/qbo/records/:collection/:id` | office | | `{ state: RecordState, quickbooks: { entity, docNumber, updatedAt, totalCents?, balanceCents?, unappliedCents?, url }, log: [LogEntry] (last 20), conflict: Conflict\|null }`. Built from the link (snapshot, `meta.qboTotalCents`, `qboBalanceCents`, `unappliedCents`, `qbo_updated_at`): no QBO call. Add `?live=1` for a fresh read (one CorePlus call, counted, look-up limits apply). For clients, `balanceCents` is the QBO customer's balance from the last pull. |
-| `POST /api/v1/qbo/records/:collection/:id/sync` | office | `{ force?: boolean, asNew?: boolean }` | 202; also the Retry button and "Send to QuickBooks now" (pushes a draft). `asNew` (only on an `unlinked` tombstone): delete the tombstone and create in QBO |
+| `GET /api/v1/qbo/waiting?limit=` | office | `limit` max 200 | records waiting to be sent (link state `blocked`), newest first: `{ data: [{ collection, recordId, reason, message, label, since }] }` (the overview's "Waiting" count, 8.2) |
+| `GET /api/v1/qbo/records/:collection/:id` | office | | `{ state: RecordState, quickbooks: { entity, qboId, docNumber, updatedAt, totalCents?, balanceCents?, unappliedCents?, url }, log: [LogEntry] (last 20), conflict: Conflict\|null }` (`qboId` is the object's id in the company's own books, not the realm id). Built from the link (snapshot, `meta.qboTotalCents`, `qboBalanceCents`, `unappliedCents`, `qbo_updated_at`): no QBO call. Add `?live=1` for a fresh read (one CorePlus call, counted, look-up limits apply). For clients, `balanceCents` is the QBO customer's balance from the last pull. |
+| `POST /api/v1/qbo/records/:collection/:id/sync` | office | `{ force?: boolean, asNew?: boolean }` | 202 `{ queued: true, state }`: the push runs at once under the tenant lease and `state` is the link's state after it. `{}` is Retry: the record's waiting outbox row is claimed and pushed with its own writer (`actor_type`), so an API key's, the assistant's or a field user's change still goes to origin review. `force: true` is "Send to QuickBooks now" (also pushes a draft): the office user approves, the holds of 4.7, 4.8, 4.11 and the origin rule are passed, and when the link was `needs_review` or `blocked` the `qbo.send` audit records the approved hold (`meta.approved`). `asNew` (only on an `unlinked` tombstone): delete the tombstone and create in QBO |
 | `POST /api/v1/qbo/records/:collection/:id/renumber` | office | | `{ number }` (estimates and invoices with `duplicate_number`) |
-| `PUT /api/v1/qbo/records/:collection/:id/link` | office | `{ qboId }` | link to a different QBO object. The target must be the collection's entity type, exist and be active in QBO, and not be linked to another record (409 `qbo_already_linked`). The new link starts with B = null: every field that differs becomes a conflict, nothing is written either way (5.5). Audit `qbo.relink` |
+| `PUT /api/v1/qbo/records/:collection/:id/link` | office | `{ qboId }` | link to a different QBO object (it reads QuickBooks, so 409 `qbo_paused` while paused). The target must be the collection's entity type, exist and be active in QBO, and not be linked to another record (409 `qbo_already_linked`). The new link starts with B = null: every field that differs becomes a conflict, nothing is written either way (5.5). Audit `qbo.relink` |
 | `DELETE /api/v1/qbo/records/:collection/:id/link` | office | | unlink: the link becomes an `unlinked` tombstone (5.6); both records kept; audit `qbo.unlink` |
 | `GET /api/v1/qbo/checks?cursor=&limit=` | office | | the "Doesn't match" list of the last daily check (5.13): `{ data: [{ collection, recordId, label, kind: 'balance'\|'total'\|'clearing', fishtapeCents, quickbooksCents, checkedAt }], cursor, more }` |
 | `GET /api/v1/qbo/log?cursor=&limit=&outcome=&collection=&recordId=` | office | | `{ data: [LogEntry], cursor, more }` |
@@ -2465,8 +2596,11 @@ their own company, not the realm id.
 `RecordState`:
 
 ```json
-{ "state": "error", "reason": "tax_mismatch", "message": "QuickBooks tax $127.82, Fishtape $127.80. Check the tax code for GST/PST MB.", "syncedAt": "2026-10-21T15:39:40Z", "conflictId": null, "docNumber": "INV-3001" }
+{ "state": "error", "reason": "tax_mismatch", "owner": "both", "message": "QuickBooks tax $127.82, Fishtape $127.80. Check the tax code for GST/PST MB.", "syncedAt": "2026-10-21T15:39:40Z", "conflictId": null, "docNumber": "INV-3001" }
 ```
+
+`owner` `quickbooks` makes the PWA show "Edit in QuickBooks". `mismatch` is added when the daily check
+(5.13) listed the record.
 
 `url` is QBO's web link for the object (`https://app.qbo.intuit.com/app/invoice?txnId=<id>` and the
 matching paths; sandbox `https://app.sandbox.qbo.intuit.com/...`; **VERIFY** the paths). `LogEntry`:
@@ -2479,8 +2613,8 @@ Intuit support) and to HQ (column grant, 3.2); it identifies a request, not a cu
 | Method and path | Level | Request | Response |
 | --- | --- | --- | --- |
 | `GET /api/v1/qbo/mappings` | office | | `{ mappings, choices, required, suggestions }` |
-| `PUT /api/v1/qbo/mappings` | office | `{ set: [{ kind, key, value }], remove: [{ kind, key }] }` | same as GET; audit `qbo.mappings` |
-| `POST /api/v1/qbo/reference/refresh` | office | | 202; at most once every 5 minutes |
+| `PUT /api/v1/qbo/mappings` | office (`option.writeMode`: owner or admin) | `{ set: [{ kind, key, value }], remove: [{ kind, key }] }` | same as GET; audit `qbo.mappings`. Setting or removing `option.writeMode` (practice mode, Go live, 8.2) answers 403 `forbidden` to an office user. Setting `writeMode: 'live'` (or removing it) while it was `shadow` goes live: waiting outbox rows become due, and with `setup.phase = 'shadow_linked'` the remaining wizard phases are queued. Setting `option.stripeCutover` reads the clearing account's balance into `option.stripeClearingOpeningCents`. Removing an option is setting it back to its default under the same rules (engine-set keys are refused; removing `jobsAsSubCustomers` is checked against the lock) |
+| `POST /api/v1/qbo/reference/refresh` | office | | 202 `{ queued: true }`; at most once every 5 minutes |
 
 `mappings` is `{ "<kind>": { "<key>": value } }`. Values: QBO ids as strings for `item`, `taxCode`,
 `purchaseTaxCode`, `account`, `paymentMethod`, `depositTo`, `paidFrom`, `class`, `department`, `term`;
@@ -2530,9 +2664,15 @@ been pushed. Every PUT re-queues `error` and `blocked` links.
   "fields": [
     { "field": "lines", "label": "Lines", "base": "3 lines, $1,065.00", "fishtape": "4 lines, $1,215.00", "quickbooks": "3 lines, $1,105.00" },
     { "field": "date", "label": "Date", "base": "2026-10-20", "fishtape": "2026-10-20", "quickbooks": "2026-10-21" }
-  ]
+  ],
+  "reason": null, "resolution": null, "resolvedAt": null
 }
 ```
+
+`reason` is set for `review`, `deleted` and `merged` conflicts; a `review` stores its text in
+`fields[0].fishtape` (field `review`). A `merged` conflict adds `recordIds: [a, b]`, both Fishtape records
+the merge folded together; `resolve` takes `{ choice: 'unlink', recordId }` with one of them (5.6). While
+paused or in setup, a choice that calls Intuit answers 409 `qbo_paused` or `qbo_not_ready` (2.5).
 
 ### 7.8 Live look-up
 
@@ -2731,9 +2871,12 @@ HQ sees health, never customer data.
   to "Companies' integrations".
 - Queue health already lists `qbo_*` job kinds (`hq-health.js queueDetail`). Their `last_error` holds
   only the fixed-table messages of 5.8, never customer data or realm ids.
-- **Actions** on the tenant page (HQ staff, reason required, audited): "Pause QuickBooks sync" /
-  "Resume" and "Release QuickBooks company" (2.9), through `routes/hq-tenants.js`.
-- **Alerts** (W6 `server/src/qbo/alerts.js`, run by `qbo_alerts` every 10 minutes in the worker, email to
+- **Actions** on the tenant page (reason required, audited): "Pause QuickBooks sync" / "Resume" (HQ
+  staff) and "Release QuickBooks company" (HQ admin, 2.9), through `routes/hq-tenants.js`.
+- The tenant block also returns `recentErrors` (the last 10: `at`, `direction`, `action`, `collection`,
+  `errorCode`, `intuitTid`), `throttledUntil` and `disconnectedAt`; still no labels, messages, record ids
+  or company name. HQ returns `quickbooks: null` on a server without the 0150 tables.
+- **Alerts** (W6 `server/src/qbo/alerts.js`, run by `hq_qbo_alerts` every 10 minutes in the worker's general pool, email to
   `HQ_NOTIFY_EMAIL` through `platform-email.js`, at most one email per alert kind per hour). Sources:
   `qbo_platform_events` (3.2), `jobs_queue` (failed `qbo_*` jobs), `qbo_api_usage`, and, for the inbox
   backlog, a per-tenant `withTenant` loop over connected tenants like the dispatcher's:
@@ -2741,7 +2884,8 @@ HQ sees health, never customer data.
   minutes), `qbo_reconnect_spike` (3+ tenants entering `reconnect_needed` in an hour), `qbo_webhook_signature`
   (any failed signature in the last hour), `qbo_jobs_failing` (5+ failed `qbo_*` jobs in an hour),
   `qbo_inbox_backlog` (a tenant dirty for more than 2 hours while `active`), `qbo_intuit_5xx` (more than 20
-  Intuit 5xx answers in 10 minutes), `qbo_budget` (workspace at 70% and 90%; a tenant at 50%),
+  Intuit 5xx answers in 10 minutes), `qbo_budget` (workspace at 70% and 90%; a tenant at 50% and 80%, each
+  step once a month),
   `qbo_safety_brake` (any tenant), `qbo_realm_mismatch` (3.2), `qbo_revoke_gave_up`. `docs/compliance/
   logging-monitoring.md` and `docs/runbooks/incident-response.md` list them with the first steps.
 - HQ settings (`services/hq-settings.js envSettings`) shows `QBO_ENVIRONMENT`, `QBO_WRITES` and the
@@ -2805,8 +2949,8 @@ HQ sees health, never customer data.
 - Roles: every QBO route returns 403 to foreman, electrician, apprentice, crew sessions and API keys;
   connect, disconnect and takeover return 403 to office; every write route returns 403 `mfa_required` to a
   session without two-step verification.
-- Secrets: `GET`, `PUT` and `DELETE /api/v1/secrets/qbo.refresh_token`, `qbo.access_token` and
-  `qbo.realm_id` return 400 and change nothing (W1).
+- Secrets: `PUT` and `DELETE /api/v1/secrets/qbo.refresh_token`, `qbo.access_token` and
+  `qbo.realm_id` return 400 and change nothing; `GET` returns 404 (no such route) and no value (W1).
 - Leaks (W3 adds to `server/test/leaks.test.js`): no token, realm id, refresh token, verifier or ticket
   in any response body, header, log line or error, across connect, start, callback, status, look-ups and
   failures (use distinctive fake values like the existing `SECRET_VALUES` test). A forced 6240 with a
@@ -2831,7 +2975,7 @@ HQ sees health, never customer data.
 
 | Id | Threat | Mitigation |
 | --- | --- | --- |
-| TM-QBO-01 | OAuth login CSRF: someone else's QuickBooks connected to an attacker's tenant | Ticket (120 s, single use, owner/admin with MFA) + interstitial naming the Fishtape company and requester + flow cookie + state row; `web` tickets need the issuer's session; connect notification names the company (2.2) |
+| TM-QBO-01 | OAuth login CSRF: someone else's QuickBooks connected to an attacker's tenant | Ticket (120 s, single use, owner/admin with MFA) + interstitial naming the Fishtape company and requester + the interstitial's SameSite=Strict pre-flow cookie required by the POST (no cross-site auto-submit) + flow cookie + state row; `web` tickets need the issuer's session at start, POST and callback; connect notification names the company (2.2) |
 | TM-QBO-02 | Token theft from the database or backups | Envelope encryption with AAD; key outside the database; revoke on disconnect; generic secret routes refuse QBO names |
 | TM-QBO-03 | Forged webhooks driving reads or writes | HMAC on the raw body (two verifiers during rotation); events only mark the tenant dirty or name an id to read; webhook-only signals confirmed by a read |
 | TM-QBO-04 | Cross-tenant routing of webhook events | realm hash unique per tenant; events stored under the tenant found by hash only |
@@ -3009,7 +3153,8 @@ An in-memory QuickBooks used through `setFetch` (unit and route tests) or as a r
 
 Run against the Canadian sandbox (Plus, then Essentials) and record results in this file:
 
-1. PKCE support (2.2), read once by hand from the discovery document.
+1. PKCE support (2.2), read once by hand from the discovery document. **Done 2026-10-20:** no
+   `code_challenge_methods_supported`, so `QBO_PKCE = false`.
 2. `GlobalTaxCalculation` required; GST/PST MB gives two `TaxLine`s; per-rate rounding; override
    accepted on sales and on purchases; `ReadOnly` rates.
 3. Negative sales lines; `Amount` vs `Qty × UnitPrice` validation and how many `Qty` decimals QBO keeps
@@ -3038,6 +3183,14 @@ Run against the Canadian sandbox (Plus, then Essentials) and record results in t
 22. Hosting region of staging (DreamHost, 208.113.210.97) and of the production host (checklist step 9).
 23. Applying a credit memo or journal entry to an invoice makes that invoice appear in CDC (its `Balance`
     changed), so the settlement step (4.9) runs; if not, the daily check (5.13) catches it.
+24. The full reconcile's query `where MetaData.LastUpdatedTime >= '<ISO time with milliseconds>Z'` (5.4)
+    is accepted by Intuit's query grammar, and how STARTPOSITION paging without ORDERBY behaves.
+25. The behaviours behind constants in `server/src/qbo/map/to-qbo.js` and `canon.js`:
+    `STRICT_LINE_AMOUNTS = true` (lossy lines and bill item lines go as qty 1),
+    `NEGATIVE_SALES_LINES = true` (else a `DiscountLineDetail`), `T5018_FIELD = 'T5018Eligible'`,
+    `CUSTOMER_MEMO_MAX = 1000`.
+26. "Deposited in QuickBooks" for a payment is detected from `DepositToAccountRef` not being a
+    `depositTo` mapping or the Stripe clearing account (4.9): check against a real bank deposit.
 
 ### 11.5 End to end
 
@@ -3125,8 +3278,8 @@ export async function revokeToken(cfg, token): void
 
 // connection.js
 export async function createConnectTicket(db, cfg, { tenantId, userId, returnTo, reconnect }): { url }
-export async function startPage(db, cfg, ticket, { sessionUserId }): { html } | { redirect }   // GET: interstitial, ticket not consumed
-export async function startFromTicket(db, sealer, cfg, ticket): { redirect, flowCookie }       // POST: consumes the ticket
+export async function startPage(db, cfg, ticket, { sessionUserId }): { html, headers, preflowCookie } | { redirect }   // GET: interstitial, ticket not consumed
+export async function startFromTicket(db, sealer, cfg, ticket, { preflow, fetchSite, sessionUserId }): { redirect, flowCookie }   // POST: consumes the ticket
 export async function completeCallback(db, sealer, cfg, { code, state, realmId, error, flowCookie, sessionUserId }): { redirect, tenantId|null, result }
 export async function takeover(db, sealer, cfg, { tenantId, userId, actor, request }): { ok }
 export async function qboRealmOwner(db, realmHash): string|null
@@ -3199,12 +3352,15 @@ Exports:
 
 ```js
 // ctx for every mapper: { collection, mappings, features, company: { province, zone }, refs, link, now }
-// refs: { qboIdFor(collection, fishtapeId) -> string|null, fishtapeIdFor(entity, qboId) -> string|null,
-//         itemKind(qboItemId) -> 'material'|'labour'|'other'|null, itemType(qboItemId) -> string|null }
+// refs: { qboIdFor(collection, fishtapeId) -> string|null, fishtapeIdFor(collection, qboId) -> string|null  (Fishtape collection names),
+//         itemKind(qboItemId) -> 'material'|'labour'|'other'|null, itemType(qboItemId) -> string|null,
+//         optional: clientOfJob(jobId), employeeEntity(employeeId) -> 'Employee'|'Vendor', poLineId(poId, index), parentOf(qboCustomerId) }
+// ctx may also carry rates ({ codes, rates, agencies } from qbo_reference) and related ({ job }) (15.2)
 export function fishtapeToCanon(collection, record, ctx): Canon
 export function qboToCanon(entity, object, ctx): Canon
-export function canonToQbo(collection, canon, ctx, { existing }): { entity, body }   // body has no Id/SyncToken; keeps existing unmodelled line attributes, GlobalTaxCalculation, foreign payment lines
-export function canonToFishtape(collection, canon, ctx, { existing }): object        // record patch
+export function canonToQbo(collection, canon, ctx, { existing, fields, displayName, billEmail, invoiceCustomerRef, invoiceBalanceCents, previousInvoiceRef, today }):
+  { entity, body, sparse, lossyLines, totalChanged, ownExcessCents, warnings, error }  // body has no Id/SyncToken (null with error); keeps existing unmodelled line attributes, GlobalTaxCalculation, foreign payment lines
+export function canonToFishtape(collection, canon, ctx, { existing, fields, report }): object   // record patch; report gets lossyLines, taxShape, taxInclusive, markup
 export const FIELD_RULES       // { [collection]: { money: string[], auto: string[], pushOnly: string[] } }
 export const MONEY_RECORD_KEYS // { [collection]: { [moneyField]: string[] /* record keys */ } }
 export function threeWayMerge(collection, base, local, remote, { localAt, remoteAt, prevValues, stale, held, remoteAlias }):
@@ -3219,10 +3375,11 @@ export function markerFor(linkId): string                           // 'Fishtape
 export function normMethod(method): string
 // tax.js
 export function lineTaxKey(doc, kind): string                       // adds NONE|<reason>
-export function taxesFromCodes(keysByKind, { province, date, existingKeys }): { taxes, taxPct, taxTreatment, taxNoneReason, ok }
-export function expectedTax(doc, codeIdsByKind, rates, date): { ok, perRate, mismatch: { codeName, codePcts, docPcts }|null }
-export function compareTax(fishtapeTotals, txnTaxDetail, rates): { equal, withinTolerance, perRate: [{ rateId, fishtapeCents, qboCents }] }
-export function taxOverride(fishtapeTotals, codeIds, rates): object|null  // TxnTaxDetail
+// `ref` is the reference bundle { codes, rates, agencies } (15.2)
+export function taxesFromCodes(keysByKind, { province, date, existingTreatment, legacyPct }): { taxes, taxPct, taxTreatment, taxNoneReason, taxProvince, ok }
+export function expectedTax(doc, codeIdsByKind, ref, date): { ok, perRate, mismatch: { codeName, codePcts, docPcts }|null }
+export function compareTax(fishtapeTotals, txnTaxDetail, ref, date): { equal, withinTolerance, perRate: [{ rateId, fishtapeCents, qboCents }] }
+export function taxOverride(fishtapeTotals, codeIds, ref, { date, purchase }): object|null  // TxnTaxDetail
 export function spreadPurchaseTax(lines, taxes, recoverableIds): { lines, taxes }   // PST/RST into line cost
 export function purchaseCodeClaimsPst(code, rates, agencies): boolean
 export function suggestTaxCodes(keys, taxCodes, taxRates): { [key]: codeId|null }
@@ -3418,11 +3575,13 @@ export async function fetchStripeFee(secretKey, paymentIntentId): { chargeId, ba
 export async function fetchPayout(secretKey, payoutId): { amountCents, currency, arrivalDate, status, automatic, livemode, feeCents }
 export async function fetchPayoutTransactions(secretKey, payoutId): [{ id, type, amountCents, feeCents, paymentIntentId|null, created }]
 // integrations/payments.js
-export async function recordStripePayout(tx, payout): { inserted: boolean }  // upserts stripe_payouts (paid_seen, earliest_charge_at, balance_txns) and queues it for QBO
-export function registerAmountDueAdjuster(fn: (tx, invoiceId) => Promise<number>): void
+export async function recordStripePayout(tx, payout): { inserted, status, queued, itemise, reason? }  // upserts stripe_payouts (paid_seen, earliest_charge_at, balance_txns); queues it for QBO only once it can be booked
+export function registerAmountDueAdjuster(fn: (tx, invoiceId) => Promise<number>): () => void  // returns an unregister function; adjusters are summed
+export async function booksInQbo(tx, env?): object|null   // the qbo_connections row when QuickBooks is on and the company is connected (any state)
+export function enqueueFeeFetch(q, tenantId, paymentId, delayMs = 120000): Promise<void>  // stripe_fee_fetch, dedupe stripe_fee_fetch:<tenant>:<payment>
 export async function amountDueCents(tx, invoice): number   // docTotals total − payments + adjustment
 // qbo/alerts.js
-export const QBO_ALERT_HANDLERS // { qbo_alerts }
+export const QBO_ALERT_HANDLERS // { hq_qbo_alerts } (general pool)
 export async function scheduleQboAlerts(db): void   // every 10 minutes
 ```
 
@@ -3543,3 +3702,405 @@ Review findings that were not taken, or were taken in another form, with the rea
 | Security 13: a portal-hidden flag on pulled documents | Deferred. No portal route serves records yet. The rule is recorded for when the portal is built (1.2, BACKLOG). The other part, not pulling QBO `Notes`, is taken (4.2). |
 | Security 20: exclude synced records from AI | The default is disclosure (10.1); exclusion is the alternative in open question 13.11, with its owner named (W3). |
 | Security 11: office users read-only | The default is two-step sign-in for every QBO change instead (7.1); read-only office is the alternative in open question 13.1. |
+
+---
+
+## 15. As built (revision 3)
+
+Every place where the code differs from revision 2, by section. The rule was: the code is right unless
+it is a bug. Bugs found while comparing were fixed in the code (marked **fixed**); everything else is now
+the contract. Items already folded into the sections above are listed here once, with where to read them.
+
+### 15.1 Connection, tokens and client (sections 2, 3; W1)
+
+- 2.1: `qbo_token_housekeeping` and `qbo_purge` run with QuickBooks off; config shapes and start-up rules
+  (folded into 2.1).
+- 2.2: the interstitial CSP allows `form-action https://appcenter.intuit.com`; `QBO_PKCE = false`
+  (recorded 2026-10-20); the iOS app has no `closeExternal()` yet (folded into 2.2).
+- 2.5: pause precedence, resume rules, `paused_since` per reason, a pause kept through
+  `reconnect_needed`, the resume target and the sweep's own dedupe key (folded into 2.5).
+- 2.6: reconnect in `setup` answers 409 `qbo_reconnect_not_allowed`.
+- 2.7: `qbo_revoke_pending.realm_hash`; a retry deletes the row without revoking (`held`) while a tenant
+  holds that realm; `disconnect()` revokes only when the realm is unowned or this tenant's; drain the
+  pending revokes before a master-key rotation (folded into 2.7). A failed revoke after a failed
+  callback is queued the same way.
+- 2.9: HQ release queues the per-company housekeeping; that run revokes only when the realm is unowned
+  or this tenant's, then deletes the secrets and sets `disconnected_at` and `purge_after`; release needs
+  an HQ admin; HQ bumps `lease_epoch` to the clock time in ms and fencing compares by equality (folded
+  into 2.9).
+- 3.2 DDL as shipped in `0150_qbo.sql`: the `qbo_platform_events.kind` CHECK is
+  `'^[a-z][a-z0-9_]{1,39}$'` (the old one refused `intuit_5xx`); `qbo_api_usage` has a tenant DELETE
+  policy and grant (13-month retention, 10.4); HQ has SELECT on `qbo_connections.lease_epoch`;
+  `qbo_revoke_pending` has `realm_hash` (all folded into 3.2).
+- 3.7, 10.2: there is no `GET /api/v1/secrets/:name`; a read of a `qbo.*` name is 404, `PUT` and
+  `DELETE` are 400 (folded in).
+- Client budget purposes: besides `sync`, `lookup` and `check`, the client takes `scan`, `cdc`,
+  `reference` and `connect`, so the 5.11 step-downs can tell them apart. `connect` (the callback's
+  CompanyInfo and Preferences reads) is counted but never refused. Budgets apply to production only;
+  sandbox calls are counted under environment `sandbox`. From 100% of the tenant budget the client
+  refuses `lookup`, `check`, `scan` and `cdc` but still allows `sync`, because webhook-driven pulls
+  continue; the engine then pulls only when the tenant is dirty and at most once an hour.
+- `http.js` `scrub`: base64url strings of 32 or more characters become `[token]` for every provider; the
+  name-safe rule is opt-in (`scrub(text, max, { names: true })`) and `QboError.detail` is already
+  name-scrubbed. Plain UUIDs are left alone, but the older `[number]` rule still masks a UUID with a digit
+  run of 9 or more.
+- Webhooks: a failed signature writes at most one `qbo_platform_events` row a minute per process (the
+  HQ alert only needs "any in the last hour"). Ingest queues `qbo_reference_refresh` (60 s, dedupe
+  `qbo_reference_refresh:<tenantId>`) for Account, Class, Department, Term, PaymentMethod, Employee and
+  Preferences events while active or in setup. The nginx webhook zone is keyed on the provider segment of
+  the path, mapped from a fixed list (`qbo`, `stripe`, `platform-stripe`, `twilio`, `sendgrid`,
+  `facebook`; anything else shares one `other` key), so a sender cannot mint buckets by varying the path.
+- `QboError`: `message` is the fixed-table text (safe for job errors), `detail` is Intuit's scrubbed text
+  (for `qbo_sync_log.message` and `qbo_links.last_error`), `outcomeUnknown` marks writes that timed out,
+  failed on the network or got a 5xx, `client.lastIntuitTid` gives the log's `intuit_tid`.
+
+### 15.2 Mapping library (section 4, 12.3; W2)
+
+- Interfaces, all optional and backward compatible: `ctx.refs` gains `clientOfJob(jobId)`,
+  `employeeEntity(employeeId)` (`'Employee'|'Vendor'`), `poLineId(purchaseOrderId, index)` and
+  `parentOf(qboCustomerId)`; `fishtapeIdFor` is called with Fishtape collection names (a Customer can be a
+  client or a job); `ctx` gains `rates` (`{ codes, rates, agencies }` from `qbo_reference`) and `related`
+  (`{ job }` for the TimeActivity description). `canonToQbo(collection, canon, ctx, opts)` takes `fields`
+  (the merge's `toRemote`), `displayName`, `billEmail`, `invoiceCustomerRef`, `invoiceBalanceCents`
+  (applied-amount cap), `previousInvoiceRef` and `today`, and returns `sparse`, `lossyLines`,
+  `totalChanged` (payments), `ownExcessCents`, `warnings` and `error` (`negative_line`,
+  `number_too_long`). `canonToFishtape` takes `{ existing, fields, report }`; `report` receives
+  `lossyLines`, `taxShape`, `taxInclusive` and `markup`. `threeWayMerge` also returns `aliasDropped`; the
+  engine clears `meta.remoteAlias[field]` for each.
+- 4.7: the canonical line comparison leaves out `kind`, bill lines compare without `taxCodeId`, bill
+  `taxes` compare as sorted `[id, cents]` pairs, description and SKU limits, and `lineIds`/`lossyLines`
+  by position (folded into 4.7). A `DiscountLineDetail` keeps QBO's description (folded in).
+- 4.7: a number over 21 characters: `docToCanon` keeps the whole number in `extra.numberFull`, and
+  `canonToQbo` returns `error: 'number_too_long'` with no body; the engine sets `error/number_too_long`
+  and sends nothing.
+- 4.7: a pulled document on an unlinked sub-customer or project goes to the nearest linked job or
+  client: `customerFromQbo(ctx, id)` checks a linked job, then a linked client, then walks up at most 5
+  parents through `refs.parentOf`, else keeps the top-level customer. The same is used for a bill line's
+  `CustomerRef`. `billPatch` keeps a line's job when the customer coming back is the client the job maps
+  to (sub-customers off).
+- 4.7, 4.8: the tax functions take the reference bundle `{ codes, rates, agencies }` where 12.3 says
+  `rates`, plus an optional date; `taxOverride` also takes `{ purchase }` for bills.
+  `taxesFromCodes(keysByKind, { province, date, existingTreatment, legacyPct })` replaces `existingKeys`
+  (the document's own key per line is kept by `reverseTaxKey({ preferred })`) and also returns
+  `taxProvince`. A new pulled BC document with key `GST` gets treatment `real-property` (BC's default;
+  the same taxes as `gst-only`).
+- 4.7: `kindOfItem` asks `refs.itemKind` before the "linked Fishtape item is material" rule. A voided
+  invoice's canonical lines are zero, so the engine applies the void before any merge of lines.
+- 4.9 payments: `rebuildPaymentLines` moves `TotalAmt` by the change in Fishtape-owned lines (current
+  `TotalAmt` + new owned − old owned), not Σ owned + Σ foreign + unapplied, because QBO subtracts
+  credit-memo lines from `TotalAmt`; `keepTotal` covers deleting one part. A payment's own excess is kept
+  in `meta.ownExcessCents` (from `pushed` after a write, kept from the link on a pull, capped at the
+  unapplied amount), so only its change is sent. `settlementCents` takes QBO payment-line cents only and
+  subtracts the invoice's own `Deposit`; the deposit gets its own Fishtape payment (`depositRecord`).
+- PrivateNote (`privateNote()` for Payment, PurchaseOrder, Transfer and both Stripe fee Purchases): a
+  pulled object (no marker on the link) keeps its PrivateNote exactly; a Fishtape-created object gets the
+  marker and Fishtape's text in front and keeps anything else QBO has after them. Invoices and estimates
+  are sparse updates, and on bills PrivateNote holds the two-way `notes`.
+- Bills: `billBody` item lines follow `STRICT_LINE_AMOUNTS` (qty 1 at the amount when Qty × UnitPrice
+  does not round to Amount). Pulled QBO bills get the same PST/RST spread as Fishtape's, so a pulled
+  tax-inclusive or PST-coded bill compares equal.
+- Matching (6.3): `matchCustomers(clients, customers, { activeClientIds, activeCustomerIds,
+  importCustomers })`, `matchItems(..., { items, exclude })` (the generic mapped items are excluded) and
+  `matchDocs(..., { taxFiledThrough, syncFrom, zone, ref, pushDrafts })`. Candidates may carry `options`
+  (tied QBO ids), `needsConfirm` (filed period) and `netOfFee`; ambiguous candidates default to `skip`;
+  drafts get no candidate unless `pushDrafts`.
+- Wizard baseline (6.4): `wizardBaseline` also returns `diffs` (display values for
+  `qbo_candidates.diffs`). For payments, a differing date, method or reference is aliased
+  (B = L, `meta.remoteAlias` = R) rather than sent to `needs_review/wizard_differs`, because payments are
+  paired with dates ignored (6.3). A date mismatch therefore stays silent (BACKLOG asks for a decision).
+- Constants behind VERIFY items are in `to-qbo.js` and `canon.js` (11.4 item 25).
+
+### 15.3 Sync engine, jobs and routes (sections 5 to 7; W3)
+
+- 5.2 money guard: `record_history` keeps only `overwritten` and `rejected` rows, so the stale-write
+  guard cannot scan it for `system:qbo` versions. The engine records `qbo_links.meta.pulledKeys` (record
+  key → the version a pull wrote), and `records.js` writes an `overwritten` history row of the version
+  each `system:qbo` patch or delete replaces, so a device's `baseVersion` can still be diffed. A money
+  key held this way goes to a `fields` conflict as written in 5.2.
+- 5.2 step 3: the remaining changed fields of a stale write are stored over the server copy without
+  comparing edit times per field, so an older offline edit of a field can overwrite a newer office edit
+  of the same field (non-money fields only). Recorded as a decision to make (BACKLOG).
+- 5.2, 5.5: a pull-triggered merge never writes to QuickBooks for a `needs_review` or `blocked` link or
+  for a record with a waiting outbox row; the fields it would have sent keep R as their snapshot base, so
+  the push still sees them as Fishtape edits and runs the origin rule and the holds. The link keeps its
+  state and reason (and the review its text: **fixed**, a pull no longer replaces a held review's text
+  with the tax-shape message). A held `totals_differ`, `wizard_differs` or `tax_shape` link therefore
+  never returns to `synced` on a pull, even when QuickBooks was changed to match; a person resolves it.
+  The pull-side tax check is skipped in that case. This also closes the same-pass race of an API-key
+  edit and a QuickBooks change where the pull runs first.
+- 5.5: the per-field local edit time for the auto-field rule is the record's `updatedAt` for every field
+  (history does not keep every version); remote times use `meta.fieldSeenAt`. Auto-field resolution is
+  coarser: any local edit makes every auto field look recently edited.
+- 5.2: the origin rule of a dependency pushed first for another record uses the dependency's own outbox
+  `actor_type` (`system` when it has none). A field user's outbox row keeps `field_user` when the sweep or
+  the wizard queues the same record again as `system` (**fixed**: the wizard's phase 7 had turned a field
+  user's bill into a system one and sent it without review).
+- 5.3: create request ids carry a generation (`meta.createGen`) after a create that definitely did not
+  land (6140, or the tax delete-again of 4.8): the 6140 path clears `createRequestId` and `sent`.
+  Generation 0 keeps the old id form.
+- 5.3 adopt-from-pull: a pull that finds an unlinked object carrying a pending link's marker (or, for
+  names, a pending create's exact name) adopts it into that link with B = null. Without it, a crash
+  between QuickBooks' answer and the link commit made the CDC pull create a duplicate Fishtape record.
+- 3.1, 4.1: pulled Fishtape records get random UUID ids, never ids built from QBO ids (a pulled client id
+  like `qbo-customer-58` would reach field crews). The settlement payment is `credit-<invoiceId>` (link
+  collection `invoices`, role `settlement`) and the deposit payment `deposit-<invoiceId>`. Exactly-once
+  comes from writing the record and its link in one transaction, with the link re-checked inside it.
+- 4.1, 13.14: under `importCustomers: 'active'` a new top-level QBO customer is created in Fishtape only
+  when a pulled document needs it (folded into 4.1).
+- 4.9: a $0 QBO payment (a credit memo or journal applied through a Payment) never becomes a Fishtape cash
+  payment; it shows through the settlement payment. A voided QBO payment, or a payment line that
+  disappeared, follows the delete rules; a line moved to another invoice opens a `fields` conflict on
+  `invoiceRef` (reason `payment_moved`). "Deposited in QuickBooks" is detected from
+  `DepositToAccountRef` not being a `depositTo` mapping or the Stripe clearing account (no Deposit read;
+  11.4 item 26).
+- 4.9, 5.4: settlement and `pullDeposit` for pulled invoices run at the end of the batch (all CDC pages
+  of a pass, or the whole full reconcile), so a payment and its invoice landing in the same batch, even on
+  different CDC pages (**fixed**), are never counted twice. The wizard and single-object paths settle at
+  once. `settle()` checks only `pending` payment links on the Fishtape side, so a Fishtape payment still in
+  the outbox with no link is not counted (BACKLOG).
+- 4.8: the pull-side tax check runs after pulled estimate and invoice updates. Within 2 cents Fishtape's
+  arithmetic is pushed back as an override, or `meta.taxDeltaCents` is recorded when QBO has payments;
+  more than 2 cents goes to `needs_review/totals_differ`. The same delta is not re-pushed on every pull. A
+  bill's purchase-tax override after a write is a full update (not sparse); `TaxOverride` pairs the
+  printed recoverable taxes with the purchase code's rates.
+- 4.10: changing a linked bill between bill and receipt opens a `fields` conflict ("change it in
+  QuickBooks") instead of deleting and re-creating the QBO object.
+- 5.4: CDC over 1,000 objects pages forward from the newest object seen; the full reconcile queries by
+  `LastUpdatedTime` and moves the cursor only when it finishes (folded into 5.4). A list that reaches the
+  50,000 cap still counts as finished (BACKLOG).
+- 5.6: held device values in `meta.held`; `'quickbooks'` on held reviews; merged conflicts with
+  `recordIds` (**fixed**: any record id was accepted before) (folded into 5.6).
+- 5.6, 2.5, 7.7: while paused or in setup, choices and API actions that call Intuit answer 409
+  `qbo_paused`/`qbo_not_ready` from the engine (`assertActive`), shared by the job and API paths; a
+  push-only record's `'quickbooks'` drop runs while paused (**fixed**) (folded into 2.5 and 5.6).
+- 5.8: the safety brake's tripped count is writes in the last hour plus waiting outbox rows; during the
+  allow hour the limit is 500 + `brake_allow_count`.
+- 5.11: at 100% of a production tenant's read budget, pulls run only when the tenant is dirty and at
+  most once an hour.
+- 5.12, 2.5: the `qbo_sync` handler runs the sweep for `payload.sweep`, `payload.reason: 'hq_resume'`, or
+  a null `fishtape_cursor`; a busy sweep re-queues under `:sweep` / `:sweep2`. HQ resume queues under
+  `qbo_sync:<tenantId>:sweep` (**fixed**: it used the plain key, so a queued pass could swallow it).
+- 5.13: the daily "new errors" notification is folded into the balance check's summary notification
+  (ref `qbo:summary:<date>`).
+- 6.3: the scan runs as one job without 4-minute chunks. Apply is chunked and resumable as written and
+  creates documents in batches of 10 (`createBatch`); clients, items, payments and other dependencies
+  are created with single calls. The wizard's `create_in_fishtape` for documents and payments goes
+  through the pull rules (`processRemote`), so the customer comes first and there is one payment per
+  linked invoice.
+- 6.4: when apply finishes, outbox rows queued before the scan are deleted only for the collections the
+  wizard decides (it already linked, created or skipped those records, so a skipped possible duplicate is
+  never pushed afterwards). Bills, purchase orders and time entries keep their rows and go to QuickBooks
+  after apply (phase 7). A live-mode pass is skipped while `setup.phase` is `shadow_linked`,
+  `apply_queued` or `applying`; the wizard sets `setup.phase = 'done'` when apply finishes.
+- 6.1, 13.10 shadow mode: due outbox rows are read without being claimed; a would-change log row is
+  written at most once a day for the same change, because cursors never move in shadow.
+- 5.8 shadow pacing (**fixed** in the PWA integration pass, found by the e2e against the real worker):
+  shadow passes never set `last_pull_at` or cleared `dirty_at`, and their outbox rows stayed due, so the
+  dispatcher queued a `qbo_sync` and a `qbo_cdc` every minute for the whole practice week. Rows looked
+  at now wait an hour and the shadow pull records `last_pull_at`. Unprocessed `qbo_inbox` rows
+  (TimeActivity, merges) still stay due in shadow (open item).
+- 7.2 `lastPushAt` (**fixed**): nothing set `qbo_connections.last_push_at`, so the overview always
+  said "Last to QuickBooks: —". The client notes its last successful Core call; `syncTenant`, the
+  wizard's apply, Send now / Retry and conflict resolution stamp it when they end.
+- 7.2 Status: `takeoverOffer` always, `setup.errors` and `setup.finishedAt`, `brake: { count }`,
+  `features.taxFiledThrough` and `features.province` (**fixed**: `finishedAt`, `taxFiledThrough` and
+  `province` were not sent, so the PWA polled a finished scan forever and could not show the filed date)
+  (folded into 7.2).
+- 7.4: `GET /qbo/setup/matches` has no `q` (folded in); the leak test's safe list gains `ids`, `outcome`
+  and `choice`.
+- 7.5: `RecordState.owner` (**fixed**: not sent before) and `mismatch`; the record view's
+  `quickbooks.qboId`; records sync answers `{ queued: true, state }` and `force` is defined (**fixed**:
+  Retry without `force` now keeps the waiting edit's writer, so it no longer skipped the origin review);
+  relink is refused while paused (**fixed**) (folded into 7.5).
+- 7.6: `option.writeMode` is owner or admin only (**fixed**: office users could go live); removing an
+  option follows the setting rules (folded into 7.6). The look-up cache of 7.8 is not used for the
+  record view's `live=1` read; that read does go through the per-user look-up limit.
+- 7.8: `lookup.js` renumber reads every `INV-%` DocNumber (up to 50 CorePlus pages) to find the next
+  free number; ordering by DocNumber would be a string sort (BACKLOG).
+- 12.4: `createRecords({ validator, config })` takes an optional config (without one it reads
+  `QBO_ENVIRONMENT` from the environment); the hook receives `{ actor, kind, role, crew }` and
+  `opts.enabled`. The amount-due adjuster is registered only when `config.qbo.enabled`.
+
+### 15.4 PWA (section 8; W4)
+
+- 8: Intuit's Connect button artwork and its licence are not committed: `CONNECT_BUTTON_ASSET = null` in
+  `lib/qbo-ui.js`, so a plain Fishtape button reads "Connect to QuickBooks"; `img/intuit/README.md` tells
+  Kelvin how to add the licensed file. The trademark line is the contract's wording and stays on the
+  VERIFY list (11.4 item 21).
+- 8.1: a Setup tab in the QuickBooks sub-navigation, and `#/quickbooks/setup?step=<id>` keeps the wizard
+  step in the URL.
+- 8.2: office users see the practice-mode switch disabled and their saves leave `writeMode` out; the
+  server enforces it (7.6). The wizard's practice switch starts ticked when no `writeMode` is saved
+  (13.10).
+- 8.3: diffs on linked customers, jobs, items and vendors need a side before Apply; document differences
+  are left to the server's `needs_review` (6.4).
+- 8.5: `qboBadge(ctx, collection, recordId, opts)` with `opts { detail, record, cache }`; it returns null
+  for people without QuickBooks access and an empty host for permitted users whose company is not
+  connected. The purchasing screens mount it on bills, suppliers and purchase orders (lists and
+  detail), and a bill hides Mark paid / Mark unpaid when `connectionActive(await qboStatusCache.status())`
+  (people who cannot see QuickBooks still see the buttons; the server's pull decides `paid`).
+- 8.6: "Look up in QuickBooks" sits on the draft invoice and draft estimate detail screens (the app has
+  no separate new-document screen).
+- `css/quickbooks.css` and `css/purchasing.css` are linked from `index.html` (cached on first use by
+  `sw.js`, like the other stylesheets); `ensureQboStyles` / `ensureStyles` remain for a page cached
+  before the links.
+- Invoice status with a QuickBooks tax delta (4.9, W6 handoff): the server's status wins. On the server
+  `refreshInvoiceStatus` uses `amountDueCents` (adjustment included). On devices
+  (`lib/qbo-ui.js` `keepsServerPaid` / `nextInvoiceStatus`), every payment added or deleted and every
+  edit that changes the total uses plain arithmetic; a stored `paid` with at most 2 cents per charged rate
+  left is kept only when the device changed no money. Every screen that shows an invoice's status or
+  balance (invoice list and detail, the record-payment default, the printed pay link, the client and job
+  tabs, the dashboard's outstanding total and overdue alerts) uses `invoiceShown(store, inv)` from
+  `lib/money.js` (the tolerance rule, `keepsServerPaid`, lives there too). A path that changes an
+  invoice's lines without recomputing its status (an import, the assistant, an older app) can still hide
+  up to 2 cents per charged rate on a stored `paid`; that is the device-side rule's known limit.
+- Payments only the sync writes are read-only on the invoice: the settlement payment
+  (`credit-<invoiceId>`, method `credit`, source `quickbooks`) and a QuickBooks deposit
+  (`deposit-<invoiceId>`, now also source `quickbooks`); deleting an invoice with either is refused.
+- Editors send only the fields typed (5.10, folded in). A field changed on both sides at the same
+  moment takes the other side's value with a toast; the invoice and estimate screens redraw through
+  `ctx.route()` and keep their scroll position.
+- Merged conflicts offer one Unlink per id in `recordIds` (7.7). "Send to QuickBooks now" sends
+  `{ force: true }`, Retry `{}`, "Send to QuickBooks as new" `{ asNew: true }` (7.5).
+- Section 7 shapes the PWA accepts: `mappings.required` as `[{ kind, key }]` (or `'kind.key'`),
+  `suggestions` shaped like `mappings`, match `counts` as `{ status: n }`, a plan warning with code
+  `differences` (or `differences_undecided` / `undecided_differences`) counting undecided fields, a
+  `setup.phase` containing `scan` while scanning, 409 `qbo_brake_count` with `details.count` or
+  `brake.count` for "Allow N changes", setup failures from `GET setup/matches?status=error`, and
+  `LogEntry.label`/`message`.
+- Settings: the numbering form keeps the other `nextNumbers`, adds "Next purchase order number", and
+  never lowers a counter (`Math.max` of the form and the stored value). Deleting an invoice that has a
+  settlement payment is refused ("void it instead").
+- 11.5: `electrical-app/tests/e2e/quickbooks.e2e.mjs` runs against the real API (every `/api/v1/qbo`
+  route) and the real QuickBooks worker jobs in-process (dispatcher, sync, reference read, scan, apply,
+  CDC, check) against the fake QuickBooks in HTTP mode; QuickBooks-side changes are made in the fake and
+  arrive by a signed webhook. It also shoots the overview, Review, mappings, a conflict, an invoice with
+  its badge and a bill at 390 and 1280 px and fails on sideways scroll.
+- Errors: 409 `qbo_paused` (resolve, Send now, Retry) shows the pause reason and says Unlink still
+  works; 409 `qbo_pause_locked` shows the reason (support only for `hq`); 409
+  `qbo_reconnect_not_allowed` has its own sentence. An origin review explains "Don't send it: Fishtape
+  goes back to the QuickBooks copy; the change is not sent." The mappings and wizard saves send a cleared
+  option in `remove` only, never in both `set` and `remove`.
+- iOS connect: `lib/native.js` `closeExternal()` closes the Safari sheet when the status poll sees the
+  connection change (2.2 step 4).
+
+### 15.5 Purchasing (sections 3.5, 4.10, 8.9; W5)
+
+- Receipts start as `draft` and become `paid` on "Save receipt" (they never take `open`), so a half-typed
+  receipt never syncs (4.1: created in QBO when status leaves draft).
+- Bills can be marked paid or unpaid by hand, because purchasing works without QuickBooks. With
+  QuickBooks connected, a bill's paid status comes from QBO only (pull); Fishtape never pushes a payment.
+  The buttons are hidden when connected (15.4).
+- Refunds store negative `unitCents`, `amountCents` and tax cents with a positive `qty` (the bill line
+  `qty` allows −1e6..1e6; PO line `qty` is at least 0). The pull mapper gives a `Credit: true` Purchase the
+  same shape. Bill money fields are bounded to ±1e11 cents and PO `unitCents` to 0..1e11.
+- A receipt photo of "max 2.5 MB" is 2.5 MiB of data-URL text (schema `maxLength` 2,621,440), so a bill
+  fits the 3 MB record limit; PDFs up to about 1.8 MB, photos downscaled to about 900 KB JPEG.
+- PO numbers come from `store.nextNumber('po')` and skip any number a PO on the device already has.
+- PO lines: once a PO leaves draft no line can be deleted; a draft keeps any line a bill points at (void
+  bills included) and every line before it, because `poLine { purchaseOrderId, index }` is a position.
+- Purchase orders made from material requests run `poProblems` and refuse the whole action (a request
+  with no quantity or description); a $0 unit cost is allowed. An untouched "New bill" or "New purchase
+  order" is deleted when the person backs out (`?fresh=1`, `blankBill` / `blankPurchaseOrder`), and a PO's
+  number is given back when it was the last one handed out.
+- The bill and PO editors go through `recordEditor` (`lib/purchasing.js`): autosave sends only the touched
+  fields and never `status`, `sentAt`, `closedAt` or `kind`; status buttons and the kind switch write their
+  own small patch. The purchasing e2e step "a status that changes while the bill is open is not written
+  back" now makes the change on the server as `system:qbo` (a real pull) and checks it survives the notes
+  edit; the earlier step changed only the device's copy at the server's version, which a fresh
+  whole-record write then stored by design. It was not a server bug.
+- 13.11: `server/src/ai/data.js` `ASSISTANT_COLLECTIONS` does not include `vendors`, `bills` or
+  `purchaseOrders`, so the assistant cannot read purchasing records today, although the 13.11 default
+  says synced records stay readable (BACKLOG).
+
+### 15.6 Stripe, HQ and alerts (sections 4.9, 9, 12.7; W6)
+
+- 4.9 point 2: the Stripe fee is read (`stripe_fee_fetch`, queued 2 minutes after the payment, dedupe
+  `stripe_fee_fetch:<tenant>:<payment>`, 8 attempts) only for a company with a `qbo_connections` row
+  while `QBO_ENVIRONMENT` is set (`booksInQbo`). A fee Stripe has not settled yet throws, so the queue
+  retries; an invalid PaymentIntent id is skipped. A refused key turns that company's Stripe card to
+  `error`. `payments.stripe.feeCurrency` (upper-case ISO) is stored, and the engine skips non-CAD fees. The
+  hourly `integrations_housekeeping` catches up missing fees and payout itemisations: 90 days back, at
+  most 200 fees and 50 payouts per company per run, skipping any item whose job is queued, running or
+  finished in the last 6 hours; only PaymentIntent ids matching `pi_[A-Za-z0-9]{8,64}` are selected.
+- `recordStripePayout(tx, payout)` returns `{ inserted, status, queued, itemise, reason? }` and queues the
+  payout for QuickBooks (outbox rank 70, `actor_type` `stripe`) only once it can be booked: paid and
+  itemised (a manual payout goes as it is, to `needs_review/payout_items`), or failed after paid.
+  Pending and canceled payouts are only stored; test-mode and non-CAD payouts are queued so the engine can
+  skip and log them. Queuing needs a `qbo_connections` row in any state; `qbo_sync` is added only when the
+  connection is active. A placeholder `INSERT … ON CONFLICT DO NOTHING`, then `SELECT … FOR UPDATE`,
+  orders two events for a new payout. The webhook queues `stripe_payout_fetch` only when `itemise` is
+  true (12.7 exports updated).
+- `registerAmountDueAdjuster` returns an unregister function and adjusters are summed;
+  `invoiceBalance().balanceCents` is the amount due (adjustment included), which is how the pay link
+  charges it without changing `routes/v1/integrations.js`.
+- 9: alerts do nothing while QuickBooks is off; budget alerts go out once per threshold per month; a
+  tenant gets 50% and 80% steps. The HQ block adds `recentErrors`, `throttledUntil` and
+  `disconnectedAt` (folded into 9). HQ pause, resume and release as in 2.9.
+
+## 16. Release review fixes (revision 4)
+
+The release review's confirmed defects, fixed in the code with a test each (`server/test/qbo-review.test.js`
+and the files named). Read the sections above with these in mind; migration `0152_qbo_review_fixes.sql`.
+
+- 2.2, TM-QBO-01: the interstitial's pre-flow cookie binds the POST to the page (above); `web` connects
+  need the issuer's session at the callback too.
+- 2.5: `qbo_setup_scan`, `qbo_setup_apply` and `qbo_reference_refresh` run the plan check first like
+  the sync jobs; a plan pause also stops the reference reads.
+- 4.5: an employee hired after setup is linked from the waiting time entry's sheet ("Link employee…"):
+  `PUT /api/v1/qbo/records/employees/:id/link { qboId, entity?: 'Employee'|'Vendor' }` writes a synced,
+  QuickBooks-owned link and queues that employee's `blocked/employee_not_linked` time entries. `GET
+  /qbo/mappings` lists `choices.employees`.
+- 4.7, 4.8: a Fishtape void of an invoice, and a delete of an invoice or a bill, dated on or before
+  `taxFiledThrough` go to `needs_review/filed_period`. Approving sends the void or delete; "keep
+  QuickBooks" restores the Fishtape record. The same applies to a deleted time entry held by the pay-period
+  lock.
+- 4.9 payments: a payment Fishtape creates records `qbo_line` (its invoice); links written before are
+  backfilled and every line check falls back to `snapshot.invoiceRef`. Settlement counts each Fishtape
+  payment at its line amount (without its own excess). A payment's canonical amount is its line plus the
+  excess its own push left unapplied (`meta.ownExcessCents`, capped by `UnappliedAmt`), so QuickBooks-side
+  edits never write the line amount back; a Fishtape delete of such a payment voids it when nothing else
+  is on it. A QuickBooks void of the invoice under a pushed payment opens the `deleted` conflict. A line
+  removed from a multi-invoice payment, when the remaining line is another Fishtape payment's, deletes
+  the pulled payment instead of opening `payment_moved`; a resolved move goes through the merge.
+- 4.7, 4.9 deposits: the `deposit-<invoiceId>` payment follows the QuickBooks Deposit on every pull of the
+  invoice (changed, removed, added again; one deleted in Fishtape stays deleted). Deposit and settlement
+  payments are never sent to QuickBooks, whatever their fields say.
+- 4.9 Stripe: a fee Purchase and a payout's Transfer are booked only for card payments Fishtape itself
+  created in QuickBooks into the clearing account (`meta.stripeClearing`, `meta.depositTo`) and dated on or
+  after the cutover; a payout with a charge the bookkeeper entered herself goes to
+  `needs_review/payout_items`; a payout whose charge was skipped as pre-cutover (local dates both ways) is
+  skipped. Deleting a Stripe payment on either side removes its fee Purchase.
+- 4.10, 4.8: a supplier refund's tax override uses the Credit purchase's positive amounts.
+- 4.11, 5.12: dates of time entries (pay-period lock, `syncFrom`, books closed, setup's time queue) are the
+  clock-in day in the company zone.
+- 5.2: a risky writer (API key, assistant, field user) of a record held as `feature_missing` is kept on
+  the link (`meta.originActor`), so the later re-queue still goes to `needs_review/origin`.
+- 5.4: a pass out of time part way through a CDC page leaves the cursor; TimeActivity reads never stop
+  the pass (5030 marks `features.timeTracking` false; other errors are logged). The full reconcile pages
+  by update time and keeps a resume point (`qbo_connections.reconcile`), gives the push half of what is
+  left of a pass while the outbox has rows, and moves neither `last_pull_at` nor the webhook mark until it
+  finishes; Status has `catchingUp`.
+- 5.8: a failure before a record's link exists counts on its outbox row (`qbo_outbox.attempts`) and ends
+  in an `error` link. Continuation keys alternate (`:cont`, `:cont2`) for passes and apply chunks; a busy
+  apply or scan is queued again; the apply of a practice-mode go-live runs to the end on the active
+  connection (`setup.fromShadow`), and sync, CDC and check jobs wait for it. The dispatcher restarts a lost
+  apply chain, puts back QuickBooks jobs with no heartbeat for 3 minutes, backs off periodic jobs that
+  fail (`qbo_connections.backoff`, 5 minutes doubling to 6 hours; a budget-stopped CDC waits for the next
+  hour), and with `QBO_WRITES=off` queues no pass for waiting outbox rows. SIGTERM ends passes at their
+  next step; the worker's `stop_grace_period` is 5 minutes. The daily check gives records that ran out of
+  retries on a passing Intuit fault (`unavailable`, `stale`, `throttled`) a fresh set.
+- 5.12: the sweep reads up to 5,000 new records per collection and stops the cursor at the last one read
+  when a collection had more; the next pass sweeps on.
+- 6.3: the scan also reads the QuickBooks invoices and estimates dated back to the oldest unlinked open
+  Fishtape document, so one already in QuickBooks (paid or closed there) is matched, never created again.
+- 9: the alerts job is `hq_qbo_alerts` and runs in the general worker pool; new rule `qbo_pool_stalled`
+  (no dispatch for 5 minutes, or a QuickBooks job waiting over 15). `/api/readyz` leaves QuickBooks jobs
+  out of its queue lag; `/api/hq/health` reports `queue.qboLagSeconds`.
+- 8: the overview's "Waiting" count opens `#/quickbooks/activity?show=waiting` (`GET /api/v1/qbo/waiting`:
+  blocked links with their reason); Retry and Send now read the state that came back and keep the sheet
+  open with the reason when the record did not go; the look-up preview shows the flat answer's facts and
+  tax code names; the connect banner says "connected again" on a reconnect and goes when the state moves
+  on; the activity filter has plural names and an "Information" outcome; a bill's Mark paid is hidden
+  while QuickBooks owns its paid status (connected, paused, waiting to reconnect, or linked), and the
+  QuickBooks sentence shows only then.

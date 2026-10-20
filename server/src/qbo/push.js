@@ -19,7 +19,7 @@ import {
   optionOf, taxFiledThrough, timeUp, passStopFor, BrakeError, PassStop, localToday, moduleRefusal, linkMeta,
 } from './engine.js';
 import { FencedError } from './lease.js';
-import { fishtapeToCanon, qboToCanon, canonEqual, markerFor, toCents, str } from './map/canon.js';
+import { fishtapeToCanon, qboToCanon, canonEqual, markerFor, toCents, toDollars, str, localDay } from './map/canon.js';
 import { canonToQbo, entityFor, paymentLineSummary, rebuildPaymentLines } from './map/to-qbo.js';
 import { linkMetaFromQbo } from './map/to-fishtape.js';
 import { canonCollection, fieldsOf } from './map/merge.js';
@@ -52,9 +52,14 @@ async function claimRows(run) {
       RETURNING o.*`, [tx.tenantId, run.epoch, BATCH])).rows.sort((a, b) => a.rank - b.rank || new Date(a.enqueued_at) - new Date(b.enqueued_at)));
 }
 
+/** How long a row shadow mode has looked at waits before the next look (the dispatcher runs every minute). */
+const SHADOW_RECHECK = '1 hour';
+
 /**
  * Work the outbox until it is empty or the pass is out of time. Returns true when work is left.
- * Shadow mode looks at one batch (the rows stay for when the company goes live).
+ * Shadow mode looks at one batch (the rows stay for when the company goes live) and moves those rows'
+ * not_before an hour on, so the dispatcher does not run a pass for them every minute of the practice
+ * week. Going live makes every row due at once (7.6); a newer edit makes its row due in 20 s as usual.
  */
 export async function runPush(run) {
   for (;;) {
@@ -65,7 +70,13 @@ export async function runPush(run) {
       if (timeUp(run)) return true;
       await processRow(run, row);
     }
-    if (run.shadow) return false;
+    if (run.shadow) {
+      await txWrite(run, (tx) => tx.query(
+        `UPDATE qbo_outbox SET not_before = now() + interval '${SHADOW_RECHECK}'
+          WHERE tenant_id = $1 AND not_before <= now() AND (collection, record_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
+        [run.tenantId, rows.map((r) => r.collection), rows.map((r) => r.record_id)]));
+      return false;
+    }
   }
 }
 
@@ -110,6 +121,10 @@ export async function processRecord(run, collection, id, o = {}) {
   };
 
   if (link && (link.state === 'unlinked' || link.owner === 'none')) return skip('Not linked to QuickBooks.');
+  // A pulled invoice's Deposit and its settlement payment live in QuickBooks (4.7, 4.9): their links
+  // are role deposit or settlement, so the main link is missing. An edit here is never sent as a new
+  // QuickBooks payment, whatever its fields now say.
+  if (collection === 'payments' && !link && await quickbooksOwnedPayment(run, id)) return skip('From QuickBooks; change it there.');
   if (link && link.owner === 'quickbooks' && !o.force) return skip('Edit in QuickBooks.');
   if (link && link.state === 'needs_review' && !o.force) return skip(null);
   if (link && link.state === 'deleted_remote' && !o.force) return skip('Removed in QuickBooks.');
@@ -124,9 +139,15 @@ export async function processRecord(run, collection, id, o = {}) {
     return 'conflict';
   }
 
-  // Eligibility (4.1).
+  // Who made the change, for the origin rule (5.2): a writer an earlier hold kept on the link counts
+  // until a person approves (force) or someone allowed to handle money changes the record again.
+  const risky = (t) => (MONEY_COLLECTIONS.has(collection) && ['api_key', 'agent', 'field_user'].includes(t)) || (collection === 'timeEntries' && ['api_key', 'agent'].includes(t));
+  const kept = !o.force && link?.meta?.originActor && risky(link.meta.originActor) && !['user', 'stripe'].includes(o.actorType) ? link.meta.originActor : null;
+  const actorType = kept || o.actorType || 'system';
+
+  // Eligibility (4.1). A wait here finishes the outbox row: a risky writer is kept on the link.
   const el = eligible(run, collection, doc, o);
-  if (el.hold) return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, { kind: doc.kind }), row, state: el.hold.state, reason: el.hold.reason, message: el.hold.message, label });
+  if (el.hold) return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, { kind: doc.kind }), row, state: el.hold.state, reason: el.hold.reason, message: el.hold.message, label, originActor: !o.force && risky(actorType) ? actorType : null });
   if (!el.ok) {
     if (!link) return skip(null);
     if (collection === 'timeEntries' && link.qbo_id) return pushDelete(run, row, record, link, { unapproved: true });
@@ -135,17 +156,17 @@ export async function processRecord(run, collection, id, o = {}) {
   }
 
   // Origin (5.2): money reaches the books only from people allowed to handle money.
-  const actorType = o.actorType || 'system';
-  const reviewOrigin = !o.force && ((MONEY_COLLECTIONS.has(collection) && ['api_key', 'agent', 'field_user'].includes(actorType))
-    || (collection === 'timeEntries' && ['api_key', 'agent'].includes(actorType)) || link?.meta?.originRejected === true);
+  const reviewOrigin = !o.force && (risky(actorType) || link?.meta?.originRejected === true);
   if (reviewOrigin) {
     const who = { api_key: 'an API key', agent: 'the assistant', field_user: 'a field user' }[actorType];
     // A push-only record keeps a change the office chose not to send: every later send needs approval.
     const message = who ? `Made by ${who}; approve to send to QuickBooks.` : 'Holds a change that was not sent to QuickBooks; approve to send it.';
     return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, { kind: doc.kind }), row, state: 'needs_review', reason: 'origin', message, label, review: { message } });
   }
-  if (o.force && link?.meta?.originRejected) {
-    link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { meta: { ...link.meta, originRejected: undefined } }));
+  if (link?.meta?.originRejected && o.force) {
+    link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { meta: { ...link.meta, originRejected: undefined, originActor: undefined } }));
+  } else if (link?.meta?.originActor && !kept) {
+    link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { meta: { ...link.meta, originActor: undefined } }));
   }
 
   // Holds (4.7, 4.8, 4.9, 4.10, 4.11).
@@ -180,10 +201,20 @@ export async function processRecord(run, collection, id, o = {}) {
 
 // ---- eligibility and holds ------------------------------------------------------------------------
 
-const dateOf = (collection, d) => {
-  if (collection === 'estimates') return d.issueDate || String(d.createdAt || '').slice(0, 10) || null;
+/** A payment that only mirrors QuickBooks: an invoice's Deposit or its settlement (links role deposit or settlement). */
+async function quickbooksOwnedPayment(run, id) {
+  return run.db.withTenant({ tenantId: run.tenantId }, async (tx) => Boolean(await getLink(tx, 'payments', id, 'deposit') || await getLink(tx, 'invoices', id, 'settlement')));
+}
+
+/**
+ * A record's date as QuickBooks will hold it: the local day in the company zone (4.7, 4.11). A time
+ * entry's clockIn is a UTC instant; its UTC date is the next day for any evening clock-in in Canada.
+ */
+export const dateOf = (run, collection, d) => {
+  const zone = run?.ctx?.company?.zone;
+  if (collection === 'estimates') return d.issueDate || localDay(d.createdAt, zone) || null;
   if (collection === 'invoices') return d.issueDate || null;
-  if (collection === 'timeEntries') return String(d.clockIn || '').slice(0, 10) || null;
+  if (collection === 'timeEntries') return localDay(d.clockIn, zone) || null;
   return d.date || null;
 };
 
@@ -192,7 +223,7 @@ function eligible(run, collection, d, o) {
   const opt = (k, dflt) => optionOf(run.ctx.mappings, k, dflt);
   const f = run.ctx.features || {};
   const syncFrom = str(opt('syncFrom', null));
-  const inScope = (open) => !syncFrom || open || (dateOf(collection, d) || '9999') >= syncFrom;
+  const inScope = (open) => !syncFrom || open || (dateOf(run, collection, d) || '9999') >= syncFrom;
   switch (collection) {
     case 'clients': case 'vendors': return { ok: true };
     case 'jobs': return { ok: Boolean(o.asDependency) && opt('jobsAsSubCustomers', true) !== false && Boolean(d.clientId) };
@@ -217,7 +248,7 @@ function eligible(run, collection, d, o) {
 
 /** Waits that keep a record out of QuickBooks for now (4.7, 4.8, 4.9, 4.10, 4.11). */
 async function localHolds(run, collection, d, { creating, force, link }) {
-  const date = dateOf(collection, d);
+  const date = dateOf(run, collection, d);
   const filed = taxFiledThrough(run.ctx.features, run.ctx.mappings);
   const closed = str(run.ctx.features?.bookCloseDate);
   if (DOCS.has(collection)) {
@@ -231,6 +262,7 @@ async function localHolds(run, collection, d, { creating, force, link }) {
   if (collection === 'payments') {
     if (!d.invoiceId) return { state: 'blocked', reason: 'no_invoice', message: 'Not sent: no invoice.' };
     if (d.method === 'credit' && d.source === 'quickbooks') return { skip: 'Settled in QuickBooks; never sent.' };
+    if (creating && d.source === 'quickbooks') return { skip: 'From QuickBooks; never sent.' };
     const inv = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, 'invoices', d.invoiceId));
     if (creating && inv?.data?.status === 'void') return { skip: 'The invoice is void.' };
     if (creating && d.source === 'stripe') {
@@ -543,10 +575,15 @@ async function finishCreate(run, link, collection, record, obj, build, { row, la
     // The recoverable tax printed on the bill, not QuickBooks' own sum (4.8 purchases).
     written = (await taxAfterWrite(run, { ...link, qbo_entity: entity }, collection, d, written, { requestParts: ['create'], L })).obj;
   }
-  const ctx = ctxFor(run, { ...link, meta }, collection);
+  // A payment's own line is the invoice it was sent to (4.9): settlement, the line checks and the
+  // merge all find the Fishtape payment by it.
+  const paymentLine = collection === 'payments' && link.role === 'main' && entity === 'Payment' ? str(L.invoiceRef) || '' : '';
+  // The link meta first: R of a payment counts the excess this create left as credit (ownExcessCents).
+  Object.assign(meta, linkMeta(entity, written, ctxFor(run, { ...link, meta }, collection), { pushed: build }));
+  if (paymentLine && d.source === 'stripe' && str(meta.depositTo) && str(meta.depositTo) === str(run.ctx.mappings.account?.stripeClearing)) meta.stripeClearing = true;
+  const ctx = ctxFor(run, { ...link, meta, qbo_line: paymentLine || link.qbo_line }, collection);
   const R = qboToCanon(entity, written, { ...ctx, collection });
   const snapshot = createdSnapshot(collection, link.role, L, R);
-  Object.assign(meta, linkMeta(entity, written, ctx, { pushed: build }));
   if (written?.CustomerRef) meta.customerRef = ref(written.CustomerRef);
   if (collection === 'jobs' && written?.ParentRef) meta.parentRef = ref(written.ParentRef);
   if (build?.body?.DisplayName || build?.body?.Name) meta.displayName = written?.DisplayName || written?.Name || meta.displayName;
@@ -561,7 +598,7 @@ async function finishCreate(run, link, collection, record, obj, build, { row, la
     }
     const l = await updateLink(tx, run, link.id, {
       qbo_id: String(written.Id), sync_token: String(written.SyncToken), qbo_updated_at: lastUpdated(written), snapshot, fishtape_version: version,
-      state: 'synced', reason: null, attempts: 0, next_attempt_at: null, last_error: null, meta, prev_values: {},
+      state: 'synced', reason: null, attempts: 0, next_attempt_at: null, last_error: null, meta, prev_values: {}, ...(paymentLine ? { qbo_line: paymentLine } : {}),
     });
     if (collection === 'invoices' && L.estimateRef && d.estimateId) {
       const est = await getLink(tx, 'estimates', d.estimateId);
@@ -680,7 +717,7 @@ async function uploadReceipt(run, link, entity, obj, d) {
  * estimates, bills and time, void invoices under the balance rule, and remove only Fishtape's own
  * line of a payment that holds others (4.2, 4.7, 4.9, 4.10, 4.11).
  */
-export async function pushDelete(run, row, record, link, { unapproved = false } = {}) {
+export async function pushDelete(run, row, record, link, { unapproved = false, force = false } = {}) {
   const collection = row?.collection || link?.collection;
   const id = row?.record_id || link?.record_id;
   const label = recordLabel(collection, record?.data || { id });
@@ -690,7 +727,18 @@ export async function pushDelete(run, row, record, link, { unapproved = false } 
   };
   if (!link || !link.qbo_id || ['deleted_local', 'unlinked', 'deleted_remote'].includes(link.state)) return done(null);
   if (link.owner === 'quickbooks' && collection !== 'payments') return done('Edit in QuickBooks.');
-  if (collection === 'timeEntries') {
+  // Already waiting for a person (below): the review decides, the sweep's daily re-queue changes nothing.
+  if (!force && link.state === 'needs_review' && ['filed_period', 'payroll_locked'].includes(link.reason)) return done(null);
+  if ((collection === 'invoices' || collection === 'bills') && !force && !link.meta?.filedConfirmed) {
+    // A void or delete takes the whole document out of a GST return already filed (4.8): a person decides.
+    const filed = taxFiledThrough(run.ctx.features, run.ctx.mappings);
+    const date = link.snapshot?.date || (record?.data ? dateOf(run, collection, record.data) : null);
+    if (filed && date && date <= filed) {
+      const message = `This removes ${collection === 'invoices' ? 'an invoice' : 'a bill'} from a GST period already filed.`;
+      return holdLink(run, { link, collection, recordId: id, entity: link.qbo_entity, row, state: 'needs_review', reason: 'filed_period', message, label, review: { message } });
+    }
+  }
+  if (collection === 'timeEntries' && !force) {
     const locked = str(optionOf(run.ctx.mappings, 'timeLockedThrough', null));
     const date = link.snapshot?.date;
     if (locked && date && date <= locked) return holdLink(run, { link, collection, recordId: id, entity: link.qbo_entity, row, state: 'needs_review', reason: 'payroll_locked', message: 'Hours already paid; change them in QuickBooks Payroll if needed.', label, review: { message: 'Hours already paid; change them in QuickBooks Payroll if needed.' } });
@@ -789,8 +837,12 @@ async function deletePayment(run, row, record, link, obj, { label, markGone }) {
     await openConflict(tx, run, link, { kind: 'deleted', label, reason: 'deposited', fields: [{ field: 'amountCents', label: 'Amount', base: '', fishtape: 'Deleted', quickbooks: message }] });
     await finishOutbox(tx, run, row);
   });
+  // The excess this payment itself left as credit (4.9, meta.ownExcessCents) goes with it: only
+  // unapplied money Fishtape does not own keeps the QuickBooks payment alive.
+  const ownExcess = Math.min(Math.max(0, summary.unappliedCents), Math.max(0, Math.round(Number(link.meta?.ownExcessCents) || 0)));
+  const otherUnapplied = summary.unappliedCents - ownExcess;
   checkBrake(run);
-  if (!otherOwned.length && !summary.foreignLines.some((l) => l.amountCents) && !summary.unappliedCents) {
+  if (!otherOwned.length && !summary.foreignLines.some((l) => l.amountCents) && !otherUnapplied) {
     try {
       const r = await run.client.voidTxn('Payment', { Id: obj.Id, SyncToken: obj.SyncToken }, { requestId: rid('void') });
       countWrite(run);
@@ -808,7 +860,7 @@ async function deletePayment(run, row, record, link, obj, { label, markGone }) {
   } else {
     const rebuilt = rebuildPaymentLines(obj, [{ invoiceQboId: mine, amountCents: 0 }], { keepTotal: true });
     try {
-      const r = await run.client.update('Payment', { ...stripRead(obj), Id: obj.Id, SyncToken: obj.SyncToken, Line: rebuilt.Line, TotalAmt: rebuilt.TotalAmt }, { requestId: rid('delete_line') });
+      const r = await run.client.update('Payment', { ...stripRead(obj), Id: obj.Id, SyncToken: obj.SyncToken, Line: rebuilt.Line, TotalAmt: toDollars(toCents(rebuilt.TotalAmt) - ownExcess) }, { requestId: rid('delete_line') });
       countWrite(run);
       await markGone('update', 'Removed this part from the QuickBooks payment; the amount is left as credit there', r?.SyncToken);
     } catch (e) {
@@ -823,7 +875,7 @@ async function deletePayment(run, row, record, link, obj, { label, markGone }) {
 }
 
 /** Delete a linked QuickBooks object that goes with another (a fee Purchase, a payout Transfer). */
-async function removeLinked(run, link, message) {
+export async function removeLinked(run, link, message) {
   let obj = null;
   try { obj = await run.client.read(link.qbo_entity, link.qbo_id); } catch (e) { if (!(e instanceof QboError && e.kind === 'not_found')) throw e; }
   if (obj) {
@@ -857,6 +909,21 @@ async function stripeVendor(run) {
   return String(vendor.Id);
 }
 
+/** The Stripe cutover (4.9): Stripe money dated before it is already in the bookkeeper's books. */
+const stripeCutover = (run) => str(optionOf(run.ctx.mappings, 'stripeCutover', optionOf(run.ctx.mappings, 'syncFrom', null)));
+
+/**
+ * A card payment Fishtape itself created in QuickBooks into the Stripe clearing account (4.9). Only
+ * those get a fee Purchase from clearing and count as booked for a payout's Transfer out of clearing.
+ * A payment the bookkeeper entered herself (linked by the wizard, relinked, pulled) went into the
+ * account she chose, often net of the fee: Fishtape books neither its fee nor its payout.
+ */
+export function bookedIntoClearing(run, link) {
+  const clearing = str(run.ctx.mappings.account?.stripeClearing);
+  if (!link || !clearing || !link.meta?.createRequestId || link.meta?.wizard) return false;
+  return link.meta.stripeClearing === true || str(link.meta.depositTo) === clearing;
+}
+
 /** A Stripe payment's fee as a Purchase (link role fee), once the main Payment exists (4.9). */
 async function processFee(run, record) {
   const d = record.data;
@@ -865,6 +932,10 @@ async function processFee(run, record) {
   if (!Number.isInteger(fee) || fee <= 0) return;
   if (d.stripe?.feeCurrency && String(d.stripe.feeCurrency).toUpperCase() !== 'CAD') return;
   if (run.shadow) return;
+  const cutover = stripeCutover(run);
+  if (cutover && (d.date || '0000') < cutover) return;
+  const main = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, 'payments', record.id));
+  if (!bookedIntoClearing(run, main)) return;
   await stripeVendor(run);
   const link = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, 'payments', record.id, 'fee'));
   if (link && link.state === 'deleted_local') return;
@@ -902,8 +973,10 @@ async function pushPayout(run, row, record) {
   if (optionOf(run.ctx.mappings, 'recordStripePayouts', true) === false) return skip('Payouts are not booked (option off).');
   if (!p.livemode) return skip('Test-mode payout; not booked.');
   if (String(p.currency).toLowerCase() !== 'cad') return skip('Not in Canadian dollars; not booked.');
-  const cutover = str(optionOf(run.ctx.mappings, 'stripeCutover', optionOf(run.ctx.mappings, 'syncFrom', null)));
-  if (cutover && p.earliest_charge_at && new Date(p.earliest_charge_at).toISOString().slice(0, 10) < cutover) return skip('Holds charges from before the Stripe cutover; already in your books.');
+  // The cutover compares local days, as the payment's own date is (localHolds): never the UTC date.
+  const cutover = stripeCutover(run);
+  const preCutover = 'Holds charges from before the Stripe cutover; already in your books.';
+  if (cutover && p.earliest_charge_at && (localDay(new Date(p.earliest_charge_at).toISOString(), run.ctx.company.zone) || '9999') < cutover) return skip(preCutover);
   if (link?.qbo_id) return reconcile(run, link, { record, row, direction: 'push' });
 
   const review = async (message) => holdLink(run, { link, collection: 'stripePayouts', recordId: id, entity: 'Transfer', row, state: 'needs_review', reason: 'payout_items', message, label, owner: 'fishtape', review: { message } });
@@ -915,9 +988,14 @@ async function pushPayout(run, row, record) {
     const waiting = [];
     for (const t of txns.filter((x) => x.type === 'charge' || x.type === 'payment')) {
       const pay = await run.db.withTenant({ tenantId: run.tenantId }, async (tx) => (await tx.query(
-        "SELECT id FROM payments WHERE tenant_id = $1 AND data->'stripe'->>'paymentIntentId' = $2 AND deleted_at IS NULL LIMIT 1", [tx.tenantId, t.paymentIntentId || ''])).rows[0]);
+        "SELECT id, data->>'date' AS date FROM payments WHERE tenant_id = $1 AND data->'stripe'->>'paymentIntentId' = $2 AND deleted_at IS NULL LIMIT 1", [tx.tenantId, t.paymentIntentId || ''])).rows[0]);
       if (!pay) return review('A charge in this payout is not a Fishtape payment; enter it in QuickBooks, then approve.');
+      // The payment was skipped as already booked (localHolds, the same test): so is its payout.
+      if (cutover && (pay.date || '9999') < cutover) return skip(preCutover);
       const main = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, 'payments', pay.id));
+      if (main?.state === 'synced' && !bookedIntoClearing(run, main)) {
+        return review('A card payment in this payout was entered in QuickBooks another way (not into the Stripe clearing account); check the deposit there, then approve.');
+      }
       const fee = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, 'payments', pay.id, 'fee'));
       const feeNeeded = optionOf(run.ctx.mappings, 'recordStripeFees', true) !== false && Number(t.feeCents) > 0;
       if (!main || main.state !== 'synced') waiting.push(main?.id || `payments:${pay.id}`);

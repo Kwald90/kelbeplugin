@@ -5,29 +5,10 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { skip, createTestDatabase } from './support/db.js';
 import { call, ownerTenant, testConfig } from './support/app.js';
 import { hqUser, startHqApp } from './support/hq.js';
 import { envSettings } from '../src/services/hq-settings.js';
-
-/**
- * Migration 0150 belongs to W1. Until it is merged, build its tables from the contract's own
- * DDL (docs/integrations/quickbooks.md 3.2), so these tests run against what W1 ships,
- * HQ column grants included. Does nothing once 0150 exists.
- */
-async function ensureQboTables(t) {
-  if ((await t.superPool.query("SELECT to_regclass('public.qbo_connections') IS NOT NULL AS ok")).rows[0].ok) return;
-  const doc = readFileSync(fileURLToPath(new URL('../../docs/integrations/quickbooks.md', import.meta.url)), 'utf8');
-  const ddl = /```sql\r?\n([\s\S]*?)```/.exec(doc.slice(doc.indexOf('### 3.2')))[1];
-  const policies = ['qbo_links', 'qbo_outbox', 'qbo_inbox', 'qbo_conflicts', 'qbo_sync_log', 'qbo_mappings', 'qbo_reference', 'qbo_candidates', 'stripe_payouts']
-    .map((tb) => `ALTER TABLE ${tb} ENABLE ROW LEVEL SECURITY; ALTER TABLE ${tb} FORCE ROW LEVEL SECURITY;
-      CREATE POLICY ${tb}_tenant ON ${tb} USING (tenant_id = app_tenant_id() AND app_portal_client_id() IS NULL)
-        WITH CHECK (tenant_id = app_tenant_id() AND app_portal_client_id() IS NULL);`).join('\n');
-  const c = await t.ownerPool.connect();
-  try { await c.query(`${ddl}\n${policies}`); } finally { c.release(); }
-}
 
 // Distinctive values that must never reach HQ.
 const COMPANY = 'Zebra Quokka Books Ltd';
@@ -56,7 +37,6 @@ async function connect(tenantId, { state = 'active', pauseReason = null } = {}) 
 before(async () => {
   if (skip) return;
   t = await createTestDatabase('hqqbo');
-  await ensureQboTables(t);
   ({ app } = await startHqApp(t));
   A = await ownerTenant(t, app, 'Alpha Wiring');
   B = await ownerTenant(t, app, 'Bravo Power');
@@ -153,7 +133,11 @@ describe('HQ QuickBooks actions', { skip }, () => {
     assert.equal(r.body.pauseReason, null);
     assert.equal(r.body.pausedSince, null);
     assert.equal((await conn(A.tenantId)).state_before, null);
-    assert.equal((await jobs('qbo_sync', A.tenantId)).length, 1);
+    const [job] = await jobs('qbo_sync', A.tenantId);
+    assert.ok(job, 'a pass is queued');
+    // The sweep has its own dedupe key, so a plain qbo_sync already waiting cannot swallow it (2.5).
+    assert.equal(job.dedupe_key, `qbo_sync:${A.tenantId}:sweep`);
+    assert.equal(job.payload.sweep, true);
     assert.equal((await hq(staff.token, url, { method: 'POST', body: { paused: false, reason: 'Again please' } })).status, 409, 'not paused by HQ');
     assert.equal((await events(A.tenantId, 'hq.qbo.pause')).length, 2);
   });

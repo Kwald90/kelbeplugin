@@ -6,8 +6,6 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { skip, createTestDatabase } from './support/db.js';
 import { call, ownerTenant, startApp } from './support/app.js';
 import { ProviderError, setFetch } from '../src/integrations/http.js';
@@ -40,23 +38,6 @@ const net = {
   },
 };
 const unix = (iso) => Math.floor(Date.parse(iso) / 1000);
-
-/**
- * Migration 0150 belongs to W1. Until it is merged, build its tables from the contract's own
- * DDL (docs/integrations/quickbooks.md 3.2), so these tests run against what W1 ships.
- * Does nothing once 0150 exists.
- */
-async function ensureQboTables(t) {
-  if ((await t.superPool.query("SELECT to_regclass('public.qbo_connections') IS NOT NULL AS ok")).rows[0].ok) return;
-  const doc = readFileSync(fileURLToPath(new URL('../../docs/integrations/quickbooks.md', import.meta.url)), 'utf8');
-  const ddl = /```sql\r?\n([\s\S]*?)```/.exec(doc.slice(doc.indexOf('### 3.2')))[1];
-  const policies = ['qbo_links', 'qbo_outbox', 'qbo_inbox', 'qbo_conflicts', 'qbo_sync_log', 'qbo_mappings', 'qbo_reference', 'qbo_candidates', 'stripe_payouts']
-    .map((tb) => `ALTER TABLE ${tb} ENABLE ROW LEVEL SECURITY; ALTER TABLE ${tb} FORCE ROW LEVEL SECURITY;
-      CREATE POLICY ${tb}_tenant ON ${tb} USING (tenant_id = app_tenant_id() AND app_portal_client_id() IS NULL)
-        WITH CHECK (tenant_id = app_tenant_id() AND app_portal_client_id() IS NULL);`).join('\n');
-  const c = await t.ownerPool.connect();
-  try { await c.query(`${ddl}\n${policies}`); } finally { c.release(); }
-}
 
 describe('Stripe reads for the books (fake Stripe, no database)', () => {
   test('fetchStripeFee reads the charge\'s balance transaction', async () => {
@@ -123,7 +104,6 @@ before(async () => {
   setFetch((u, i) => net.fetch(u, i));
   if (skip) return;
   t = await createTestDatabase('stripefees');
-  await ensureQboTables(t);
   ({ app } = await startApp(t));
   process.env.QBO_ENVIRONMENT = 'sandbox'; // QuickBooks is on for this server (read when each call runs)
   A = await ownerTenant(t, app, 'Alpha Electric');

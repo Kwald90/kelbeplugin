@@ -8,7 +8,7 @@
 import { qboApi } from '../lib/qbo-api.js';
 import * as Q from '../lib/qbo-ui.js';
 import { openGuide } from './integrations.js';
-import { openExternal, isNativeApp } from '../lib/native.js';
+import { openExternal, closeExternal, isNativeApp } from '../lib/native.js';
 
 /** The last status this run loaded: shown greyed while offline. Memory only. */
 let lastStatus = null;
@@ -103,7 +103,8 @@ function renderOverview(root, ctx) {
   const { ui, query } = ctx;
   const { h } = ui;
   const host = h('div', { class: 'stack' }, h('p', { class: 'muted' }, 'Loading…'));
-  const result = query.connect && query.connect !== '1' ? query.connect : null;
+  // The connect result shows for the connection as it was when the page opened (keepConnectResult).
+  let kept = { result: query.connect && query.connect !== '1' ? query.connect : null };
   root.append(frame(ctx, 'overview', { actions: [ui.button('Setup guide', { icon: 'book', onClick: () => openGuide('quickbooks') })] }, host));
   // Keep the result on screen but out of the address bar, so a reload doesn't repeat it.
   if (query.connect) history.replaceState(null, '', `${location.pathname}${location.search}#/quickbooks${query.show ? `?show=${encodeURIComponent(query.show)}` : ''}`);
@@ -115,8 +116,10 @@ function renderOverview(root, ctx) {
     ui.clear(host);
     const kind = Q.overviewKind(status);
     const parts = [];
+    kept = Q.keepConnectResult(kept, status);
+    const result = kept.result;
     if (result) {
-      const r = Q.connectResultText(result);
+      const r = Q.connectResultText(result, status);
       parts.push(banner(ui, r.tone === 'success' ? 'success' : r.tone, h('strong', null, r.title), ' ', r.text));
     }
     if (result === 'realm_in_use' || status?.takeoverOffer) parts.push(takeoverCard(ctx, status, reload));
@@ -130,6 +133,7 @@ function renderOverview(root, ctx) {
         isAdmin(ctx) ? ui.button('Go live', { size: 'sm', variant: 'primary', onClick: (e) => goLive(ctx, e.currentTarget, reload) }) : null));
     }
     parts.push(stateCard(ctx, kind, status, reload));
+    if (status?.catchingUp) parts.push(banner(ui, 'info', 'Catching up with QuickBooks after a long break: this can take a few passes.'));
     if (status && ['active', 'paused', 'reconnect_needed'].includes(status.state)) {
       const links = Q.countLinks(status.counts);
       if (links.length) parts.push(h('div', { class: 'card qbo-counts' }, h('h3', null, 'Needs attention'),
@@ -287,7 +291,7 @@ async function startConnect(ctx, { reconnect = false, btn = null } = {}, reload)
     if (Date.now() > until) { stop = true; reload?.(); return; }
     try {
       const s = await qboApi.status();
-      if (s.state !== before) { stop = true; lastStatus = s; ctx.ui.toast(s.state === 'setup' || s.state === 'active' ? 'QuickBooks is connected' : 'QuickBooks status changed', 'success'); reload?.(); return; }
+      if (s.state !== before) { stop = true; lastStatus = s; closeExternal(); ctx.ui.toast(s.state === 'setup' || s.state === 'active' ? 'QuickBooks is connected' : 'QuickBooks status changed', 'success'); reload?.(); return; }
     } catch { /* keep trying */ }
     setTimeout(tick, 3000);
   };
@@ -435,9 +439,18 @@ function optionsForm(ctx, opts, status, { wizard = false } = {}) {
   return { el: form, read, valid: () => form.reportValidity() };
 }
 
-const optionSets = (before = {}, after = {}) => Object.entries(after)
-  .filter(([k, v]) => JSON.stringify(before?.[k] ?? null) !== JSON.stringify(v ?? null))
-  .map(([key, value]) => ({ kind: 'option', key, value }));
+/**
+ * The option changes for PUT /qbo/mappings: a changed value goes in `set`; a cleared one (a date
+ * emptied, a choice put back to 'Pick one…') goes in `remove`, which the server treats as back to
+ * the default. A key is never in both.
+ */
+const optionChanges = (before = {}, after = {}) => {
+  const changed = Object.entries(after).filter(([k, v]) => JSON.stringify(before?.[k] ?? null) !== JSON.stringify(v ?? null));
+  return {
+    set: changed.filter(([, v]) => v != null).map(([key, value]) => ({ kind: 'option', key, value })),
+    remove: changed.filter(([, v]) => v == null).map(([key]) => ({ kind: 'option', key })),
+  };
+};
 
 // ---------------------------------------------------------------------------------------------
 // Mappings (8.4), also step 3 of the wizard
@@ -573,9 +586,11 @@ function mappingsView(ctx, host, { wizard = false, onReady = null } = {}) {
 
     async function save(btn) {
       if (!optionsBlock.valid()) return;
-      const { set, remove } = Q.mappingDiff(data.mappings || {}, draft);
-      const optSet = optionSets(data.mappings?.option, optionsBlock.read());
-      const all = [...set.filter((s) => s.kind !== 'option'), ...optSet];
+      const diff = Q.mappingDiff(data.mappings || {}, draft);
+      const opt = optionChanges(data.mappings?.option, optionsBlock.read());
+      // Options come only from the form (optionChanges), so a key is never in both set and remove.
+      const all = [...diff.set.filter((s) => s.kind !== 'option'), ...opt.set];
+      const remove = [...diff.remove.filter((r) => r.kind !== 'option'), ...opt.remove];
       if (!all.length && !remove.length) { ui.toast('Nothing changed', 'info'); return; }
       // Say what changed (8.4), by the names on screen.
       const nameOf = ({ kind, key }) => (kind === 'option'
@@ -664,8 +679,8 @@ function renderWizard(root, ctx) {
           const p = Q.settingsProblems(v);
           ui.clear(problems);
           if (p.length) { problems.append(banner(ui, 'warning', p.join(' '))); return; }
-          const set = optionSets(before, v);
-          if (set.length && !(await write(ctx, () => qboApi.saveMappings({ set }), { btn: e.currentTarget }))) return;
+          const { set, remove } = optionChanges(before, v);
+          if ((set.length || remove.length) && !(await write(ctx, () => qboApi.saveMappings({ set, remove }), { btn: e.currentTarget }))) return;
           go('mappings');
         } }));
     }).catch((e) => { ui.clear(body).append(h('p', null, Q.errorText(e))); });
@@ -824,7 +839,7 @@ function renderWizard(root, ctx) {
         h('section', { class: 'card stack' }, h('h3', null, 'Differences'),
           h('p', { class: 'muted', style: { margin: 0 } }, 'For each linked record, pick which side is right for each field. The other side is updated on the first sync.'),
           byKind.length ? byKind.map(([k, list]) => h('div', { class: 'stack qbo-diff-kind' },
-            h('div', { class: 'row' }, h('strong', { class: 'grow' }, kindLabel(k)),
+            h('div', { class: 'row qbo-diff-head' }, h('strong', { class: 'grow' }, kindLabel(k)),
               ui.button('Use Fishtape for all', { size: 'sm', variant: 'ghost', onClick: (e) => write(ctx, () => qboApi.bulkChoices({ kind: k, fieldsFrom: 'fishtape' }), { btn: e.currentTarget }).then((r) => { if (r !== undefined) load(); }) }),
               ui.button('Use QuickBooks for all', { size: 'sm', variant: 'ghost', onClick: (e) => write(ctx, () => qboApi.bulkChoices({ kind: k, fieldsFrom: 'quickbooks' }), { btn: e.currentTarget }).then((r) => { if (r !== undefined) load(); }) })),
             list.map((c) => h('div', { class: 'qbo-diff', dataset: { cand: c.id } }, h('div', { class: 'qbo-diff-title' }, c.fishtape?.label || c.quickbooks?.label || c.id),
@@ -838,7 +853,7 @@ function renderWizard(root, ctx) {
           h('p', { class: 'muted', style: { margin: 0 } }, 'These add to a GST period already filed. Tick each one that should still go to QuickBooks; the rest are skipped.'),
           filed.map((c) => h('label', { class: 'field check' }, h('input', { type: 'checkbox', checked: Boolean(c.confirmed), onChange: (e) => write(ctx, () => qboApi.setChoices([{ id: c.id, choice: c.choice, confirmed: e.target.checked }])).then((r) => { if (r !== undefined) c.confirmed = e.target.checked; }) }),
             h('span', null, Q.sideSummary(c.fishtape, ui.fmtMoney))))) : null,
-        plan ? planCard(plan) : null,
+        plan ? planCard(plan, Q.undecidedDiffs(cands).length) : null,
         h('div', { class: 'row qbo-wizard-foot' }, ui.button('Back', { variant: 'ghost', icon: 'chevron-left', onClick: () => go('match') }), h('span', { class: 'grow' }),
           ready.ok ? null : h('span', { class: 'qbo-why muted' }, ready.why),
           ui.button('Apply', { variant: 'primary', icon: 'check', disabled: !ready.ok || Q.isOffline(ctx), onClick: async (e) => {
@@ -854,20 +869,20 @@ function renderWizard(root, ctx) {
         h('span', { class: 'muted' }, side === 'fishtape' ? 'Fishtape' : 'QuickBooks'), h('span', null, d[side] === '' || d[side] == null ? '(empty)' : String(d[side])));
       return h('div', { class: ['qbo-diff-row', pick ? null : 'undecided'] }, h('span', { class: 'qbo-diff-field' }, d.label || d.field), opt('fishtape'), opt('quickbooks'));
     };
-    const planCard = (p) => {
+    // One line per kind of record (a five-column table does not fit a phone): only the counts that are not 0.
+    const PLAN_PARTS = [['link', 'linked'], ['createInQbo', 'created in QuickBooks'], ['createInFishtape', 'created in Fishtape'], ['skip', 'left alone']];
+    const planCard = (p, openDiffs = 0) => {
       const nums = Object.entries(p.numbers || {}).filter(([, v]) => v && v.qboHighest != null && v.fishtapeNext != null && Number(v.qboHighest) >= Number(v.fishtapeNext));
+      // The server counts records with a difference left; the screen counts fields, as the Apply line does.
+      const countOf = (w) => (['differences', 'differences_undecided', 'undecided_differences'].includes(w.code) ? Math.max(openDiffs, w.count || 0) : w.count);
       return h('section', { class: 'card stack' }, h('h3', null, 'What happens'),
-        ui.table({
-          columns: [
-            { key: 'kind', label: 'Records', render: (r) => Q.MATCH_KINDS.find((k) => k.id === r.kind)?.label || r.kind },
-            { key: 'link', label: 'Linked', align: 'right', render: (r) => String(r.link || 0) },
-            { key: 'q', label: 'Created in QuickBooks', align: 'right', render: (r) => String(r.createInQbo || 0) },
-            { key: 'f', label: 'Created in Fishtape', align: 'right', render: (r) => String(r.createInFishtape || 0) },
-            { key: 's', label: 'Left alone', align: 'right', render: (r) => String(r.skip || 0) },
-          ],
-          rows: p.phases || [],
-        }),
-        (p.warnings || []).length ? h('ul', { class: 'qbo-warnings' }, p.warnings.map((w) => h('li', null, w.message || w.code, w.count != null ? ` (${w.count})` : ''))) : null,
+        h('div', { class: 'list qbo-plan' }, (p.phases || []).map((r) => {
+          const parts = PLAN_PARTS.filter(([k]) => r[k] > 0).map(([k, words]) => `${r[k]} ${words}`);
+          return h('div', { class: 'list-row', dataset: { planKind: r.kind } },
+            h('strong', { class: 'qbo-plan-kind' }, Q.MATCH_KINDS.find((k) => k.id === r.kind)?.label || r.kind),
+            h('span', { class: parts.length ? null : 'muted' }, parts.length ? parts.join(' · ') : 'Nothing to do'));
+        })),
+        (p.warnings || []).length ? h('ul', { class: 'qbo-warnings' }, p.warnings.map((w) => { const n = countOf(w); return h('li', null, w.message || w.code, n != null ? ` (${n})` : ''); })) : null,
         nums.length ? h('label', { class: 'field check' }, h('input', { type: 'checkbox', onChange: (e) => { raise = e.target.checked; } }),
           h('span', null, `Raise Fishtape's next numbers above QuickBooks' highest (${nums.map(([k, v]) => `${k} ${v.qboHighest}`).join(', ')})`)) : null);
     };
@@ -972,11 +987,13 @@ function renderConflict(root, ctx, id) {
     if (!(await ui.confirmDialog(text, { title: 'Are you sure?', okLabel }))) return;
     resolve(body, btn);
   };
+  // The column heads; on a phone each value carries its own (data-label), so the heads are hidden.
+  const gridHead = () => ['Field', 'Before', 'Fishtape', 'QuickBooks'].map((t) => h('span', { class: 'muted qbo-cg-head' }, t));
   const draw = (c) => {
     ui.clear(host);
     const href = Q.recordHref(c.collection, c.recordId);
     const resolved = c.status && c.status !== 'open';
-    const title = h('div', { class: 'row' }, h('h3', { class: 'grow', style: { margin: 0 } }, c.label || c.recordId), ui.badge(CONFLICT_KIND[c.kind] || c.kind, 'warning'),
+    const title = h('div', { class: 'row qbo-conflict-title' }, h('h3', { class: 'grow', style: { margin: 0 } }, c.label || c.recordId), ui.badge(CONFLICT_KIND[c.kind] || c.kind, 'warning'),
       href ? ui.button('Open record', { size: 'sm', variant: 'ghost', href }) : null);
     const actions = [];
     if (c.kind === 'fields') {
@@ -985,24 +1002,25 @@ function renderConflict(root, ctx, id) {
       const applyBtn = ui.button('Use my choices', { variant: 'primary', disabled: true, onClick: (e) => resolve({ choice: 'fields', fields: { ...picks } }, e.currentTarget) });
       host.append(title, mfaBanner(ctx) || '', h('div', { class: 'card stack' },
         h('p', { class: 'muted', style: { margin: 0 } }, 'Both sides changed these since they last agreed. Pick the right value for each; it is written to the other side.'),
-        h('div', { class: 'qbo-conflict-grid' },
-          h('span', { class: 'muted' }, 'Field'), h('span', { class: 'muted' }, 'Before'), h('span', { class: 'muted' }, 'Fishtape'), h('span', { class: 'muted' }, 'QuickBooks'),
-          fields.map((f) => [h('strong', null, f.label || f.field), h('span', { class: 'muted' }, fmtVal(f.base)),
+        h('div', { class: 'qbo-conflict-grid' }, gridHead(),
+          fields.map((f) => [h('strong', null, f.label || f.field), h('span', { class: 'muted', dataset: { label: 'Before' } }, fmtVal(f.base)),
             sidePick(f, 'fishtape'), sidePick(f, 'quickbooks')]))));
       function sidePick(f, side) {
-        return h('label', { class: 'qbo-side' }, h('input', { type: 'radio', name: `c-${f.field}`, disabled: resolved, onChange: () => { picks[f.field] = side; applyBtn.disabled = !allPicked(); } }), h('span', null, fmtVal(f[side])));
+        return h('label', { class: 'qbo-side', dataset: { label: side === 'fishtape' ? 'Fishtape' : 'QuickBooks' } }, h('input', { type: 'radio', name: `c-${f.field}`, disabled: resolved, onChange: () => { picks[f.field] = side; applyBtn.disabled = !allPicked(); } }), h('span', null, fmtVal(f[side])));
       }
       actions.push(ui.button('Use Fishtape for all', { onClick: (e) => resolve({ choice: 'fishtape' }, e.currentTarget) }),
         ui.button('Use QuickBooks for all', { onClick: (e) => resolve({ choice: 'quickbooks' }, e.currentTarget) }), applyBtn);
     } else {
       host.append(title, mfaBanner(ctx) || '', h('div', { class: 'card stack' },
         h('p', { style: { margin: 0 } }, c.message || Q.REVIEW_REASON[c.reason] || CONFLICT_KIND[c.kind] || ''),
-        (c.fields || []).length ? h('div', { class: 'qbo-conflict-grid' }, h('span', { class: 'muted' }, 'Field'), h('span', { class: 'muted' }, 'Before'), h('span', { class: 'muted' }, 'Fishtape'), h('span', { class: 'muted' }, 'QuickBooks'),
-          c.fields.map((f) => [h('strong', null, f.label || f.field), h('span', { class: 'muted' }, fmtVal(f.base)), h('span', null, fmtVal(f.fishtape)), h('span', null, fmtVal(f.quickbooks))])) : null));
+        (c.fields || []).length ? h('div', { class: 'qbo-conflict-grid' }, gridHead(),
+          c.fields.map((f) => [h('strong', null, f.label || f.field), h('span', { class: 'muted', dataset: { label: 'Before' } }, fmtVal(f.base)), h('span', { dataset: { label: 'Fishtape' } }, fmtVal(f.fishtape)), h('span', { dataset: { label: 'QuickBooks' } }, fmtVal(f.quickbooks))])) : null));
       if (c.kind === 'review') {
         if (c.reason === 'name_taken') actions.push(ui.button('Link to the QuickBooks customer', { variant: 'primary', onClick: (e) => resolve({ choice: 'link' }, e.currentTarget) }), ui.button('Create with a new name', { onClick: (e) => resolve({ choice: 'create' }, e.currentTarget) }));
         else {
           const approve = { origin: 'Approve and send', filed_period: 'Send it anyway', payroll_locked: 'Send it anyway', payout_items: 'I entered these in QuickBooks' }[c.reason] || "Use Fishtape's version";
+          // 7.7: on an origin review, keeping QuickBooks puts Fishtape back to the QuickBooks copy.
+          if (c.reason === 'origin') host.append(h('p', { class: 'muted', dataset: { keepQbo: '1' }, style: { margin: 0 } }, "Don't send it: Fishtape goes back to the QuickBooks copy; the change is not sent."));
           actions.push(ui.button(approve, { variant: 'primary', onClick: (e) => resolve({ choice: 'fishtape' }, e.currentTarget) }),
             ui.button(['origin', 'filed_period', 'payroll_locked'].includes(c.reason) ? "Don't send it" : "Keep QuickBooks' version", { onClick: (e) => resolve({ choice: 'quickbooks' }, e.currentTarget) }),
             ui.button('Unlink', { variant: 'ghost danger', onClick: (e) => confirmThen(e, `Unlink ${c.label || 'this record'} from QuickBooks? Both records are kept; nothing is sent for it until it is linked again or sent as new.`, 'Unlink', { choice: 'unlink' }) }));
@@ -1038,11 +1056,12 @@ function renderActivity(root, ctx) {
   const host = h('div', { class: 'stack' });
   root.append(frame(ctx, 'activity', { subtitle: 'What was sent to and received from QuickBooks' }, host));
   let alive = true, rows = [], cursor = null, more = false;
+  if (query.show === 'waiting') return renderWaiting(host, ctx, () => { alive = false; });
   const f = { outcome: query.outcome || '', collection: query.collection || '', recordId: query.recordId || '' };
   const filters = h('div', { class: 'row qbo-filters' },
     h('label', { class: 'field' }, h('span', null, 'Show'), h('select', { name: 'outcome', onChange: (e) => { f.outcome = e.target.value; load(true); } }, Q.OUTCOMES.map((o) => h('option', { value: o.id, selected: o.id === f.outcome }, o.label)))),
     h('label', { class: 'field' }, h('span', null, 'Records'), h('select', { name: 'collection', onChange: (e) => { f.collection = e.target.value; f.recordId = ''; load(true); } },
-      h('option', { value: '' }, 'All records'), Object.entries(Q.COLLECTION_LABEL).map(([k, v]) => h('option', { value: k, selected: k === f.collection }, `${v}s`)))),
+      h('option', { value: '' }, 'All records'), Object.entries(Q.COLLECTION_PLURAL).map(([k, v]) => h('option', { value: k, selected: k === f.collection }, v)))),
     f.recordId ? ui.button('All records', { size: 'sm', variant: 'ghost', icon: 'x', onClick: (e) => { f.recordId = ''; e.currentTarget.remove(); load(true); } }) : null);
   const list = h('div');
   host.append(f.outcome === 'shadow' ? banner(ui, 'warning', 'Practice mode: these are the changes Fishtape would have made. Nothing was written.') : '', filters, list);
@@ -1056,7 +1075,7 @@ function renderActivity(root, ctx) {
       draw();
     } catch (e) { if (alive) ui.clear(list).append(ui.empty({ icon: 'alert', title: 'The activity could not be loaded', text: Q.errorText(e) })); }
   };
-  const tone = (o) => ({ error: 'danger', warning: 'warning', conflict: 'warning', shadow: 'accent', skipped: 'neutral', auto_resolved: 'info', ok: 'success' }[o] || 'neutral');
+  const tone = (o) => ({ error: 'danger', warning: 'warning', conflict: 'warning', shadow: 'accent', skipped: 'neutral', info: 'info', ok: 'success' }[o] || 'neutral');
   const draw = () => {
     ui.clear(list);
     list.append(ui.table({
@@ -1091,6 +1110,30 @@ function renderActivity(root, ctx) {
   return () => { alive = false; };
 }
 
+/** The records waiting to be sent (link state blocked), each with why: the overview's "Waiting" count. */
+function renderWaiting(host, ctx, stop) {
+  const { ui } = ctx;
+  const { h } = ui;
+  let alive = true;
+  const list = h('div', null, h('p', { class: 'muted' }, 'Loading…'));
+  host.append(h('div', { class: 'row' }, h('h3', { style: { margin: 0 } }, 'Waiting to be sent'), h('span', { class: 'grow' }), ui.button('All activity', { size: 'sm', variant: 'ghost', href: '#/quickbooks/activity' })), list);
+  if (Q.isOffline(ctx)) { ui.clear(list).append(ui.empty({ icon: 'alert', title: "You're offline", text: 'QuickBooks needs a connection.' })); return () => { alive = false; stop(); }; }
+  qboApi.waiting({ limit: 200 }).then((r) => {
+    if (!alive) return;
+    ui.clear(list).append(ui.table({
+      columns: [
+        { key: 'rec', label: 'Record', render: (w) => { const href = Q.recordHref(w.collection, w.recordId); const text = w.label || `${Q.COLLECTION_LABEL[w.collection] || w.collection} ${w.recordId}`; return href ? h('a', { href }, text) : text; } },
+        { key: 'why', label: 'Waiting for', render: (w) => Q.reasonText({ state: 'blocked', reason: w.reason }) || w.message || w.reason || '—' },
+        { key: 'at', label: 'Since', render: (w) => (w.since ? ui.fmtDateTime(w.since) : '—') },
+      ],
+      rows: r?.data || [],
+      onRowClick: (w) => Q.openRecordSheet(ctx, w.collection, w.recordId),
+      empty: ui.empty({ icon: 'check', title: 'Nothing is waiting', text: 'Every record that should be in QuickBooks has gone.' }),
+    }));
+  }).catch((e) => { if (alive) ui.clear(list).append(ui.empty({ icon: 'alert', title: 'The list could not be loaded', text: Q.errorText(e) })); });
+  return () => { alive = false; stop(); };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Look-up (7.8, 8.6)
 // ---------------------------------------------------------------------------------------------
@@ -1102,6 +1145,7 @@ function renderLookup(root, ctx) {
   root.append(frame(ctx, 'lookup', { subtitle: 'Search your QuickBooks company and bring a record into Fishtape' }, host));
   let alive = true;
   let entity = ['customers', 'invoices', 'estimates'].includes(query.entity) ? query.entity : 'customers';
+  let taxCodes = null;
   const client = query.clientId ? store.get('clients', query.clientId) : null;
   const results = h('div');
   const note = h('div');
@@ -1114,14 +1158,19 @@ function renderLookup(root, ctx) {
     statusSel.hidden = entity === 'customers';
   };
   const tabsHost = h('div');
+  // Always in the page (an empty, hidden paragraph without a client): host.append is the DOM's own
+  // and would write a null as the text "null".
+  const clientNote = h('p', { class: 'muted', style: { margin: 0 } }, client ? `For ${client.name}` : '');
+  const drawClientNote = () => { clientNote.hidden = !(client && entity !== 'customers'); };
   const drawTabs = () => ui.clear(tabsHost).append(ui.tabs([{ id: 'customers', label: 'Customers' }, { id: 'invoices', label: 'Invoices' }, { id: 'estimates', label: 'Estimates' }], entity,
-    (e) => { entity = e; ui.clear(results); input.value = ''; drawControls(); drawTabs(); }));
+    (e) => { entity = e; ui.clear(results); input.value = ''; drawControls(); drawTabs(); drawClientNote(); }));
   host.append(
     tabsHost,
     note,
     h('form', { class: 'row qbo-lookup-form', onSubmit: (e) => { e.preventDefault(); search(); } }, input, statusSel, searchBtn),
-    client && entity !== 'customers' ? h('p', { class: 'muted', style: { margin: 0 } }, `For ${client.name}`) : null,
+    clientNote,
     results);
+  drawClientNote();
   drawTabs();
   drawControls();
 
@@ -1189,18 +1238,20 @@ function renderLookup(root, ctx) {
   function preview(r) {
     const body = h('div', { class: 'stack' }, h('p', { class: 'muted' }, 'Loading…'));
     const s = ui.openSheet({ title: entity === 'customers' ? r.name : `${entity === 'invoices' ? 'Invoice' : 'Estimate'} ${r.docNumber || ''}`, body, actions: [ui.button('Close', { variant: 'ghost', onClick: () => s.close() })] });
-    qboApi.lookupOne(entity, r.qboId).then((o) => {
+    // The tax code names come from the mappings' lists (read once per screen): a line shows the
+    // code's name, never its QuickBooks id.
+    const codes = entity === 'customers' ? Promise.resolve([]) : (taxCodes ||= qboApi.mappings().then((m) => m?.choices?.taxCodes || []).catch(() => []));
+    Promise.all([qboApi.lookupOne(entity, r.qboId), codes]).then(([o, list]) => {
       ui.clear(body);
-      const lines = o.lines || [];
+      const v = Q.lookupFacts(entity, o, { money: (c) => ui.fmtMoney(c), date: (d) => ui.fmtDate(d), taxCodeName: (id) => list.find((c) => String(c.id) === id)?.name || null });
       h(body, null,
-        o.header ? h('dl', { class: 'qbo-facts' }, Object.entries(o.header).filter(([, v]) => v != null && typeof v !== 'object').map(([k, v]) => [h('dt', null, k), h('dd', null, String(v))])) : null,
-        lines.length ? ui.table({ columns: [
+        v.facts.length ? h('dl', { class: 'qbo-facts' }, v.facts.map(([k, val]) => [h('dt', null, k), h('dd', null, val)])) : null,
+        v.lines.length ? ui.table({ columns: [
           { key: 'd', label: 'Description', render: (l) => l.description || '—' },
           { key: 'q', label: 'Qty', align: 'right', render: (l) => (l.qty != null ? String(l.qty) : '—') },
           { key: 'a', label: 'Amount', align: 'right', render: (l) => ui.fmtMoney(l.amountCents) },
-          { key: 't', label: 'Tax', render: (l) => l.taxCode || '—' },
-        ], rows: lines }) : null,
-        o.totals ? h('dl', { class: 'qbo-facts' }, Object.entries(o.totals).map(([k, v]) => [h('dt', null, k.replace(/Cents$/, '')), h('dd', { class: 'num' }, typeof v === 'number' ? ui.fmtMoney(v) : String(v))])) : null,
+          ...(v.taxColumn ? [{ key: 't', label: 'Tax', render: (l) => l.taxName || '—' }] : []),
+        ], rows: v.lines }) : null,
         Q.trademarkLine(ui));
     }).catch((e) => { ui.clear(body).append(h('p', null, Q.errorText(e))); });
   }

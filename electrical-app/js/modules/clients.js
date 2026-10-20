@@ -1,5 +1,5 @@
 // Clients (S12): list, detail with related records, add/edit/delete.
-import { invoiceBalanceCents, invoiceStatus, docTotals } from '../lib/money.js';
+import { invoiceShown, docTotals } from '../lib/money.js';
 import { openLeadSheet } from './leads.js';
 import { moduleOn } from '../lib/modules.js';
 import { BILLING_MODES } from '../lib/tm.js';
@@ -18,7 +18,7 @@ export function invoiceClientId(store, inv) {
 
 export function clientBalanceCents(store, clientId) {
   return store.list('invoices', (i) => i.status !== 'void' && i.status !== 'draft' && invoiceClientId(store, i) === clientId)
-    .reduce((s, i) => s + Math.max(0, invoiceBalanceCents(store, i)), 0);
+    .reduce((s, i) => s + Math.max(0, invoiceShown(store, i).balanceCents), 0);
 }
 
 export function openClientSheet({ store, ui, nav }, client = null, { onSaved, prefill = {} } = {}) {
@@ -183,10 +183,10 @@ function detailView(root, ctx, id) {
         columns: [
           { key: 'number', label: '#', render: (r) => h('span', { class: 'mono' }, r.number) },
           { key: 'job', label: 'Job', render: (r) => (r.jobId ? jobTitle(r.jobId) : '—') },
-          { key: 'status', label: 'Status', render: (r) => ui.statusBadge(invoiceStatus(store, r)) },
+          { key: 'status', label: 'Status', render: (r) => ui.statusBadge(invoiceShown(store, r).status) },
           { key: 'dueDate', label: 'Due', sort: (r) => r.dueDate || '', render: (r) => ui.fmtDate(r.dueDate) },
           { key: 'total', label: 'Total', align: 'right', render: (r) => ui.fmtMoney(docTotals(r).totalCents) },
-          { key: 'bal', label: 'Balance', align: 'right', sort: (r) => invoiceBalanceCents(store, r), render: (r) => ui.fmtMoney(Math.max(0, invoiceBalanceCents(store, r))) },
+          { key: 'bal', label: 'Balance', align: 'right', sort: (r) => invoiceShown(store, r).balanceCents, render: (r) => ui.fmtMoney(Math.max(0, invoiceShown(store, r).balanceCents)) },
         ],
         rows: invoices, onRowClick: (r) => nav('#/invoices/' + r.id),
         empty: ui.empty({ icon: 'receipt', title: 'No invoices yet' }),

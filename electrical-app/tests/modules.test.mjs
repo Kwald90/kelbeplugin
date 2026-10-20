@@ -82,10 +82,7 @@ describe('module switches', () => {
   test('every collection the switches name exists, and every switch names real screens', () => {
     for (const c of Object.keys(M.COLLECTION_SWITCHES)) assert.ok(COLLECTIONS.includes(c), c);
     for (const ids of Object.values(M.COLLECTION_SWITCHES)) for (const id of ids) assert.ok(M.SWITCH_BY_ID[id], id);
-    // The purchasing screen's plan entry comes with plans.js (QuickBooks contract 12.2, merged first);
-    // until then only it may be missing, and once plans.js has it the full check applies again.
-    const planPending = Object.hasOwn(FEATURE_PLAN, 'purchasing') ? [] : ['purchasing'];
-    for (const sw of M.SWITCHES) for (const m of sw.modules) assert.ok(Object.hasOwn(FEATURE_PLAN, m) || planPending.includes(m), `${sw.id} → ${m}`);
+    for (const sw of M.SWITCHES) for (const m of sw.modules) assert.ok(Object.hasOwn(FEATURE_PLAN, m), `${sw.id} → ${m}`);
     assert.equal(new Set(M.SWITCHES.map((s) => s.id)).size, M.SWITCHES.length);
     for (const g of new Set(M.SWITCHES.map((s) => s.group))) assert.ok(M.SWITCH_GROUPS.some((x) => x.id === g), g);
   });

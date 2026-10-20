@@ -92,6 +92,23 @@ before(async () => {
 after(async () => { setFetch(null); await t?.close(); });
 
 describe('scan and matches (6.3)', { skip }, () => {
+  test('an open Fishtape invoice from before the window that QuickBooks already has (paid there) is matched, never created again', async () => {
+    const T = await setupTenant('Old Open Electric');
+    await create(T, 'clients', { id: 'c-old', name: 'Old Open Client', email: 'old@example.ca' });
+    const cust = fake.create(T.realmId, 'Customer', { DisplayName: 'Old Open Client', PrimaryEmailAddr: { Address: 'old@example.ca' } });
+    const old = new Date(Date.parse(`${TODAY.slice(0, 7)}-01T12:00:00Z`) - 120 * 86_400_000).toISOString().slice(0, 10);
+    // Exported to QuickBooks by CSV; the customer paid there, so Fishtape still says "sent".
+    await create(T, 'invoices', invoice({ id: 'inv-2875', number: 'INV-2875', clientId: 'c-old', issueDate: old, dueDate: old }));
+    const q = qboInvoice(T, cust.Id, 'INV-2875', 100000, { TxnDate: old });
+    fake.create(T.realmId, 'Payment', { CustomerRef: { value: cust.Id }, TxnDate: old, TotalAmt: q.TotalAmt, Line: [{ Amount: q.TotalAmt, LinkedTxn: [{ TxnId: q.Id, TxnType: 'Invoice' }] }] });
+    assert.equal(Number(fake.get(T.realmId, 'Invoice', q.Id).Balance), 0, 'paid in QuickBooks');
+    await leased(T, (epoch) => scan(deps, T.tenantId, { epoch }));
+    const all = (await matches(T)).data;
+    const c = all.find((x) => x.kind === 'invoices' && x.fishtape?.id === 'inv-2875');
+    assert.notEqual(c.choice, 'create_in_qbo', 'never a second INV-2875 in QuickBooks');
+    assert.equal(c.quickbooks?.qboId, q.Id, 'paired with the QuickBooks copy');
+  });
+
   test('matching rules, baselines and every default choice; apply creates both ways with nothing doubled', async () => {
     const T = await setupTenant('Wizard Electric');
     // Customers.

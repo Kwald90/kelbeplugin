@@ -26,7 +26,7 @@ import { registerAmountDueAdjuster } from './integrations/payments.js';
 import { createQboHandlers, scheduleQboJobs } from './qbo/jobs.js';
 import { createQboPlatformHandlers, scheduleQboPlatformJobs } from './qbo/platform-jobs.js';
 import { QBO_ALERT_HANDLERS, scheduleQboAlerts } from './qbo/alerts.js';
-import { amountDueAdjustment } from './qbo/engine.js';
+import { amountDueAdjustment, markShutdown } from './qbo/engine.js';
 
 Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS, PLATFORM_EMAIL_HANDLERS, SIGNUP_HANDLERS, FINANCE_HANDLERS, STATUS_HANDLERS, LOCATION_HANDLERS);
 
@@ -40,11 +40,11 @@ async function main() {
   const workerId = `${hostname()}:${process.pid}`;
   const sealer = createSealer(config.secretsMasterKey);
   const records = createRecords({ validator: createValidator(), config });
-  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }), ...createMaterialHandlers({ config }) };
+  // The QuickBooks alerts run in the general pool: they watch the QuickBooks pool and must not wait in it.
+  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }), ...createMaterialHandlers({ config }), ...QBO_ALERT_HANDLERS };
   const qboHandlers = {
     ...createQboHandlers({ sealer, config, records, workerId }),
     ...createQboPlatformHandlers({ sealer, config }),
-    ...QBO_ALERT_HANDLERS,
   };
   // The QuickBooks amount-due adjustment (docs/integrations/quickbooks.md 4.9), for invoice statuses set here.
   if (config.qbo?.enabled) registerAmountDueAdjuster(amountDueAdjustment);
@@ -89,7 +89,9 @@ async function main() {
     }
   }
 
-  const stop = async () => { stopping = true; };
+  // A deploy stops the container (SIGTERM, then a kill after stop_grace_period): QuickBooks passes end
+  // at their next step as if out of time, release their claims and lease and queue their continuation.
+  const stop = async () => { stopping = true; markShutdown(); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   log('info', 'worker started', { concurrency: config.worker.concurrency, qboConcurrency: config.worker.qboConcurrency });

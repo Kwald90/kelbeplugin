@@ -25,7 +25,7 @@ import { scan, apply } from '../src/qbo/wizard.js';
 import { renumber } from '../src/qbo/lookup.js';
 import { processRecord } from '../src/qbo/push.js';
 import { ingestWebhook, parseWebhook } from '../src/qbo/webhook.js';
-import { resolveConflict } from '../src/qbo/conflicts.js';
+import { resolveConflict, conflictView } from '../src/qbo/conflicts.js';
 import { QboError, createQboClient } from '../src/qbo/client.js';
 
 const KEY = randomBytes(32).toString('base64');
@@ -548,12 +548,16 @@ describe('review findings', { skip }, () => {
     await patch(T, 'invoices', 'inv-o', { lines: BIG_LINES }, apiKey(T));
     await pass(T);
     assert.equal((await link(T, 'invoices', 'inv-o')).reason, 'origin');
+    const reviewText = async () => (await openConflicts(T)).find((c) => c.record_id === 'inv-o')?.fields?.[0]?.fishtape;
+    const before = await reviewText();
+    assert.ok(before, 'the origin review is open');
     await qboPayment(T, 'c-o', lo.qbo_id, 10);
     await pass(T);
     assert.equal(fake.get(T.realmId, 'Invoice', lo.qbo_id).TotalAmt, 1120, 'QuickBooks keeps its lines');
     const held = await link(T, 'invoices', 'inv-o');
     assert.equal(held.state, 'needs_review');
     assert.equal(held.reason, 'origin');
+    assert.equal(await reviewText(), before, 'the pull keeps the origin review text');
     // The edit and the QuickBooks change land in the same pass: the pull runs first.
     await patch(T, 'invoices', 'inv-q', { lines: BIG_LINES }, apiKey(T));
     await qboPayment(T, 'c-o', lq.qbo_id, 10);
@@ -698,5 +702,118 @@ describe('review findings', { skip }, () => {
     assert.equal((await openConflicts(T)).length, 0);
     assert.equal(fake.list(T.realmId, 'Invoice').length, 1);
     assert.equal(fake.get(T.realmId, 'Invoice', l.qbo_id).CustomerMemo.value, 'After the crash');
+  });
+});
+
+// ---- the integrator's fixes after wave B: each test fails without its fix ------------------------
+
+describe('integrator fixes', { skip }, () => {
+  test("Send now without force keeps the waiting edit's writer: an API-key change still goes to review", async () => {
+    const T = await setupTenant('Send Now Origin');
+    await create(T, 'clients', { id: 'c-n', name: 'Send Client' });
+    await create(T, 'invoices', invoice({ id: 'inv-n', number: 'INV-110', clientId: 'c-n' }));
+    await pass(T);
+    const l = await link(T, 'invoices', 'inv-n');
+    await patch(T, 'invoices', 'inv-n', { lines: BIG_LINES }, apiKey(T));
+    // Retry (no force) before the pass runs: the API key's edit is not approved by it.
+    await leased(T, (epoch) => pushRecord(deps, T.tenantId, 'invoices', 'inv-n', { epoch }));
+    assert.equal(fake.get(T.realmId, 'Invoice', l.qbo_id).TotalAmt, 1120, 'QuickBooks keeps its lines');
+    const held = await link(T, 'invoices', 'inv-n');
+    assert.equal(held.state, 'needs_review');
+    assert.equal(held.reason, 'origin');
+  });
+
+  test("a field user's bill entered during setup keeps its writer through apply and goes to review", async () => {
+    const T = await setupTenant('Setup Field Bill');
+    await t.superPool.query(`UPDATE qbo_connections SET state = 'setup', setup = '{}'::jsonb, cdc_cursor = NULL, fishtape_cursor = NULL WHERE tenant_id = $1`, [T.tenantId]);
+    await create(T, 'vendors', { id: 'v-f', name: 'Field Supply' });
+    await create(T, 'bills', { id: 'b-f', kind: 'bill', vendorId: 'v-f', number: 'F-100', date: TODAY, status: 'open', lines: [{ description: 'Wire', qty: 1, unitCents: 10000, amountCents: 10000 }], taxes: [{ id: 'GST', label: 'GST', cents: 500 }], taxProvince: 'MB', totalCents: 10500 });
+    // As if a foreman with purchasing rights had entered it.
+    await t.superPool.query("UPDATE qbo_outbox SET actor_type = 'field_user' WHERE tenant_id = $1 AND collection = 'bills'", [T.tenantId]);
+    await new Promise((r) => setTimeout(r, 20));
+    await leased(T, (epoch) => scan(deps, T.tenantId, { epoch }));
+    for (let i = 0; i < 30; i++) if ((await leased(T, (epoch) => apply(deps, T.tenantId, { epoch }))).finished) break;
+    await pass(T, { sweep: true });
+    await pass(T);
+    assert.equal(fake.list(T.realmId, 'Bill').length, 0, 'the bill waits for approval');
+    const bl = await link(T, 'bills', 'b-f');
+    assert.equal(bl?.state, 'needs_review', `${bl?.state} ${bl?.reason}`);
+    assert.equal(bl.reason, 'origin');
+  });
+
+  test("while paused, 'quickbooks' on a held purchase order runs: a push-only record needs no QuickBooks call", async () => {
+    const T = await setupTenant('Paused Push Only');
+    await create(T, 'vendors', { id: 'v-p', name: 'Paused Supply' });
+    await create(T, 'purchaseOrders', { id: 'po-p', number: 'PO-200', vendorId: 'v-p', date: TODAY, status: 'open', lines: [{ description: 'Conduit', qty: 2, unitCents: 1500 }] });
+    await pass(T);
+    assert.ok((await link(T, 'purchaseOrders', 'po-p')).qbo_id);
+    await patch(T, 'purchaseOrders', 'po-p', { lines: [{ description: 'Conduit', qty: 40, unitCents: 1500 }] }, apiKey(T));
+    await pass(T);
+    const review = (await openConflicts(T)).find((c) => c.record_id === 'po-p');
+    assert.equal(review?.reason, 'origin');
+    await t.superPool.query("UPDATE qbo_connections SET state = 'paused', pause_reason = 'hq', paused_since = now(), lease_until = NULL WHERE tenant_id = $1", [T.tenantId]);
+    fake.resetCalls();
+    const r = await leased(T, (epoch) => resolveConflict(deps, T.tenantId, review.id, { choice: 'quickbooks' }, whoOf(T.p), { epoch }));
+    assert.equal(r.status, 'resolved');
+    assert.equal(fake.calls.filter((c) => c.realmId === T.realmId).length, 0, 'no QuickBooks call');
+    const l = await link(T, 'purchaseOrders', 'po-p');
+    assert.equal(l.state, 'synced');
+    assert.equal(l.meta.originRejected, true, 'the next send needs approval');
+  });
+
+  test('an invoice and its payment on different CDC pages (over 1,000 changes): one Fishtape payment, never a settlement', async () => {
+    const T = await setupTenant('Cdc Pages');
+    await create(T, 'clients', { id: 'c-pg', name: 'Paged Client' });
+    await create(T, 'invoices', invoice({ id: 'inv-pg', number: 'INV-120', clientId: 'c-pg' }));
+    await pass(T);
+    const l = await link(T, 'invoices', 'inv-pg');
+    // Fill the first CDC page so it ends with the invoice and the payment opens the second.
+    const cur = (await t.superPool.query('SELECT cdc_cursor FROM qbo_connections WHERE tenant_id = $1', [T.tenantId])).rows[0].cdc_cursor;
+    const since = new Date(cur).getTime() - 120_000;
+    let inWindow = 0;
+    for (const e of ['Customer', 'Vendor', 'Item', 'Estimate', 'Invoice', 'Payment', 'Bill', 'Purchase', 'PurchaseOrder', 'Deposit', 'Transfer']) {
+      for (const o of fake.list(T.realmId, e)) if (Date.parse(o.MetaData?.LastUpdatedTime) >= since && !(e === 'Invoice' && String(o.Id) === String(l.qbo_id))) inWindow++;
+    }
+    // New top-level customers: under importCustomers 'active' they are not written to Fishtape (4.1).
+    for (let i = 0; i < 999 - inWindow; i++) fake.create(T.realmId, 'Customer', { DisplayName: `Filler ${i}` });
+    await new Promise((r) => setTimeout(r, 5));
+    const pay = await qboPayment(T, 'c-pg', l.qbo_id, 100);
+    // QuickBooks moves the invoice in the same instant: the invoice ends page one, the payment opens page two.
+    const objects = fake.company(T.realmId).objects;
+    objects.Invoice.get(String(l.qbo_id)).MetaData.LastUpdatedTime = objects.Payment.get(String(pay.Id)).MetaData.LastUpdatedTime;
+    await pass(T, { direction: 'pull', purpose: 'cdc' });
+    const pays = await paymentsOf(T, 'inv-pg');
+    assert.deepEqual(pays.map((x) => x.data.amountCents), [10000], JSON.stringify(pays.map((x) => x.id)));
+    // Not even for a moment: a settlement made on page one and removed on page two would reach devices.
+    assert.equal((await rec(T, 'payments', 'credit-inv-pg')), null, 'no settlement payment was ever written');
+    assert.equal((await rec(T, 'invoices', 'inv-pg')).status, 'partial');
+  });
+
+  test('a QuickBooks merge of two linked customers lists both records; unlinking the other moves this link to the kept one', async () => {
+    const T = await setupTenant('Merged Pair');
+    await create(T, 'clients', { id: 'c-m1', name: 'Merge One' });
+    await create(T, 'clients', { id: 'c-m2', name: 'Merge Two' });
+    await create(T, 'clients', { id: 'c-m3', name: 'Bystander' });
+    await pass(T);
+    const from = (await link(T, 'clients', 'c-m1')).qbo_id;
+    const into = (await link(T, 'clients', 'c-m2')).qbo_id;
+    fake.company(T.realmId).events.length = 0;
+    fake.merge(T.realmId, 'Customer', from, into);
+    const hook = fake.signedWebhook(T.realmId, 'v1');
+    await ingestWebhook(t.db, sealer, config, parseWebhook(hook.raw));
+    await pass(T);
+    const row = (await openConflicts(T)).find((c) => c.kind === 'merged');
+    assert.ok(row, 'a merged conflict');
+    const view = conflictView(row);
+    assert.deepEqual(view.recordIds, ['c-m1', 'c-m2']);
+    assert.ok(view.fields.every((f) => !('qboId' in f) && !('recordIds' in f)), 'internal keys stay out of the API shape');
+    await assert.rejects(leased(T, (epoch) => resolveConflict(deps, T.tenantId, row.id, { choice: 'unlink', recordId: 'c-m3' }, whoOf(T.p), { epoch })), (e) => e.statusCode === 400);
+    assert.equal((await link(T, 'clients', 'c-m3')).state, 'synced', 'a record outside the merge is never unlinked');
+    const done = await leased(T, (epoch) => resolveConflict(deps, T.tenantId, row.id, { choice: 'unlink', recordId: 'c-m2' }, whoOf(T.p), { epoch }));
+    assert.equal(done.status, 'resolved');
+    assert.equal((await link(T, 'clients', 'c-m2')).state, 'unlinked');
+    const moved = await link(T, 'clients', 'c-m1');
+    assert.equal(moved.qbo_id, String(into));
+    assert.equal(moved.state, 'synced');
   });
 });

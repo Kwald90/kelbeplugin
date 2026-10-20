@@ -15,7 +15,7 @@ import { QBO_RANK, upsertOutbox } from './hooks.js';
 import { enqueueSync, loadConnection } from './connection.js';
 import { assertEpoch } from './lease.js';
 import {
-  makeRun, txWrite, getLink, insertLink, updateLink, loadRecord, ctxFor, optionOf, taxFiledThrough, monthStart, timeUp, zoneOf, loadMappings,
+  makeRun, stampPush, txWrite, getLink, insertLink, updateLink, loadRecord, ctxFor, optionOf, taxFiledThrough, monthStart, timeUp, zoneOf, loadMappings,
 } from './engine.js';
 import { processRecord, createBatch } from './push.js';
 import { createFromRemote, settle } from './pull.js';
@@ -111,8 +111,20 @@ export async function scan(deps, tenantId, { epoch } = {}) {
   const qboEmployees = await q('select * from Employee where Active in (true, false)');
   const qboVendors = run.ctx.features?.bills === false ? [] : await q('select * from Vendor where Active in (true, false)');
   const byId = (list) => new Map(list.map((o) => [String(o.Id), o]));
-  const invMap = byId([...await q("select * from Invoice where Balance > '0'"), ...await q(`select * from Invoice where TxnDate >= '${from}'`)]);
-  const estMap = byId([...await q(`select * from Estimate where TxnDate >= '${from}'`), ...await q("select * from Estimate where TxnStatus = 'Pending'"), ...await q("select * from Estimate where TxnStatus = 'Accepted'")]);
+  // An open Fishtape document dated before the window may be in QuickBooks already, paid or closed
+  // there (a CSV export, payments recorded only in QuickBooks): its copy is read too, so both match
+  // passes see it and it is never proposed for a second create (6.3).
+  const oldest = await run.db.withTenant({ tenantId }, async (tx) => (await tx.query(
+    `SELECT (SELECT min(r.data->>'issueDate') FROM invoices r WHERE r.tenant_id = $1 AND r.deleted_at IS NULL AND r.data->>'status' IN ('sent', 'partial')
+               AND NOT EXISTS (SELECT 1 FROM qbo_links l WHERE l.tenant_id = r.tenant_id AND l.collection = 'invoices' AND l.record_id = r.id AND l.state <> 'unlinked')) AS inv,
+            (SELECT min(COALESCE(r.data->>'issueDate', substr(r.data->>'createdAt', 1, 10))) FROM estimates r WHERE r.tenant_id = $1 AND r.deleted_at IS NULL AND r.data->>'status' IN ('sent', 'accepted')
+               AND NOT EXISTS (SELECT 1 FROM qbo_links l WHERE l.tenant_id = r.tenant_id AND l.collection = 'estimates' AND l.record_id = r.id AND l.state <> 'unlinked')) AS est`,
+    [tx.tenantId])).rows[0]);
+  const back = (d) => (d && /^\d{4}-\d{2}-\d{2}/.test(d) && d.slice(0, 10) < from ? daysBefore(d.slice(0, 10), 14) : null);
+  const invBack = back(oldest?.inv);
+  const estBack = back(oldest?.est);
+  const invMap = byId([...await q("select * from Invoice where Balance > '0'"), ...await q(`select * from Invoice where TxnDate >= '${invBack || from}'`)]);
+  const estMap = byId([...await q(`select * from Estimate where TxnDate >= '${estBack || from}'`), ...await q("select * from Estimate where TxnStatus = 'Pending'"), ...await q("select * from Estimate where TxnStatus = 'Accepted'")]);
   const payMap = byId(await q(`select * from Payment where TxnDate >= '${syncFrom}'`));
   for (const c of customers) if (c.ParentRef) run.index.parents.set(String(c.Id), ref(c.ParentRef));
 
@@ -413,16 +425,27 @@ const PHASES = [
 export async function apply(deps, tenantId, { epoch, budgetMs } = {}) {
   const run = await makeRun(deps, tenantId, { epoch, purpose: 'sync', ignoreBrake: true, budgetMs });
   if (!run) throw new ApiError(409, 'qbo_not_connected', 'QuickBooks is not connected.');
+  try {
+    return await applyChunk(run, tenantId);
+  } finally {
+    await stampPush(run);
+  }
+}
+
+async function applyChunk(run, tenantId) {
   const setup = run.conn.setup || {};
   if (setup.cancelRequested) { await setupProgress(run, { phase: 'cancelled', cancelRequested: false, finishedAt: new Date().toISOString() }); return { phase: 'cancelled', finished: true }; }
   const shadowLinked = setup.phase === 'shadow_linked';
-  if (run.conn.state !== 'setup' && !(run.conn.state === 'active' && shadowLinked && !run.shadow)) return { phase: setup.phase, finished: true, skipped: run.conn.state };
+  // Out of practice mode the connection is already active: the remaining phases run there, chunk after
+  // chunk, until finishApply (fromShadow marks such an apply; 6.4).
+  const fromShadow = shadowLinked || (setup.fromShadow === true && ['apply_queued', 'applying'].includes(setup.phase));
+  if (run.conn.state !== 'setup' && !(run.conn.state === 'active' && fromShadow && !run.shadow)) return { phase: setup.phase, finished: true, skipped: run.conn.state };
   let phase = Number(setup.applyPhase || 1);
-  if (shadowLinked && phase < 2) phase = 2;
+  if (fromShadow && phase < 2) phase = 2;
   const counts = await run.db.withTenant({ tenantId }, async (tx) => (await tx.query(
     "SELECT count(*) FILTER (WHERE choice <> 'skip')::int AS total, count(*) FILTER (WHERE choice <> 'skip' AND applied_at IS NOT NULL)::int AS done, count(*) FILTER (WHERE error IS NOT NULL)::int AS errors FROM qbo_candidates WHERE tenant_id = $1",
     [tx.tenantId])).rows[0]);
-  await setupProgress(run, { phase: 'applying', applyPhase: phase, total: counts.total, done: counts.done, errors: counts.errors, startedAt: setup.startedAt || new Date().toISOString() });
+  await setupProgress(run, { phase: 'applying', applyPhase: phase, total: counts.total, done: counts.done, errors: counts.errors, startedAt: setup.startedAt || new Date().toISOString(), ...(fromShadow && run.conn.state === 'active' ? { fromShadow: true } : {}) });
   for (; phase <= 8; phase++) {
     await setupProgress(run, { applyPhase: phase });
     const p = PHASES[phase - 1];
@@ -612,7 +635,15 @@ async function applyCosts(run) {
     await q('bills', 'bills', "coalesce(data->>'status', 'draft') <> 'draft' AND coalesce(data->>'date', '') >= $2", [syncFrom]);
     await q('purchase_orders', 'purchaseOrders', "data->>'status' IN ('open', 'sent', 'closed') AND coalesce(data->>'date', '9999') >= $2", [syncFrom]);
     if (optionOf(run.ctx.mappings, 'timeOwner', null) === 'fishtape' && optionOf(run.ctx.mappings, 'syncTime', true) !== false) {
-      await q('time_entries', 'timeEntries', "(data->>'approved')::boolean IS TRUE AND substr(coalesce(data->>'clockIn', ''), 1, 10) >= $2 AND substr(coalesce(data->>'clockIn', ''), 1, 10) > $3", [syncFrom, locked || '0000-00-00']);
+      // The TimeActivity date is the clock-in day in the company zone (4.11), never the UTC date: an
+      // evening clock-in on the last paid day is still in the paid period.
+      const { rows } = await tx.query(
+        "SELECT id, data->>'clockIn' AS clock_in FROM time_entries WHERE tenant_id = $1 AND deleted_at IS NULL AND (data->>'approved')::boolean IS TRUE", [tx.tenantId]);
+      for (const r of rows) {
+        const day = localDay(r.clock_in, run.ctx.company.zone);
+        if (!day || day < syncFrom || (locked && day <= locked)) continue;
+        await upsertOutbox(tx, { collection: 'timeEntries', recordId: r.id, op: 'upsert', actorType: 'system', rank: QBO_RANK.timeEntries, delayS: 0 });
+      }
     }
   });
   return false;
@@ -643,9 +674,14 @@ async function finishApply(run) {
   });
 }
 
-/** Queue the next apply chunk under its own key (the running job holds the plain one, 5.8). */
-export function enqueueApply(q, tenantId, { next = false } = {}) {
-  return enqueue(q, { kind: 'qbo_setup_apply', tenantId, dedupeKey: next ? `qbo_setup_apply:${tenantId}:cont` : `qbo_setup_apply:${tenantId}`, runAt: new Date(Date.now() + (next ? 5_000 : 0)), maxAttempts: 5 });
+/**
+ * Queue the next apply chunk under its own key (5.8): the running job holds its own key, so the
+ * continuation takes `:cont`, or `:cont2` when the running job is `:cont` itself (runningKey).
+ */
+export function enqueueApply(q, tenantId, { next = false, runningKey = null, delayMs = null } = {}) {
+  const base = `qbo_setup_apply:${tenantId}`;
+  const key = next ? (runningKey === `${base}:cont` ? `${base}:cont2` : `${base}:cont`) : base;
+  return enqueue(q, { kind: 'qbo_setup_apply', tenantId, dedupeKey: key, runAt: new Date(Date.now() + (delayMs ?? (next ? 5_000 : 0))), maxAttempts: 5 });
 }
 
 export { assertEpoch, KINDS, localDay, zoneOf };

@@ -1,5 +1,6 @@
-// QuickBooks alerts for HQ (docs/integrations/quickbooks.md section 9). The qbo_alerts job runs
-// every 10 minutes in the worker, checks the rules below and emails HQ_NOTIFY_EMAIL through the
+// QuickBooks alerts for HQ (docs/integrations/quickbooks.md section 9). The hq_qbo_alerts job runs
+// every 10 minutes in the worker's general pool (never the QuickBooks pool it watches: a stuck or
+// empty QuickBooks pool must still be reported), checks the rules below and emails HQ_NOTIFY_EMAIL through the
 // platform email outbox, at most once per alert kind per hour (budget alerts once per threshold
 // per month). The email row is the record that an alert went out, so several workers never
 // send the same alert twice.
@@ -124,6 +125,23 @@ export const RULES = [
     },
   },
   {
+    kind: 'qbo_pool_stalled',
+    title: 'The QuickBooks worker pool is not running',
+    steps: ['Check the worker is up and WORKER_QBO_CONCURRENCY is 1 or more (docker compose logs worker).', 'In HQ > Health > Queue, look for qbo_* jobs that stay "running": the dispatcher puts one back after 3 minutes without a heartbeat, the hourly housekeeping after 15.'],
+    async check(db) {
+      const { rows } = await db.query(
+        `SELECT (SELECT count(*)::int FROM qbo_realms) AS realms,
+                EXTRACT(EPOCH FROM now() - (SELECT max(finished_at) FROM jobs_queue WHERE kind = 'qbo_dispatch' AND status = 'done'))::int AS since_dispatch,
+                EXTRACT(EPOCH FROM now() - (SELECT min(run_at) FROM jobs_queue WHERE kind LIKE $1 AND status = 'queued' AND run_at <= now()))::int AS oldest`, ['qbo\\_%']);
+      const r = rows[0];
+      if (!r.realms) return [];
+      const text = [];
+      if (r.since_dispatch == null || r.since_dispatch > 300) text.push(r.since_dispatch == null ? 'No QuickBooks dispatch has finished yet.' : `The QuickBooks dispatcher last finished ${Math.round(r.since_dispatch / 60)} minutes ago (it runs every minute).`);
+      if (r.oldest != null && r.oldest > 900) text.push(`The oldest QuickBooks job has waited ${Math.round(r.oldest / 60)} minutes for the pool.`);
+      return text.length ? [{ count: 1, text: text.join(' '), companies: [] }] : [];
+    },
+  },
+  {
     kind: 'qbo_intuit_5xx',
     title: 'Intuit is answering with server errors',
     steps: ['Check https://status.developer.intuit.com. Syncs retry on their own with backoff.', 'If it lasts, tell affected companies that QuickBooks is slow on Intuit\'s side.'],
@@ -232,7 +250,7 @@ export async function runQboAlerts({ db, notifyEmail = '', hqLink = '', env = pr
 export function createQboAlertHandlers(deps = {}) {
   const now = deps.now || (() => new Date());
   return {
-    async qbo_alerts({ db, job }) {
+    async hq_qbo_alerts({ db, job }) {
       const env = deps.env || process.env;
       if (!qboEnabled(env)) return { skipped: 'QuickBooks is off on this server' };
       const at = now();
@@ -243,7 +261,7 @@ export function createQboAlertHandlers(deps = {}) {
       } finally {
         if (!job?.payload?.once) {
           const next = new Date(at.getTime() + EVERY_MS);
-          await enqueue(db, { kind: 'qbo_alerts', runAt: next, dedupeKey: `qbo_alerts:${slotKey(next)}`, maxAttempts: 1 });
+          await enqueue(db, { kind: 'hq_qbo_alerts', runAt: next, dedupeKey: `hq_qbo_alerts:${slotKey(next)}`, maxAttempts: 1 });
         }
       }
     },
@@ -252,8 +270,13 @@ export function createQboAlertHandlers(deps = {}) {
 
 export const QBO_ALERT_HANDLERS = createQboAlertHandlers();
 
-/** Start the 10-minute alert chain (idempotent; the worker calls it hourly). Nothing when QuickBooks is off. */
+/**
+ * Start the 10-minute alert chain (idempotent; the worker calls it at start and hourly), with the next
+ * slot's link too: a killed worker's row may still hold this slot's key. Nothing when QuickBooks is off.
+ */
 export async function scheduleQboAlerts(db, at = new Date(), env = process.env) {
   if (!qboEnabled(env)) return;
-  await enqueue(db, { kind: 'qbo_alerts', dedupeKey: `qbo_alerts:${slotKey(at)}`, maxAttempts: 1 });
+  await enqueue(db, { kind: 'hq_qbo_alerts', dedupeKey: `hq_qbo_alerts:${slotKey(at)}`, maxAttempts: 1 });
+  const next = new Date(Math.floor(at.getTime() / EVERY_MS) * EVERY_MS + EVERY_MS);
+  await enqueue(db, { kind: 'hq_qbo_alerts', runAt: next, dedupeKey: `hq_qbo_alerts:${slotKey(next)}`, maxAttempts: 1 });
 }

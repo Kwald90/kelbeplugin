@@ -6,13 +6,13 @@
 // to either side, the tenant lease (wait up to 10 s, else 409 qbo_busy). Every route needs the
 // quickbooks plan feature (403 feature_not_in_plan) and a server with QuickBooks on (503).
 // Nothing here is given to the assistant, MCP or API keys (10.1); search terms travel in POST bodies.
-import { ApiError, notFound, validationFailed } from '../../errors.js';
+import { ApiError, forbidden, notFound, validationFailed } from '../../errors.js';
 import { appendAudit, requestFacts } from '../../services/audit.js';
 import { requireFeature } from '../../services/entitlements.js';
 import { enqueue } from '../../services/queue.js';
 import { qboCfg } from '../../qbo/env.js';
 import { QboError, createQboClient } from '../../qbo/client.js';
-import { requireQboRole } from '../../qbo/roles.js';
+import { requireQboRole, QBO_ADMIN_ROLES } from '../../qbo/roles.js';
 import { loadConnection, enqueueSync } from '../../qbo/connection.js';
 import { acquireLease, releaseLease } from '../../qbo/lease.js';
 import { QBO_COLLECTIONS } from '../../qbo/hooks.js';
@@ -163,7 +163,8 @@ export default async function qboRoutes(app, { config, db, records }) {
     await inTenant(req, async (tx) => {
       await assertReadyToApply(tx, c);
       if (req.body?.raiseNumbers) await raiseNumbers(tx, req);
-      await tx.query("UPDATE qbo_connections SET setup = setup || '{\"phase\":\"apply_queued\",\"cancelRequested\":false}'::jsonb WHERE tenant_id = $1", [tx.tenantId]);
+      await tx.query("UPDATE qbo_connections SET setup = setup || '{\"phase\":\"apply_queued\",\"cancelRequested\":false}'::jsonb || $2::jsonb WHERE tenant_id = $1",
+        [tx.tenantId, JSON.stringify(c.setup?.phase === 'shadow_linked' ? { fromShadow: true } : {})]);
       await enqueueApply(tx, tx.tenantId);
       await appendAudit(tx, tx.tenantId, { actor: req.principal.actor, action: 'qbo.setup.apply', collection: 'qbo_connections', summary: 'Started applying the QuickBooks setup', request: requestFacts(req) });
     }, { write: true });
@@ -227,7 +228,7 @@ export default async function qboRoutes(app, { config, db, records }) {
     return rows;
   }
   const stateOf = (l) => ({
-    state: l.state, reason: l.reason, message: l.last_error || (l.reason ? REASON_TEXT[l.reason] || null : null),
+    state: l.state, reason: l.reason, owner: l.owner, message: l.last_error || (l.reason ? REASON_TEXT[l.reason] || null : null),
     syncedAt: l.synced_at ? new Date(l.synced_at).toISOString() : null, conflictId: l.conflict_id || null, docNumber: l.meta?.docNumber || l.snapshot?.number || null,
     ...(l.meta?.mismatch ? { mismatch: l.meta.mismatch } : {}),
   });
@@ -276,6 +277,23 @@ export default async function qboRoutes(app, { config, db, records }) {
     return { state: stateOf(l), quickbooks, log: out.log, conflict: out.conflict };
   }));
 
+  // The overview's "Waiting" count as a list (8.2): records whose link is blocked, with the reason and
+  // the label of their latest log line. Holds are logged as skipped, so the activity log alone would
+  // not list them.
+  app.get('/api/v1/qbo/waiting', {
+    ...read,
+    schema: { tags, summary: 'Records waiting to be sent to QuickBooks (blocked), with the reason', querystring: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } } }, response: errorResponses },
+  }, wrap(async (req) => {
+    const c = await needConnection(req);
+    const limit = Math.min(Math.max(Number(req.query?.limit) || 100, 1), 200);
+    const rows = await inTenant(req, async (tx) => (await tx.query(
+      `SELECT l.collection, l.record_id, l.reason, l.last_error, l.updated_at,
+              (SELECT s.label FROM qbo_sync_log s WHERE s.tenant_id = l.tenant_id AND s.collection = l.collection AND s.record_id = l.record_id AND s.label IS NOT NULL ORDER BY s.id DESC LIMIT 1) AS label
+         FROM qbo_links l WHERE l.tenant_id = $1 AND l.realm_hash = $2 AND l.role = 'main' AND l.state = 'blocked'
+        ORDER BY l.updated_at DESC LIMIT $3`, [tx.tenantId, c.realm_hash, limit])).rows);
+    return { data: rows.map((w) => ({ collection: w.collection, recordId: w.record_id, reason: w.reason, message: w.last_error || null, label: w.label || null, since: w.updated_at ? new Date(w.updated_at).toISOString() : null })) };
+  }));
+
   app.post('/api/v1/qbo/records/:collection/:id/sync', {
     ...write,
     schema: { tags, summary: 'Retry, Send to QuickBooks now, or Send as new (an unlinked tombstone)', params: recordParams, body: { type: 'object', additionalProperties: false, properties: { force: { type: 'boolean' }, asNew: { type: 'boolean' } } }, response: errorResponses },
@@ -290,7 +308,9 @@ export default async function qboRoutes(app, { config, db, records }) {
     const summary = req.body?.asNew ? 'Sent to QuickBooks as new' : held ? `Sent to QuickBooks now, approving the hold (${held.reason || held.state})` : 'Sent to QuickBooks now';
     await inTenant(req, (tx) => appendAudit(tx, tx.tenantId, { actor: req.principal.actor, action: 'qbo.send', collection, recordId: id, summary, request: requestFacts(req), ...(held ? { meta: { approved: held.reason || held.state } } : {}) }));
     reply.code(202);
-    return { state };
+    // The push ran at once under the lease; state is the link's state after it (7.5). A hold hands
+    // back the link row itself: answer only its state, never the row (realm hash, snapshot, meta).
+    return { queued: true, state: state && typeof state === 'object' ? (state.state ?? null) : state };
   }));
 
   app.post('/api/v1/qbo/records/:collection/:id/renumber', { ...write, schema: { tags, summary: 'Give a document the next number and send it again', params: recordParams, response: errorResponses } }, wrap(async (req) => {
@@ -307,13 +327,15 @@ export default async function qboRoutes(app, { config, db, records }) {
 
   app.put('/api/v1/qbo/records/:collection/:id/link', {
     ...write,
-    schema: { tags, summary: 'Link to a different QuickBooks record (every difference becomes a conflict)', params: recordParams, body: { type: 'object', additionalProperties: false, required: ['qboId'], properties: { qboId: { type: 'string', pattern: '^\\d{1,20}$' } } }, response: errorResponses },
+    schema: { tags, summary: 'Link to a different QuickBooks record (every difference becomes a conflict); an employee to a QuickBooks Employee or Vendor', params: recordParams, body: { type: 'object', additionalProperties: false, required: ['qboId'], properties: { qboId: { type: 'string', pattern: '^\\d{1,20}$' }, entity: { type: 'string', enum: ['Employee', 'Vendor'] } } }, response: errorResponses },
   }, wrap(async (req) => {
     const { collection, id } = collectionParam(req);
-    await needConnection(req);
+    // Relinking reads the QuickBooks record: not while sync is paused (2.5).
+    const c = await needConnection(req);
+    if (c.state === 'paused') throw new ApiError(409, 'qbo_paused', 'QuickBooks sync is paused.', { pauseReason: c.pause_reason });
     return withApiLease(req, async (epoch) => {
       const run = await makeRun(deps, req.principal.tenantId, { epoch, purpose: 'lookup' });
-      const l = await relinkRecord(run, collection, id, req.body.qboId, who(req));
+      const l = await relinkRecord(run, collection, id, req.body.qboId, who(req), { entity: req.body.entity || null });
       return { state: stateOf(l) };
     });
   }));
@@ -372,6 +394,8 @@ export default async function qboRoutes(app, { config, db, records }) {
       classes: of('Class').map((r) => ({ id: r.qbo_id, name: r.name, active: r.active })),
       departments: of('Department').map((r) => ({ id: r.qbo_id, name: r.name, active: r.active })),
       terms: of('Term').map((r) => ({ id: r.qbo_id, name: r.name, active: r.active })),
+      // For linking an employee hired after setup (4.5): the QuickBooks employees, email to match on.
+      employees: of('Employee').map((r) => ({ id: r.qbo_id, name: r.name, active: r.active, email: r.data?.PrimaryEmailAddr?.Address || null })),
     };
     const settings = (await tx.query("SELECT data FROM settings WHERE tenant_id = $1 AND id = 'settings' AND deleted_at IS NULL", [tx.tenantId])).rows[0]?.data || {};
     const province = settings.company?.province || c.features?.province || null;
@@ -437,6 +461,9 @@ export default async function qboRoutes(app, { config, db, records }) {
       response: errorResponses,
     },
   }, wrap(async (req) => {
+    // Practice mode and Go live belong to an owner or admin (8.2); other office mappings do not.
+    const touchesWriteMode = [...(req.body?.set || []), ...(req.body?.remove || [])].some((m) => m?.kind === 'option' && m.key === 'writeMode');
+    if (touchesWriteMode && !QBO_ADMIN_ROLES.includes(req.principal.role)) throw forbidden('Only an owner or admin can turn practice mode on or off.');
     const c = await needConnection(req);
     let goLive = false;
     // Setting the Stripe cutover reads the clearing account's balance as the check's opening balance (6.1, 5.13).
@@ -492,7 +519,10 @@ export default async function qboRoutes(app, { config, db, records }) {
       if (goLive) {
         // Out of practice mode: what waited in the outbox goes now.
         await tx.query('UPDATE qbo_outbox SET not_before = now(), claimed_until = NULL, claimed_epoch = NULL WHERE tenant_id = $1', [tx.tenantId]);
-        if (c.setup?.phase === 'shadow_linked') await enqueueApply(tx, tx.tenantId);
+        if (c.setup?.phase === 'shadow_linked') {
+          await tx.query(`UPDATE qbo_connections SET setup = setup || '{"fromShadow": true}'::jsonb WHERE tenant_id = $1`, [tx.tenantId]);
+          await enqueueApply(tx, tx.tenantId);
+        }
         else if (c.state === 'active') await enqueueSync(tx, tx.tenantId, { sweep: true });
       }
       await appendAudit(tx, tx.tenantId, { actor: req.principal.actor, action: 'qbo.mappings', collection: 'qbo_mappings', summary: `Changed QuickBooks mappings: ${changed.join(', ').slice(0, 400)}`, request: requestFacts(req) });

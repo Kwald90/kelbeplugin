@@ -85,6 +85,16 @@ export async function openExternal(url, { onClose, win = globalThis } = {}) {
   await browser.open({ url: u.href, presentationStyle: 'fullscreen' });
 }
 
+/**
+ * Close the Safari sheet openExternal opened (the iOS app only), for example once the QuickBooks
+ * connection changes while the person is still on Intuit's pages. Does nothing on the web, and
+ * never throws: the sheet may already be closed.
+ */
+export async function closeExternal() {
+  if (!isNativeApp()) return false;
+  try { await plugin('Browser').close(); return true; } catch { return false; }
+}
+
 // ---- Keychain -------------------------------------------------------------------
 
 /** Keys the FishtapeKeychain plugin accepts. */

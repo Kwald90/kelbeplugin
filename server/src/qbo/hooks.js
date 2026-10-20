@@ -62,7 +62,8 @@ async function connectionOf(tx) {
 /**
  * The outbox upsert (5.2 step 6), shared with the sweep. On conflict the earliest enqueued_at
  * stays, stale and held accumulate, the newest op wins, an api_key or agent actor in the burst
- * stays (it is held for review), not_before moves 20 s on and the claim is cleared, so the pass
+ * stays (it is held for review), a field user's stays when the system (sweep, setup wizard) queues
+ * the same record again, not_before moves 20 s on and the claim is cleared, so the pass
  * that claimed an older edit never deletes this one.
  */
 export async function upsertOutbox(tx, { collection, recordId, op, stale = false, held = {}, actorType, rank, delayS = DEBOUNCE_S }) {
@@ -71,7 +72,9 @@ export async function upsertOutbox(tx, { collection, recordId, op, stale = false
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(secs => $9))
      ON CONFLICT (tenant_id, collection, record_id) DO UPDATE SET
        op = EXCLUDED.op, stale = qbo_outbox.stale OR EXCLUDED.stale, held = qbo_outbox.held || EXCLUDED.held,
-       actor_type = CASE WHEN qbo_outbox.actor_type IN ('api_key', 'agent') THEN qbo_outbox.actor_type ELSE EXCLUDED.actor_type END,
+       actor_type = CASE WHEN qbo_outbox.actor_type IN ('api_key', 'agent')
+                           OR (qbo_outbox.actor_type = 'field_user' AND EXCLUDED.actor_type = 'system') THEN qbo_outbox.actor_type
+                         ELSE EXCLUDED.actor_type END,
        not_before = EXCLUDED.not_before, claimed_until = NULL, claimed_epoch = NULL`,
     [tx.tenantId, collection, recordId, op, Boolean(stale), JSON.stringify(held || {}), actorType, rank ?? QBO_RANK[collection] ?? 50, delayS]);
 }

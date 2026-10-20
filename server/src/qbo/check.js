@@ -8,7 +8,7 @@ import { docTotals } from '../../../electrical-app/js/lib/money.js';
 import { amountDueCents } from '../integrations/payments.js';
 import { notify } from '../services/notify.js';
 import { writeLog, recordLabel } from './log.js';
-import { makeRun, txWrite, optionOf } from './engine.js';
+import { makeRun, txWrite, optionOf, requeueStuck } from './engine.js';
 import { sweep } from './sweep.js';
 import { refreshReference } from './reference.js';
 import { toCents } from './map/canon.js';
@@ -116,6 +116,9 @@ export async function runCheck(deps, tenantId, { epoch } = {}) {
       });
     }
   });
+  // Records that ran out of retries on a passing Intuit fault (5xx, a locked company, a stale copy)
+  // get a fresh set of tries once a day: the outage is likely over, and nothing else would send them.
+  await txWrite(run, (tx) => requeueStuck(tx, { reasons: ['unavailable', 'stale', 'throttled', 'other'] }));
   await sweep(deps, tenantId, { epoch });
   await refreshReference(deps, tenantId, { epoch, force: true }).catch(() => {});
   return { mismatches, checked };

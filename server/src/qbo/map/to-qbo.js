@@ -419,13 +419,20 @@ const PAYMENT_TYPE = { card: 'CreditCard', cash: 'Cash', debit: 'Cash', cheque: 
 const EXPENSE_OWN = new Set(['ItemRef', 'Qty', 'UnitPrice', 'TaxCodeRef', 'TaxInclusiveAmt', 'AccountRef', 'CustomerRef', 'BillableStatus']);
 const expenseExtras = (ex, key) => (ex && ex[key] ? Object.fromEntries(Object.entries(ex[key]).filter(([k]) => !EXPENSE_OWN.has(k))) : {});
 
+/**
+ * A receipt whose lines add up below zero is a supplier refund: a QuickBooks Purchase with Credit true
+ * and every amount positive (4.10). -1 for those, else 1; the tax override uses the same sign (4.8).
+ */
+export function purchaseSign(c) {
+  return c?.kind === 'receipt' && sum((c.lines || []).map((l) => Number(l.amountCents) || 0)) < 0 ? -1 : 1;
+}
+
 function billBody(c, ctx, existing) {
   const { meta } = linkInfo(ctx);
   const bill = c.kind !== 'receipt';
   const body = existing ? fromExisting(existing) : {};
-  const total = sum((c.lines || []).map((l) => l.amountCents));
-  const credit = !bill && total < 0;
-  const sign = credit ? -1 : 1;
+  const sign = purchaseSign(c);
+  const credit = sign < 0;
   if (bill) body.VendorRef = refOf(c.vendorRef);
   else {
     body.EntityRef = c.vendorRef ? { value: String(c.vendorRef), type: 'Vendor' } : undefined;

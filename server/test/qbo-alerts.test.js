@@ -5,31 +5,9 @@
 import { test, before, after, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { skip, createTestDatabase } from './support/db.js';
 import { RULES, createQboAlertHandlers, qboBudgets, qboEnabled, runQboAlerts, scheduleQboAlerts, tenantBudget } from '../src/qbo/alerts.js';
 import { createTenantWithOwner } from '../src/services/tenants.js';
-
-/**
- * Migration 0150 belongs to W1. Until it is merged, build its tables from the contract's own
- * DDL (docs/integrations/quickbooks.md 3.2), so these tests run against what W1 ships.
- * Does nothing once 0150 exists.
- */
-async function ensureQboTables(t) {
-  if ((await t.superPool.query("SELECT to_regclass('public.qbo_connections') IS NOT NULL AS ok")).rows[0].ok) return;
-  const doc = readFileSync(fileURLToPath(new URL('../../docs/integrations/quickbooks.md', import.meta.url)), 'utf8');
-  const ddl = /```sql\r?\n([\s\S]*?)```/.exec(doc.slice(doc.indexOf('### 3.2')))[1];
-  const policies = ['qbo_links', 'qbo_outbox', 'qbo_inbox', 'qbo_conflicts', 'qbo_sync_log', 'qbo_mappings', 'qbo_reference', 'qbo_candidates', 'stripe_payouts']
-    .map((tb) => `ALTER TABLE ${tb} ENABLE ROW LEVEL SECURITY; ALTER TABLE ${tb} FORCE ROW LEVEL SECURITY;
-      CREATE POLICY ${tb}_tenant ON ${tb} USING (tenant_id = app_tenant_id() AND app_portal_client_id() IS NULL)
-        WITH CHECK (tenant_id = app_tenant_id() AND app_portal_client_id() IS NULL);`).join('\n');
-  // The contract's own event list has intuit_5xx, which its CHECK (^[a-z_]{2,40}$) refuses: digits
-  // are allowed here, as asked of W1 in the W6 merge report.
-  const kinds = "ALTER TABLE qbo_platform_events DROP CONSTRAINT qbo_platform_events_kind_check, ADD CONSTRAINT qbo_platform_events_kind_check CHECK (kind ~ '^[a-z0-9_]{2,40}$');";
-  const c = await t.ownerPool.connect();
-  try { await c.query(`${ddl}\n${policies}\n${kinds}`); } finally { c.release(); }
-}
 
 const NOTIFY = 'hq-alerts@fishtape.test';
 const ENV = { QBO_ENVIRONMENT: 'production' };
@@ -50,7 +28,6 @@ const times = (n, every = 0.5) => Array.from({ length: n }, (_, i) => i * every)
 before(async () => {
   if (skip) return;
   t = await createTestDatabase('qboalerts');
-  await ensureQboTables(t);
   for (const name of ['Alpha Wiring', 'Bravo Power', 'Charlie Lights', 'Delta Volts']) {
     const { tenant } = await createTenantWithOwner(t.db, { name, owner: { email: `${name.split(' ')[0].toLowerCase()}-${randomBytes(3).toString('hex')}@example.test`, password: `pw-${randomBytes(12).toString('hex')}`, displayName: name } });
     tenants.push(tenant.id);
@@ -228,6 +205,24 @@ describe('QuickBooks alert emails and the job', { skip }, () => {
     await t.superPool.query('DELETE FROM qbo_api_usage');
   });
 
+  test('the QuickBooks pool stalled: no dispatch for 5 minutes, or a qbo_* job waiting over 15 (only with a connected company)', async () => {
+    await t.superPool.query('DELETE FROM jobs_queue');
+    assert.deepEqual(await check('qbo_pool_stalled'), [], 'no company uses QuickBooks: nothing to dispatch');
+    await t.superPool.query("INSERT INTO qbo_realms (realm_hash, tenant_id, environment) VALUES ($1, $2, 'production')", [randomBytes(32), tenants[3]]);
+    try {
+      assert.equal((await check('qbo_pool_stalled')).length, 1, 'no dispatch has ever finished');
+      await t.superPool.query("INSERT INTO jobs_queue (kind, payload, status, run_at, finished_at) VALUES ('qbo_dispatch', '{}', 'done', now() - interval '1 minute', now() - interval '1 minute')");
+      assert.deepEqual(await check('qbo_pool_stalled'), [], 'dispatched a minute ago');
+      await t.superPool.query("INSERT INTO jobs_queue (kind, payload, tenant_id, status, run_at) VALUES ('qbo_sync', '{}', $1, 'queued', now() - interval '20 minutes')", [tenants[3]]);
+      const f = await check('qbo_pool_stalled');
+      assert.equal(f.length, 1);
+      assert.match(f[0].text, /waited 20 minutes/);
+    } finally {
+      await t.superPool.query('DELETE FROM jobs_queue');
+      await t.superPool.query('DELETE FROM qbo_realms WHERE tenant_id = $1', [tenants[3]]);
+    }
+  });
+
   test('a broken rule does not stop the others', async () => {
     await events('realm_mismatch', [1]);
     const broken = { kind: 'qbo_broken', title: 'x', steps: [], check: async () => { throw new Error('boom'); } };
@@ -239,26 +234,26 @@ describe('QuickBooks alert emails and the job', { skip }, () => {
   test('the job runs every 10 minutes while QuickBooks is on, and not at all when it is off', async () => {
     const at = new Date('2026-10-20T15:04:00Z');
     await scheduleQboAlerts(t.db, at, {});
-    assert.equal((await t.superPool.query("SELECT count(*)::int AS n FROM jobs_queue WHERE kind = 'qbo_alerts'")).rows[0].n, 0, 'off: nothing scheduled');
+    assert.equal((await t.superPool.query("SELECT count(*)::int AS n FROM jobs_queue WHERE kind = 'hq_qbo_alerts'")).rows[0].n, 0, 'off: nothing scheduled');
     await scheduleQboAlerts(t.db, at, ENV);
     await scheduleQboAlerts(t.db, at, ENV);
-    const queued = (await t.superPool.query("SELECT dedupe_key FROM jobs_queue WHERE kind = 'qbo_alerts'")).rows;
-    assert.deepEqual(queued.map((j) => j.dedupe_key), ['qbo_alerts:2026-10-20T15:00'], 'one job per 10-minute slot');
+    const queued = (await t.superPool.query("SELECT dedupe_key FROM jobs_queue WHERE kind = 'hq_qbo_alerts'")).rows;
+    assert.deepEqual(queued.map((j) => j.dedupe_key).sort(), ['hq_qbo_alerts:2026-10-20T15:00', 'hq_qbo_alerts:2026-10-20T15:10'], 'one job per 10-minute slot, the next one too (a killed worker may hold this one)');
 
     await t.superPool.query('DELETE FROM jobs_queue');
     const handlers = createQboAlertHandlers({ env: { ...ENV, HQ_NOTIFY_EMAIL: NOTIFY, APP_ENV: 'test', SECRETS_MASTER_KEY: randomBytes(32).toString('base64'), PUBLIC_ORIGIN: 'https://app.fishtape.test' }, now: () => at });
     await events('revoke_gave_up', [1]);
-    const r = await handlers.qbo_alerts({ db: t.db, job: { payload: {} } });
+    const r = await handlers.hq_qbo_alerts({ db: t.db, job: { payload: {} } });
     assert.deepEqual(r.fired, ['qbo_revoke_gave_up']);
     assert.equal(r.emailed, 1);
     assert.match((await outbox())[0].text_body, /https:\/\/app\.fishtape\.test\/hq\/#\/developer\/quickbooks/);
-    const next = (await t.superPool.query("SELECT dedupe_key, run_at FROM jobs_queue WHERE kind = 'qbo_alerts'")).rows;
-    assert.deepEqual(next.map((j) => j.dedupe_key), ['qbo_alerts:2026-10-20T15:10']);
+    const next = (await t.superPool.query("SELECT dedupe_key, run_at FROM jobs_queue WHERE kind = 'hq_qbo_alerts'")).rows;
+    assert.deepEqual(next.map((j) => j.dedupe_key), ['hq_qbo_alerts:2026-10-20T15:10']);
     assert.equal(new Date(next[0].run_at).toISOString(), '2026-10-20T15:14:00.000Z');
 
     await t.superPool.query('DELETE FROM jobs_queue');
     const off = createQboAlertHandlers({ env: {}, now: () => at });
-    assert.deepEqual(await off.qbo_alerts({ db: t.db, job: { payload: {} } }), { skipped: 'QuickBooks is off on this server' });
-    assert.equal((await t.superPool.query("SELECT count(*)::int AS n FROM jobs_queue WHERE kind = 'qbo_alerts'")).rows[0].n, 0, 'the chain stops while QuickBooks is off');
+    assert.deepEqual(await off.hq_qbo_alerts({ db: t.db, job: { payload: {} } }), { skipped: 'QuickBooks is off on this server' });
+    assert.equal((await t.superPool.query("SELECT count(*)::int AS n FROM jobs_queue WHERE kind = 'hq_qbo_alerts'")).rows[0].n, 0, 'the chain stops while QuickBooks is off');
   });
 });

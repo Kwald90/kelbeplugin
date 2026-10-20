@@ -84,6 +84,9 @@ button.qbo-badge:focus-visible { outline: 2px solid var(--accent); outline-offse
 .qbo-side .muted { flex: none; font-size: var(--fs-xs); }
 .qbo-dup { flex-wrap: wrap; padding: var(--s2) 0; border-top: 1px solid var(--border); }
 .qbo-warnings { margin: 0; padding-left: var(--s5); }
+.qbo-diff-head { flex-wrap: wrap; gap: var(--s1) var(--s2); }
+.qbo-plan .list-row { flex-wrap: wrap; gap: var(--s1) var(--s3); }
+.qbo-plan-kind { min-width: 110px; }
 
 /* mappings */
 .qbo-map-section h3 { margin: 0; }
@@ -102,8 +105,16 @@ button.qbo-badge:focus-visible { outline: 2px solid var(--accent); outline-offse
 
 @media (max-width: 640px) {
   .qbo-diff-row { grid-template-columns: 1fr; }
-  .qbo-conflict-grid { grid-template-columns: 1fr 1fr; }
-  .qbo-conflict-grid > :nth-child(4n + 1) { grid-column: 1 / -1; margin-top: var(--s2); }
+  .qbo-diff-head > .grow { flex-basis: 100%; }
+  /* One column: the field, then Before, Fishtape and QuickBooks, each with its own small label. */
+  .qbo-conflict-grid { grid-template-columns: 1fr; gap: var(--s1); }
+  .qbo-conflict-grid > .qbo-cg-head { display: none; }
+  .qbo-conflict-grid > strong { margin-top: var(--s2); }
+  .qbo-conflict-grid [data-label]::before { content: attr(data-label); display: block; font-size: var(--fs-xs); color: var(--text-muted); }
+  .qbo-conflict-grid label.qbo-side[data-label] { flex-wrap: wrap; }
+  .qbo-conflict-grid label.qbo-side[data-label]::before { flex-basis: 100%; }
+  .qbo-conflict-title { flex-wrap: wrap; }
+  .qbo-conflict-title > h3 { flex-basis: 100%; }
   .qbo-facts { grid-template-columns: 1fr; }
   .qbo-facts dd { margin-bottom: var(--s1); }
   .qbo-amounts { grid-template-columns: 1fr; }

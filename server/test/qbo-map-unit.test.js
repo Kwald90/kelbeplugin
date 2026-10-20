@@ -730,7 +730,7 @@ test('Stripe payments: gross into the clearing account, fee as a Purchase, settl
   assert.equal(settlementCents({ ...Q.invoice, Deposit: 200, Balance: 1633.84 }, [100000]), 25000);
   assert.deepEqual(settlementRecord({ invoiceId: 'inv-3001', cents: 25000, date: '2026-10-20' }),
     { invoiceId: 'inv-3001', amountCents: 25000, date: '2026-10-20', method: 'credit', source: 'quickbooks', reference: 'Credited or paid in QuickBooks' });
-  assert.deepEqual(depositRecord({ ...Q.invoice, Deposit: 200 }, 'inv-3001'), { invoiceId: 'inv-3001', amountCents: 20000, date: '2026-10-15', method: 'transfer', reference: 'Deposit in QuickBooks' });
+  assert.deepEqual(depositRecord({ ...Q.invoice, Deposit: 200 }, 'inv-3001'), { invoiceId: 'inv-3001', amountCents: 20000, date: '2026-10-15', method: 'transfer', source: 'quickbooks', reference: 'Deposit in QuickBooks' });
   assert.equal(depositRecord(Q.invoice, 'inv-3001'), null);
   const dep = qboToCanon('Invoice', { ...Q.invoice, Deposit: 200 }, ctx('payments', { role: 'deposit' }));
   assert.equal(dep.amountCents, 20000);

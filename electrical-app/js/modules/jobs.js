@@ -1,5 +1,5 @@
 // Jobs (S15): list by status, job detail with money, drawings, change orders, crew, compliance.
-import { docTotals, invoiceBalanceCents, invoicePaidCents, entryHours } from '../lib/money.js';
+import { docTotals, invoiceShown, invoicePaidCents, entryHours } from '../lib/money.js';
 import { emergencyCard } from '../lib/safety-emergency.js';
 import { siteCard } from '../lib/location-ui.js';
 import { entryMinutes, kindOf, fmtH } from '../lib/timesheet.js';
@@ -163,7 +163,7 @@ function moneyFor(store, job) {
   const invoices = store.list('invoices', (i) => i.jobId === job.id && i.status !== 'void');
   const invoicedCents = invoices.reduce((s, i) => s + docTotals(i).totalCents, 0);
   const paidCents = invoices.reduce((s, i) => s + invoicePaidCents(store, i.id), 0);
-  const balanceCents = invoices.reduce((s, i) => s + Math.max(0, invoiceBalanceCents(store, i)), 0);
+  const balanceCents = invoices.reduce((s, i) => s + Math.max(0, invoiceShown(store, i).balanceCents), 0);
   const entries = store.list('timeEntries', (t) => t.jobId === job.id);
   let hours = 0, labourCents = 0;
   for (const t of entries) {
@@ -413,9 +413,9 @@ function detailView(root, ctx, id) {
     el.append(ui.table({
       columns: [
         { key: 'number', label: 'No.' }, { key: 'issueDate', label: 'Issued', render: (i) => ui.fmtDate(i.issueDate) },
-        { key: 'status', label: 'Status', render: (i) => ui.statusBadge(i.status) },
+        { key: 'status', label: 'Status', render: (i) => ui.statusBadge(invoiceShown(store, i).status) },
         { key: 'total', label: 'Total', align: 'right', render: (i) => ui.fmtMoney(docTotals(i).totalCents) },
-        { key: 'bal', label: 'Balance', align: 'right', render: (i) => ui.fmtMoney(invoiceBalanceCents(store, i)) },
+        { key: 'bal', label: 'Balance', align: 'right', render: (i) => ui.fmtMoney(invoiceShown(store, i).balanceCents) },
       ],
       rows: m.invoices, onRowClick: (i) => nav('#/invoices/' + i.id),
       empty: h('p', { class: 'muted' }, 'No invoices yet.'),

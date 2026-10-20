@@ -203,7 +203,8 @@ export function createQboClient(o) {
   // The worker holds the tenant lease (one caller); each API process may run 2 look-ups at once.
   const maxInFlight = o.maxInFlight ?? (purpose === 'lookup' ? 2 : 1);
   let plan = null;
-  const client = { lastIntuitTid: null, purpose };
+  // wroteAt: when a write (a Core call) last succeeded, for qbo_connections.last_push_at (7.2 lastPushAt).
+  const client = { lastIntuitTid: null, wroteAt: null, purpose };
 
   async function tenantBudget() {
     plan ??= await loadTenantPlan(db, tenantId);
@@ -321,6 +322,7 @@ export function createQboClient(o) {
         }
         if (res.ok) {
           await count({ core, coreplus });
+          if (core) client.wroteAt = new Date();
           if (coreplus) capSeen.delete(cfg.environment);
           return res.json;
         }

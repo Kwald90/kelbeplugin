@@ -10,7 +10,10 @@
 // The word "QBO" never reaches a screen; screens say "QuickBooks" (Intuit's branding rules).
 import { qboApi, QBO_COLLECTIONS } from './qbo-api.js';
 import { lineTaxIds, taxKey } from './qbo-export.js';
-import { KINDS } from './money.js';
+import { KINDS, keepsServerPaid, taxRoundingCents } from './money.js';
+
+// The tax-rounding rule lives in lib/money.js so every screen shows the same status (invoiceShown).
+export { keepsServerPaid, taxRoundingCents };
 import { TAX_NONE_REASONS, ratesOn, provinceName, taxComponents, treatmentsFor, fmtPct } from './tax.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -110,6 +113,8 @@ export const RECONNECT_REASON = {
 /** The callback result (2.2) on #/quickbooks?connect=<result>. Same meaning as the server's done page. */
 export const CONNECT_RESULT = {
   ok: { tone: 'success', title: 'QuickBooks is connected', text: 'Next: set up what syncs and match your records.' },
+  // The same company again after a disconnect or a reconnect: setup is already done (2.6).
+  reconnected: { tone: 'success', title: 'QuickBooks is connected again', text: 'Syncing picks up where it left off.' },
   state_invalid: { tone: 'danger', title: 'The connect link expired', text: 'It expired or was already used. Press Connect to QuickBooks again.' },
   forbidden: { tone: 'danger', title: 'Not allowed', text: 'Only an owner or admin of the company can connect QuickBooks.' },
   plan: { tone: 'danger', title: 'Not in your plan', text: 'QuickBooks sync is part of the Pro plan and up.' },
@@ -123,8 +128,22 @@ export const CONNECT_RESULT = {
   unavailable: { tone: 'danger', title: 'Not available', text: "QuickBooks isn't available on this server yet." },
 };
 
-export function connectResultText(result) {
+/** The banner for a connect result; an ok that came back to an active (or paused) connection is a reconnect. */
+export function connectResultText(result, status = null) {
+  if (result === 'ok' && status && ['active', 'paused', 'reconnect_needed'].includes(status.state)) return CONNECT_RESULT.reconnected;
   return CONNECT_RESULT[result] || CONNECT_RESULT.exchange_failed;
+}
+
+/**
+ * Whether the connect result banner still belongs on the overview: it is shown for the connection as
+ * it was when the page opened, and goes once the state moves on (a disconnect, a takeover).
+ * @param {{ result: string|null, state?: string }} kept what the page kept so far
+ * @returns {{ result: string|null, state?: string }}
+ */
+export function keepConnectResult(kept, status) {
+  if (!kept?.result || !status) return kept || { result: null };
+  if (kept.state === undefined) return { result: kept.result, state: status.state };
+  return status.state === kept.state ? kept : { result: null };
 }
 
 /** Sync log outcomes (7.5 LogEntry.outcome) in words, for the activity filter. */
@@ -134,7 +153,7 @@ export const OUTCOMES = [
   { id: 'error', label: 'Errors' },
   { id: 'warning', label: 'Warnings' },
   { id: 'conflict', label: 'Needs a decision' },
-  { id: 'auto_resolved', label: 'Settled automatically' },
+  { id: 'info', label: 'Information' },
   { id: 'skipped', label: 'Skipped' },
   { id: 'shadow', label: 'Would change (practice mode)' },
 ];
@@ -142,6 +161,11 @@ export const OUTCOMES = [
 export const COLLECTION_LABEL = {
   clients: 'Client', jobs: 'Job', items: 'Product or service', vendors: 'Supplier', estimates: 'Estimate', invoices: 'Invoice',
   payments: 'Payment', bills: 'Bill', purchaseOrders: 'Purchase order', timeEntries: 'Time entry', stripePayouts: 'Stripe payout',
+};
+/** Plural names for lists and filters. */
+export const COLLECTION_PLURAL = {
+  clients: 'Clients', jobs: 'Jobs', items: 'Products and services', vendors: 'Suppliers', estimates: 'Estimates', invoices: 'Invoices',
+  payments: 'Payments', bills: 'Bills', purchaseOrders: 'Purchase orders', timeEntries: 'Time entries', stripePayouts: 'Stripe payouts',
 };
 export const COLLECTION_ROUTE = {
   clients: (id) => `#/clients/${id}`, jobs: (id) => `#/jobs/${id}`, items: () => '#/inventory', vendors: (id) => `#/purchasing/vendors/${id}`,
@@ -153,6 +177,11 @@ export const recordHref = (collection, id) => (COLLECTION_ROUTE[collection] ? CO
 /** Settlement payments (4.9): written only by the QuickBooks sync, shown read-only. */
 export const SETTLEMENT_LABEL = 'Credited or paid in QuickBooks';
 export const isSettlementPayment = (p) => Boolean(p) && p.method === 'credit' && p.source === 'quickbooks';
+export const DEPOSIT_LABEL = 'Deposit in QuickBooks';
+/** A QuickBooks deposit on the invoice (payment 'deposit-<invoiceId>', 4.7): also written only by the sync. */
+export const isDepositPayment = (p) => Boolean(p) && String(p.id || '').startsWith('deposit-') && (p.source === 'quickbooks' || p.reference === DEPOSIT_LABEL);
+/** Payments only the QuickBooks sync writes: shown read-only, never deleted here. */
+export const isQuickBooksPayment = (p) => isSettlementPayment(p) || isDepositPayment(p);
 
 // ---------------------------------------------------------------------------------------------
 // Who sees QuickBooks
@@ -209,6 +238,13 @@ export function errorText(e) {
   if (code === 'qbo_not_connected') return 'QuickBooks is not connected.';
   if (code === 'qbo_reconnect_needed') return 'Reconnect to QuickBooks first.';
   if (code === 'qbo_not_ready') return 'Finish setting up QuickBooks first.';
+  // 409 qbo_paused from resolve, Send now and Retry: the pause reason, and what still works.
+  if (code === 'qbo_paused') return `${PAUSE_REASON[e?.details?.pauseReason] || 'QuickBooks sync is paused.'} Sending waits until it resumes; Unlink still works.`;
+  if (code === 'qbo_pause_locked') {
+    const reason = e?.details?.pauseReason;
+    return `${PAUSE_REASON[reason] || "This pause can't be lifted here."}${reason === 'hq' ? ' Only Fishtape support can resume it.' : ''}`;
+  }
+  if (code === 'qbo_reconnect_not_allowed') return 'QuickBooks is connected and being set up; there is nothing to reconnect.';
   if (code === 'qbo_busy') return 'QuickBooks sync is busy; try again in a minute.';
   if (code === 'lookup_budget') return "Look-ups are off for the rest of the month: your company used most of this month's QuickBooks reads.";
   if (code === 'qbo_throttled') {
@@ -262,7 +298,7 @@ export function countLinks(counts = {}) {
   const c = counts || {};
   const rows = [
     { key: 'error', label: 'Not sent (errors)', n: c.error || 0, href: '#/quickbooks/activity?outcome=error', tone: 'danger' },
-    { key: 'blocked', label: 'Waiting', n: (c.blocked || 0), href: '#/quickbooks/activity?outcome=warning', tone: 'warning' },
+    { key: 'blocked', label: 'Waiting', n: (c.blocked || 0), href: '#/quickbooks/activity?show=waiting', tone: 'warning' },
     { key: 'pending', label: 'Sending', n: c.pending || 0, href: '#/quickbooks/activity', tone: 'info' },
     { key: 'conflict', label: 'Need a decision', n: c.conflict || 0, href: '#/quickbooks/conflicts', tone: 'warning' },
     { key: 'needsReview', label: 'To check', n: c.needsReview || 0, href: '#/quickbooks/conflicts', tone: 'warning' },
@@ -341,11 +377,70 @@ export function badgeActions(rs, { collection, record = null, url = null } = {})
   if (safeQboUrl(url)) out.push('open');
   if (rs.state === 'unlinked') { out.push('asNew', 'link'); return out; }
   if (rs.conflictId) out.push(rs.state === 'needs_review' && rs.reason === 'origin' ? 'approve' : 'conflict');
+  if (collection === 'timeEntries' && rs.state === 'blocked' && rs.reason === 'employee_not_linked') out.push('linkEmployee');
   if (rs.state === 'error' || (rs.state === 'blocked' && rs.reason !== 'no_invoice')) out.push('retry');
   if (doc && ['duplicate_number', 'duplicate_number_local'].includes(rs.reason)) out.push('renumber');
   if (rs.state === 'deleted_remote' && collection === 'timeEntries') out.push('asNew');
   if (!['unlinked', 'deleted_local'].includes(rs.state)) out.push('unlink');
   return [...new Set(out)];
+}
+
+/** Link states after which a Retry or Send now did go: anything else is still waiting or failed. */
+const SENT_STATES = ['synced', 'pending', 'deleted_local'];
+
+/**
+ * What a Retry, Send now or Send as new came back with (7.5: { queued, state } after the push ran).
+ * done: the record went (or was queued with no state to tell); otherwise the sheet stays open and says why.
+ */
+export function pushOutcome(r) {
+  const state = r?.state ?? null;
+  if (!state || SENT_STATES.includes(state)) return { done: true, state };
+  return { done: false, state };
+}
+
+/** The toast after a push that did not go, from the record's fresh state. */
+export function stillWaitingText(rs) {
+  const why = reasonText(rs);
+  if (why) return why.startsWith('Waiting') ? `Still ${why.charAt(0).toLowerCase()}${why.slice(1)}` : `Not sent: ${why}`;
+  const info = badgeFor(rs);
+  return info ? `Not sent: ${info.text}` : 'Not sent to QuickBooks.';
+}
+
+/**
+ * The facts a look-up preview shows (7.8: the single-record answer is flat). Customers: name, company,
+ * email, phone, owing. Documents: number, customer, date, status, subtotal, tax, total, owing. Lines
+ * show the tax code's name when it is known, never its QuickBooks id.
+ * @returns {{ facts: [string, string][], lines: object[], taxColumn: boolean }}
+ */
+export function lookupFacts(entity, o, { money = (c) => String(c), date = (d) => String(d), taxCodeName = () => null } = {}) {
+  if (!o || typeof o !== 'object') return { facts: [], lines: [], taxColumn: false };
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const facts = entity === 'customers' ? [
+    ['Name', o.name], ['Company', o.companyName], ['Email', o.email], ['Phone', o.phone],
+    ['Owing', num(o.balanceCents) != null ? money(o.balanceCents) : null], ['Status', o.active === false ? 'Inactive' : null],
+  ] : [
+    ['Number', o.docNumber], ['Customer', o.customer], ['Date', o.date ? date(o.date) : null], ['Status', o.status],
+    ['Subtotal', num(o.totalCents) != null && num(o.taxCents) != null ? money(o.totalCents - o.taxCents) : null],
+    ['Tax', num(o.taxCents) != null ? money(o.taxCents) : null], ['Total', num(o.totalCents) != null ? money(o.totalCents) : null],
+    ['Owing', num(o.balanceCents) != null ? money(o.balanceCents) : null],
+  ];
+  const lines = (Array.isArray(o.lines) ? o.lines : []).map((l) => ({ ...l, taxName: l?.taxCode ? taxCodeName(String(l.taxCode)) || null : null }));
+  return { facts: facts.filter(([, v]) => v != null && v !== ''), lines, taxColumn: lines.some((l) => l.taxName) };
+}
+
+/**
+ * Who sets a supplier bill's paid status (4.10): QuickBooks while the company is connected, paused or
+ * waiting for a reconnect (sync catches up later), and for any bill linked to QuickBooks. Then there is
+ * no "Mark paid" here. null: Fishtape does (no QuickBooks).
+ * @returns {'quickbooks'|'quickbooks_later'|null}
+ */
+export function billPaidBy(status, rs = null) {
+  const linked = Boolean(rs?.state) && !['unlinked', 'deleted_local', 'deleted_remote'].includes(rs.state);
+  const state = status && status.available !== false ? status.state : null;
+  if (state === 'active') return 'quickbooks';
+  if (['paused', 'reconnect_needed'].includes(state)) return 'quickbooks_later';
+  if (linked) return state === 'setup' ? 'quickbooks' : 'quickbooks_later';
+  return null;
 }
 
 /**
@@ -551,26 +646,6 @@ export const staleNoTaxReason = (doc) => Boolean(doc?.taxNoneReason) && !needsNo
 // ---------------------------------------------------------------------------------------------
 // Invoices and estimates that QuickBooks writes too (4.8, 4.9, 5.10)
 // ---------------------------------------------------------------------------------------------
-
-/**
- * Cents of QuickBooks' own tax rounding a 'paid' set by the server may leave on this device (4.8):
- * 2 per charged rate, the sync's tolerance. The server marks such an invoice paid at the
- * QuickBooks total (meta.taxDeltaCents, which devices never see).
- */
-export function taxRoundingCents(inv) {
-  const n = (Array.isArray(inv?.taxes) ? inv.taxes : []).filter((t) => (Number(t.pct) || 0) > 0).length;
-  return 2 * Math.max(1, n);
-}
-
-/**
- * A stored 'paid' this device keeps although a cent or two is left: only the QuickBooks tax
- * rounding remains. Never promotes another status, and never counts an overpayment.
- */
-export function keepsServerPaid(inv, paidCents, totalCents) {
-  if (inv?.status !== 'paid' || !(paidCents > 0)) return false;
-  const left = totalCents - paidCents;
-  return left > 0 && left <= taxRoundingCents(inv);
-}
 
 /**
  * The status to store after payments or an edit (void is never touched). Plain arithmetic, except
@@ -844,7 +919,7 @@ export function trademarkLine(ui) {
   return ui.h('p', { class: 'qbo-tm muted' }, TRADEMARK);
 }
 
-/** Load css/quickbooks.css once (index.html does not list it yet). */
+/** Make sure css/quickbooks.css is loaded (index.html links it; this covers a page cached before it did). */
 export function ensureQboStyles() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/quickbooks.css"]')) return;
   const link = document.createElement('link');
@@ -918,10 +993,21 @@ export function openRecordSheet(ctx, collection, id, { record = null, mismatch =
   const after = (msg) => { cache.invalidate(collection); cache.invalidate(); if (msg) ui.toast(msg, 'success'); sheet.close(); ctx.route?.(); };
   // One request per tap: the button stays off until the server answers (a double tap would ask
   // QuickBooks twice). `btn` is taken before any await: currentTarget is gone after the click.
-  const act = async (fn, msg, btn = null) => {
+  // A push (Retry, Send now, Send as new) answers with the link's state after it ran (7.5): when it
+  // is still blocked, failed or waiting for review the sheet stays open with the reason, never a
+  // success toast.
+  const act = async (fn, msg, btn = null, { push = false } = {}) => {
     if (btn?.disabled) return;
     if (btn) btn.disabled = true;
-    try { await fn(); after(msg); } catch (e) { showError(ctx, e); } finally { if (btn) btn.disabled = false; }
+    try {
+      const r = await fn();
+      const out = push ? pushOutcome(r) : { done: true };
+      if (out.done) { after(msg); return; }
+      cache.invalidate(collection); cache.invalidate();
+      const view = await qboApi.record(collection, id).catch(() => null);
+      if (view) draw(view);
+      ui.toast(stillWaitingText(view?.state || { state: out.state }), 'error', 5000);
+    } catch (e) { showError(ctx, e); } finally { if (btn) btn.disabled = false; }
   };
   const draw = (view) => {
     ui.clear(body);
@@ -934,13 +1020,17 @@ export function openRecordSheet(ctx, collection, id, { record = null, mismatch =
     const button = (which) => {
       switch (which) {
         case 'open': return h('a', { class: 'btn secondary sm', href: qUrl, target: '_blank', rel: 'noopener noreferrer' }, ui.icon('link', 16), h('span', null, 'Open in QuickBooks'));
-        case 'retry': return ui.button('Retry', { size: 'sm', icon: 'redo', onClick: (e) => act(() => qboApi.pushRecord(collection, id), 'Sending again', e.currentTarget) });
-        case 'sendNow': return ui.button('Send to QuickBooks now', { size: 'sm', variant: 'primary', icon: 'send', onClick: (e) => act(() => qboApi.pushRecord(collection, id, { force: true }), 'Sending to QuickBooks', e.currentTarget) });
+        case 'retry': return ui.button('Retry', { size: 'sm', icon: 'redo', onClick: (e) => act(() => qboApi.pushRecord(collection, id), 'Sending again', e.currentTarget, { push: true }) });
+        case 'sendNow': return ui.button('Send to QuickBooks now', { size: 'sm', variant: 'primary', icon: 'send', onClick: (e) => act(() => qboApi.pushRecord(collection, id, { force: true }), 'Sending to QuickBooks', e.currentTarget, { push: true }) });
+        case 'linkEmployee': {
+          const employeeId = (record || ctx.store?.get?.(collection, id))?.employeeId;
+          return employeeId ? ui.button('Link employee…', { size: 'sm', variant: 'primary', icon: 'link', onClick: () => employeeLinkSheet(ctx, employeeId, () => after('Employee linked; the time goes to QuickBooks')) }) : null;
+        }
         case 'asNew': return ui.button('Send to QuickBooks as new', { size: 'sm', variant: 'primary', icon: 'send', onClick: async (e) => {
           const btn = e.currentTarget;
           if (btn.disabled) return;
           if (!(await ui.confirmDialog('This creates a new record in QuickBooks. The QuickBooks record it was linked to stays as it is.', { title: 'Send as new?', okLabel: 'Send as new', danger: false }))) return;
-          act(() => qboApi.pushRecord(collection, id, { asNew: true }), 'Sending to QuickBooks as new', btn);
+          act(() => qboApi.pushRecord(collection, id, { asNew: true }), 'Sending to QuickBooks as new', btn, { push: true });
         } });
         case 'link': return ui.button('Link…', { size: 'sm', icon: 'link', onClick: () => linkSheet(ctx, collection, id, () => after('Linked')) });
         case 'renumber': return ui.button('Renumber', { size: 'sm', icon: 'edit', onClick: async (e) => {
@@ -989,6 +1079,51 @@ export function openRecordSheet(ctx, collection, id, { record = null, mismatch =
     ui.clear(body).append(h('p', null, errorText(e)));
   });
   return sheet;
+}
+
+/**
+ * The QuickBooks employees for a Fishtape employee, best match first: the same email, then the same
+ * name, then the rest by name (inactive ones left out).
+ */
+export function employeeChoices(employee, qboEmployees = []) {
+  const email = String(employee?.email || '').trim().toLowerCase();
+  const name = String(employee?.name || '').trim().toLowerCase();
+  const score = (q) => (email && String(q.email || '').trim().toLowerCase() === email ? 2 : 0) + (name && String(q.name || '').trim().toLowerCase() === name ? 1 : 0);
+  return (qboEmployees || []).filter((q) => q && q.active !== false && /^\d{1,20}$/.test(String(q.id)))
+    .map((q) => ({ ...q, match: score(q) })).sort((a, b) => b.match - a.match || String(a.name).localeCompare(String(b.name)));
+}
+
+/**
+ * "Link employee…" (4.5): someone hired after setup has approved time waiting until their Fishtape
+ * employee is linked to their QuickBooks employee. Picks from the QuickBooks employees (mappings
+ * choices); the server re-queues the waiting time.
+ */
+export function employeeLinkSheet(ctx, employeeId, onDone) {
+  const { ui } = ctx;
+  const { h } = ui;
+  const employee = ctx.store?.get?.('employees', employeeId) || null;
+  const list = h('div', { class: 'list' }, h('p', { class: 'muted' }, 'Loading…'));
+  const link = async (qboId, btn) => {
+    if (btn?.disabled) return;
+    if (btn) btn.disabled = true;
+    try { await qboApi.link('employees', employeeId, qboId); s.close(); onDone?.(); } catch (e) { showError(ctx, e); } finally { if (btn) btn.disabled = false; }
+  };
+  const s = ui.openSheet({
+    title: `Link ${employee?.name || 'employee'} to QuickBooks`, dialog: true,
+    body: h('div', { class: 'stack' }, h('p', { class: 'muted', style: { margin: 0 } }, 'Pick this person in QuickBooks. Add them there first if they are not listed, then refresh the lists in Mappings.'), list),
+    actions: [ui.button('Cancel', { variant: 'ghost', onClick: () => s.close() })],
+  });
+  qboApi.mappings().then((m) => {
+    ui.clear(list);
+    const rows = employeeChoices(employee, m?.choices?.employees || []);
+    for (const q of rows) {
+      list.append(h('div', { class: 'list-row' },
+        h('div', { class: 'grow' }, h('div', { class: 'title' }, q.name), h('div', { class: 'meta' }, [q.email, q.match >= 2 ? 'same email' : null].filter(Boolean).join(' · '))),
+        ui.button('Link', { size: 'sm', onClick: (e) => link(q.id, e.currentTarget) })));
+    }
+    if (!rows.length) list.append(h('p', { class: 'muted' }, 'No QuickBooks employees yet.'));
+  }).catch((e) => { ui.clear(list).append(h('p', null, errorText(e))); });
+  return s;
 }
 
 /** "Link…": pick the QuickBooks record to link to (look-up for customers, invoices and estimates; an id otherwise). */

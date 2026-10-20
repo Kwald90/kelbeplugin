@@ -233,12 +233,18 @@ The full contract (every request and response shape, the rules behind them) is
 - Every `/api/v1/qbo/*` route is for office roles only (owner, admin, office sessions): field roles,
   crew sessions and API keys get 403 `forbidden`. Connect, disconnect and takeover are owner/admin.
   Every route that changes anything needs a two-step-verified session (403 `mfa_required`),
-  whatever the role. Plan feature `quickbooks` (Pro) except status and disconnect.
+  whatever the role. Plan feature `quickbooks` (Pro) except status and disconnect. Practice mode and
+  Go live (`option.writeMode` in `PUT /api/v1/qbo/mappings`) are owner/admin.
 - Responses never carry tokens, the realm id or Intuit request URLs. Look-up searches are POST bodies,
   so customer names never sit in a URL.
-- Extra codes: 409 `qbo_not_connected`, `qbo_reconnect_needed`, `qbo_not_ready`, `qbo_busy`,
-  `qbo_pause_locked`, `qbo_already_linked`, `qbo_option_locked`, `setup_incomplete`; 429
-  `qbo_throttled` (`details.retryAfterS`), `lookup_budget`; 502 / 503 `qbo_unavailable`.
+- Extra codes: 409 `qbo_not_connected`, `qbo_reconnect_needed`, `qbo_not_ready`, `qbo_paused`
+  (`details.pauseReason`; sync is off, so actions that call Intuit wait), `qbo_busy`, `qbo_pause_locked`,
+  `qbo_brake_count` (`details.count`), `qbo_reconnect_not_allowed`, `qbo_already_linked`,
+  `qbo_option_locked`, `qbo_conflict_closed`, `qbo_not_unlinked`, `setup_incomplete`; 429
+  `qbo_throttled` (`details.retryAfterS`), `lookup_budget`, `qbo_budget`; 502 / 503 `qbo_unavailable`.
+- `POST …/records/{collection}/{id}/sync` and `POST /api/v1/qbo/reference/refresh` answer 202 with
+  JSON (`{ queued: true, state }` and `{ queued: true }`); a `merged` conflict lists both Fishtape
+  records in `recordIds`.
 
 | group | routes |
 | --- | --- |

@@ -13,7 +13,7 @@ import { qboApi, query } from '../js/lib/qbo-api.js';
 import { taxComponents } from '../js/lib/tax.js';
 import { store } from '../js/store.js';
 import { enqueue } from '../js/sync.js';
-import { docTotals } from '../js/lib/money.js';
+import { docTotals, invoiceShown } from '../js/lib/money.js';
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 const ENT = (features) => ({ plan: 'pro', features });
@@ -341,6 +341,15 @@ describe('tax situations, code fits and "Why no tax?" (4.8, 8.4, 8.5)', () => {
     assert.equal(Q.isSettlementPayment({ method: 'cheque' }), false);
     assert.equal(Q.SETTLEMENT_LABEL, 'Credited or paid in QuickBooks');
   });
+
+  test('a QuickBooks deposit (payment deposit-<invoiceId>) is read-only too; a payment typed here is not', () => {
+    const dep = { id: 'deposit-inv-3001', invoiceId: 'inv-3001', method: 'transfer', source: 'quickbooks', reference: 'Deposit in QuickBooks', amountCents: 20000 };
+    assert.equal(Q.isDepositPayment(dep), true);
+    assert.equal(Q.isQuickBooksPayment(dep), true);
+    assert.equal(Q.isQuickBooksPayment({ id: 'credit-inv-3001', method: 'credit', source: 'quickbooks' }), true);
+    assert.equal(Q.isQuickBooksPayment({ id: 'pay-1', method: 'transfer', reference: 'Deposit' }), false);
+    assert.equal(Q.isDepositPayment({ id: 'deposit-x', method: 'cheque' }), false, 'the id alone is not enough');
+  });
 });
 
 describe('wizard and mappings helpers (6, 8.3, 8.4)', () => {
@@ -511,6 +520,26 @@ describe('invoice status with QuickBooks\' tax rounding (4.8, 4.9)', () => {
     assert.equal(Q.keepsServerPaid(mb({ status: 'paid' }), 112001, 112000), false, 'overpaid is plain paid');
     assert.equal(Q.nextInvoiceStatus(null, 0, 0), null);
   });
+
+  test('every screen shows the same status and balance: a server-paid invoice with a cent left is paid at $0.00', () => {
+    // INV-3001 is past due; the server marked it paid at the QuickBooks total, $0.01 under Fishtape's.
+    const payments = [{ id: 'credit-inv-1', invoiceId: 'inv-1', amountCents: 111999, method: 'credit', source: 'quickbooks' }];
+    const fake = { list: (c, f = () => true) => (c === 'payments' ? payments.filter(f) : []) };
+    const past = { dueDate: '2026-01-31' };
+    assert.deepEqual(invoiceShown(fake, mb({ status: 'paid', ...past })), { status: 'paid', balanceCents: 0 });
+    assert.deepEqual(invoiceShown(fake, mb({ status: 'sent', ...past })), { status: 'overdue', balanceCents: 1 }, 'not marked paid: the cent is owed');
+    assert.deepEqual(invoiceShown(fake, mb({ status: 'void' })), { status: 'void', balanceCents: 0 });
+    payments[0].amountCents = 50000;
+    assert.deepEqual(invoiceShown(fake, mb({ status: 'paid', ...past })), { status: 'overdue', balanceCents: 62000 }, 'more than the rounding is money owed');
+  });
+
+  test('the dashboard, client, job and invoice screens use invoiceShown, never the raw arithmetic', () => {
+    for (const f of ['dashboard', 'clients', 'jobs', 'invoices']) {
+      const src = read(`../js/modules/${f}.js`);
+      assert.doesNotMatch(src, /\binvoice(Status|BalanceCents)\s*\(/, `${f}.js shows the raw invoiceStatus / invoiceBalanceCents`);
+      assert.match(src, /\binvoiceShown\b/, `${f}.js uses invoiceShown`);
+    }
+  });
 });
 
 describe('invoice and estimate editors save only what was typed (5.10)', () => {
@@ -664,5 +693,112 @@ describe('words on screen (Intuit branding rules)', () => {
     assert.ok(guide.trim().endsWith(Q.TRADEMARK), 'the guide ends with the trademark line');
     assert.match(read('../img/intuit/README.md'), /CONNECT_BUTTON_ASSET/);
     assert.equal(Q.CONNECT_BUTTON_ASSET, null, 'no Intuit artwork until Kelvin adds the licensed file');
+  });
+});
+
+describe('review fixes: what the office sees', () => {
+  test('"Waiting" opens the list of waiting records, not an empty warnings filter', () => {
+    const w = Q.countLinks({ blocked: 2 }).find((l) => l.key === 'blocked');
+    assert.equal(w.href, '#/quickbooks/activity?show=waiting');
+  });
+
+  test('the activity filter has plural record names and only outcomes the log writes', () => {
+    assert.equal(Q.COLLECTION_PLURAL.timeEntries, 'Time entries');
+    assert.equal(Q.COLLECTION_PLURAL.items, 'Products and services');
+    assert.deepEqual(Object.keys(Q.COLLECTION_PLURAL).sort(), Object.keys(Q.COLLECTION_LABEL).sort());
+    const ids = Q.OUTCOMES.map((o) => o.id);
+    assert.ok(!ids.includes('auto_resolved'), 'never written by the server (log.js OUTCOMES)');
+    for (const id of ids.filter(Boolean)) assert.ok(['ok', 'skipped', 'conflict', 'error', 'warning', 'info', 'shadow'].includes(id), id);
+    assert.ok(ids.includes('info'));
+  });
+
+  test('a reconnect says so, and the result banner goes when the connection moves on', () => {
+    assert.equal(Q.connectResultText('ok', { state: 'setup' }).title, 'QuickBooks is connected');
+    assert.match(Q.connectResultText('ok', { state: 'active' }).text, /picks up where it left off/);
+    let kept = { result: 'ok' };
+    kept = Q.keepConnectResult(kept, null);
+    assert.equal(kept.result, 'ok', 'still loading');
+    kept = Q.keepConnectResult(kept, { state: 'active' });
+    assert.equal(kept.result, 'ok');
+    kept = Q.keepConnectResult(kept, { state: 'active' });
+    assert.equal(kept.result, 'ok', 'a redraw of the same state keeps it');
+    kept = Q.keepConnectResult(kept, { state: 'not_connected' });
+    assert.equal(kept.result, null, 'gone after Disconnect');
+    assert.equal(Q.keepConnectResult(kept, { state: 'active' }).result, null);
+  });
+
+  test('Retry and Send now read the state that came back: a record still blocked is not "sending"', () => {
+    assert.deepEqual(Q.pushOutcome({ queued: true, state: 'blocked' }), { done: false, state: 'blocked' });
+    assert.equal(Q.pushOutcome({ queued: true, state: 'error' }).done, false);
+    assert.equal(Q.pushOutcome({ queued: true, state: 'needs_review' }).done, false);
+    assert.equal(Q.pushOutcome({ queued: true, state: 'synced' }).done, true);
+    assert.equal(Q.pushOutcome({ queued: true }).done, true, 'a bare 202');
+    assert.equal(Q.stillWaitingText({ state: 'blocked', reason: 'employee_not_linked' }), 'Still waiting: employee not linked to QuickBooks.');
+    assert.match(Q.stillWaitingText({ state: 'error', reason: 'zzz' }), /^Not sent/);
+  });
+
+  test('look-up preview: the flat answer becomes facts; a tax code shows its name, never its id', () => {
+    const money = (c) => `$${(c / 100).toFixed(2)}`;
+    const cust = Q.lookupFacts('customers', { qboId: '58', name: 'Prairie Co-op', companyName: 'Prairie Co-op Ltd', email: 'ap@prairie.test', phone: null, balanceCents: 12000, active: true }, { money });
+    assert.deepEqual(cust.facts, [['Name', 'Prairie Co-op'], ['Company', 'Prairie Co-op Ltd'], ['Email', 'ap@prairie.test'], ['Owing', '$120.00']]);
+    const inv = Q.lookupFacts('invoices', { qboId: '1040', docNumber: '1040', customer: 'Prairie Co-op', date: '2026-10-01', status: 'open', taxCents: 3600, totalCents: 33600, balanceCents: 33600,
+      lines: [{ description: null, qty: 1, amountCents: 30000, taxCode: '8' }] }, { money, date: (d) => d, taxCodeName: (id) => (id === '8' ? 'GST/PST MB' : null) });
+    assert.deepEqual(inv.facts.map(([k]) => k), ['Number', 'Customer', 'Date', 'Status', 'Subtotal', 'Tax', 'Total', 'Owing']);
+    assert.equal(inv.facts.find(([k]) => k === 'Subtotal')[1], '$300.00');
+    assert.equal(inv.lines[0].taxName, 'GST/PST MB');
+    assert.equal(inv.taxColumn, true);
+    const unknown = Q.lookupFacts('invoices', { lines: [{ amountCents: 1, taxCode: '8' }] }, { money });
+    assert.equal(unknown.taxColumn, false, 'no names known: no tax column rather than an id');
+  });
+
+  test('the lookup screen never appends a null (shown as the word "null")', () => {
+    const src = read('../js/modules/quickbooks.js');
+    const lookup = src.slice(src.indexOf('function renderLookup'), src.indexOf('function renderLookup') + 4000);
+    assert.doesNotMatch(lookup, /\? h\('p'[^)]*\)[^,]*: null,\s*\n\s*results\)/, 'no conditional null inside host.append');
+    assert.match(lookup, /clientNote/);
+  });
+
+  test('a bill is paid in QuickBooks while connected, paused or waiting to reconnect, and when linked; never the sentence without QuickBooks', () => {
+    assert.equal(Q.billPaidBy({ state: 'active' }), 'quickbooks');
+    assert.equal(Q.billPaidBy({ state: 'paused', pauseReason: 'brake' }), 'quickbooks_later');
+    assert.equal(Q.billPaidBy({ state: 'reconnect_needed' }), 'quickbooks_later');
+    assert.equal(Q.billPaidBy({ state: 'not_connected' }), null);
+    assert.equal(Q.billPaidBy(null), null);
+    assert.equal(Q.billPaidBy({ state: 'disconnected' }, { state: 'synced' }), 'quickbooks_later');
+    const src = read('../js/modules/purchasing.js');
+    assert.doesNotMatch(src, /With QuickBooks connected, paying the bill there/);
+  });
+
+  test('a time entry waiting for its employee offers "Link employee…", best match first', () => {
+    assert.ok(Q.badgeActions({ state: 'blocked', reason: 'employee_not_linked' }, { collection: 'timeEntries' }).includes('linkEmployee'));
+    assert.ok(!Q.badgeActions({ state: 'blocked', reason: 'employee_not_linked' }, { collection: 'bills' }).includes('linkEmployee'));
+    const rows = Q.employeeChoices({ name: 'Nina Newhire', email: 'Nina@Example.test' }, [
+      { id: '7', name: 'Adam Amp', email: null, active: true },
+      { id: '9', name: 'N. Newhire', email: 'nina@example.test', active: true },
+      { id: '10', name: 'Old Hand', active: false },
+      { id: 'x', name: 'Bad id', active: true },
+    ]);
+    assert.deepEqual(rows.map((r) => r.id), ['9', '7']);
+  });
+});
+
+describe('review fixes: the API wrapper', () => {
+  let calls, savedFetch;
+  beforeEach(() => {
+    calls = [];
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : undefined });
+      return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+  });
+  afterEach(() => { globalThis.fetch = savedFetch; });
+
+  test('employees can be linked and unlinked (never sent); the waiting list has its route', async () => {
+    await qboApi.link('employees', 'e-1', '55');
+    await qboApi.unlink('employees', 'e-1');
+    await qboApi.waiting({ limit: 200 });
+    assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), ['PUT /api/v1/qbo/records/employees/e-1/link', 'DELETE /api/v1/qbo/records/employees/e-1/link', 'GET /api/v1/qbo/waiting?limit=200']);
+    assert.throws(() => qboApi.pushRecord('employees', 'e-1'), /Not a QuickBooks collection/);
   });
 });

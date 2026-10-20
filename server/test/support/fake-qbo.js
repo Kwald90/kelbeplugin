@@ -990,10 +990,12 @@ export function createFakeQbo(opts = {}) {
  * @returns {Promise<{ result: string, redirect: string, tenantId: string|null }>}
  */
 export async function connectViaFake(fake, { db, sealer, config, tenantId, userId, realmId, returnTo = 'app', reconnect = false }) {
-  const { createConnectTicket, startFromTicket, completeCallback } = await import('../../src/qbo/connection.js');
+  const { createConnectTicket, startPage, startFromTicket, completeCallback } = await import('../../src/qbo/connection.js');
   const { url } = await createConnectTicket(db, config, { tenantId, userId, returnTo, reconnect });
   const ticket = new URL(url).searchParams.get('ticket');
-  const start = await startFromTicket(db, sealer, config, ticket);
+  // The interstitial first: its pre-flow cookie is what the POST must carry (2.2).
+  const page = await startPage(db, config, ticket, { sessionUserId: userId });
+  const start = await startFromTicket(db, sealer, config, ticket, { preflow: page.preflowCookie || null, sessionUserId: userId });
   if (!start.flowCookie) return { result: new URL(start.redirect).searchParams.get('result'), redirect: start.redirect, tenantId: null };
   const back = await fake.authorize(start.redirect, { realmId });
   return completeCallback(db, sealer, config, {
