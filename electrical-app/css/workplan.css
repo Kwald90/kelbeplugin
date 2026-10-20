@@ -7,6 +7,7 @@
 .wp-warn { color: var(--danger); font-size: var(--fs-sm); margin: var(--s2) 0; }
 .wp-alert { display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s3) var(--s4); margin-bottom: var(--s3); border-radius: var(--r-md); background: var(--danger-soft); color: var(--danger); font-size: var(--fs-sm); }
 .wp-alert a { color: inherit; font-weight: 650; }
+.wp-alert > svg, .wp-note-card > svg { flex: none; margin-top: 2px; }
 .wp-note-card { display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s3) var(--s4); border-radius: var(--r-md); background: var(--info-soft); color: var(--info); font-size: var(--fs-sm); margin-bottom: var(--s3); }
 .wp-preview-line { padding: var(--s3); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); font-size: var(--fs-sm); }
 .wp-syncline:empty { display: none; }

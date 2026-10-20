@@ -271,17 +271,29 @@ export default {
     paintSync(ctx.app?.sync?.status?.());
     let pending = null;
     const later = () => { clearTimeout(pending); pending = setTimeout(draw, 40); };
+    const arrived = new Set();
+    let arrivedTimer = null;
+    const announce = () => {
+      const days = [...arrived].sort();
+      arrived.clear();
+      const label = (d) => (d === ui.today() ? 'today' : d === W.addDays(ui.today(), 1) ? 'tomorrow' : ui.fmtDate(d, { weekday: 'long' }));
+      if (days.length) ui.toast(`Your list for ${days.map(label).join(' and ')} is ready`, 'success', 4500);
+    };
     const offs = [
       store.on('workTasks', (e) => {
-        // A task added to my list from elsewhere (the foreman, after the day was published).
-        if (e.remote && e.type === 'add' && e.record?.employeeId === empId && W.isNew(e.record)) ui.toast(`New task: ${e.record.title}`, 'info', 4000);
+        // Tasks reaching my list from the server: a day just published, or one added to a
+        // published day (the "new" badge). Drafts never reach a worker's device.
+        if (e.remote && e.type === 'add' && e.record?.employeeId === empId && W.isPublished(e.record) && e.record.status !== 'done') {
+          if (W.isNew(e.record)) ui.toast(`New task: ${e.record.title}`, 'info', 4000);
+          else if (e.record.date >= ui.today()) { arrived.add(e.record.date); clearTimeout(arrivedTimer); arrivedTimer = setTimeout(announce, 300); }
+        }
         later();
       }),
       store.on('jobs', later),
       store.on('employees', later),
       ctx.app?.onSyncStatus?.(paintSync) || (() => {}),
     ];
-    return () => { clearTimeout(pending); offs.forEach((f) => f()); };
+    return () => { clearTimeout(pending); clearTimeout(arrivedTimer); offs.forEach((f) => f()); };
   },
 };
 
