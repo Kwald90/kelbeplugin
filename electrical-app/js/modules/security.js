@@ -1,6 +1,7 @@
 // Security audit: access review, activity log, security audit checklists.
 import { ROLES, PERMS } from '../auth.js';
 import { checklistCards, checklistProgress, newChecklistFromTemplate } from './compliance.js';
+import { api } from '../session.js';
 
 export const SECURITY_TEMPLATES = [
   {
@@ -145,7 +146,52 @@ export default {
       }).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
     }
 
+    // Signed in: the company's audit log from the server (every device, the API and agents),
+    // newest first, 200 at a time. "This device" shows the local log as before.
+    let source = auth.synced ? 'server' : 'device';
+    function serverActivity() {
+      const f = { action: '', coll: '' };
+      let rows = [], cursor = null, loading = false;
+      const host = h('div');
+      const input = (label, key, ph) => h('label', { class: 'field' }, h('span', null, label), h('input', { value: f[key], placeholder: ph, onChange: (e) => { f[key] = e.target.value.trim(); rows = []; cursor = null; load(); } }));
+      body.append(h('div', { class: 'card log-filters' }, h('div', { class: 'form-grid' }, input('Action', 'action', 'e.g. record.delete'), input('Area', 'coll', 'e.g. invoices'),
+        h('div', { class: 'field' }, h('span', null, 'Source'), ui.tabs([{ id: 'server', label: 'Company (server)' }, { id: 'device', label: 'This device' }], source, (t) => { source = t; draw(); })))), host);
+      const paint = (err) => {
+        ui.clear(host).append(h('div', { class: 'row', style: { margin: '8px 0' } }, h('span', { class: 'muted' }, err ? err.message : `${rows.length} entries${cursor ? ' loaded' : ''}`), h('span', { class: 'grow' }),
+          rows.length ? ui.button('Export CSV', { icon: 'download', size: 'sm', onClick: () => {
+            const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+            ui.download(`audit-log-${ui.today()}.csv`, [['when', 'who', 'kind', 'action', 'area', 'record', 'detail'].join(','), ...rows.map((a) => [a.at, a.actorLabel, a.actorType, a.action, a.collection, a.recordId, a.summary].map(esc).join(','))].join('
+'), 'text/csv');
+            store.log('export', `Audit log CSV (${rows.length} rows)`, 'auditLog');
+          } }) : null),
+        ui.table({
+          columns: [
+            { key: 'at', label: 'When', render: (a) => ui.fmtDateTime(a.at) },
+            { key: 'who', label: 'Who', render: (a) => h('span', null, a.actorLabel || 'System', a.actorType && a.actorType !== 'user' ? h('span', { class: 'muted' }, ` (${a.actorType.replace('_', ' ')})`) : null) },
+            { key: 'action', label: 'Action', render: (a) => ui.badge(a.action, /delete|failed|revoke|locked/.test(a.action) ? 'danger' : /create|add/.test(a.action) ? 'success' : 'neutral') },
+            { key: 'collection', label: 'Area', render: (a) => a.collection || '—' },
+            { key: 'summary', label: 'Detail', render: (a) => h('span', { class: 'log-summary' }, a.summary || '—') },
+          ],
+          rows, empty: ui.empty({ icon: 'activity', title: loading ? 'Loading…' : 'No matching entries' }),
+        }),
+        cursor ? h('div', { class: 'row' }, ui.button('Load more', { size: 'sm', onClick: load })) : null);
+      };
+      async function load() {
+        loading = true; paint();
+        const q = new URLSearchParams({ limit: '200' });
+        if (f.action) q.set('action', f.action);
+        if (f.coll) q.set('collection', f.coll);
+        if (cursor) q.set('cursor', cursor);
+        try {
+          const r = await api.get(`/api/v1/auditLog?${q}`);
+          rows = rows.concat(r.data || []); cursor = r.more ? r.cursor : null; loading = false; paint();
+        } catch (e) { loading = false; paint(e.code === 'offline' ? new Error('Offline: the company log needs a connection. Switch to This device.') : e); }
+      }
+      load();
+    }
+
     function activity() {
+      if (source === 'server') return serverActivity();
       const all = store.list('auditLog');
       const uniq = (k) => [...new Set(all.map((a) => a[k]).filter(Boolean))].sort();
       const sel = (label, key, opts) => {
@@ -157,7 +203,8 @@ export default {
       const userOpts = [...store.list('employees').map((e) => ({ value: e.id, label: e.name })), { value: 'system', label: 'System' }];
       body.append(h('div', { class: 'card log-filters' }, h('div', { class: 'form-grid' },
         sel('User', 'user', userOpts), sel('Action', 'action', uniq('action').map((a) => ({ value: a, label: a }))),
-        sel('Area', 'coll', uniq('collection').map((a) => ({ value: a, label: a }))), date('From', 'from'), date('To', 'to'))));
+        sel('Area', 'coll', uniq('collection').map((a) => ({ value: a, label: a }))), date('From', 'from'), date('To', 'to'),
+        auth.synced ? h('div', { class: 'field' }, h('span', null, 'Source'), ui.tabs([{ id: 'server', label: 'Company (server)' }, { id: 'device', label: 'This device' }], source, (t) => { source = t; draw(); })) : null)));
       const logHost = h('div');
       body.append(logHost);
       function drawLog() {

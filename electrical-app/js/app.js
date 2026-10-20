@@ -16,6 +16,7 @@ import { hasUnitsChoice, setUnits, getUnits } from './lib/units.js';
 import { session, api, syncPrefs } from './session.js';
 import { createSync } from './sync.js';
 import { FEATURE_PLAN, hasFeature } from './plans.js';
+import { notifyBell } from './modules/notifications.js';
 
 const { h, icon } = ui;
 const put = (el, ...kids) => h(ui.clear(el), null, ...kids);
@@ -122,6 +123,7 @@ function buildRail() {
   }
   const u = auth.current();
   rail.append(h('div', { class: 'rail-bottom' },
+    notifyBell(ui),
     mode === 'synced' ? syncButton() : demoButton(),
     h('button', { class: 'rail-btn', 'aria-label': 'Toggle dark mode', onClick: toggleTheme }, icon(isDark() ? 'sun' : 'moon', 20), h('span', { class: 'tip' }, 'Theme')),
     mode === 'synced'

@@ -22,6 +22,10 @@ import settings from './settings.js';
 import integrations from './integrations.js';
 import assistant from './assistant.js';
 import billing from './billing.js';
+import onboarding from './onboarding.js';
+import importer from './import.js';
+import notifications from './notifications.js';
+import developer from './developer.js';
 
 export const GROUPS = {
   home: 'Home', sales: 'Sales', work: 'Work', money: 'Money', people: 'People', field: 'Field', admin: 'Admin',
@@ -30,4 +34,5 @@ export const GROUPS = {
 export const MODULES = [
   dashboard, assistant, clients, leads, sequences, jobs, schedule, drawings, wireruns, estimates, invoices, inventory,
   employees, time, sops, compliance, security, calcs, bending, panels, settings, integrations, billing,
+  importer, developer, onboarding, notifications,
 ];

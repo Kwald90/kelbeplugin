@@ -6,6 +6,7 @@ import { getUnits, setUnits, parseLength, fmtLength } from '../lib/units.js';
 import { PROVINCES, TREATMENTS, treatmentsFor, treatmentHint, taxSetup, newDocTax, describeTaxes, ratesOn, provinceName, isGstHstNumber } from '../lib/tax.js';
 import { adoptionFor, CODE_BOOKS } from '../lib/cec/provinces.js';
 import { placementSettings } from '../lib/placement-rules.js';
+import { logoField } from './onboarding.js';
 
 export const APP_VERSION = '0.3.0';
 
@@ -239,6 +240,12 @@ export default {
       location.reload();
     };
 
+    const redownload = async () => {
+      if (!(await ui.confirmDialog('Clear this device’s copy of the company data and download it again from the server? Changes waiting to sync stay queued and are sent afterwards.', { title: 'Download everything again', okLabel: 'Download again', danger: false }))) return;
+      await store.clearAll();
+      location.reload();
+    };
+
     const counts = ['clients', 'jobs', 'drawings', 'estimates', 'invoices', 'employees', 'auditLog'].map((c) => `${store.count(c)} ${c === 'auditLog' ? 'log entries' : c}`).join(' · ');
     const storageStatus = store.offlineOnly
       ? ui.badge('Memory only: data is lost on reload', 'danger')
@@ -247,14 +254,21 @@ export default {
     drawCode(); drawTax(); drawPlacement();
     root.append(ui.page({ title: 'Settings', subtitle: s.company?.name },
       h('div', { class: 'grid-2 settings-grid' },
-        card('Company', 'Shown on estimates, invoices and printouts', company, saveRow('Save company', saveCompany)),
+        card('Company', 'Shown on estimates, invoices and printouts', company, saveRow('Save company', saveCompany), h('strong', null, 'Logo'), logoField(ctx)),
         card('Code book and units', 'Which electrical code the field tools follow, and how lengths show', codeHost),
         card('Sales tax', 'GST/HST and PST/RST for new estimates and invoices', taxHost),
         card('Defaults', 'Applied to new estimates and invoices', defaults, saveRow('Save defaults', saveDefaults)),
         card('Document numbering', 'The next number each new document gets', numbering, saveRow('Save numbering', saveNumbering)),
         card('Box placement', 'Used when placing boxes on drawings', placementHost),
         card('Appearance', null, themeHost),
-        card('Data', 'Everything lives on this device. Export a backup regularly.',
+        store.synced ? card('Data', 'Your company’s data lives on the server and syncs to this device.',
+          h('div', { class: 'muted' }, counts),
+          h('div', { class: 'row' }, ui.button('Export a copy', { icon: 'download', onClick: exportBackup })),
+          h('div', { class: 'muted' }, 'A JSON copy of what is on this device, for your records. Restoring from a file only works in the demo; signed in, the server is the copy that counts.'),
+          h('hr', { class: 'hr' }),
+          h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', null, 'Download everything again'), h('div', { class: 'muted' }, 'Clears this device’s copy and downloads it fresh from the server. Changes still waiting to sync are kept and sent.')),
+            ui.button('Download again…', { icon: 'download', onClick: redownload })))
+          : card('Data', 'Everything lives on this device. Export a backup regularly.',
           h('div', { class: 'row' }, storageStatus), h('div', { class: 'muted' }, counts),
           h('div', { class: 'row' },
             ui.button('Export backup', { icon: 'download', onClick: exportBackup }),
@@ -262,6 +276,9 @@ export default {
           h('hr', { class: 'hr' }),
           h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', null, 'Wipe all data'), h('div', { class: 'muted' }, 'Clears this device and reloads the demo data.')),
             ui.button('Wipe…', { variant: 'danger', icon: 'trash', onClick: wipe }))),
+        card('Accounting and imports', 'Bring records in from other software; send invoices and payments to QuickBooks Online',
+          h('div', { class: 'row' }, ui.button('Import a file', { icon: 'upload', href: '#/import' }), ui.button('Export to QuickBooks', { icon: 'download', href: '#/import/export' })),
+          h('div', { class: 'row' }, ui.button('Developer & API keys', { variant: 'ghost', icon: 'key', href: '#/developer' }), ui.button('Set-up checklist', { variant: 'ghost', icon: 'check', href: '#/onboarding' }))),
         card('About', null,
           h('div', null, h('strong', null, BRAND.name), ` v${APP_VERSION}`),
           h('p', { class: 'muted', style: { margin: 0 } }, 'A CRM/ERP for Canadian electrical contractors, with an infinite-canvas plan workspace.'),

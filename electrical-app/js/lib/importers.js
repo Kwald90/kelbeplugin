@@ -491,8 +491,18 @@ export function normalizeRow(row, map, targetId, { dateOrder = 'mdy', presetId =
     if (!record.name) errors.push('No name for this person');
     if (record.role === 'owner' || record.role === 'admin') warnings.push(`Role ${record.role}: employee records don't grant access; members do (Account)`);
   }
-  return { record: errors.length ? null : record, errors, warnings, extra };
+  // Record fields the file actually gave (an "update existing" import changes only these).
+  const from = SOURCES[targetId] || {};
+  const provided = record ? Object.keys(record).filter((k) => (from[k] || [k]).some((src) => out[src] != null && out[src] !== '')) : [];
+  return { record: errors.length ? null : record, errors, warnings, extra, provided };
 }
+
+/** Which input fields each record field is built from (when not simply the same name). */
+const SOURCES = {
+  clients: { name: ['name', 'company', 'firstName', 'lastName'], address: ['address', 'street', 'street2', 'city', 'province', 'postal'], notes: ['notes', 'company', 'firstName', 'lastName'] },
+  items: { name: ['name', 'description'] },
+  employees: { name: ['name', 'firstName', 'lastName'] },
+};
 
 /** Extra columns a preset lists for one field (all of Jobber's phone columns), as indexes. */
 export function altColumns(headers, presetId) {
@@ -538,11 +548,12 @@ export function buildIndex(targetId, records) {
 }
 
 /** Fields an "update existing" import may fill in: only values the file has, never ids or stock. */
-export function mergePatch(targetId, existing, incoming) {
+export function mergePatch(targetId, existing, incoming, provided = null) {
   const patch = {};
   const skip = new Set(['id', 'stock', 'symbol', 'crewIds', 'changeOrders', 'estimateId', 'tags', 'clientId']);
   for (const [k, v] of Object.entries(incoming)) {
     if (skip.has(k)) continue;
+    if (provided && !provided.includes(k)) continue;
     if (v === '' || v == null) continue;
     if (typeof v === 'number' && v === 0 && (targetId === 'items' ? ['labourHours', 'reorderPoint'].includes(k) : false)) continue;
     if (JSON.stringify(existing[k]) !== JSON.stringify(v)) patch[k] = v;
@@ -575,7 +586,7 @@ export function planRows(rows, { targetId, map, dateOrder, presetId, mode = 'ski
     for (const k of keys) state.fileKeys.set(k, line);
     const hit = keys.map((k) => state.existing.get(k)).find(Boolean);
     if (hit) {
-      if (mode === 'update') items.push({ line, action: 'update', id: hit, record: r.record, errors: [], warnings: r.warnings, extra: r.extra });
+      if (mode === 'update') items.push({ line, action: 'update', id: hit, record: r.record, provided: r.provided, errors: [], warnings: r.warnings, extra: r.extra });
       else items.push({ line, action: 'skip', id: hit, record: r.record, errors: [], warnings: [...r.warnings, 'Already in Fishtape'], extra: r.extra });
       return;
     }
