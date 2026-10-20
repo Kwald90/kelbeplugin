@@ -6,6 +6,7 @@
 // #/time/settings (owner: location policy and payroll), #/time/map (opt-in live crew map).
 import { addDays } from './schedule.js';
 import { openEntry, reviewFlag, approveEntries } from '../lib/clock.js';
+import { qboBadge } from '../lib/qbo-ui.js';
 import { weekSheet, weekOf, otRule, ruleText, fmtH, entryMinutes, kindOf, PAYROLL_FORMATS, payrollCsv, fillWagepointTemplate } from '../lib/timesheet.js';
 import { locationSettings, locationState } from '../lib/location-policy.js';
 import { fmtDistance } from '../lib/geo.js';
@@ -241,10 +242,12 @@ export default {
           { key: 'break', label: 'Break', align: 'right', render: (t) => `${t.breakMins || 0}m` },
           { key: 'hours', label: 'Hours', align: 'right', render: (t) => fmtH(entryMinutes(t)) },
           { key: 'loc', label: 'Location', render: (t) => h('span', { class: 'row loc-cell' }, locBadge(ui, t) || h('span', { class: 'muted' }, '—'), reviewButton(t)) },
-          { key: 'ok', label: 'Approved', render: (t) => (canApprove && t.clockOut
+          { key: 'ok', label: 'Approved', render: (t) => h('span', { class: 'row-inline' }, (canApprove && t.clockOut
             ? h('input', { type: 'checkbox', checked: !!t.approved, 'aria-label': 'Approve entry', onClick: (e) => e.stopPropagation(),
               onChange: (e) => store.update('timeEntries', t.id, e.target.checked ? { approved: true, approvedAt: new Date().toISOString(), approvedBy: me.id || null } : { approved: false, approvedAt: null, approvedBy: null }, { summary: `${e.target.checked ? 'approved' : 'unapproved'} time ${ui.localDay(t.clockIn)}` }) })
-            : t.approved ? ui.badge('approved', 'success') : ui.badge(t.clockOut ? 'pending' : 'open', t.clockOut ? 'warning' : 'info')) },
+            : t.approved ? ui.badge('approved', 'success') : ui.badge(t.clockOut ? 'pending' : 'open', t.clockOut ? 'warning' : 'info')),
+            // QuickBooks (contract 8.5): office roles only; qboBadge is null for foremen and crew.
+            t.approved ? qboBadge(ctx, 'timeEntries', t.id, { record: t }) : null) },
         ],
         rows, onRowClick,
         empty: ui.empty({ icon: 'clock', title: 'No time this week', text: 'Nothing recorded for this week yet.' }),

@@ -31,13 +31,15 @@ import safety from './safety.js';
 import today from './today.js';
 import workplan from './workplan.js';
 import materials from './materials.js';
+import purchasing from './purchasing.js';
+import quickbooks from './quickbooks.js';
 
 export const GROUPS = {
   home: 'Home', sales: 'Sales', work: 'Work', money: 'Money', people: 'People', field: 'Field', admin: 'Admin',
 };
 
 export const MODULES = [
-  dashboard, today, assistant, clients, leads, sequences, jobs, schedule, workplan, materials, drawings, wireruns, estimates, invoices, inventory,
+  dashboard, today, assistant, clients, leads, sequences, jobs, schedule, workplan, materials, drawings, wireruns, estimates, invoices, purchasing, quickbooks, inventory,
   employees, time, sops, safety, compliance, security, calcs, bending, panels, settings, integrations, billing,
   importer, developer, onboarding, notifications, help,
 ];

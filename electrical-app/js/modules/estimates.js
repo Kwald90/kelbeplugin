@@ -4,6 +4,7 @@ import { newDocTax } from '../lib/tax.js';
 import { mergeForTakeoff, sortSheets } from '../lib/plansets.js';
 import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
 import { moduleOn } from '../lib/modules.js';
+import { qboBadge, noTaxReasonPicker, lookupAction } from '../lib/qbo-ui.js';
 
 const STATUSES = ['draft', 'sent', 'accepted', 'declined'];
 
@@ -59,7 +60,7 @@ function renderList(root, ctx) {
           { key: 'client', label: 'Client', render: (e) => clientName(store, e.clientId), sort: (e) => clientName(store, e.clientId) },
           { key: 'title', label: 'Title', render: (e) => e.title || '—', sort: (e) => e.title || '' },
           { key: 'total', label: 'Total', align: 'right', render: (e) => money(docTotals(e).totalCents), sort: (e) => docTotals(e).totalCents },
-          { key: 'status', label: 'Status', render: (e) => ui.statusBadge(e.status), sort: (e) => e.status },
+          { key: 'status', label: 'Status', render: (e) => h('span', { class: 'row-inline' }, ui.statusBadge(e.status), qboBadge(ctx, 'estimates', e.id, { record: e })), sort: (e) => e.status },
           { key: 'validUntil', label: 'Valid until', render: (e) => validCell(ui, e), sort: (e) => e.validUntil || '' },
         ],
         rows: r,
@@ -204,7 +205,9 @@ function renderDetail(root, ctx, id) {
   const save = debounce(() => { store.update('estimates', id, pick(doc)); }, 450);
   // Invoicing or leads turned off (Settings → Modules): no buttons into them.
   const on = (m) => (ctx.on ? ctx.on(m) : moduleOn(store.settings(), m));
-  const changed = () => { totals.update(doc); save(); };
+  const changed = () => { totals.update(doc); noTax.update(); save(); };
+  // "Why no tax?" (QuickBooks contract 8.5): every company; each reason lands on its own GST return line.
+  const noTax = noTaxReasonPicker(ctx, doc, { onChange: () => save() });
 
   const clients = store.list('clients').sort((a, b) => a.name.localeCompare(b.name));
   const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
@@ -223,7 +226,7 @@ function renderDetail(root, ctx, id) {
     fieldEl({ label: 'Valid until', name: 'validUntil', type: 'date', value: doc.validUntil }, (v) => { doc.validUntil = v; }),
     fieldEl({ label: 'Labour rate ($/h)', name: 'labourRateCents', type: 'money', value: doc.labourRateCents }, (v) => { doc.labourRateCents = v; }),
     fieldEl({ label: 'Materials markup %', name: 'markupPct', type: 'number', step: '0.1', min: '0', value: doc.markupPct ?? 0, hint: 'Extra uplift on material lines' }, (v) => { doc.markupPct = v || 0; }),
-    taxEditor({ doc, store, onChange: changed }));
+    taxEditor({ doc, store, onChange: changed }), noTax);
 
   const notes = fieldEl({ label: 'Notes shown on the estimate', name: 'notes', type: 'textarea', value: doc.notes, span: true }, (v) => { doc.notes = v; });
   const editor = lineEditor({ doc, store, onChange: changed });
@@ -234,7 +237,8 @@ function renderDetail(root, ctx, id) {
     ui.clear(statusHost);
     const st = doc.status;
     h(statusHost, null,
-      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), ui.statusBadge(st)),
+      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), qboBadge(ctx, 'estimates', id, { detail: true, record: doc }), ui.statusBadge(st)),
+      st === 'draft' ? lookupAction(ctx, { entity: 'estimates', clientId: doc.clientId }) : null,
       h('div', { class: 'row' },
         st !== 'sent' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: () => setStatus('sent') }) : null,
         st !== 'accepted' ? ui.button('Accepted', { size: 'sm', variant: 'primary', icon: 'check', onClick: () => accept() }) : null,

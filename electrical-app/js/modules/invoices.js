@@ -5,6 +5,7 @@ import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientNa
 import { invoiceOnlineTools, payLinkBlock } from './integrations.js';
 import { moduleOn } from '../lib/modules.js';
 import { billingLabel, restoreConflicts } from '../lib/tm.js';
+import { qboBadge, noTaxReasonPicker, isSettlementPayment, SETTLEMENT_LABEL, settlementNote, lookupAction } from '../lib/qbo-ui.js';
 
 const METHODS = ['e-transfer', 'cheque', 'card', 'cash', 'transfer'];
 
@@ -22,6 +23,28 @@ export default {
   },
 };
 
+/**
+ * A few cents QuickBooks' own tax rounding may leave (docs/integrations/quickbooks.md 4.8): the
+ * server marks such an invoice paid at the QuickBooks total, which this device can't see. 2 cents
+ * per tax component, as the sync's tolerance.
+ */
+export function taxRoundingCents(inv) {
+  const n = (Array.isArray(inv?.taxes) ? inv.taxes : []).filter((t) => (Number(t.pct) || 0) > 0).length;
+  return 2 * Math.max(1, n);
+}
+
+/** Paid for this device: fully paid, or marked paid (by the server) with only the tax rounding left. */
+export function paidOnDevice(inv, paidCents, totalCents) {
+  if (paidCents > 0 && paidCents >= totalCents) return true;
+  return inv?.status === 'paid' && paidCents > 0 && totalCents - paidCents <= taxRoundingCents(inv);
+}
+
+/** Status to show: the stored 'paid' wins over a balance of a cent or two of QuickBooks tax rounding. */
+export function shownStatus(store, inv) {
+  if (inv.status === 'paid' && paidOnDevice(inv, invoicePaidCents(store, inv.id), docTotals(inv).totalCents)) return 'paid';
+  return invoiceStatus(store, inv);
+}
+
 /** Recompute the stored status from payments (never touches void). */
 export function syncInvoiceStatus(store, invId) {
   const inv = store.get('invoices', invId);
@@ -29,7 +52,7 @@ export function syncInvoiceStatus(store, invId) {
   const paid = invoicePaidCents(store, invId);
   const total = docTotals(inv).totalCents;
   let next = inv.status;
-  if (paid > 0 && paid >= total) next = 'paid';
+  if (paidOnDevice(inv, paid, total)) next = 'paid';
   else if (paid > 0) next = 'partial';
   else if (inv.status === 'paid' || inv.status === 'partial') next = 'sent';
   if (next !== inv.status) return store.update('invoices', invId, { status: next }, { summary: `${inv.number} → ${next}` });
@@ -46,7 +69,7 @@ function renderList(root, ctx) {
   const draw = () => {
     ui.clear(host);
     const all = store.list('invoices').map((inv) => {
-      const status = invoiceStatus(store, inv);
+      const status = shownStatus(store, inv);
       const total = docTotals(inv).totalCents;
       const balance = inv.status === 'void' ? 0 : total - invoicePaidCents(store, inv.id);
       return { inv, status, total, balance };
@@ -105,7 +128,7 @@ function renderList(root, ctx) {
           { key: 'due', label: 'Due', render: (r) => ui.fmtDate(r.inv.dueDate), sort: (r) => r.inv.dueDate || '' },
           { key: 'total', label: 'Total', align: 'right', render: (r) => money(r.total), sort: (r) => r.total },
           { key: 'balance', label: 'Balance', align: 'right', render: (r) => money(r.balance), sort: (r) => r.balance },
-          { key: 'status', label: 'Status', render: (r) => ui.statusBadge(r.status), sort: (r) => r.status },
+          { key: 'status', label: 'Status', render: (r) => h('span', { class: 'row-inline' }, ui.statusBadge(r.status), qboBadge(ctx, 'invoices', r.inv.id, { record: r.inv })), sort: (r) => r.status },
         ],
         rows,
         onRowClick: (r) => nav('#/invoices/' + r.inv.id),
@@ -197,7 +220,7 @@ function renderDetail(root, ctx, id) {
   }, 450);
   const paid = () => invoicePaidCents(store, id);
   const money = moneyFormatter(store.settings());
-  const changed = () => { totals.update(doc); save(); };
+  const changed = () => { totals.update(doc); noTax.update(); save(); };
 
   const clients = store.list('clients').sort((a, b) => a.name.localeCompare(b.name));
   const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
@@ -209,12 +232,14 @@ function renderDetail(root, ctx, id) {
   };
   const readOnly = doc.status === 'void';
   const taxNodes = taxEditor({ doc, store, onChange: changed, readOnly, dateKey: 'issueDate' });
+  // "Why no tax?" (QuickBooks contract 8.5): every company; each reason lands on its own GST return line.
+  const noTax = noTaxReasonPicker(ctx, doc, { onChange: () => save(), readOnly });
   const header = h('div', { class: 'form-grid' },
     fieldEl({ label: 'Client', name: 'clientId', type: 'select', value: doc.clientId || '', options: ui.recordOptions(clients) }, (v) => { doc.clientId = v || null; }),
     fieldEl({ label: 'Job', name: 'jobId', type: 'select', value: doc.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`) }, (v) => { doc.jobId = v || null; }),
     fieldEl({ label: 'Issue date', name: 'issueDate', type: 'date', value: doc.issueDate }, (v) => { doc.issueDate = v; taxNodes.recompute(); }),
     fieldEl({ label: 'Due date', name: 'dueDate', type: 'date', value: doc.dueDate }, (v) => { doc.dueDate = v; }),
-    taxNodes);
+    taxNodes, noTax);
   const notes = fieldEl({ label: 'Notes shown on the invoice', name: 'notes', type: 'textarea', value: doc.notes, span: true }, (v) => { doc.notes = v; });
   const editor = lineEditor({ doc, store, onChange: changed, readOnly });
   const totals = totalsPanel(doc, { showMarkup: false, paidCents: paid, money });
@@ -225,10 +250,10 @@ function renderDetail(root, ctx, id) {
   const drawStatus = () => {
     ui.clear(statusHost);
     const cur = store.get('invoices', id) || doc;
-    const st = invoiceStatus(store, cur);
-    const bal = invoiceBalanceCents(store, cur);
+    const st = shownStatus(store, cur);
+    const bal = st === 'paid' ? Math.min(0, invoiceBalanceCents(store, cur)) : invoiceBalanceCents(store, cur);
     h(statusHost, null,
-      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), ui.statusBadge(st)),
+      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), qboBadge(ctx, 'invoices', id, { detail: true, record: cur }), ui.statusBadge(st)),
       h('div', { class: 'row' },
         cur.status === 'draft' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: () => setStatus('sent') }) : null,
         cur.status !== 'void' && bal > 0 ? ui.button('Record payment', { size: 'sm', variant: 'primary', icon: 'dollar', onClick: recordPayment }) : null,
@@ -236,17 +261,25 @@ function renderDetail(root, ctx, id) {
       invoiceOnlineTools(ctx, cur, bal),
       cur.estimateId && moduleOn(store.settings(), 'estimates') ? ui.button('Source estimate', { size: 'sm', variant: 'ghost', icon: 'file-text', href: '#/estimates/' + cur.estimateId }) : null,
       cur.tm ? h('div', { class: 'muted', dataset: { tmInvoice: '1' } }, `${billingLabel('tm')}: ${(cur.tm.timeEntryIds || []).length} time entr${(cur.tm.timeEntryIds || []).length === 1 ? 'y' : 'ies'}, ${(cur.tm.stockMoveIds || []).length + (cur.tm.materialRequestIds || []).length} material record(s)${cur.tm.from || cur.tm.to ? `, ${cur.tm.from || '…'} to ${cur.tm.to || '…'}` : ''}. Voiding frees them to bill again.`) : null,
-      cur.jobId ? ui.button('Open job', { size: 'sm', variant: 'ghost', icon: 'briefcase', href: '#/jobs/' + cur.jobId }) : null);
+      cur.jobId ? ui.button('Open job', { size: 'sm', variant: 'ghost', icon: 'briefcase', href: '#/jobs/' + cur.jobId }) : null,
+      cur.status === 'draft' ? lookupAction(ctx, { entity: 'invoices', clientId: cur.clientId }) : null);
   };
   const drawPayments = () => {
     ui.clear(paymentsHost);
     const pays = store.list('payments', (p) => p.invoiceId === id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-    paymentsHost.append(pays.length ? h('div', { class: 'list' }, pays.map((p) => h('div', { class: 'list-row' },
-      h('div', { class: 'grow' }, h('div', { class: 'title num' }, money(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), p.method, p.reference].filter(Boolean).join(' · '))),
-      ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: 'Delete payment', onClick: async () => {
-        if (!(await ui.confirmDialog(`Delete the ${money(p.amountCents)} payment?`, { okLabel: 'Delete' }))) return;
-        store.remove('payments', p.id); afterPayment();
-      } }))))
+    // A settlement payment (credit memos or journals applied in QuickBooks, contract 4.9) is written
+    // only by the QuickBooks sync: shown read-only, never edited or deleted here.
+    paymentsHost.append(pays.length ? h('div', { class: 'list' }, pays.map((p) => (isSettlementPayment(p)
+      ? h('div', { class: 'list-row', dataset: { settlement: '1' } },
+        h('div', { class: 'grow' }, h('div', { class: 'title num' }, money(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), SETTLEMENT_LABEL].filter(Boolean).join(' · '))),
+        settlementNote(ui))
+      : h('div', { class: 'list-row' },
+        h('div', { class: 'grow' }, h('div', { class: 'title num' }, money(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), p.method, p.reference].filter(Boolean).join(' · '))),
+        qboBadge(ctx, 'payments', p.id, { record: p }),
+        ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: 'Delete payment', onClick: async () => {
+          if (!(await ui.confirmDialog(`Delete the ${money(p.amountCents)} payment?`, { okLabel: 'Delete' }))) return;
+          store.remove('payments', p.id); afterPayment();
+        } })))))
       : h('p', { class: 'muted', style: { margin: 0 } }, 'No payments recorded.'));
   };
   const afterPayment = () => { save.flush(); syncInvoiceStatus(store, id); const cur = store.get('invoices', id); doc.status = cur.status; refreshPaid(); drawStatus(); drawPayments(); };

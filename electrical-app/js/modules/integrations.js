@@ -14,7 +14,7 @@ import { apiFetch } from '../session.js';
 
 const PLUG = '<path d="M9 2v5M15 2v5"/><path d="M6 7h12v4a6 6 0 01-12 0z"/><path d="M12 17v5"/>';
 const ICONS = { stripe: 'dollar', resend: 'mail', sendgrid: 'send', twilio: 'phone', facebook: 'funnel', anthropic: 'zap' };
-const GUIDE_LABEL = { stripe: 'Stripe', resend: 'Resend (email)', sendgrid: 'SendGrid (email)', twilio: 'Twilio (texts)', facebook: 'Facebook Lead Ads', anthropic: 'Anthropic (Claude)' };
+const GUIDE_LABEL = { stripe: 'Stripe', resend: 'Resend (email)', sendgrid: 'SendGrid (email)', twilio: 'Twilio (texts)', facebook: 'Facebook Lead Ads', anthropic: 'Anthropic (Claude)', quickbooks: 'QuickBooks Online' };
 // VERIFY with Kelvin: where "Ask us to set this up" requests should go.
 export const SETUP_EMAIL = 'setup@fishtapehq.com';
 
@@ -256,6 +256,23 @@ async function disconnect(ctx, c, refresh) {
   await refresh(c.provider);
 }
 
+/** QuickBooks Online has its own screen (#/quickbooks, docs/integrations/quickbooks.md 8.2): this card links to it. */
+function quickBooksCard(ctx) {
+  const { ui } = ctx;
+  const { h } = ui;
+  const ent = ctx.auth?.synced ? ctx.app?.session?.me?.entitlements : null;
+  const inPlan = !ent || (Array.isArray(ent.features) && ent.features.includes('quickbooks'));
+  return h('article', { class: 'card int-card', dataset: { provider: 'quickbooks' } },
+    h('header', { class: 'int-head' },
+      h('span', { class: 'int-logo', 'aria-hidden': 'true' }, ui.icon('link', 22)),
+      h('div', { class: 'grow' }, h('h3', null, 'QuickBooks Online')),
+      inPlan ? null : ui.badge('Pro plan', 'neutral')),
+    h('p', { class: 'int-blurb' }, 'Two-way sync: clients, products, estimates, invoices, payments, time and supplier bills, with your own tax codes. Set up and check it on its own screen.'),
+    h('footer', { class: 'int-foot' },
+      ui.button('Setup guide', { size: 'sm', icon: 'book', onClick: () => openGuide('quickbooks') }), h('span', { class: 'grow' }),
+      ui.button('Open QuickBooks', { size: 'sm', variant: 'primary', icon: 'chevron-right', href: '#/quickbooks' })));
+}
+
 function problemState(ctx, e) {
   const { ui } = ctx;
   const { h } = ui;
@@ -288,6 +305,7 @@ export default {
     },
     h('div', { class: 'card flat int-intro' }, ui.icon('shield-check', 20),
       h('p', null, 'Each account is yours: payments go to your Stripe, emails come from your address, texts from your number. Keys are encrypted on the server and never shown again after you save them. Each card has a step-by-step guide, or we can set everything up for you.')),
+    quickBooksCard(ctx),
     grid));
 
     let cards = [];

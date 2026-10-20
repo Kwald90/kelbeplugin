@@ -1,0 +1,111 @@
+/* QuickBooks screens (modules/quickbooks.js), badges and sheets (lib/qbo-ui.js). Tokens only. */
+.qbo-nav { display: flex; gap: var(--s1); flex-wrap: wrap; margin: 0 0 var(--s4); padding-bottom: var(--s2); border-bottom: 1px solid var(--border); }
+.qbo-nav a { padding: var(--s1) var(--s3); border-radius: var(--r-pill); color: var(--text-muted); font-size: var(--fs-sm); font-weight: 600; text-decoration: none; }
+.qbo-nav a:hover { background: var(--surface-2); color: var(--text); }
+.qbo-nav a.active { background: var(--accent-soft); color: var(--accent); }
+
+.qbo-body { min-width: 0; }
+.qbo-offline { opacity: .55; pointer-events: none; }
+.qbo-tm { margin: var(--s6) 0 0; font-size: var(--fs-xs); line-height: var(--lh-xs); }
+.qbo-small { font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.qbo-busy { opacity: .6; pointer-events: none; }
+.qbo-bad { color: var(--danger); }
+
+.qbo-banner { display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s3); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.qbo-banner svg { flex: none; margin-top: 2px; }
+.qbo-banner.info { background: var(--info-soft); color: var(--info); border-color: transparent; }
+.qbo-banner.success { background: var(--success-soft); color: var(--success); border-color: transparent; }
+.qbo-banner.warning { background: var(--warning-soft); color: var(--warning); border-color: transparent; }
+.qbo-banner.danger { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.qbo-banner a { color: inherit; font-weight: 700; }
+.qbo-banner .btn { flex: none; }
+
+.qbo-state { display: flex; flex-direction: column; gap: var(--s3); }
+.qbo-state h3 { margin: 0; }
+.qbo-syncs { margin: 0; padding-left: var(--s5); display: grid; gap: var(--s1); }
+.qbo-facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s4); margin: 0; font-size: var(--fs-sm); }
+.qbo-facts dt { color: var(--text-muted); }
+.qbo-facts dd { margin: 0; overflow-wrap: anywhere; }
+.qbo-progress { display: flex; align-items: center; gap: var(--s3); }
+.qbo-progress .progress { flex: 1; }
+.qbo-connect-img { padding: 0; border: 0; background: none; cursor: pointer; align-self: flex-start; }
+.qbo-connect-img img { display: block; }
+
+.qbo-counts h3 { margin: 0 0 var(--s3); }
+.qbo-count-grid { display: grid; gap: var(--s2); grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr)); }
+.qbo-count { display: flex; flex-direction: column; gap: 2px; padding: var(--s3); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); text-decoration: none; }
+.qbo-count strong { font-size: var(--fs-lg); line-height: var(--lh-lg); }
+.qbo-count.danger strong { color: var(--danger); }
+.qbo-count.warning strong { color: var(--warning); }
+.qbo-count.info strong { color: var(--info); }
+.qbo-links { flex-wrap: wrap; }
+
+/* badges */
+.qbo-badge-host:empty, .qbo-lookup-host:empty { display: none; }
+.qbo-badge-host { display: inline-flex; vertical-align: middle; margin-left: var(--s1); }
+button.qbo-badge { cursor: pointer; border: 0; font: inherit; font-size: var(--fs-xs); white-space: nowrap; }
+button.qbo-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.qbo-actions { flex-wrap: wrap; gap: var(--s2); }
+.qbo-amounts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+.qbo-amounts > div { display: flex; flex-direction: column; padding: var(--s3); border-radius: var(--r-md); background: var(--surface-2); }
+.qbo-log-mini .list-row { padding-block: var(--s2); }
+.qbo-settlement { display: inline-flex; align-items: center; gap: var(--s1); font-size: var(--fs-xs); }
+
+/* no-tax reason picker */
+.qbo-notax[hidden] { display: none; }
+.qbo-notax-missing { color: var(--warning); }
+
+/* wizard */
+.qbo-steps { list-style: none; display: flex; flex-wrap: wrap; gap: var(--s2); margin: 0 0 var(--s4); padding: 0; }
+.qbo-steps li { display: flex; align-items: center; gap: var(--s2); padding: var(--s1) var(--s3) var(--s1) var(--s1); border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-muted); font-size: var(--fs-sm); }
+.qbo-step-n { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); font-weight: 700; font-size: var(--fs-xs); }
+.qbo-steps li.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.qbo-steps li.active .qbo-step-n { background: var(--accent-fill); color: var(--on-accent); border-color: transparent; }
+.qbo-steps li.done .qbo-step-n { background: var(--success-soft); color: var(--success); border-color: transparent; }
+.qbo-wizard-foot { padding-top: var(--s3); border-top: 1px solid var(--border); flex-wrap: wrap; }
+.qbo-why { font-size: var(--fs-sm); }
+.qbo-scan .row { flex-wrap: wrap; }
+.qbo-tabs-wrap { overflow-x: auto; }
+.qbo-chips, .qbo-bulk { flex-wrap: wrap; gap: var(--s2); }
+.chip { padding: var(--s1) var(--s3); border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.chip.active { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
+.qbo-choice { display: flex; flex-direction: column; gap: var(--s1); min-width: 160px; }
+.qbo-choice select, .qbo-dup select { max-width: 100%; }
+.qbo-score { font-variant-numeric: tabular-nums; }
+.qbo-diff-kind { padding-top: var(--s2); border-top: 1px solid var(--border); }
+.qbo-diff { display: flex; flex-direction: column; gap: var(--s1); padding: var(--s2) 0; }
+.qbo-diff-title { font-weight: 600; }
+.qbo-diff-row { display: grid; grid-template-columns: minmax(90px, 160px) 1fr 1fr; gap: var(--s2); align-items: start; padding: var(--s2); border-radius: var(--r-sm); background: var(--surface-2); }
+.qbo-diff-row.undecided { box-shadow: inset 3px 0 0 var(--warning); }
+.qbo-diff-field { font-weight: 600; font-size: var(--fs-sm); }
+.qbo-side { display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s1) var(--s2); border-radius: var(--r-sm); cursor: pointer; overflow-wrap: anywhere; min-width: 0; }
+.qbo-side.picked { background: var(--success-soft); }
+.qbo-side input { margin-top: 3px; flex: none; }
+.qbo-side .muted { flex: none; font-size: var(--fs-xs); }
+.qbo-dup { flex-wrap: wrap; padding: var(--s2) 0; border-top: 1px solid var(--border); }
+.qbo-warnings { margin: 0; padding-left: var(--s5); }
+
+/* mappings */
+.qbo-map-section h3 { margin: 0; }
+.qbo-map-section { display: flex; flex-direction: column; gap: var(--s3); }
+.qbo-required select { border-color: var(--warning); }
+.qbo-suggested { color: var(--info); font-weight: 400; font-size: var(--fs-xs); }
+
+/* conflicts */
+.qbo-conflict-grid { display: grid; grid-template-columns: minmax(80px, max-content) 1fr 1fr 1fr; gap: var(--s2) var(--s3); align-items: start; font-size: var(--fs-sm); }
+.qbo-conflict-grid > * { min-width: 0; overflow-wrap: anywhere; }
+
+/* look-up */
+.qbo-lookup-form { flex-wrap: wrap; gap: var(--s2); }
+.qbo-lookup-form input { flex: 1 1 220px; min-width: 0; }
+.qbo-filters { flex-wrap: wrap; gap: var(--s3); align-items: flex-end; }
+
+@media (max-width: 640px) {
+  .qbo-diff-row { grid-template-columns: 1fr; }
+  .qbo-conflict-grid { grid-template-columns: 1fr 1fr; }
+  .qbo-conflict-grid > :nth-child(4n + 1) { grid-column: 1 / -1; margin-top: var(--s2); }
+  .qbo-facts { grid-template-columns: 1fr; }
+  .qbo-facts dd { margin-bottom: var(--s1); }
+  .qbo-amounts { grid-template-columns: 1fr; }
+}
+.row-inline { display: inline-flex; flex-wrap: wrap; gap: var(--s1); align-items: center; }

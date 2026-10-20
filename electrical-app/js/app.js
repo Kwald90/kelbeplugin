@@ -30,6 +30,7 @@ const MODULE_COLLECTIONS = {
   compliance: ['permits', 'inspections', 'certifications', 'checklists'], sequences: ['sequences', 'enrolments', 'outbox'],
   security: ['checklists'], wireruns: ['wireRuns'], bending: ['bends', 'benderProfiles'],
   workplan: ['workPlans', 'workTasks', 'taskTemplates', 'huddles'], materials: ['materialRequests'],
+  purchasing: ['vendors', 'bills', 'purchaseOrders'],
 };
 // Electricians and apprentices land on My day (their task list) instead of the dashboard.
 const FIELD_ROLES = ['electrician', 'apprentice'];
