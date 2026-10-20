@@ -177,9 +177,12 @@ Export the dashboard CSV and the talk PDFs as evidence.
 
 ## Notifications
 
-There is no server `notify()` helper yet. `notifySafety()` in `modules/safety/common.js` is the hook: it writes an
-audit entry and the screens show a toast. When the server gets notify(), send: stop-work FLHAs to the
-foreman, new incidents to managers, reportable incidents with their deadline, and overdue corrective actions to the owner.
+Safety records are written in the app and synced, so the bell (`#/notifications`) works its items out from the
+synced records on each device: `safetyNotifications()` in `modules/safety/common.js`, registered with
+`addNotificationSource()`. Managers get stop-work FLHAs (2 days), new incidents and near misses (14 days) and
+reportable incidents with the first deadline; a corrective action's owner gets it (and again when overdue);
+managers get overdue actions. `notifySafety()` still writes the device audit entry. Moving these to the server's
+`notify()` (so the daily email includes them) needs a hook on safety writes in `services/records.js`.
 
 ## VERIFY list (confirm before production)
 

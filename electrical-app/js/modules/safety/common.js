@@ -1,4 +1,7 @@
 // Shared helpers for the Safety screens (modules/safety.js and its sub-views).
+import { addNotificationSource } from '../../lib/notify.js';
+import { actionState } from '../../lib/safety.js';
+import { reportableFor } from '../../lib/safety-reporting.js';
 
 export const ICON_HARDHAT = '<path d="M3 17h18v2H3z"/><path d="M5 17a7 7 0 0114 0"/><path d="M10 10V6h4v4"/>';
 export const ICON_STOP = '<path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M8 12h8"/>';
@@ -76,14 +79,46 @@ export function signatureView(ui, sig, label = 'Signed') {
 export const backBtn = (ui, href, title = 'Back') => ui.button('', { icon: 'chevron-left', title, href });
 
 /**
- * NOTIFY HOOK (safety alerts). There is no server notify() helper yet, so alerts are an
- * audit entry on the device and a toast. When the server grows notify(), call it from the
- * sync path for: stop-work FLHAs, new incidents, reportable incidents, overdue actions.
+ * NOTIFY HOOK (safety alerts): an audit entry on the device. Safety records are written in the
+ * app and synced, so the bell works them out from the synced records on every device
+ * (safetyNotifications below, registered with lib/notify.js): stop-work FLHAs and new or
+ * reportable incidents to managers, corrective actions to their owner, overdue ones to managers.
  * See docs/safety/README.md "Notifications".
  */
 export function notifySafety(ctx, event, summary, recordId = null) {
   try { ctx.store.log(`safety-${event}`, summary, 'safety', recordId); } catch { /* ignore */ }
 }
+
+const DAY_MS = 86400000;
+/** Bell items from safety records for one person ({ employeeId, can, manager }). Pure. */
+export function safetyNotifications({ store, me, now = new Date() }) {
+  if (!me?.can?.('safety')) return [];
+  const out = [];
+  const today = now.toISOString().slice(0, 10);
+  const recent = (iso, days) => iso && now.getTime() - Date.parse(iso) <= days * DAY_MS;
+  if (me.manager) {
+    for (const f of store.list('flhas', (x) => x.stopWork && x.signature?.dataUrl && recent(x.updatedAt || x.createdAt, 2))) {
+      out.push({ key: `safety:stop:${f.id}`, kind: 'safety', title: 'Stop work called on site', body: String(f.stopWorkReason || '').slice(0, 140), link: '#/safety/flha', at: f.updatedAt || f.createdAt, tone: 'danger' });
+    }
+    const province = store.settings().company?.province;
+    for (const inc of store.list('incidents', (x) => x.status !== 'closed' && recent(x.reportedAt || x.createdAt, 14))) {
+      const rep = inc.kind === 'incident' ? reportableFor(inc, inc.province || province) : null;
+      const due = rep?.any ? [...rep.notify.filter((r) => r.id !== 'bc-inv').map((r) => r.dueAt), rep.wcb?.dueAt].filter(Boolean).sort()[0] : null;
+      out.push({ key: `safety:inc:${inc.id}:${rep?.any ? 'rep' : 'new'}`, kind: 'safety', title: rep?.any ? `Reportable incident: ${inc.title || 'untitled'}` : `New ${inc.kind === 'near-miss' ? 'near miss' : 'incident'}: ${inc.title || 'untitled'}`,
+        body: due ? `Report by ${due.slice(0, 16).replace('T', ' ')}` : '', link: `#/safety/incidents/${inc.id}`, at: inc.reportedAt || inc.createdAt, tone: rep?.any ? 'danger' : 'warning' });
+    }
+  }
+  for (const a of store.list('correctiveActions', (x) => x.status !== 'done' && x.status !== 'verified')) {
+    const state = actionState(a, today);
+    if (me.employeeId && a.ownerId === me.employeeId) {
+      out.push({ key: `safety:act:${a.id}:${a.ownerId}:${state}`, kind: 'safety', title: state === 'overdue' ? `Overdue: ${a.title}` : `Safety action for you: ${a.title}`, body: a.dueDate ? `Due ${a.dueDate}` : '', link: '#/safety/actions', at: a.updatedAt || a.createdAt, tone: state === 'overdue' ? 'danger' : 'warning' });
+    } else if (me.manager && state === 'overdue') {
+      out.push({ key: `safety:overdue:${a.id}:${a.dueDate}`, kind: 'safety', title: `Safety action overdue: ${a.title}`, body: `Due ${a.dueDate}`, link: '#/safety/actions', at: `${a.dueDate}T00:00:00.000Z`, tone: 'danger' });
+    }
+  }
+  return out;
+}
+addNotificationSource(safetyNotifications);
 
 export function emptyNoEmployee(ui) {
   return ui.empty({ icon: 'user', title: 'Link your account to an employee', text: 'Safety records are filed in a worker\'s name. Ask an owner to link your login to your employee record.' });

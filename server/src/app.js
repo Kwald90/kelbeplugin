@@ -37,6 +37,7 @@ import integrationRoutes from './routes/v1/integrations.js';
 import webhookRoutes from './routes/v1/webhooks.js';
 import aiRoutes from './routes/v1/ai.js';
 import mcpRoutes from './routes/mcp.js';
+import notificationRoutes from './routes/v1/notifications.js';
 import kpiRoutes from './routes/v1/kpis.js';
 
 const MB = 1024 * 1024;
@@ -193,6 +194,7 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(webhookRoutes, deps);
   await app.register(aiRoutes, deps);
   await app.register(mcpRoutes, deps);
+  await app.register(notificationRoutes, deps);
   await app.register(kpiRoutes, deps);
   await app.register(hqTenantRoutes, deps);
   await app.register(hqComplianceRoutes, deps);

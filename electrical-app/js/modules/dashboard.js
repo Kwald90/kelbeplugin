@@ -1,6 +1,7 @@
 // S11 Dashboard: today at a glance, plus every alert the other modules raise.
 import { invoiceBalanceCents, invoiceStatus, entryHours, moneyFormatter } from '../lib/money.js';
 import { provinceName } from '../lib/tax.js';
+import { onboardingCard } from './onboarding.js';
 import { workplanTiles } from './workplan.js';
 
 export default {
@@ -135,6 +136,7 @@ export default {
           auth.can('estimates') ? ui.button('New quote', { icon: 'file-text', variant: 'primary', href: '#/estimates/new' }) : null,
         ].filter(Boolean),
       },
+      onboardingCard(ctx),
       stats,
       clockCard ? h('div', { style: { marginTop: 'var(--s4)' } }, clockCard) : null,
       (() => { const wp = workplanTiles(ctx); return wp ? [...ui.section('Crew tasks'), wp] : null; })(),
