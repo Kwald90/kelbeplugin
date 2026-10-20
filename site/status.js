@@ -1,9 +1,11 @@
 // Public status page: reads /api/v1/status (status, version, environment, commit) and
 // /api/readyz (database, migrations, queue). Both are public and carry no tenant data.
 import { BRAND } from '/js/brand.js';
+import { wireAppLinks } from '/site/app-link.js';
 
 const API = document.querySelector('meta[name="fishtape-api"]')?.content.replace(/\/$/, '') || '';
 for (const n of document.querySelectorAll('[data-brand]')) n.textContent = BRAND.name;
+wireAppLinks();
 document.getElementById('year').textContent = String(new Date().getFullYear());
 document.title = `Status · ${BRAND.name}`;
 

@@ -1,0 +1,104 @@
+/* Landing-page hero (site/hero.js). Shared by site/index.html and the HQ > Promotions preview,
+   so every rule is scoped to .hero. The hero is always dark (video), whatever the theme.
+   Contrast: all text sits on the scrim at >= 76% near-black. Worst case (a pure white frame)
+   that composites to about #464645: white text 9.5:1, the yellow eyebrow 5.1:1 (WCAG AA). */
+:root {
+  --hero-bg-1: #23262b;
+  --hero-bg-2: #121315;
+  --hero-ink: #ffffff;
+  --hero-ink-soft: rgba(255, 255, 255, .88);
+  --hero-eyebrow: #f5b301;
+  --hero-scrim-strong: rgba(12, 11, 10, .84);
+  --hero-scrim: rgba(12, 11, 10, .76);
+  --hero-scrim-clear: rgba(12, 11, 10, 0);
+  --hero-chip: rgba(12, 11, 10, .62);
+  --hero-dot: rgba(255, 255, 255, .42);
+  --hero-line: rgba(255, 255, 255, .7);
+}
+
+.hero { position: relative; isolation: isolate; overflow: hidden; color: var(--hero-ink);
+  height: clamp(560px, 82vh, 860px);
+  background: radial-gradient(120% 90% at 85% 20%, var(--hero-bg-1), var(--hero-bg-2)); }
+.hero [hidden] { display: none !important; }
+
+/* ---- media layers ---- */
+.hero-stage, .hero-layer, .hero-scrim { position: absolute; inset: 0; }
+.hero-stage { z-index: 0; }
+.hero-layer { opacity: 0; z-index: 0; transition: opacity var(--hero-fade, 800ms) linear; will-change: opacity; }
+.hero-layer.is-visible { opacity: 1; }
+.hero-layer.is-front { z-index: 1; }
+.hero-layer.no-anim { transition: none !important; }
+.hero-poster, .hero-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
+.hero-video { opacity: 0; }
+.hero-video.has-frame { opacity: 1; }
+.hero[data-transition="slide"] .hero-layer { opacity: 1; transform: translateX(100%); transition: transform var(--hero-fade, 800ms) cubic-bezier(.45, 0, .2, 1); will-change: transform; }
+.hero[data-transition="slide"] .hero-layer.is-visible { transform: none; }
+.hero[data-transition="slide"] .hero-layer.is-leaving { transform: translateX(-100%); }
+.hero[data-transition="slide"] .hero-layer.no-anim { transition: none !important; }
+
+/* Left to right on wide screens: dark under the text, clear on the right. The text column ends
+   at max(616px, 50% + 56px) (1120px container, 600px copy), so the 76% stop sits past it. */
+.hero-scrim { z-index: 1; pointer-events: none;
+  background: linear-gradient(90deg, var(--hero-scrim-strong) 0, var(--hero-scrim) max(700px, calc(50% + 100px)), var(--hero-scrim-clear) max(1180px, calc(50% + 560px))); }
+
+/* ---- text ---- */
+.hero-inner { position: relative; z-index: 2; height: 100%; max-width: 1120px; margin: 0 auto; padding: var(--s7) var(--s4); display: flex; align-items: center; }
+.hero-copy { max-width: 600px; display: flex; flex-direction: column; gap: var(--s3);
+  opacity: 0; animation: hero-reveal 1ms linear 1.5s forwards; /* no-JS / slow-API fallback */ }
+.hero-copy.is-ready { opacity: 1; animation: none; transition: opacity 180ms ease; }
+.hero-copy.is-ready.is-swapping { opacity: 0; }
+@keyframes hero-reveal { to { opacity: 1; } }
+.hero-copy > * { margin: 0; }
+.hero-eyebrow { color: var(--hero-eyebrow); font-weight: 700; font-size: var(--fs-sm); line-height: var(--lh-sm); letter-spacing: .06em; text-transform: uppercase; }
+.hero-headline { font-size: clamp(34px, 5vw, 56px); line-height: 1.05; letter-spacing: -0.025em; font-weight: 800; text-wrap: balance;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.hero-sub { color: var(--hero-ink-soft); font-size: var(--fs-lg); line-height: var(--lh-lg); max-width: 34em; }
+.hero-ctas { display: flex; flex-wrap: wrap; gap: var(--s3); margin-top: var(--s2) !important; }
+/* Button basics repeated here so the HQ preview (no site.css) draws them the same. */
+.hero .site-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 var(--s5); border-radius: var(--r-pill);
+  border: 1px solid transparent; font: 600 var(--fs-base)/1 var(--font-sans); text-decoration: none; cursor: pointer; }
+.hero .hero-primary { background: var(--accent-fill); color: var(--on-accent); }
+.hero .hero-secondary { background: transparent; color: var(--hero-ink); border-color: var(--hero-line); }
+.hero .hero-secondary:hover { background: rgba(255, 255, 255, .08); }
+.hero-note { color: var(--hero-ink-soft); font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.hero :focus-visible { outline: 3px solid var(--accent-fill); outline-offset: 3px; }
+
+/* ---- controls ---- */
+.hero-controls { position: absolute; z-index: 3; right: var(--s4); bottom: var(--s4); display: flex; align-items: center; gap: 2px;
+  padding: 2px 4px; border-radius: var(--r-pill); background: var(--hero-chip); }
+.hero-dots { display: flex; }
+.hero-dot, .hero-pause { appearance: none; border: 0; background: transparent; color: var(--hero-ink); cursor: pointer; width: 44px; height: 44px; padding: 0; display: grid; place-items: center; border-radius: var(--r-pill); }
+.hero-dot-bar { position: relative; display: block; width: 24px; height: 4px; border-radius: 2px; overflow: hidden; background: var(--hero-dot); transition: width 200ms ease; }
+.hero-dot[aria-current="true"] .hero-dot-bar { width: 34px; }
+.hero-dot-fill { position: absolute; inset: 0; background: var(--hero-ink); transform: scaleX(0); transform-origin: left center; }
+.hero-dot:not([aria-current="true"]):hover .hero-dot-bar { background: var(--hero-line); }
+.hero-pause:hover { background: rgba(255, 255, 255, .12); }
+
+/* ---- phones: text at the bottom over a bottom-up scrim, controls top right ---- */
+@media (max-width: 760px) {
+  .hero { height: max(560px, 88vh); height: max(560px, 88svh); }
+  .hero-scrim { background: linear-gradient(0deg, var(--hero-scrim-strong) 0, var(--hero-scrim) 62%, var(--hero-scrim-clear) 92%); }
+  .hero-inner { align-items: flex-end; padding: var(--s6) var(--s4) var(--s5); }
+  .hero-headline { font-size: clamp(30px, 8.5vw, 40px); }
+  .hero-sub { font-size: var(--fs-base); line-height: var(--lh-base); }
+  .hero-ctas .site-btn { flex: 1 1 100%; }
+  .hero-controls { top: var(--s3); bottom: auto; right: var(--s3); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-copy, .hero-copy.is-ready { transition: none; animation-delay: 0s; }
+  .hero-dot-bar { transition: none; }
+}
+
+/* HQ preview frames reuse the hero at a fixed size. */
+.hero.hero-preview { height: auto; aspect-ratio: 16 / 9; }
+.hero.hero-preview.is-phone { aspect-ratio: 9 / 16; }
+.hero.is-phone .hero-scrim { background: linear-gradient(0deg, var(--hero-scrim-strong) 0, var(--hero-scrim) 62%, var(--hero-scrim-clear) 92%); }
+.hero.is-phone .hero-inner { align-items: flex-end; padding: var(--s4) var(--s3); }
+.hero.is-phone .hero-headline { font-size: 24px; }
+.hero.is-phone .hero-sub { font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.hero.is-phone .hero-ctas .site-btn { flex: 1 1 100%; min-height: 40px; font-size: var(--fs-sm); }
+.hero.is-phone .hero-controls { top: var(--s2); bottom: auto; right: var(--s2); }
+.hero.hero-preview:not(.is-phone) .hero-headline { font-size: 30px; }
+.hero.hero-preview:not(.is-phone) .hero-inner { padding: var(--s4) var(--s5); }
+.hero.hero-preview .hero-controls { top: var(--s2); bottom: auto; right: var(--s2); }

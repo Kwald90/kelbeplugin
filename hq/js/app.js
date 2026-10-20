@@ -15,6 +15,7 @@ const PAGES = [
   { id: 'billing', title: 'Billing', icon: 'dollar', load: () => import('./pages/billing.js') },
   { id: 'leads', title: 'Leads', icon: 'funnel', load: () => import('./pages/leads.js') },
   { id: 'mail', title: 'Mail', icon: 'mail', load: () => import('./pages/mail.js') },
+  { id: 'promotions', title: 'Promotions', icon: 'play', load: () => import('./pages/promotions.js') },
   { id: 'flags', title: 'Feature flags', icon: 'sliders', load: () => import('./pages/flags.js') },
 ];
 

@@ -3,6 +3,7 @@
 import { PLANS, PLAN_IDS, FEATURE_PLAN, EXTRA_USER_CENTS, CURRENCY, planRank } from '/js/plans.js';
 import { FEATURE_LABELS } from '/js/modules/billing.js';
 import { BRAND } from '/js/brand.js';
+import { wireAppLinks } from '/site/app-link.js';
 
 const API = document.querySelector('meta[name="fishtape-api"]')?.content.replace(/\/$/, '') || '';
 const money = (cents) => (cents / 100).toLocaleString('en-CA', { style: 'currency', currency: CURRENCY, maximumFractionDigits: cents % 100 ? 2 : 0 });
@@ -18,6 +19,7 @@ function el(tag, attrs = {}, ...kids) {
 }
 
 for (const n of document.querySelectorAll('[data-brand]')) n.textContent = BRAND.name;
+wireAppLinks();
 document.getElementById('year').textContent = String(new Date().getFullYear());
 document.title = `Pricing · ${BRAND.name}`;
 

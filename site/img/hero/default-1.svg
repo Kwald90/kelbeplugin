@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b1e23"/><stop offset="1" stop-color="#2b3a4a"/></linearGradient>
+<pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#ffffff" stroke-opacity=".06" stroke-width="1"/></pattern>
+<radialGradient id="glow" cx=".72" cy=".42" r=".55"><stop offset="0" stop-color="#f5b301" stop-opacity=".16"/><stop offset="1" stop-color="#f5b301" stop-opacity="0"/></radialGradient>
+</defs>
+<rect width="1920" height="1080" fill="url(#bg)"/><rect width="1920" height="1080" fill="url(#grid)"/><rect width="1920" height="1080" fill="url(#glow)"/>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+<rect x="1000" y="250" width="700" height="560" stroke="#ffffff" stroke-opacity=".75" stroke-width="10"/>
+<path d="M1000 520H1290V810M1290 520V250" stroke="#ffffff" stroke-opacity=".5" stroke-width="6"/>
+<path d="M1140 810a90 90 0 0 1 90-90" stroke="#ffffff" stroke-opacity=".35" stroke-width="4"/>
+<rect x="1062" y="232" width="36" height="36" rx="6" fill="#f5b301" stroke="none"/><rect x="1212" y="232" width="36" height="36" rx="6" fill="#f5b301" stroke="none"/><rect x="1402" y="232" width="36" height="36" rx="6" fill="#f5b301" stroke="none"/><rect x="1582" y="232" width="36" height="36" rx="6" fill="#f5b301" stroke="none"/><rect x="1682" y="382" width="36" height="36" rx="6" fill="#f5b301" stroke="none"/><rect x="1682" y="602" width="36" height="36" rx="6" fill="#f5b301" stroke="none"/><rect x="982" y="342" width="36" height="36" rx="6" fill="#f5b301" stroke="none"/><rect x="982" y="672" width="36" height="36" rx="6" fill="#f5b301" stroke="none"/><rect x="1482" y="792" width="36" height="36" rx="6" fill="#f5b301" stroke="none"/>
+<path d="M1080 170H1230M1080 150V190M1230 150V190" stroke="#f5b301" stroke-width="4"/>
+<path d="M1420 250Q1500 420 1700 400" stroke="#f5b301" stroke-opacity=".7" stroke-width="4" stroke-dasharray="14 12"/>
+<circle cx="1640" cy="720" r="34" stroke="#5fd394" stroke-width="6"/><path d="M1624 720l11 12 22-24" stroke="#5fd394" stroke-width="6"/></g>
+</svg>
