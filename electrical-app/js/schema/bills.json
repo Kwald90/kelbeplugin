@@ -1,0 +1,305 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/bills.json",
+  "title": "Bill or receipt",
+  "description": "A supplier bill (kind bill, pay later) or a paid receipt (kind receipt). A supplier refund or card credit is a receipt with negative amounts. Office only (invoices permission). A bill whose lines and taxes differ from totalCents by more than 2 cents is kept but not sent to QuickBooks until fixed. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "kind": {
+      "enum": [
+        "bill",
+        "receipt",
+        null
+      ]
+    },
+    "vendorId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "vendors record; required before it can sync."
+    },
+    "number": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "description": "The supplier's invoice or receipt number."
+    },
+    "date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "dueDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "jobId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "Default job for lines without one."
+    },
+    "purchaseOrderId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "The purchase order this bill is for."
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "open",
+        "paid",
+        "void",
+        null
+      ],
+      "description": "Receipts go from draft straight to paid. paid on a bill comes from QuickBooks (balance 0) or is set by hand."
+    },
+    "paidWith": {
+      "enum": [
+        "card",
+        "cash",
+        "cheque",
+        "debit",
+        "transfer",
+        null
+      ],
+      "description": "Receipts only; picks the paid-from account."
+    },
+    "lines": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4000
+          },
+          "qty": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": -1000000,
+            "maximum": 1000000
+          },
+          "unitCents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": -100000000000,
+            "maximum": 100000000000,
+            "description": "Money in integer cents (CAD)."
+          },
+          "amountCents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": -100000000000,
+            "maximum": 100000000000,
+            "description": "Money in integer cents (CAD). round(qty x unitCents) unless typed."
+          },
+          "itemId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128,
+            "description": "items record, if the line is a price-book item"
+          },
+          "jobId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "costType": {
+            "enum": [
+              "material",
+              "subcontract",
+              "equipment",
+              "other",
+              null
+            ]
+          },
+          "poLine": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "purchaseOrderId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 199
+              }
+            }
+          }
+        }
+      }
+    },
+    "taxes": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "enum": [
+              "GST",
+              "HST",
+              "PST",
+              "RST",
+              "QST",
+              null
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
+          },
+          "cents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": -100000000000,
+            "maximum": 100000000000,
+            "description": "Money in integer cents (CAD)."
+          }
+        }
+      }
+    },
+    "taxProvince": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2
+    },
+    "totalCents": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": -100000000000,
+      "maximum": 100000000000,
+      "description": "Money in integer cents (CAD), as printed on the bill."
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2000
+    },
+    "receipt": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Photo (JPEG or PNG) or PDF of the bill, as a data URL until object storage.",
+      "properties": {
+        "dataUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2621440,
+          "pattern": "^data:(image/jpeg|image/png|application/pdf);base64,"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "takenAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        }
+      }
+    },
+    "materialRequestIds": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 200,
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      }
+    }
+  },
+  "additionalProperties": true
+}

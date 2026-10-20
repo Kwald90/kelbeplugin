@@ -35,6 +35,7 @@ export const COLLECTIONS = [
   'workPlans', 'workTasks', 'taskTemplates', 'huddles',
   'materialRequests',
   'locationPoints', 'locationConsents',
+  'vendors', 'bills', 'purchaseOrders',
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -50,7 +51,8 @@ export const DEFAULT_SETTINGS = {
   markupPct: 20,
   units: 'metric', // company default; each user can switch (js/lib/units.js)
   currency: 'CAD',
-  nextNumbers: { job: 1001, estimate: 2001, invoice: 3001 },
+  // po: purchase orders (js/lib/purchasing.js), PO-5001 on.
+  nextNumbers: { job: 1001, estimate: 2001, invoice: 3001, po: 5001 },
   // Which modules the company uses (js/lib/modules.js). A new company starts with the
   // recommended set; a settings record without `modules` (from before switches) has them all.
   modules: { ...DEFAULT_MODULES },
@@ -385,11 +387,12 @@ export const store = {
   settings() { return clone(bucket('settings').get('settings')) || clone(DEFAULT_SETTINGS); },
   saveSettings(patch) { return this.update('settings', 'settings', patch, { summary: 'settings' }); },
 
-  /** Reserve the next document number: nextNumber('job') -> 'J-1001'. */
+  /** Reserve the next document number: nextNumber('job') -> 'J-1001', nextNumber('po') -> 'PO-5001'. */
   nextNumber(kind) {
-    const prefix = { job: 'J', estimate: 'E', invoice: 'INV' }[kind] || kind.toUpperCase();
+    const prefix = { job: 'J', estimate: 'E', invoice: 'INV', po: 'PO' }[kind] || kind.toUpperCase();
     const s = this.settings();
-    const n = s.nextNumbers?.[kind] ?? 1;
+    // A settings record from before a kind existed (po) starts at its default, not 1.
+    const n = s.nextNumbers?.[kind] ?? DEFAULT_SETTINGS.nextNumbers[kind] ?? 1;
     this.update('settings', 'settings', { nextNumbers: { ...s.nextNumbers, [kind]: n + 1 } }, { silent: true });
     return `${prefix}-${n}`;
   },

@@ -120,6 +120,10 @@ export const COLLECTION_FEATURES = {
   // Location while clocked in is part of the time clock (every plan).
   locationPoints: ['time'],
   locationConsents: ['time'],
+  // Purchasing (Pro): suppliers, bills and receipts, purchase orders.
+  vendors: ['purchasing'],
+  bills: ['purchasing'],
+  purchaseOrders: ['purchasing'],
 };
 
 /**

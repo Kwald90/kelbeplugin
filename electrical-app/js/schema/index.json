@@ -41,6 +41,9 @@
     "materialRequests": "./materialRequests.json",
     "auditLog": "./auditLog.json",
     "locationPoints": "./locationPoints.json",
-    "locationConsents": "./locationConsents.json"
+    "locationConsents": "./locationConsents.json",
+    "vendors": "./vendors.json",
+    "bills": "./bills.json",
+    "purchaseOrders": "./purchaseOrders.json"
   }
 }
