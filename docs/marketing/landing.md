@@ -11,10 +11,56 @@ a footer with the status page. The hero's text, buttons and clips are a **promot
 | `site/hero.js`, `site/hero.css` | the player (also used by the HQ preview) |
 | `site/app-link.js` | where "Sign in" goes: `https://app.fishtapehq.com/` from `fishtapehq.com`/`www.`, else `/` (a `<meta name="fishtape-app">` overrides) |
 | `site/img/hero/default-*.svg` | posters of the built-in promotion |
-| `site/img/shots/*.svg` | screenshot placeholders (see below) |
+| `site/img/shots/*.{webp,jpg}` | real screenshots of the app in demo mode (see below) |
 | `hq/js/pages/promotions.js`, `hq/promotions.css` | HQ → Promotions |
 | `server/src/routes/promotions.js`, `server/src/services/promotions.js` | API |
 | `server/migrations/0025_promotions.sql`, `0026_hq_media.sql` | tables |
+
+## The rest of the site
+
+Every page shares one header (Features, Pricing, Services, About, Status, Sign in, Start free
+trial; a `<details>` menu on phones) and one footer, plus a canonical URL on fishtapehq.com,
+Open Graph and Twitter tags and the card image `site/img/og/fishtape-og.png`.
+
+| URL (production) | file | what |
+| --- | --- | --- |
+| `/` | `index.html` | the landing page above |
+| `/features`, `/features/<slug>` | `features/*.html` | overview grid and one page per feature (14) |
+| `/for/<slug>` | `for/*.html` | residential, commercial and industrial, solo; Ontario, BC, Alberta, Saskatchewan, Manitoba, Atlantic Canada; switching from Jobber, Housecall Pro, QuickBooks |
+| `/services` | `services.html` | setup, data import, price book, training, templates, Enterprise; each "Talk to us" posts to `/api/v1/public/enterprise-leads` with a `service` (HQ → Leads shows it) |
+| `/about` | `about.html` | why Fishtape exists, principles, contact form (`service: contact`) |
+| `/pricing`, `/signup`, `/status`, `/terms`, `/privacy` | hand-written pages | the status page is in [docs/runbooks/status-page.md](../runbooks/status-page.md) |
+| `/sitemap.xml`, `/robots.txt` | generated | robots allows the site, disallows `/api/` and `/hq/` |
+
+**Generated, then committed.** `node tools/site/build.mjs` writes the feature, landing, services
+and about pages from `tools/site/{features,landing,pages}.mjs`, fills the `<!-- @site:NAME -->`
+blocks in the hand-written pages (head metadata, header, footer, the "No caps on your work" section,
+the home page screenshots, the pricing cards and feature table), and writes the sitemap and robots.
+`--check` fails when anything is out of date; `electrical-app/tests/site-pages.test.mjs` runs it.
+So: edit the copy in `tools/site/`, run the build, commit both. Which plan includes a feature is
+read from `electrical-app/js/plans.js` at build time and again in the browser (`site/site.js`);
+province facts (code in force, inspection authority, amendments, sales tax, WCB) from the app's
+`js/lib/cec/provinces.js`, `amendments.js`, `js/lib/tax.js` and `js/lib/safety-reporting.js`.
+
+**Links.** The HTML links to the clean production URLs. Staging serves the same files under
+`/site/` (`/site/about.html`, `/site/features/wire-runs.html`); `site/site.js` rewrites the links
+there on any host that isn't a marketing host (`site/site-lib.js` `localHref`). On
+`status.fishtapehq.com` the other pages link to the apex. Production nginx 301s old
+`/site/<page>.html` addresses to the clean URL.
+
+**Preview and check locally.**
+
+    node tools/site/serve.mjs --mock-api      # http://localhost:8090, production routing and CSP
+    node tools/site/crawl.mjs                 # Chrome at 1280 and 390 px: every page and link
+
+The crawl fails on sideways scroll, console errors (CSP included), failed requests, layout shift
+over 0.05, images without sizes or much larger than shown, and checks the phone menu, the services
+form and the status page. `node tools/site/og-image.mjs` redraws the card image.
+
+**Copy rules.** en-CA, plain trade language, only what is built; pending things say "coming"
+(App Store listing, live QuickBooks sync, logo on documents). No testimonials, customer counts,
+ratings, awards, partner logos or "trusted by"; the site test refuses the obvious ones. Service
+prices say "Quoted per job" until Kelvin sets them.
 
 ## How promotions work
 
@@ -119,20 +165,28 @@ Export example with ffmpeg:
 Every create, update, status change, duplicate, delete, upload and media delete writes an audit
 event on the platform chain (no copy text in the summary).
 
-## Screenshots to capture
+## Screenshots
 
-Replace each placeholder in `site/img/shots/` with a real screenshot (1200×750 or 2400×1500,
-WebP, ≤ 200 KB), then change the `src` in `site/index.html` from `.svg` to `.webp`. Use demo data
-(no real customers), light theme, desktop width.
+`site/img/shots/` holds real captures of the app (17 screens), taken with headless Chrome at iPad
+landscape size (1366×1024; `phone-my-day` at iPhone size, 390×844 @2x) from a fresh demo
+("Try the demo on this device", metric) plus what a person enters through the UI: a floor plan
+built with the Room tool and Auto-place, a wire run, tasks, an FLHA, clock-ins. `integrations`,
+`assistant` and `hq-dashboard` come from the API on an embedded database with the server's own seed
+accounts. No customer data beyond the demo seed.
 
-| file | capture |
+Each screen is four files: `<name>.webp` and `.jpg` (full size, WebP ≤ 75 KB) and `<name>-sm.webp`
+and `-sm.jpg` (half size, for cards). Pages use them through `shotImg()` in `tools/site/lib.mjs`
+(`<picture>`, WebP first, sizes and `srcset`); the build fails if a file is missing.
+
+| name | shows |
 | --- | --- |
-| `plan-canvas` | a floor plan with a drawn room, receptacles auto-placed along the walls and one CEC spacing check flagged |
-| `wire-runs` | a wire run traced on a plan, segment lengths and the total in metres visible |
-| `bending` | the bending tool with an EMT offset: diagram and the marks list |
-| `estimate` | an estimate with several line items, Ontario HST and the CAD total |
-| `time-clock` | the shared-iPad time clock: crew list, who is clocked in to which job |
-| `calculators` | a CEC calculator (conductor size or voltage drop) with the rule references |
+| `plan-canvas`, `cec-check` | a floor plan with boxes placed and the takeoff; the same plan after the CEC check |
+| `wire-runs`, `bending`, `calculators` | a wire run with allowances; an EMT offset; conductor sizing with rule references |
+| `estimate`, `invoice` | Ontario HST estimate; a progress invoice with a payment recorded |
+| `my-day`, `phone-my-day`, `work-plan`, `time-clock` | the crew's day, the planner, the clock |
+| `safety-flha`, `leads`, `integrations`, `assistant`, `security`, `hq-dashboard` | the rest |
+
+Retake them after a visible UI change, keep the names, then run `node tools/site/build.mjs`.
 
 ## Environment
 
@@ -187,3 +241,7 @@ apex, or set `<meta name="fishtape-api" content="https://app.fishtapehq.com">` a
   loop and fails on any frame that isn't one clip or a mix of two neighbours; also pause, dots
   and arrow keys, off-screen pause, reduced motion, Save-Data, an HQ edit reaching the page, a
   390 px phone, the other site pages, and a clean console under the real CSP.
+- `node --test electrical-app/tests/site-pages.test.mjs`: clean-URL mapping, plan labels from plans.js,
+  status page helpers, the generated site up to date, one h1, canonical and Open Graph tags, no inline
+  style or script, every internal link and image resolves, the no-caps section, honesty rules.
+- `node tools/site/crawl.mjs`: every page in Chrome at 1280 and 390 px (see "The rest of the site").

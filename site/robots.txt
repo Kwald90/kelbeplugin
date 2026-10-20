@@ -1,0 +1,7 @@
+# fishtapehq.com
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /hq/
+
+Sitemap: https://fishtapehq.com/sitemap.xml

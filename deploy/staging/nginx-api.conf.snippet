@@ -69,12 +69,24 @@ location ^~ /hq/ {
     return 404;
 }
 
-# ---- Public pages from the checkout's site/ folder: pricing + Enterprise form, status ----
-# They use /css/tokens.css and /icons/ from the app root, and call /api/ on this host.
+# ---- Public pages from the checkout's site/ folder (the marketing site) ----
+# They use /css/tokens.css, /js/ and /icons/ from the app root, and call /api/ on this host.
+# Staging serves every page as a file under /site/; the clean production URLs are not mapped here.
+#   production (fishtapehq.com)        staging
+#   /                                  /site/index.html
+#   /pricing, /about, /services ...    /site/pricing.html, /site/about.html, /site/services.html ...
+#   /features, /features/<slug>        /site/features/index.html, /site/features/<slug>.html
+#   /for/<slug>                        /site/for/<slug>.html
+#   /status (and status.fishtapehq.com) /site/status.html
+#   /sitemap.xml, /robots.txt          /site/sitemap.xml, /site/robots.txt (for checking only)
+# The HTML links to the clean URLs; site/site.js rewrites them to the /site/ files on any host
+# that isn't a marketing host, so links work here too.
 location ^~ /site/ {
     root /var/www/tgelectrical/current;
     expires epoch;
     location ~ /\. { return 404; }
+    location = /site/sitemap.xml { default_type application/xml; try_files $uri =404; }
+    location = /site/robots.txt { default_type text/plain; try_files $uri =404; }
     location ~* \.(?:html|js|mjs|css|png|jpe?g|gif|webp|avif|svg|ico|woff2?)$ { try_files $uri =404; }
     location = /site/ { return 302 /site/index.html; }
     return 404;

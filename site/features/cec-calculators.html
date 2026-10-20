@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CEC 2024 calculators: conductor size, voltage drop, box fill · Fishtape</title>
+  <meta name="description" content="Calculators for the Canadian Electrical Code (CSA C22.1:24): conductor ampacity, voltage drop, conduit fill, box fill, dwelling and apartment demand loads, motors and bonding.">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="theme-color" content="#16171a">
+  <!-- Where the API lives. Empty = this origin. -->
+  <meta name="fishtape-api" content="">
+  <!-- Where "Sign in" goes. Empty = worked out by site/app-link.js. -->
+  <meta name="fishtape-app" content="">
+  <!-- @site:meta (tools/site/build.mjs) -->
+  <link rel="canonical" href="https://fishtapehq.com/features/cec-calculators">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Fishtape">
+  <meta property="og:locale" content="en_CA">
+  <meta property="og:title" content="CEC 2024 calculators: conductor size, voltage drop, box fill · Fishtape">
+  <meta property="og:description" content="Calculators for the Canadian Electrical Code (CSA C22.1:24): conductor ampacity, voltage drop, conduit fill, box fill, dwelling and apartment demand loads, motors and bonding.">
+  <meta property="og:url" content="https://fishtapehq.com/features/cec-calculators">
+  <meta property="og:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Fishtape: software for Canadian electrical contractors">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="CEC 2024 calculators: conductor size, voltage drop, box fill · Fishtape">
+  <meta name="twitter:description" content="Calculators for the Canadian Electrical Code (CSA C22.1:24): conductor ampacity, voltage drop, conduit fill, box fill, dwelling and apartment demand loads, motors and bonding.">
+  <meta name="twitter:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <!-- /@site:meta -->
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/site/site.css">
+</head>
+<body>
+  <!-- @site:header -->
+  <a class="site-skip" href="#main">Skip to content</a>
+  <header class="site-head">
+    <div class="site-head-in">
+      <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="/features" aria-current="page">Features</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/services">Services</a>
+        <a href="/about">About</a>
+        <a href="/status">Status</a>
+      </nav>
+      <div class="site-head-actions">
+        <a class="site-signin" data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+        <a class="site-btn" href="/signup?plan=pro">Start free trial</a>
+        <details class="site-menu">
+          <summary><span class="site-burger" aria-hidden="true"></span><span class="sr-only">Menu</span></summary>
+          <nav class="site-menu-panel" aria-label="Main (menu)">
+            <a href="/features" aria-current="page">Features</a>
+            <a href="/pricing">Pricing</a>
+            <a href="/services">Services</a>
+            <a href="/about">About</a>
+            <a href="/status">Status</a>
+            <span class="site-menu-sep" aria-hidden="true"></span>
+            <a data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+          </nav>
+        </details>
+      </div>
+    </div>
+  </header>
+  <!-- /@site:header -->
+
+  <main id="main">
+    <p class="mk-crumbs"><a href="/features">Features</a> / CEC calculators</p>
+    <section class="mk-hero has-shot" aria-labelledby="page-title">
+      <div class="mk-hero-copy">
+        <p class="mk-eyebrow">CEC calculators</p>
+        <h1 id="page-title">The code book maths, with the rule beside every answer</h1>
+        <p class="mk-lede">Size the conductor, check the voltage drop, fill the conduit and the box, and work out the service. Each answer cites the CEC rule or table so you can check it.</p>
+        <p class="mk-plan">Included in: <span data-plan-feature="calcs">Every plan</span> <a href="/pricing#features">Compare plans</a></p>
+        <div class="mk-ctas"><a class="site-btn big" href="/signup?plan=pro">Start free trial</a> <a class="site-btn ghost big" href="/pricing">See pricing</a></div>
+      </div>
+      <figure class="shot"><picture><source type="image/webp" srcset="/site/img/shots/calculators-sm.webp 683w, /site/img/shots/calculators.webp 1366w" sizes="(min-width: 1120px) 590px, (min-width: 900px) 52vw, 100vw"><img src="/site/img/shots/calculators-sm.jpg" srcset="/site/img/shots/calculators-sm.jpg 683w, /site/img/shots/calculators.jpg 1366w" sizes="(min-width: 1120px) 590px, (min-width: 900px) 52vw, 100vw" width="683" height="512" alt="A CEC calculator showing a conductor size with the table and rule references" fetchpriority="high" decoding="async"></picture></figure>
+    </section>
+
+    <div class="site-section mk-cols">
+      <section class="mk-block" aria-labelledby="what-title">
+        <h2 id="what-title">What it does</h2>
+        <ul class="mk-list"><li><strong>Conductors and voltage drop</strong>Tables 1 to 4 ampacity at 60, 75 and 90 °C, copper and aluminium, terminations (4-006), continuous loads (8-104) and 8-102 voltage drop.</li><li><strong>Conduit and box fill</strong>Rule 12-910 with Tables 6, 8 and 9 for EMT, rigid, PVC, ENT and flex; Rule 12-3034 with Tables 22 and 23 for boxes.</li><li><strong>Demand loads</strong>8-200 single dwellings, 8-202 apartments and 62-118 electric heat, with Ontario's Table 39.</li><li><strong>Motors and bonding</strong>Tables 44, 45 and 29, Rules 28-106, 28-200 and 28-306, and Table 16 bonding conductors.</li></ul>
+      </section>
+      <section class="mk-block" aria-labelledby="site-title">
+        <h2 id="site-title">How it works on site</h2>
+        <ol class="mk-steps"><li>Pick the calculator. Your province and code book come from Settings.</li><li>Enter the load, the length and the system: 120/240 V, 120/208 V, 347/600 V or 600 V.</li><li>Read the answer with its rule and table references.</li><li>Save it to the job, or use it in a panel schedule.</li></ol>
+      </section>
+    </div>
+
+    <section class="site-section" aria-labelledby="plans-title">
+      <div class="site-section-head"><h2 id="plans-title">Which plan includes it</h2><p>Every plan has no caps on invoices, estimates, jobs, clients or drawings. Plans differ by features and included users.</p></div>
+      <ul class="mk-plans"><li><span>CEC calculators</span><span data-plan-feature="calcs">Every plan</span></li><li><span>Panel schedules</span><span data-plan-feature="panels">Pro and up</span></li><li><span>Permits and inspections</span><span data-plan-feature="compliance">Pro and up</span></li></ul>
+      <p class="mk-note"><strong>Good to know.</strong> CEC 2024 is the default; NEC 2023 is there for a job that needs it. The calculators cite numbers and rule references only, never CSA's text. Values we could not confirm against the printed 2024 code book are marked to verify. They are estimating aids: the inspector's reading of the code in force decides.</p>
+    </section>
+    <section class="mk-cta" aria-label="Get started">
+      <h2>Try it on your next job</h2>
+      <p>14 days free on the plan you pick. A $1 deposit confirms your card and comes off your first month. Cancel before the trial ends and the plan is never charged.</p>
+      <div class="mk-ctas"><a class="site-btn big" href="/signup?plan=pro">Start free trial</a> <a class="site-btn ghost big" href="/pricing">See pricing</a></div>
+    </section>
+    <section class="site-section" aria-labelledby="related-title">
+      <h2 id="related-title">Related features</h2>
+      <ul class="mk-links"><li><a href="/features/box-placement">Box auto-placement and CEC checks</a></li><li><a href="/features/pipe-bending">Pipe bending</a></li><li><a href="/features/ai-assistant">AI assistant, CEC helper and MCP</a></li></ul>
+    </section>
+  </main>
+
+  <!-- @site:footer -->
+  <footer class="site-foot">
+    <div class="site-foot-in">
+      <div class="site-foot-brand">
+        <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+        <p>Jobs, quotes, drawings, crew time and invoices for Canadian electrical contractors. Built by a working electrical contractor.</p>
+      </div>
+      <div class="site-foot-cols">
+        <nav aria-label="Product">
+          <h2>Product</h2>
+          <ul>
+            <li><a href="/features">Features</a></li>
+            <li><a href="/pricing">Pricing</a></li>
+            <li><a href="/services">Services</a></li>
+            <li><a href="/features/ios-app">iPad and iPhone</a></li>
+            <li><a href="/features/security-privacy">Security</a></li>
+            <li><a href="/status">Service status</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Who it's for">
+          <h2>Who it's for</h2>
+          <ul>
+            <li><a href="/for/residential-electricians">Residential electricians</a></li>
+            <li><a href="/for/commercial-industrial">Commercial and industrial</a></li>
+            <li><a href="/for/solo-electricians">Solo electricians</a></li>
+            <li><a href="/for/switching-from-jobber">Switching from Jobber</a></li>
+            <li><a href="/for/switching-from-housecall-pro">Switching from Housecall Pro</a></li>
+            <li><a href="/for/switching-from-quickbooks">Switching from QuickBooks</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="By province">
+          <h2>By province</h2>
+          <ul>
+            <li><a href="/for/ontario">Ontario</a></li>
+            <li><a href="/for/british-columbia">British Columbia</a></li>
+            <li><a href="/for/alberta">Alberta</a></li>
+            <li><a href="/for/saskatchewan">Saskatchewan</a></li>
+            <li><a href="/for/manitoba">Manitoba</a></li>
+            <li><a href="/for/atlantic-canada">Atlantic Canada</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Company">
+          <h2>Company</h2>
+          <ul>
+            <li><a href="/about">About</a></li>
+            <li><a href="/about#contact">Contact</a></li>
+            <li><a href="/terms">Terms</a></li>
+            <li><a href="/privacy">Privacy</a></li>
+            <li><a href="/.well-known/security.txt">security.txt</a></li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+    <div class="site-foot-base">
+      <span>© <span id="year" data-year>2026</span> <span data-brand>Fishtape</span>. Prices in Canadian dollars.</span>
+      <span>Built for the Canadian electrical trade.</span>
+    </div>
+  </footer>
+  <!-- /@site:footer -->
+
+  <script type="module" src="/site/site.js"></script>
+</body>
+</html>

@@ -11,18 +11,62 @@
   <meta name="fishtape-api" content="">
   <!-- Where "Sign in" and the app live. Empty = this origin. -->
   <meta name="fishtape-app" content="">
+  <!-- @site:meta (tools/site/build.mjs) -->
+  <link rel="canonical" href="https://fishtapehq.com/signup">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Fishtape">
+  <meta property="og:locale" content="en_CA">
+  <meta property="og:title" content="Start your free trial · Fishtape">
+  <meta property="og:description" content="Start a 14-day free trial of Fishtape, the app for Canadian electrical contractors. A $1 deposit confirms your card and comes off your first invoice.">
+  <meta property="og:url" content="https://fishtapehq.com/signup">
+  <meta property="og:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Fishtape: software for Canadian electrical contractors">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Start your free trial · Fishtape">
+  <meta name="twitter:description" content="Start a 14-day free trial of Fishtape, the app for Canadian electrical contractors. A $1 deposit confirms your card and comes off your first invoice.">
+  <meta name="twitter:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <!-- /@site:meta -->
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/site/site.css">
   <link rel="stylesheet" href="/site/signup.css">
 </head>
 <body>
+  <!-- @site:header -->
+  <a class="site-skip" href="#main">Skip to content</a>
   <header class="site-head">
-    <a class="site-brand" href="/site/index.html"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
-    <nav><a href="/site/pricing.html">Pricing</a> <a class="site-btn ghost" data-app-link href="/">Sign in</a></nav>
+    <div class="site-head-in">
+      <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="/features">Features</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/services">Services</a>
+        <a href="/about">About</a>
+        <a href="/status">Status</a>
+      </nav>
+      <div class="site-head-actions">
+        <a class="site-signin" data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+        <a class="site-btn" href="/signup?plan=pro">Start free trial</a>
+        <details class="site-menu">
+          <summary><span class="site-burger" aria-hidden="true"></span><span class="sr-only">Menu</span></summary>
+          <nav class="site-menu-panel" aria-label="Main (menu)">
+            <a href="/features">Features</a>
+            <a href="/pricing">Pricing</a>
+            <a href="/services">Services</a>
+            <a href="/about">About</a>
+            <a href="/status">Status</a>
+            <span class="site-menu-sep" aria-hidden="true"></span>
+            <a data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+          </nav>
+        </details>
+      </div>
+    </div>
   </header>
+  <!-- /@site:header -->
 
-  <main class="su-main">
+  <main id="main" class="su-main">
     <!-- Shown after Stripe sends people back (?done=1). -->
     <section id="su-done" class="su-card su-done" hidden aria-labelledby="su-done-title">
       <div class="su-done-mark" aria-hidden="true">✓</div>
@@ -48,7 +92,7 @@
             <li><strong>After the trial:</strong> <span id="su-price">$129/month</span> plus tax, less the <span data-deposit>$1.00</span> deposit. Cancel any time before the trial ends and the plan is never charged.</li>
           </ol>
         </div>
-        <p class="site-fine">Prices in Canadian dollars. Need more than 25 users, single sign-on or setup done for you? <a href="/site/pricing.html#talk">Talk to us about Enterprise</a>.</p>
+        <p class="site-fine">Prices in Canadian dollars. Need more than 25 users, single sign-on or setup done for you? <a href="/pricing#talk">Talk to us about Enterprise</a>.</p>
       </section>
 
       <section class="su-card" aria-labelledby="su-form-title">
@@ -125,7 +169,7 @@
 
           <div class="su-field su-check">
             <input id="su-terms" name="acceptTerms" type="checkbox" required aria-describedby="su-terms-err">
-            <label for="su-terms">I agree to the <a href="/site/terms.html" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/site/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</label>
+            <label for="su-terms">I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>
             <p class="su-err" id="su-terms-err" hidden></p>
           </div>
 
@@ -139,11 +183,67 @@
     </div>
   </main>
 
+  <!-- @site:footer -->
   <footer class="site-foot">
-    <span>© <span id="year"></span> <span data-brand>Fishtape</span></span>
-    <span class="su-foot-links"><a href="/site/terms.html">Terms</a> <a href="/site/privacy.html">Privacy</a> <a href="/site/status.html">Service status</a></span>
+    <div class="site-foot-in">
+      <div class="site-foot-brand">
+        <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+        <p>Jobs, quotes, drawings, crew time and invoices for Canadian electrical contractors. Built by a working electrical contractor.</p>
+      </div>
+      <div class="site-foot-cols">
+        <nav aria-label="Product">
+          <h2>Product</h2>
+          <ul>
+            <li><a href="/features">Features</a></li>
+            <li><a href="/pricing">Pricing</a></li>
+            <li><a href="/services">Services</a></li>
+            <li><a href="/features/ios-app">iPad and iPhone</a></li>
+            <li><a href="/features/security-privacy">Security</a></li>
+            <li><a href="/status">Service status</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Who it's for">
+          <h2>Who it's for</h2>
+          <ul>
+            <li><a href="/for/residential-electricians">Residential electricians</a></li>
+            <li><a href="/for/commercial-industrial">Commercial and industrial</a></li>
+            <li><a href="/for/solo-electricians">Solo electricians</a></li>
+            <li><a href="/for/switching-from-jobber">Switching from Jobber</a></li>
+            <li><a href="/for/switching-from-housecall-pro">Switching from Housecall Pro</a></li>
+            <li><a href="/for/switching-from-quickbooks">Switching from QuickBooks</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="By province">
+          <h2>By province</h2>
+          <ul>
+            <li><a href="/for/ontario">Ontario</a></li>
+            <li><a href="/for/british-columbia">British Columbia</a></li>
+            <li><a href="/for/alberta">Alberta</a></li>
+            <li><a href="/for/saskatchewan">Saskatchewan</a></li>
+            <li><a href="/for/manitoba">Manitoba</a></li>
+            <li><a href="/for/atlantic-canada">Atlantic Canada</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Company">
+          <h2>Company</h2>
+          <ul>
+            <li><a href="/about">About</a></li>
+            <li><a href="/about#contact">Contact</a></li>
+            <li><a href="/terms">Terms</a></li>
+            <li><a href="/privacy">Privacy</a></li>
+            <li><a href="/.well-known/security.txt">security.txt</a></li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+    <div class="site-foot-base">
+      <span>© <span id="year" data-year>2026</span> <span data-brand>Fishtape</span>. Prices in Canadian dollars.</span>
+      <span>Built for the Canadian electrical trade.</span>
+    </div>
   </footer>
+  <!-- /@site:footer -->
 
+  <script type="module" src="/site/site.js"></script>
   <script type="module" src="/site/signup.js"></script>
 </body>
 </html>

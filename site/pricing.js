@@ -4,6 +4,7 @@ import { PLANS, PLAN_IDS, FEATURE_PLAN, EXTRA_USER_CENTS, CURRENCY, planRank } f
 import { FEATURE_LABELS } from '/js/modules/billing.js';
 import { BRAND } from '/js/brand.js';
 import { wireAppLinks } from '/site/app-link.js';
+import { localHref } from '/site/site-lib.js';
 
 const API = document.querySelector('meta[name="fishtape-api"]')?.content.replace(/\/$/, '') || '';
 const money = (cents) => (cents / 100).toLocaleString('en-CA', { style: 'currency', currency: CURRENCY, maximumFractionDigits: cents % 100 ? 2 : 0 });
@@ -39,14 +40,14 @@ plansHost.replaceChildren(...PLAN_IDS.map((id, i) => {
       feats.map((f) => el('li', {}, FEATURE_LABELS[f]))),
     contact
       ? el('a', { class: 'site-btn ghost', href: '#talk' }, "Let's talk")
-      : el('a', { class: 'site-btn', href: `/site/signup.html?plan=${id}` }, 'Start a free trial'));
+      : el('a', { class: 'site-btn', href: localHref(`/signup?plan=${id}`, location.hostname) }, 'Start a free trial'));
 }));
 document.getElementById('extra-users').textContent = `More users than your plan includes? Each extra user is ${money(EXTRA_USER_CENTS)}/month. Taxes are added at checkout for your province.`;
 
 // ---- features table -------------------------------------------------------------
 const table = document.getElementById('feature-table');
 const rows = Object.keys(FEATURE_PLAN).filter((f) => FEATURE_LABELS[f]).sort((a, b) => planRank(FEATURE_PLAN[a]) - planRank(FEATURE_PLAN[b]));
-table.append(
+table.replaceChildren(table.querySelector('caption') || '',
   el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Feature'), PLAN_IDS.map((id) => el('th', { scope: 'col', class: 'c' }, PLANS[id].name)))),
   el('tbody', {}, rows.map((f) => el('tr', {}, el('th', { scope: 'row' }, FEATURE_LABELS[f]),
     PLAN_IDS.map((id) => {

@@ -5,6 +5,7 @@ import { PLANS, PLAN_IDS, CURRENCY } from '/js/plans.js';
 import { BRAND } from '/js/brand.js';
 import { createHero, FALLBACK_PROMOTION } from '/site/hero.js';
 import { wireAppLinks } from '/site/app-link.js';
+import { localHref } from '/site/site-lib.js';
 
 const API = document.querySelector('meta[name="fishtape-api"]')?.content.replace(/\/$/, '') || '';
 const PROVINCES = new Set(['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT']);
@@ -61,7 +62,7 @@ document.getElementById('land-plans').replaceChildren(...PLAN_IDS.map((id) => {
   const price = el('p', 'site-price', contact ? 'Custom' : money(p.priceCents));
   if (!contact) price.append(el('small', null, ' /month'));
   const cta = el('a', contact ? 'site-btn ghost' : 'site-btn', contact ? "Let's talk" : 'Start free trial');
-  cta.href = contact ? '/site/pricing.html#talk' : `/site/signup.html?plan=${encodeURIComponent(id)}`;
+  cta.href = localHref(contact ? '/pricing#talk' : `/signup?plan=${encodeURIComponent(id)}`, location.hostname);
   card.append(el('h3', null, p.name), price, el('p', 'site-muted', p.blurb),
     el('p', 'site-users', p.includedUsers == null ? 'Users to suit you' : `${p.includedUsers} users included`), cta);
   return card;

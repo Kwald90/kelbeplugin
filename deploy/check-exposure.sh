@@ -21,8 +21,11 @@
 #   --production        also require /api/hq/, /hq/ and the API docs UI to be 404 (app host)
 #   --hq                HQ host: skip the PWA checks, require X-Robots-Tag noindex
 #   --marketing         public site on the apex: no PWA (/sw.js 404, /index.html redirects to the
-#                       app host), /pricing served, only /api/v1/status and /api/v1/public/ proxied
-#   --status            status host: the status page, /api/v1/status and /api/readyz; no PWA,
+#                       app host), every page in site/sitemap.xml 200 at its clean URL, robots.txt
+#                       and sitemap.xml served, old /site/*.html redirected, page-shaped junk and
+#                       traversal 404, only /api/v1/status and /api/v1/public/ proxied
+#   --status            status host: the status page and its files, /api/v1/status, /api/readyz and
+#                       /api/v1/public/status; other site pages redirect to the apex; no PWA,
 #                       no other API route
 #   --no-api            skip API checks (staging before server/ exists)
 #   --resolve H:P:ADDR  passed to curl, e.g. run on the box itself:
@@ -53,6 +56,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 2; }
+
+# The site's pages (--marketing): every <loc> in site/sitemap.xml, as clean paths. Falls back to
+# a fixed list when the script runs without the repo next to it.
+SITEMAP="$(dirname "${BASH_SOURCE[0]}")/../site/sitemap.xml"
+MARKETING_PAGES=()
+if [ -f "$SITEMAP" ]; then
+  while IFS= read -r p; do MARKETING_PAGES+=("$p"); done < <(sed -n 's#.*<loc>https://fishtapehq\.com\([^<]*\)</loc>.*#\1#p' "$SITEMAP")
+fi
+[ "${#MARKETING_PAGES[@]}" -gt 0 ] || MARKETING_PAGES=(/ /pricing /signup /about /services /status /features /features/plans-takeoff /for/ontario)
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -170,10 +182,37 @@ if [ "$MODE" = marketing ] || [ "$MODE" = status ]; then
     loc="$(hdr location)"
     if [[ "$CODE" =~ ^30[178]$ ]] && [[ "$loc" == https://app.* ]]; then ok "/index.html -> $CODE $loc"
     else bad "/index.html should redirect to the app host, got $CODE '${loc}'"; fi
-    fetch /pricing
-    check "/pricing 200" "/pricing answered $CODE" [ "$CODE" = 200 ]
-    fetch /js/plans.js
-    check "/js/plans.js 200 (app assets the site imports)" "/js/plans.js answered $CODE" [ "$CODE" = 200 ]
+    # Every page of the site answers 200 at its clean URL (the list is site/sitemap.xml's).
+    pages_ok=0; pages_bad=""
+    for p in "${MARKETING_PAGES[@]}"; do
+      fetch "$p"
+      if [ "$CODE" = 200 ] && grep -qi '<link rel="canonical"' "$TMP/b"; then pages_ok=$((pages_ok + 1)); else pages_bad="$pages_bad $p($CODE)"; fi
+    done
+    if [ -z "$pages_bad" ]; then ok "$pages_ok site pages answer 200 with a canonical URL"; else bad "site pages not served:$pages_bad"; fi
+    for p in /robots.txt /sitemap.xml /js/plans.js /js/brand.js /site/site.js /site/site.css /site/img/og/fishtape-og.png; do
+      fetch "$p"
+      check "$p 200" "$p answered $CODE (want 200)" [ "$CODE" = 200 ]
+    done
+    fetch /robots.txt
+    check "robots.txt disallows /api/ and /hq/" "robots.txt does not disallow /api/ and /hq/" sh -c "grep -q '^Disallow: /api/' '$TMP/b' && grep -q '^Disallow: /hq/' '$TMP/b'"
+    # Old /site/*.html addresses redirect to the clean URL.
+    fetch "/site/about.html"
+    loc="$(hdr location)"
+    if [[ "$CODE" =~ ^30[178]$ ]] && [[ "$loc" == */about ]]; then ok "/site/about.html -> $CODE $loc"; else bad "/site/about.html should redirect to /about, got $CODE '${loc}'"; fi
+    # Page-shaped paths that are not pages, and traversal through the page routes, stay 404.
+    for p in /features/ /features/Wire-Runs /features/wire_runs /features/a/b /for/ /for/../.env /features/..%2f..%2f.env /about.html /about/ /site/features/ /site/for/x.php /sitemap.xml.bak /robots.txt~ /site/sitemap.xml /tools/site/build.mjs /tools/site/serve.mjs; do
+      fetch "$p"
+      if [[ "$CODE" == 2* ]]; then bad "$p answered $CODE on the marketing host (want 404)"; else ok "$p -> $CODE"; fi
+    done
+  fi
+  if [ "$MODE" = status ]; then
+    for p in /site/status.js /site/status-lib.js /site/site.js /site/site-lib.js /site/app-link.js /site/site.css /css/tokens.css /js/brand.js; do
+      fetch "$p"
+      check "$p 200 on the status host" "$p answered $CODE on the status host (want 200: the page needs it)" [ "$CODE" = 200 ]
+    done
+    fetch /about
+    loc="$(hdr location)"
+    if [[ "$CODE" =~ ^30[178]$ ]] && [[ "$loc" == https://fishtapehq.com/about ]]; then ok "/about -> $CODE $loc"; else bad "/about on the status host should redirect to the apex, got $CODE '${loc}'"; fi
   fi
   fetch /.well-known/security.txt
   if [ "$CODE" = 200 ] && grep -q '^Contact:' "$TMP/b"; then ok "security.txt"; else bad "/.well-known/security.txt answered $CODE or has no Contact"; fi
@@ -211,8 +250,8 @@ fi
 if [ "$API" -eq 1 ]; then
   api_leak() { grep -aqiE "$SECRET_RE|\"(password|secret|token|apiKey|privateKey)\"[[:space:]]*:|\"stack\"[[:space:]]*:|node_modules/|/app/server/|[[:space:]]at [A-Za-z_.<>]+ \(|\b(10\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\.[0-9]+\.[0-9]+\b" "$TMP/b"; }
   case "$MODE" in
-    marketing) health=(/api/v1/status) ;;
-    status) health=(/api/healthz /api/v1/status /api/readyz) ;;
+    marketing) health=(/api/v1/status /api/v1/public/status) ;;
+    status) health=(/api/healthz /api/v1/status /api/readyz /api/v1/public/status) ;;
     *) health=(/api/healthz /api/v1/status) ;;
   esac
   for p in "${health[@]}"; do

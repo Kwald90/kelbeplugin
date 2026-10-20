@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Integrations: Stripe, email, SMS, QuickBooks, imports · Fishtape</title>
+  <meta name="description" content="Connect your own Stripe, SendGrid or Resend, Twilio and Facebook Lead Ads accounts. Export to QuickBooks Online. Import clients and price books from Jobber, QuickBooks and Housecall Pro.">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="theme-color" content="#16171a">
+  <!-- Where the API lives. Empty = this origin. -->
+  <meta name="fishtape-api" content="">
+  <!-- Where "Sign in" goes. Empty = worked out by site/app-link.js. -->
+  <meta name="fishtape-app" content="">
+  <!-- @site:meta (tools/site/build.mjs) -->
+  <link rel="canonical" href="https://fishtapehq.com/features/integrations">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Fishtape">
+  <meta property="og:locale" content="en_CA">
+  <meta property="og:title" content="Integrations: Stripe, email, SMS, QuickBooks, imports · Fishtape">
+  <meta property="og:description" content="Connect your own Stripe, SendGrid or Resend, Twilio and Facebook Lead Ads accounts. Export to QuickBooks Online. Import clients and price books from Jobber, QuickBooks and Housecall Pro.">
+  <meta property="og:url" content="https://fishtapehq.com/features/integrations">
+  <meta property="og:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Fishtape: software for Canadian electrical contractors">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Integrations: Stripe, email, SMS, QuickBooks, imports · Fishtape">
+  <meta name="twitter:description" content="Connect your own Stripe, SendGrid or Resend, Twilio and Facebook Lead Ads accounts. Export to QuickBooks Online. Import clients and price books from Jobber, QuickBooks and Housecall Pro.">
+  <meta name="twitter:image" content="https://fishtapehq.com/site/img/og/fishtape-og.png">
+  <!-- /@site:meta -->
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/site/site.css">
+</head>
+<body>
+  <!-- @site:header -->
+  <a class="site-skip" href="#main">Skip to content</a>
+  <header class="site-head">
+    <div class="site-head-in">
+      <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="/features" aria-current="page">Features</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/services">Services</a>
+        <a href="/about">About</a>
+        <a href="/status">Status</a>
+      </nav>
+      <div class="site-head-actions">
+        <a class="site-signin" data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+        <a class="site-btn" href="/signup?plan=pro">Start free trial</a>
+        <details class="site-menu">
+          <summary><span class="site-burger" aria-hidden="true"></span><span class="sr-only">Menu</span></summary>
+          <nav class="site-menu-panel" aria-label="Main (menu)">
+            <a href="/features" aria-current="page">Features</a>
+            <a href="/pricing">Pricing</a>
+            <a href="/services">Services</a>
+            <a href="/about">About</a>
+            <a href="/status">Status</a>
+            <span class="site-menu-sep" aria-hidden="true"></span>
+            <a data-app-link href="https://app.fishtapehq.com/">Sign in</a>
+          </nav>
+        </details>
+      </div>
+    </div>
+  </header>
+  <!-- /@site:header -->
+
+  <main id="main">
+    <p class="mk-crumbs"><a href="/features">Features</a> / Integrations and imports</p>
+    <section class="mk-hero has-shot" aria-labelledby="page-title">
+      <div class="mk-hero-copy">
+        <p class="mk-eyebrow">Integrations</p>
+        <h1 id="page-title">Your accounts, connected. Your old data, brought across.</h1>
+        <p class="mk-lede">Fishtape connects to your own Stripe, email, SMS and Facebook accounts, with a setup guide and a connection test for each. Bring your clients and price book from the software you're leaving.</p>
+        <p class="mk-plan">Included in: <span data-plan-feature="integrations">Every plan</span> <a href="/pricing#features">Compare plans</a></p>
+        <div class="mk-ctas"><a class="site-btn big" href="/signup?plan=pro">Start free trial</a> <a class="site-btn ghost big" href="/pricing">See pricing</a></div>
+      </div>
+      <figure class="shot"><picture><source type="image/webp" srcset="/site/img/shots/integrations-sm.webp 683w, /site/img/shots/integrations.webp 1366w" sizes="(min-width: 1120px) 590px, (min-width: 900px) 52vw, 100vw"><img src="/site/img/shots/integrations-sm.jpg" srcset="/site/img/shots/integrations-sm.jpg 683w, /site/img/shots/integrations.jpg 1366w" sizes="(min-width: 1120px) 590px, (min-width: 900px) 52vw, 100vw" width="683" height="512" alt="The integrations screen with cards to connect your own Stripe, Resend, SendGrid and Twilio accounts, each with a setup guide" fetchpriority="high" decoding="async"></picture></figure>
+    </section>
+
+    <div class="site-section mk-cols">
+      <section class="mk-block" aria-labelledby="what-title">
+        <h2 id="what-title">What it does</h2>
+        <ul class="mk-list"><li><strong>Stripe</strong>Card payments on invoices through your own Stripe account. The payment is recorded on the invoice when Stripe confirms it.</li><li><strong>SendGrid or Resend</strong>Estimates, invoices and follow-ups emailed from your own domain, with domain authentication so they don't land in spam.</li><li><strong>Twilio</strong>Texts for follow-ups and reminders from a local number, with STOP and START handled.</li><li><strong>QuickBooks Online and imports</strong>Export customers, invoices and payments as files QuickBooks Online imports. Import clients, items and jobs from Jobber, QuickBooks, Housecall Pro or any spreadsheet.</li></ul>
+      </section>
+      <section class="mk-block" aria-labelledby="site-title">
+        <h2 id="site-title">How it works on site</h2>
+        <ol class="mk-steps"><li>Open Integrations and pick the service. Each has a step-by-step guide.</li><li>Paste the key once. It is encrypted and never shown again; the card shows only the last few characters.</li><li>Press Test to check the connection.</li><li>Or ask us to do it with you: see Services.</li></ol>
+      </section>
+    </div>
+
+    <section class="site-section" aria-labelledby="plans-title">
+      <div class="site-section-head"><h2 id="plans-title">Which plan includes it</h2><p>Every plan has no caps on invoices, estimates, jobs, clients or drawings. Plans differ by features and included users.</p></div>
+      <ul class="mk-plans"><li><span>Stripe invoice payments</span><span data-plan-feature="payments.online">Pro and up</span></li><li><span>Email (SendGrid or Resend)</span><span data-plan-feature="integrations.email">Pro and up</span></li><li><span>SMS (Twilio)</span><span data-plan-feature="integrations.sms">Business and up</span></li><li><span>Facebook Lead Ads</span><span data-plan-feature="integrations.facebook">Business and up</span></li><li><span>Imports and QuickBooks export</span><span data-plan-feature="import">Every plan</span></li></ul>
+      <p class="mk-note"><strong>Good to know.</strong> A live QuickBooks Online connection (sending invoices and payments both ways without files) is coming; today it is a CSV export in QuickBooks' import format. Keys belong to your company and are never shared with other companies.</p>
+    </section>
+    <section class="mk-cta" aria-label="Get started">
+      <h2>Try it on your next job</h2>
+      <p>14 days free on the plan you pick. A $1 deposit confirms your card and comes off your first month. Cancel before the trial ends and the plan is never charged.</p>
+      <div class="mk-ctas"><a class="site-btn big" href="/signup?plan=pro">Start free trial</a> <a class="site-btn ghost big" href="/pricing">See pricing</a></div>
+    </section>
+    <section class="site-section" aria-labelledby="related-title">
+      <h2 id="related-title">Related features</h2>
+      <ul class="mk-links"><li><a href="/features/estimating-invoicing">Estimates to invoices</a></li><li><a href="/features/crm-leads">CRM, leads and follow-ups</a></li><li><a href="/features/security-privacy">Security and privacy</a></li></ul>
+    </section>
+  </main>
+
+  <!-- @site:footer -->
+  <footer class="site-foot">
+    <div class="site-foot-in">
+      <div class="site-foot-brand">
+        <a class="site-brand" href="/"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+        <p>Jobs, quotes, drawings, crew time and invoices for Canadian electrical contractors. Built by a working electrical contractor.</p>
+      </div>
+      <div class="site-foot-cols">
+        <nav aria-label="Product">
+          <h2>Product</h2>
+          <ul>
+            <li><a href="/features">Features</a></li>
+            <li><a href="/pricing">Pricing</a></li>
+            <li><a href="/services">Services</a></li>
+            <li><a href="/features/ios-app">iPad and iPhone</a></li>
+            <li><a href="/features/security-privacy">Security</a></li>
+            <li><a href="/status">Service status</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Who it's for">
+          <h2>Who it's for</h2>
+          <ul>
+            <li><a href="/for/residential-electricians">Residential electricians</a></li>
+            <li><a href="/for/commercial-industrial">Commercial and industrial</a></li>
+            <li><a href="/for/solo-electricians">Solo electricians</a></li>
+            <li><a href="/for/switching-from-jobber">Switching from Jobber</a></li>
+            <li><a href="/for/switching-from-housecall-pro">Switching from Housecall Pro</a></li>
+            <li><a href="/for/switching-from-quickbooks">Switching from QuickBooks</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="By province">
+          <h2>By province</h2>
+          <ul>
+            <li><a href="/for/ontario">Ontario</a></li>
+            <li><a href="/for/british-columbia">British Columbia</a></li>
+            <li><a href="/for/alberta">Alberta</a></li>
+            <li><a href="/for/saskatchewan">Saskatchewan</a></li>
+            <li><a href="/for/manitoba">Manitoba</a></li>
+            <li><a href="/for/atlantic-canada">Atlantic Canada</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Company">
+          <h2>Company</h2>
+          <ul>
+            <li><a href="/about">About</a></li>
+            <li><a href="/about#contact">Contact</a></li>
+            <li><a href="/terms">Terms</a></li>
+            <li><a href="/privacy">Privacy</a></li>
+            <li><a href="/.well-known/security.txt">security.txt</a></li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+    <div class="site-foot-base">
+      <span>© <span id="year" data-year>2026</span> <span data-brand>Fishtape</span>. Prices in Canadian dollars.</span>
+      <span>Built for the Canadian electrical trade.</span>
+    </div>
+  </footer>
+  <!-- /@site:footer -->
+
+  <script type="module" src="/site/site.js"></script>
+</body>
+</html>
