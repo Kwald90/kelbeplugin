@@ -6,6 +6,7 @@ import { today } from './ui.js';
 import { newDocTax } from './lib/tax.js';
 import { CEC_TEMPLATES } from './lib/cec/checklists.js';
 import { seedDemoPlan } from './lib/workplan.js';
+import { presetModules } from './lib/modules.js';
 
 // Canvas symbol ids (js/canvas/symbols.js draws them). Price book items point
 // at these so a drawing's symbol count can become an estimate.
@@ -30,6 +31,8 @@ export function seedIfEmpty(store) {
     company: COMPANY, codeBook: 'CEC-2024', units: 'metric', currency: 'CAD',
     tax: { mode: 'province', treatment: 'standard', custom: [] }, taxPct: 13,
     labourRateCents: 11500, markupPct: 20,
+    // The demo shows every module; a real company starts with the recommended set.
+    modules: presetModules('all'), billing: { defaultMode: 'fixed', travelRateCents: null }, materialRequests: { sendAt: '15:00', emailTo: '' },
   });
   const tax = () => newDocTax(store.settings()); // Ontario: HST 13% on everything
 
@@ -145,7 +148,8 @@ export function seedIfEmpty(store) {
   const j2 = job('Brewhouse 347/600 V distribution', c3.id, 'scheduled', 2, 6, [marcus.id, priya.id], c3.address, 'New 225 A 347/600 V distribution panel DP-1 for the brewhouse, chiller and kettle; 45 kVA transformer to a 120/208 V panel.');
   const j3 = job('Generator interlock', null, 'complete', -9, -8, [priya.id], '14 Elm St, Barrie, ON', 'Interlock kit and 30 A inlet.');
   const j4 = job('Miller kitchen rewire', c2.id, 'lead', 10, 14, [], c2.address, 'Pending quote acceptance.');
-  store.update('jobs', j1.id, { changeOrders: [{ id: 'co-1', title: 'Add 2 × dedicated 20 A for compressors', amountCents: 98000, status: 'approved', date: today(-1) }] }, S);
+  store.update('jobs', j1.id, { billingMode: 'tm', changeOrders: [{ id: 'co-1', title: 'Add 2 × dedicated 20 A for compressors', amountCents: 98000, status: 'approved', date: today(-1) }] }, S);
+  for (const j of [j2, j3, j4]) store.update('jobs', j.id, { billingMode: 'fixed' }, S);
   store.update('estimates', e1.id, { jobId: j4.id }, S);
   store.update('jobs', j4.id, { estimateId: e1.id }, S);
 
@@ -188,6 +192,10 @@ export function seedIfEmpty(store) {
   // stock moves
   store.add('stockMoves', { itemId: items.rec.id, fromLocationId: shop.id, toLocationId: van1.id, qty: 10, jobId: null, date: today(-3), note: 'Restock van' }, S);
   store.add('stockMoves', { itemId: items.pot.id, fromLocationId: van1.id, toLocationId: null, qty: 6, jobId: j1.id, date: today(-1), note: 'Used on job' }, S);
+
+  // material requests from the crew (one waiting for today's send, one the office has to order)
+  store.add('materialRequests', { jobId: j1.id, itemId: items.rec.id, description: 'Duplex receptacle 15 A TR (5-15R), installed', qty: 12, unit: 'ea', note: 'Op 4 north wall', urgent: false, employeeId: tom.id, status: 'requested' }, S);
+  store.add('materialRequests', { jobId: j1.id, itemId: null, description: '3/4" EMT', qty: 20, unit: 'sticks', note: '', urgent: true, employeeId: marcus.id, status: 'sent', sentAt: iso(-1, 15, 0), batchId: 'demo-batch-1' }, S);
 
   // SOPs
   store.add('sops', {

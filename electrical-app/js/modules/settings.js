@@ -7,6 +7,11 @@ import { PROVINCES, TREATMENTS, treatmentsFor, treatmentHint, taxSetup, newDocTa
 import { adoptionFor, CODE_BOOKS } from '../lib/cec/provinces.js';
 import { placementSettings } from '../lib/placement-rules.js';
 import { logoField } from './onboarding.js';
+import { SWITCHES, SWITCH_GROUPS, SWITCH_BY_ID, PRESETS, switchOn, nextModules, presetModules, presetOf } from '../lib/modules.js';
+import { BILLING_MODES } from '../lib/tm.js';
+import { requestSettings, fmtSendAt, nextSendAt, PROVINCE_TZ, validTimeZone } from '../lib/materials.js';
+import { FEATURE_PLAN, hasFeature } from '../plans.js';
+import { session } from '../session.js';
 
 export const APP_VERSION = '0.3.0';
 
@@ -167,14 +172,18 @@ export default {
 
     // defaults
     const defaults = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
-      { label: 'Labour rate (per hour)', name: 'labourRateCents', type: 'money', value: s.labourRateCents },
-      { label: 'Material markup %', name: 'markupPct', type: 'number', step: '0.1', min: 0, value: s.markupPct, hint: 'Used to suggest sell prices from cost' },
+      { label: 'Labour rate (per hour)', name: 'labourRateCents', type: 'money', value: s.labourRateCents, hint: 'Estimates, and time & material jobs' },
+      { label: 'Material markup %', name: 'markupPct', type: 'number', step: '0.1', min: 0, value: s.markupPct, hint: 'Suggests sell prices; marks up material on T&M invoices' },
+      { label: 'New jobs bill', name: 'defaultMode', type: 'select', value: s.billing?.defaultMode || 'fixed', options: BILLING_MODES.map((m) => ({ value: m.value, label: m.label })), hint: 'A client can have its own default' },
+      { label: 'Travel rate (per hour)', name: 'travelRateCents', type: 'money', value: s.billing?.travelRateCents ?? null, hint: 'Blank: the labour rate' },
       { label: 'Currency', name: 'currency', type: 'select', value: s.currency || 'CAD', options: CURRENCIES },
     ]));
     const saveDefaults = () => {
       if (!defaults.reportValidity()) return;
       const v = ui.readForm(defaults);
-      store.saveSettings({ labourRateCents: v.labourRateCents, markupPct: v.markupPct ?? 0, currency: v.currency });
+      const travelRaw = defaults.querySelector('[name=travelRateCents]').value.trim();
+      store.saveSettings({ labourRateCents: v.labourRateCents, markupPct: v.markupPct ?? 0, currency: v.currency,
+        billing: { ...(store.settings().billing || {}), defaultMode: v.defaultMode === 'tm' ? 'tm' : 'fixed', travelRateCents: travelRaw === '' ? null : v.travelRateCents } });
       ui.setCurrency(v.currency);
       ui.toast('Defaults saved', 'success');
     };
@@ -191,6 +200,76 @@ export default {
       const cur = store.settings().nextNumbers || {};
       store.saveSettings({ nextNumbers: { job: v.job || cur.job, estimate: v.estimate || cur.estimate, invoice: v.invoice || cur.invoice } });
       ui.toast('Numbering saved', 'success');
+    };
+
+    // modules (switches): what the company uses, separate from what the plan includes
+    const modulesHost = h('div', { class: 'stack' });
+    const ent = ctx.auth?.synced ? session.me?.entitlements : null;
+    const inPlan = (sw) => {
+      if (!ent) return true;
+      const ids = sw.id === 'pricebook' || sw.id === 'inventory' ? ['inventory'] : sw.modules;
+      const overrides = Object.fromEntries(Object.keys(FEATURE_PLAN).map((f) => [f, ent.features.includes(f)]));
+      return !ids.length || ids.some((m) => hasFeature(ent.plan, m, overrides));
+    };
+    // Turning a module on or off redraws the whole app; come back to this card afterwards.
+    const keepPlace = () => history.replaceState(null, '', '#/settings?section=modules');
+    const drawModules = () => {
+      ui.clear(modulesHost);
+      const cur = store.settings();
+      const preset = presetOf(cur);
+      const on = SWITCHES.filter((sw) => switchOn(cur, sw.id)).length;
+      const apply = (id) => {
+        keepPlace();
+        store.saveSettings({ modules: presetModules(id) });
+        ui.toast(`${PRESETS[id].label}: ${PRESETS[id].on.length} modules on. Nothing was deleted.`, 'success', 3600);
+      };
+      const toggle = (sw, value) => {
+        keepPlace();
+        store.saveSettings({ modules: nextModules(store.settings(), { [sw.id]: value }) });
+        ui.toast(value ? `${sw.label} is on` : `${sw.label} is off. Its records are kept.`, 'success');
+      };
+      modulesHost.append(
+        h('div', { class: 'mod-presets', role: 'group', 'aria-label': 'Presets' }, Object.entries(PRESETS).map(([id, p]) => h('button', {
+          type: 'button', class: 'mod-preset', 'aria-pressed': String(preset === id), dataset: { preset: id }, onClick: () => apply(id),
+        }, h('strong', null, p.label), h('span', null, p.desc)))),
+        h('div', { class: 'muted' }, `${on} of ${SWITCHES.length} on${preset === 'custom' ? ' · your own mix' : ''}. Jobs, the dashboard and Settings are always on.`),
+        ...SWITCH_GROUPS.map((g) => h('div', { class: 'mod-group' }, h('h4', null, g.label),
+          SWITCHES.filter((sw) => sw.group === g.id).map((sw) => {
+            const isOn = switchOn(cur, sw.id);
+            const needs = sw.needs && !switchOn(cur, sw.needs) ? SWITCH_BY_ID[sw.needs]?.label : null;
+            return h('label', { class: ['mod-row', isOn ? null : 'off'], dataset: { switch: sw.id } },
+              h('div', { class: 'grow' }, h('div', { class: 'title' }, sw.label), h('div', { class: 'meta' }, sw.desc, needs ? ` Works with ${needs}.` : '')),
+              inPlan(sw) ? null : ui.badge('Not in your plan', 'neutral'),
+              h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: isOn, 'aria-label': sw.label, onChange: (e) => toggle(sw, e.target.checked) }));
+          }))));
+    };
+
+    // material requests: when the day's list goes to the office, and where it is emailed
+    const materialsHost = h('div', { class: 'stack' });
+    const drawMaterials = () => {
+      ui.clear(materialsHost);
+      const cur = store.settings();
+      const rs = requestSettings(cur);
+      const tzName = (tz) => tz.replace('America/', '').replace(/_/g, ' ');
+      const tzOptions = [...new Set([rs.timeZone, ...Object.values(PROVINCE_TZ)])].map((tz) => ({ value: tz, label: tzName(tz) }));
+      const form = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
+        { label: 'Send the list at', name: 'sendAt', type: 'time', value: rs.sendAt, required: true, hint: 'Once a day, in the time zone below' },
+        { label: 'Time zone', name: 'timeZone', type: 'select', value: rs.timeZone, options: tzOptions, hint: 'From your province unless you pick another' },
+        { label: 'Email the list to', name: 'emailTo', type: 'text', value: cur.materialRequests?.emailTo || '', placeholder: cur.company?.email || 'orders@yourcompany.ca', span: true, hint: 'Up to five addresses, separated by commas. Blank: the company email.' },
+      ]));
+      const save = () => {
+        if (!form.reportValidity()) return;
+        const v = ui.readForm(form);
+        const province = store.settings().company?.province || 'ON';
+        store.saveSettings({ materialRequests: { ...(store.settings().materialRequests || {}), sendAt: v.sendAt,
+          timeZone: validTimeZone(v.timeZone) && v.timeZone !== PROVINCE_TZ[province] ? v.timeZone : null, emailTo: String(v.emailTo || '').trim() } });
+        ui.toast(`Material requests go to the office at ${fmtSendAt(v.sendAt)}`, 'success');
+        drawMaterials();
+      };
+      const next = nextSendAt(new Date(), rs);
+      materialsHost.append(form,
+        h('div', { class: 'muted' }, `Next list: ${next.at.toLocaleString('en-CA', { timeZone: rs.timeZone, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${tzName(rs.timeZone)} time). The office also gets it in the bell and on the Material requests page.`),
+        saveRow('Save', save));
     };
 
     // theme
@@ -251,14 +330,18 @@ export default {
       ? ui.badge('Memory only: data is lost on reload', 'danger')
       : store.persistent ? ui.badge('Persistent storage', 'success') : ui.badge('Browser may clear data when low on space', 'warning');
 
-    drawCode(); drawTax(); drawPlacement();
+    drawCode(); drawTax(); drawPlacement(); drawModules(); drawMaterials();
+    const modulesCard = card('Modules', 'Turn off what you don’t use. Nothing is deleted: turn a module back on and everything in it comes back.', modulesHost);
+    modulesCard.id = 'modules';
     root.append(ui.page({ title: 'Settings', subtitle: s.company?.name },
       h('div', { class: 'grid-2 settings-grid' },
         card('Company', 'Shown on estimates, invoices and printouts', company, saveRow('Save company', saveCompany), h('strong', null, 'Logo'), logoField(ctx)),
+        modulesCard,
         card('Code book and units', 'Which electrical code the field tools follow, and how lengths show', codeHost),
         card('Sales tax', 'GST/HST and PST/RST for new estimates and invoices', taxHost),
         card('Defaults', 'Applied to new estimates and invoices', defaults, saveRow('Save defaults', saveDefaults)),
         card('Document numbering', 'The next number each new document gets', numbering, saveRow('Save numbering', saveNumbering)),
+        ctx.on?.('materials') !== false ? card('Material requests', 'When the crew’s requests go to the office as one list', materialsHost) : null,
         card('Box placement', 'Used when placing boxes on drawings', placementHost),
         ctx.auth?.synced ? card('Your account', 'Password, two-step sign-in, your units and theme',
           ui.button('Password and sign-in', { icon: 'key', href: '#/account' })) : null,
@@ -286,5 +369,6 @@ export default {
           h('p', { class: 'muted', style: { margin: 0 } }, 'A CRM/ERP for Canadian electrical contractors, with an infinite-canvas plan workspace.'),
           h('p', { class: 'muted', style: { margin: 0 } }, 'Calculators follow the Canadian Electrical Code (CSA C22.1:24) by default, or NEC 2023 if you choose it. They are estimating aids that cite rule and table numbers; always verify against the code and amendments in force where you work, and the inspection authority.')),
       )));
+    if (ctx.query.section === 'modules') requestAnimationFrame(() => modulesCard.scrollIntoView({ block: 'start' }));
   },
 };

@@ -3,6 +3,9 @@ import { invoiceBalanceCents, invoiceStatus, entryHours, moneyFormatter } from '
 import { provinceName } from '../lib/tax.js';
 import { onboardingCard } from './onboarding.js';
 import { workplanTiles } from './workplan.js';
+import { moduleOn, switchOn, linkOn } from '../lib/modules.js';
+import { unbilledAcrossJobs } from '../lib/tm.js';
+import { tmSources } from './jobs.js';
 
 export default {
   id: 'dashboard',
@@ -15,14 +18,16 @@ export default {
     const { h } = ui;
     let timer;
 
-    // Due sequence steps are queued whenever the office opens the app.
-    import('./sequences.js').then((m) => m.processSequences?.(store)).catch(() => {});
+    // Due sequence steps are queued whenever the office opens the app (not when follow-ups are off).
+    if (moduleOn(store.settings(), 'sequences')) import('./sequences.js').then((m) => m.processSequences?.(store)).catch(() => {});
 
     const draw = () => {
       ui.clear(root);
       const me = auth.current();
       const settings = store.settings();
       const money = moneyFormatter(settings);
+      // Tiles, alerts and buttons for turned-off modules are left out (Settings → Modules).
+      const on = (m) => moduleOn(settings, m);
       const day = ui.today();
       const hour = new Date().getHours();
       const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -39,16 +44,19 @@ export default {
       const overdue = invoices.filter((i) => invoiceStatus(store, i) === 'overdue');
       const onClock = store.list('timeEntries', (e) => !e.clockOut);
       const myOpen = onClock.find((e) => e.employeeId === me.id);
+      const unbilled = auth.can('invoices') && on('invoices') ? unbilledAcrossJobs(jobs.filter((j) => !['lead'].includes(j.status)), { settings, ...tmSources(store), dayOf: ui.localDay }) : null;
 
       const stats = h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' } },
-        auth.can('leads') ? ui.stat({ label: 'Open pipeline', value: money(pipeline, { whole: true }), hint: `${openLeads.length} open leads` }) : null,
+        auth.can('leads') && on('leads') ? ui.stat({ label: 'Open pipeline', value: money(pipeline, { whole: true }), hint: `${openLeads.length} open leads` }) : null,
         ui.stat({ label: 'Jobs in progress', value: String(active.length), hint: `${jobs.filter((j) => j.status === 'scheduled').length} scheduled` }),
-        auth.can('invoices') ? ui.stat({ label: 'Owed to you', value: money(outstanding, { whole: true }), hint: overdue.length ? `${overdue.length} overdue` : 'nothing overdue', tone: overdue.length ? 'danger' : null }) : null,
-        ui.stat({ label: 'On the clock', value: String(onClock.length), hint: onClock.map((e) => empById.get(e.employeeId)?.name.split(' ')[0]).filter(Boolean).join(', ') || 'nobody yet', tone: onClock.length ? 'success' : null }),
+        auth.can('invoices') && on('invoices') ? ui.stat({ label: 'Owed to you', value: money(outstanding, { whole: true }), hint: overdue.length ? `${overdue.length} overdue` : 'nothing overdue', tone: overdue.length ? 'danger' : null }) : null,
+        unbilled ? h('a', { href: '#/jobs', class: 'dash-stat-link', style: { color: 'inherit', textDecoration: 'none' }, dataset: { unbilledTm: String(unbilled.cents) } },
+          ui.stat({ label: 'Unbilled T&M', value: money(unbilled.cents, { whole: true }), hint: unbilled.count ? `${unbilled.count} time & material job${unbilled.count === 1 ? '' : 's'} · ${unbilled.hours} h` : 'all billed', tone: unbilled.cents ? 'accent' : null })) : null,
+        on('time') ? ui.stat({ label: 'On the clock', value: String(onClock.length), hint: onClock.map((e) => empById.get(e.employeeId)?.name.split(' ')[0]).filter(Boolean).join(', ') || 'nobody yet', tone: onClock.length ? 'success' : null }) : null,
       );
 
       // ---- my clock ----
-      const clockCard = auth.can('time') ? h('div', { class: 'card row', style: { justifyContent: 'space-between' } },
+      const clockCard = auth.can('time') && on('time') ? h('div', { class: 'card row', style: { justifyContent: 'space-between' } },
         h('div', { class: 'row' }, h('span', { class: 'avatar', style: { background: me.color || '#5f5a51', width: '40px', height: '40px' } }, ui.initials(me.name)),
           h('div', null, h('div', { style: { fontWeight: 650 } }, myOpen ? `On the clock · ${jobById.get(myOpen.jobId)?.title || 'no job'}` : 'Not clocked in'),
             h('div', { class: 'muted num', id: 'dash-clock' }, myOpen ? ui.fmtHours(entryHours(myOpen)) + ` since ${ui.fmtTime(myOpen.clockIn)}` : 'Clock in from the time clock'))),
@@ -91,7 +99,7 @@ export default {
       for (const l of openLeads.filter((x) => x.nextActionAt && ui.daysUntil(x.nextActionAt) <= 0)) {
         add('accent', 'funnel', `Follow up: ${l.title} (${l.contactName || 'lead'})`, '#/leads');
       }
-      for (const it of store.list('items', (x) => x.reorderPoint > 0)) {
+      for (const it of switchOn(settings, 'inventory') ? store.list('items', (x) => x.reorderPoint > 0) : []) {
         const total = Object.values(it.stock || {}).reduce((s, q) => s + (Number(q) || 0), 0);
         if (total < it.reorderPoint) add('warning', 'box', `Low stock: ${it.name} (${total} ${it.unit})`, '#/inventory');
       }
@@ -103,7 +111,16 @@ export default {
       }
       const queued = store.count('outbox', (o) => o.status === 'queued');
       if (queued) add('info', 'send', `${queued} follow-up message${queued > 1 ? 's' : ''} waiting in the outbox`, '#/sequences');
+      // Material requests: what the office still has to order.
+      if (auth.isManager()) {
+        const waiting = store.count('materialRequests', (r) => (r.status || 'requested') === 'requested');
+        const toOrder = store.count('materialRequests', (r) => r.status === 'sent');
+        if (toOrder) add('accent', 'truck', `${toOrder} material request${toOrder === 1 ? '' : 's'} to order`, '#/materials');
+        else if (waiting) add('info', 'truck', `${waiting} material request${waiting === 1 ? '' : 's'} going to the office at the next send`, '#/materials');
+      }
       const toneOrder = { danger: 0, warning: 1, accent: 2, info: 3 };
+      // Alerts about turned-off modules are left out (Settings → Modules).
+      alerts.splice(0, alerts.length, ...alerts.filter((a) => linkOn(settings, a.href)));
       alerts.sort((a, b) => toneOrder[a.tone] - toneOrder[b.tone]);
       const alertList = h('div', { class: 'list' }, alerts.length ? alerts.slice(0, 10).map((a) =>
         h('a', { class: 'list-row click', href: a.href, style: { color: 'inherit', textDecoration: 'none' } },
@@ -112,7 +129,7 @@ export default {
 
       // ---- recent drawings ----
       const drawings = store.list('drawings', null, { omit: ['underlay', 'strokes', 'texts', 'rooms'] }).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 4);
-      const drawingCards = auth.can('drawings') ? h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' } },
+      const drawingCards = auth.can('drawings') && on('drawings') ? h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' } },
         drawings.map((d) => h('a', { class: 'card click', href: `#/drawings/${d.id}`, style: { padding: '8px', color: 'inherit', textDecoration: 'none' } },
           h('div', { class: 'dash-thumb', style: { aspectRatio: '4 / 3', borderRadius: '12px', background: 'var(--paper)', border: '1px solid var(--border)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundImage: d.thumb ? `url(${d.thumb})` : 'none', display: 'grid', placeItems: 'center', color: 'var(--text-muted)' } }, d.thumb ? null : ui.icon('pen', 28)),
           h('div', { style: { padding: '8px 4px 2px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, d.name),
@@ -132,17 +149,17 @@ export default {
         subtitle: [new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }), settings.company?.name,
           settings.company?.province ? `${provinceName(settings.company.province)} · ${settings.codeBook === 'NEC-2023' ? 'NEC 2023' : 'CEC 2024'}` : null].filter(Boolean).join(' · '),
         actions: [
-          auth.can('leads') ? ui.button('New lead', { icon: 'funnel', href: '#/leads?new=1' }) : null,
-          auth.can('estimates') ? ui.button('New quote', { icon: 'file-text', variant: 'primary', href: '#/estimates/new' }) : null,
+          auth.can('leads') && on('leads') ? ui.button('New lead', { icon: 'funnel', href: '#/leads?new=1' }) : null,
+          auth.can('estimates') && on('estimates') ? ui.button('New quote', { icon: 'file-text', variant: 'primary', href: '#/estimates/new' }) : null,
         ].filter(Boolean),
       },
       onboardingCard(ctx),
       stats,
       clockCard ? h('div', { style: { marginTop: 'var(--s4)' } }, clockCard) : null,
-      (() => { const wp = workplanTiles(ctx); return wp ? [...ui.section('Crew tasks'), wp] : null; })(),
+      (() => { const wp = on('workplan') ? workplanTiles(ctx) : null; return wp ? [...ui.section('Crew tasks'), wp] : null; })(),
       h('div', { class: 'grid-2', style: { marginTop: 'var(--s2)' } },
         h('div', null, ...ui.section('Needs attention'), alertList),
-        h('div', null, ...ui.section('Today on site'), today)),
+        on('schedule') ? h('div', null, ...ui.section('Today on site'), today) : null),
       drawingCards ? [...ui.section('Recent plans & drawings'), drawingCards] : null,
       activity ? [...ui.section('Recent activity'), activity] : null));
     };

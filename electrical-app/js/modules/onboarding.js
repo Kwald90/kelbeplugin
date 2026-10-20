@@ -6,6 +6,10 @@
 import { isGstHstNumber, PROVINCES } from '../lib/tax.js';
 import { CODE_BOOKS } from '../lib/cec/provinces.js';
 import { DEFAULT_SETTINGS } from '../store.js';
+import { moduleOn } from '../lib/modules.js';
+
+/** Steps that belong to a module: left out while the company has it turned off. */
+const STEP_MODULE = { pricebook: 'inventory', plans: 'drawings', connect: 'integrations' };
 
 const DEFAULT_RATE = DEFAULT_SETTINGS.labourRateCents;
 const DEFAULT_MARKUP = DEFAULT_SETTINGS.markupPct;
@@ -64,7 +68,7 @@ export function detectSteps(f) {
     { id: 'plans', title: 'Import a plan set', text: 'Drop in the PDF drawings; each sheet becomes a page you can mark up and take off from.', done: f.planSets > 0, detail: f.planSets ? `${f.planSets} sheet${f.planSets === 1 ? '' : 's'}` : '', href: '#/drawings' },
   ];
   for (const st of steps) { st.skipped = !st.done && Boolean(skipped[st.id]); }
-  return steps;
+  return steps.filter((st) => !STEP_MODULE[st.id] || moduleOn(s, STEP_MODULE[st.id]));
 }
 
 export function progress(steps) {

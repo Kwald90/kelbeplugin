@@ -109,6 +109,9 @@ export function checkWriteRules(p, coll, existing, next) {
   if (p.kind === 'api_key') return null;
   const def = collectionDef(coll);
 
+  // Material requests: crew file their own, and change or withdraw them only until they are sent.
+  if (coll === 'materialRequests' && !p.isManager) return materialRequestRule(p, existing, next);
+
   // Time entries: non-managers write only their own, and cannot approve.
   if (def?.ownRows && !p.isManager) {
     if (!p.employeeId) return 'Your membership is not linked to an employee record, so you cannot record time.';
@@ -139,6 +142,31 @@ export function checkWriteRules(p, coll, existing, next) {
     const changed = changedKeys(existing, next);
     if (changed.some((k) => k !== 'nextNumbers')) return 'Changing settings needs the settings permission.';
   }
+  return null;
+}
+
+// ---- money and material requests ------------------------------------------------
+
+/** Permission keys that show costs and prices (office and managers). */
+const MONEY_PERMS = ['inventory', 'estimates', 'invoices'];
+
+/** May this principal see costs and prices? API keys act for the company, so they may. */
+export const seesMoney = (p) => p.kind === 'api_key' || MONEY_PERMS.some((k) => p.perms?.has(k));
+
+/** Fields that carry money, per collection, hidden from readers who do not see money. */
+export const MONEY_FIELDS = { materialRequests: ['costCents'], items: ['costCents', 'priceCents'] };
+
+/** A non-manager's write to a material request: an error message, or null when allowed. */
+function materialRequestRule(p, existing, next) {
+  const me = p.employeeId;
+  if (!me) return 'Your membership is not linked to an employee record, so you cannot request material.';
+  if (existing && existing.employeeId !== me) return 'You can only change your own material requests.';
+  if (next && next.employeeId !== me) return 'Request material as yourself.';
+  if (existing && (existing.status || 'requested') !== 'requested') return 'This request has gone to the office; ask them to change it.';
+  if (!next) return null;
+  if (!['requested', 'cancelled'].includes(next.status || 'requested')) return 'Only the office marks requests sent, ordered or fulfilled.';
+  if (!same(existing?.costCents ?? null, next.costCents ?? null)) return 'Only the office sets costs.';
+  for (const k of ['batchId', 'sentAt', 'stockMoveId']) if (!same(existing?.[k] ?? null, next[k] ?? null)) return 'Only the office handles sent requests.';
   return null;
 }
 
@@ -210,6 +238,14 @@ function safetyWriteRule(p, coll, existing, next) {
  * Returns the record to store.
  */
 export function restoreHiddenFields(p, coll, existing, next) {
+  if (MONEY_FIELDS[coll] && next && !seesMoney(p)) {
+    // A crew member's copy never had the cost: keep the stored one (or none).
+    const out = { ...next };
+    for (const k of MONEY_FIELDS[coll]) {
+      if (existing && k in existing) out[k] = existing[k]; else delete out[k];
+    }
+    return out;
+  }
   if (coll !== 'incidents' || !next) return next;
   const out = { ...next };
   delete out.medicalHidden; // a read marker (redactForReader), never stored
@@ -222,6 +258,11 @@ export function restoreHiddenFields(p, coll, existing, next) {
 
 /** Fields hidden from some readers. Returns a copy when anything is removed. */
 export function redactForReader(p, coll, data) {
+  if (MONEY_FIELDS[coll] && data && !seesMoney(p) && MONEY_FIELDS[coll].some((k) => k in data)) {
+    const rest = { ...data };
+    for (const k of MONEY_FIELDS[coll]) delete rest[k];
+    return rest;
+  }
   if (coll === 'employees' && data && p.kind !== 'api_key' && !p.perms.has('employees') && 'rateCents' in data) {
     const { rateCents, ...rest } = data;
     return rest;
