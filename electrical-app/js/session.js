@@ -138,6 +138,12 @@ export const session = {
 
   isDemo() { try { return localStorage.getItem(K.mode) === 'demo'; } catch { return false; } },
   setDemo(on) { try { if (on) localStorage.setItem(K.mode, 'demo'); else localStorage.removeItem(K.mode); } catch { /* ignore */ } },
+  /**
+   * May a #/demo link (the website's "Try the demo") switch this device into the demo? Only when no
+   * company uses it: no company database from a sign-in and no registered shared iPad. Otherwise one
+   * click on a marketing link would park the company's data, stop sync and stick on every launch.
+   */
+  demoLinkAllowed() { return !this.pointer() && !this.device(); },
 
   /** Which company database this device last used: { userId, tenantId } or null. */
   pointer() {
