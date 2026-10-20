@@ -9,6 +9,7 @@ export const COLLECTIONS = [
   'employees', 'timeEntries', 'drawings', 'sops', 'permits', 'inspections',
   'certifications', 'checklists', 'panels', 'auditLog', 'settings',
   'wireRuns', 'bends', 'benderProfiles',
+  'flhas', 'toolboxTalks', 'incidents', 'correctiveActions', 'safetyInspections', 'siteOrientations', 'jobSafety',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -31,6 +32,7 @@ const JOB = g('job_id', 'jobId');
 const STATUS = g('status', 'status');
 const NUMBER = g('number', 'number');
 const EMPLOYEE = g('employee_id', 'employeeId');
+const DAY = g('day', 'date');
 
 /**
  * @typedef {object} CollectionDef
@@ -44,6 +46,7 @@ const EMPLOYEE = g('employee_id', 'employeeId');
  * @property {'self'|'client'|null} portal  which rows a client-portal session may read
  * @property {number} maxBytes    max JSON size of one record
  * @property {string[]} [readAll] true when every member may read (settings)
+ * @property {string} [migration] the NNNN migration that created the table; unset = 0003 (scripts/gen-collections-sql.js)
  */
 
 // Every role has "dashboard", so it only grants reads the dashboard shows to everyone
@@ -79,6 +82,17 @@ const DEFS = {
   wireRuns: { table: 'wire_runs', gen: [JOB, g('drawing_id', 'drawingId')], read: ['drawings', 'jobs', 'estimates'], write: ['drawings'], portal: null, maxBytes: 64 * MB },
   bends: { table: 'bends', gen: [JOB], read: ['calcs', 'jobs'], write: ['calcs'], portal: null },
   benderProfiles: { table: 'bender_profiles', gen: [], read: ['calcs'], write: ['calcs'], portal: null },
+  // Safety (migration 0110, docs/safety/README.md). Every role has `safety`; what a non-manager
+  // may change is narrowed in auth/access.js (own FLHAs, own signatures, own reports, own actions),
+  // and incident medical details are stripped for non-managers (redactForReader).
+  // Signatures are small JPEG data URLs; photos are downscaled data URLs (object storage later).
+  flhas: { table: 'flhas', gen: [EMPLOYEE, JOB, DAY], read: ['safety'], write: ['safety'], portal: null, maxBytes: 1 * MB, migration: '0110' },
+  toolboxTalks: { table: 'toolbox_talks', gen: [JOB, STATUS, DAY], read: ['safety'], write: ['safety'], portal: null, maxBytes: 4 * MB, migration: '0110' },
+  incidents: { table: 'incidents', gen: [JOB, STATUS, g('kind', 'kind')], read: ['safety'], write: ['safety'], portal: null, maxBytes: 8 * MB, migration: '0110' },
+  correctiveActions: { table: 'corrective_actions', gen: [JOB, STATUS, g('owner_id', 'ownerId'), g('source_id', 'sourceId')], read: ['safety'], write: ['safety'], portal: null, maxBytes: 4 * MB, migration: '0110' },
+  safetyInspections: { table: 'safety_inspections', gen: [JOB, g('status', 'result'), DAY], read: ['safety'], write: ['safety'], portal: null, maxBytes: 8 * MB, migration: '0110' },
+  siteOrientations: { table: 'site_orientations', gen: [EMPLOYEE, JOB], read: ['safety'], write: ['safety'], managerWrite: true, portal: null, maxBytes: 1 * MB, migration: '0110' },
+  jobSafety: { table: 'job_safety', gen: [JOB], read: ['safety', 'jobs'], write: ['safety'], managerWrite: true, portal: null, migration: '0110' },
 };
 
 /** @type {Map<string, CollectionDef>} */

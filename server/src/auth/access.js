@@ -97,6 +97,9 @@ export function checkWriteRules(p, coll, existing, next) {
     if (after.slice(before.length).some((a) => a?.employeeId !== p.employeeId)) return 'You can only acknowledge for yourself.';
   }
 
+  const safetyMsg = SAFETY_COLLECTIONS.has(coll) && !p.isManager ? safetyWriteRule(p, coll, existing, next) : null;
+  if (safetyMsg) return safetyMsg;
+
   // Settings: the settings permission edits anything; document creators may only bump nextNumbers.
   if (coll === 'settings' && !p.perms.has('settings')) {
     if (!existing || !next) return 'Only the settings permission can create or delete settings.';
@@ -106,10 +109,94 @@ export function checkWriteRules(p, coll, existing, next) {
   return null;
 }
 
+// ---- safety (docs/safety/README.md) ------------------------------------------
+// Every role holds `safety`. Managers (owner, admin, office, foreman) do anything; everyone
+// else files their own FLHAs, near misses, incidents and inspections, signs toolbox talks for
+// themselves and closes corrective actions assigned to them.
+const SAFETY_COLLECTIONS = new Set(['flhas', 'toolboxTalks', 'incidents', 'correctiveActions', 'safetyInspections']);
+
+/** Incident fields only managers read: injury, body part, treatment, WCB claim. */
+export const MEDICAL_FIELDS = ['medical'];
+
+/** Can this principal see incident medical details? Session managers only (not API keys). */
+export const seesMedical = (p) => p.kind === 'session' && Boolean(p.isManager);
+
+const onlyKeys = (existing, next, allowed) => changedKeys(existing, next).filter((k) => !allowed.includes(k));
+
+/** A non-manager's write to a safety collection: an error message, or null when allowed. */
+function safetyWriteRule(p, coll, existing, next) {
+  if (p.kind === 'api_key') return null;
+  const me = p.employeeId;
+  if (!me) return 'Your membership is not linked to an employee record, so you cannot file safety records.';
+  if (coll === 'flhas') {
+    if (!next) return 'Only managers can delete a hazard assessment.';
+    if ((existing && existing.employeeId !== me) || next.employeeId !== me) return 'You can only file your own hazard assessment.';
+    if (!same(existing?.review ?? null, next.review ?? null)) return 'Only a manager can sign off the review.';
+    return null;
+  }
+  if (coll === 'toolboxTalks') {
+    if (!existing || !next) return 'Only managers can schedule or delete toolbox talks.';
+    if (onlyKeys(existing, next, ['attendees']).length) return 'You can only sign the attendance sheet.';
+    const before = existing.attendees || [];
+    const after = next.attendees || [];
+    if (after.length < before.length || !before.every((a, i) => same(a, after[i]))) return 'Signatures cannot be removed or changed.';
+    if (after.slice(before.length).some((a) => a?.employeeId !== me)) return 'You can only sign for yourself.';
+    return null;
+  }
+  if (coll === 'incidents') {
+    if (!next) return 'Only managers can delete an incident report.';
+    if (!existing) return next.reportedBy === me ? null : 'File the report as yourself.';
+    if (existing.reportedBy !== me) return "Only managers can change someone else's report.";
+    if ((existing.status || 'reported') !== 'reported') return 'This report is under investigation; ask a manager to change it.';
+    const locked = changedKeys(existing, next).filter((k) => ['status', 'investigation', 'reporting', 'reportedBy', 'closedAt'].includes(k));
+    return locked.length ? 'Only managers investigate, close or report incidents.' : null;
+  }
+  if (coll === 'correctiveActions') {
+    if (!next) return 'Only managers delete corrective actions.';
+    if (!existing) {
+      // A worker may raise an action from their own inspection or report: open, unassigned or theirs.
+      if (next.createdBy !== me || (next.status || 'open') !== 'open' || (next.ownerId && next.ownerId !== me)) return 'Only managers assign corrective actions.';
+      return null;
+    }
+    if (existing.ownerId !== me) return 'Only the owner of a corrective action can close it.';
+    if (onlyKeys(existing, next, ['status', 'doneAt', 'doneBy', 'doneNote', 'evidence']).length) return 'You can only mark the action done with evidence.';
+    if (!['open', 'done'].includes(next.status)) return 'Only a manager can verify a corrective action.';
+    return null;
+  }
+  if (coll === 'safetyInspections') {
+    if (!next) return 'Only managers can delete an inspection.';
+    if ((existing && existing.inspectorId !== me) || next.inspectorId !== me) return 'You can only file inspections you did.';
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Hidden fields a reader could not see cannot be changed by their write either: put the
+ * stored values back (a worker editing their own report never wipes the medical details).
+ * Returns the record to store.
+ */
+export function restoreHiddenFields(p, coll, existing, next) {
+  if (coll !== 'incidents' || !next) return next;
+  const out = { ...next };
+  delete out.medicalHidden; // a read marker (redactForReader), never stored
+  if (!existing || seesMedical(p)) return out;
+  for (const k of MEDICAL_FIELDS) {
+    if (k in existing) out[k] = existing[k]; else delete out[k];
+  }
+  return out;
+}
+
 /** Fields hidden from some readers. Returns a copy when anything is removed. */
 export function redactForReader(p, coll, data) {
   if (coll === 'employees' && data && p.kind !== 'api_key' && !p.perms.has('employees') && 'rateCents' in data) {
     const { rateCents, ...rest } = data;
+    return rest;
+  }
+  if (coll === 'incidents' && data && !seesMedical(p) && MEDICAL_FIELDS.some((k) => k in data)) {
+    const rest = { ...data };
+    for (const k of MEDICAL_FIELDS) delete rest[k];
+    rest.medicalHidden = true;
     return rest;
   }
   return data;

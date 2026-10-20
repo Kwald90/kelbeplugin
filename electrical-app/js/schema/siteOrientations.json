@@ -1,0 +1,148 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/siteOrientations.json",
+  "title": "Site orientation",
+  "description": "A new worker's orientation to one job site. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "employeeId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "workerName": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200
+    },
+    "company": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200
+    },
+    "jobId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "by": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "topics": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 60,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 60
+          },
+          "done": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "signature": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "dataUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80000,
+          "description": "Small JPEG data URL of the finger/Pencil signature (white background, ~480x160, capped at ~60 KB)."
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "employeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        }
+      },
+      "description": "The worker's signature."
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 5000
+    }
+  },
+  "additionalProperties": true
+}

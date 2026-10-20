@@ -103,6 +103,13 @@ export const COLLECTION_FEATURES = {
   wireRuns: ['wireruns'],
   bends: ['bending', 'calcs'],
   benderProfiles: ['bending', 'calcs'],
+  flhas: ['safety'],
+  toolboxTalks: ['safety'],
+  incidents: ['safety'],
+  correctiveActions: ['safety'],
+  safetyInspections: ['safety'],
+  siteOrientations: ['safety'],
+  jobSafety: ['safety'],
 };
 
 /**

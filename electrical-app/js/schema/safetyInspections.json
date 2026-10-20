@@ -1,0 +1,260 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/safetyInspections.json",
+  "title": "Safety inspection",
+  "description": "An equipment or site inspection from a checklist template, pass/fail per item. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "templateId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 60
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "jobId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "assetTag": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 120
+    },
+    "date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "inspectorId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "items": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 120,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 60
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 1000
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "result": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 10,
+            "description": "Known values: open, pass, fail, na."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "photos": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 128
+                },
+                "dataUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 700000,
+                  "description": "JPEG data URL, downscaled on the device to ~400 KB. Moves to object storage later."
+                },
+                "caption": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 500
+                },
+                "takenAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 40,
+                  "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+                },
+                "width": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 1,
+                  "maximum": 10000
+                },
+                "height": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 1,
+                  "maximum": 10000
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "result": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20,
+      "description": "Known values: in-progress, pass, fail."
+    },
+    "frequencyDays": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 3660
+    },
+    "nextDue": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "completedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "signature": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "dataUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80000,
+          "description": "Small JPEG data URL of the finger/Pencil signature (white background, ~480x160, capped at ~60 KB)."
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "employeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        }
+      },
+      "description": "The inspector's signature."
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 5000
+    }
+  },
+  "additionalProperties": true
+}
