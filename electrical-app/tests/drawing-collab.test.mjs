@@ -348,3 +348,81 @@ test('a stroke drawn and cut before a save counts as one new mark', async () => 
   assert.deepEqual([r.diff.add.length, r.diff.edit.length], [1, 0]);
   assert.ok(d.strokes.every((s) => s.by?.id === 'emp-j'));
 });
+
+test('merge: pieces of a cut stroke go with a whole-stroke delete or redraw made without seeing the cut', async () => {
+  const { eraseStrokes } = await import('../js/canvas/erase.js');
+  const line = { id: 'S', layer: 'L1', tool: 'pen', color: '#1c1b19', size: 2, points: [] };
+  for (let x = 0; x <= 400; x += 10) line.points.push([x, 0, 0.5]);
+  const base = drawing();
+  const empty = baselineOf(base);
+  base.strokes.push(line);
+  stampChanges(base, empty, JACKSON, T(1)); // Jackson draws S
+  const ids = (d) => d.strokes.map((s) => s.id).sort();
+
+  // device A erases the middle at 10: S (left) and S2 (right, cut from S)
+  const A = structuredClone(base);
+  const cutA = (() => {
+    const b = baselineOf(A);
+    A.strokes = eraseStrokes(A.strokes, [200, 0], [200, 0], 8, { newId: () => 'S2' }).strokes;
+    return stampChanges(A, b, MANNY, T(10));
+  })();
+  assert.deepEqual(ids(A), ['S', 'S2']);
+  assert.equal(A.strokes[1].cutFrom, 'S', 'the piece remembers the stroke it was cut from');
+
+  // device B, offline with the uncut S, deletes it at 20: nothing of the line survives either way
+  const B = structuredClone(base);
+  B.strokes = [];
+  stampChanges(B, baselineOf(base), OFFICE, T(20));
+  assert.deepEqual(ids(mergeDrawing(A, B)), []);
+  assert.deepEqual(ids(mergeDrawing(B, A)), []);
+
+  // device C, offline with the uncut S, moves it at 20: C's whole stroke, no leftover piece drawn twice
+  const C = structuredClone(base);
+  C.strokes[0].points = C.strokes[0].points.map(([x, y, p]) => [x, y + 50, p]);
+  stampChanges(C, baselineOf(base), OFFICE, T(20));
+  for (const m of [mergeDrawing(A, C), mergeDrawing(C, A)]) {
+    assert.deepEqual(ids(m), ['S']);
+    assert.equal(m.strokes[0].points.length, line.points.length, 'the full-length moved stroke');
+  }
+
+  // a delete made before the cut loses to it: both pieces stay
+  const early = structuredClone(base);
+  early.strokes = [];
+  stampChanges(early, baselineOf(base), OFFICE, T(5));
+  assert.deepEqual(ids(mergeDrawing(early, A)), ['S', 'S2']);
+  assert.deepEqual(ids(mergeDrawing(A, early)), ['S', 'S2']);
+
+  // device A's own later changes know the cut: deleting or recolouring the left piece keeps the right one
+  const del = structuredClone(A);
+  del.strokes = del.strokes.filter((s) => s.id !== 'S');
+  stampChanges(del, cutA.baseline, MANNY, T(15));
+  assert.deepEqual(ids(mergeDrawing(A, del)), ['S2']);
+  assert.deepEqual(ids(mergeDrawing(del, A)), ['S2']);
+  const recol = structuredClone(A);
+  recol.strokes[0].color = '#b42318';
+  const recolBase = stampChanges(recol, cutA.baseline, MANNY, T(15)).baseline;
+  assert.deepEqual(ids(mergeDrawing(A, recol)), ['S', 'S2']);
+  assert.deepEqual(ids(mergeDrawing(C, recol)), ['S'], "C's move at 20 is later than the cut and the recolour");
+
+  // ...and once A changes the left piece again after C's unaware move, A's cut stands
+  const again = structuredClone(recol);
+  again.strokes[0].color = '#1f5fb8';
+  stampChanges(again, recolBase, MANNY, T(30));
+  for (const m of [mergeDrawing(C, again), mergeDrawing(again, C)]) {
+    assert.deepEqual(ids(m), ['S', 'S2']);
+    assert.equal(m.strokes.find((s) => s.id === 'S').color, '#1f5fb8');
+  }
+  // merging copies that both know the cut changes nothing
+  const both = mergeDrawing(A, recol);
+  assert.equal(JSON.stringify(mergeDrawing(both, both)), JSON.stringify(both));
+});
+
+test('change order from drawings: the markup line keeps its rate out of the description', () => {
+  const r = costDelta({ current: { receptacle: 4 }, baseline: {}, items: ITEMS, labourRateCents: 9500, markupPct: 20 });
+  const co = changeOrderFrom(r, { id: 'co-m', date: '2026-10-19' });
+  const markup = co.lines.find((l) => l.kind === 'other');
+  assert.equal(markup.description, 'Markup on material');
+  assert.equal(markup.markupPct, 20);
+  assert.equal(markup.unitCents, 960);
+  assert.ok(!co.lines.some((l) => /\d\s*%/.test(l.description)), 'no percentage in any line text');
+});

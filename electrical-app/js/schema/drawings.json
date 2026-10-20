@@ -432,7 +432,7 @@
         "object",
         "null"
       ],
-      "description": "Deleted item ids -> { at, by }, so the object-level merge (js/lib/drawing-collab.js) knows an item was deleted rather than never seen. A write without this field replaces the stored copy (last writer wins), as before tracking.",
+      "description": "Deleted item ids -> { at, by }, so the object-level merge (js/lib/drawing-collab.js) knows an item was deleted rather than never seen. Only a sync push flagged itemMerge (an app that records tombstones) merges; a write without the flag or without this field is last-writer-wins, as before tracking.",
       "additionalProperties": {
         "type": "object"
       }

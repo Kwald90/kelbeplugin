@@ -309,7 +309,10 @@ Part of the Time clock (every plan). Docs: `docs/field/timesheets.md`; privacy i
   "Before tracking". Drawings add `history[]` (symbol counts per person and session, folded within 15 min, capped at 400),
   `tombstones { id: { at, by } }`, `editedBy`, `editedAt`, `clientId`.
 - Drawing writes merge per object on the server (`mergeWrite` → `mergeDrawing`), like work tasks: union by id, later
-  edit wins, tombstones delete unless the item was edited after. A write without `tombstones` (older app) is last-writer-wins.
+  edit wins, tombstones delete unless the item was edited after, and pieces the area eraser cut (`cutFrom`) go with a
+  later whole-stroke delete or redraw that never saw the cut. Only pushes flagged `itemMerge: true` (sent by apps that
+  record tombstones, `sync.js`) merge; a push without it, or a copy without `tombstones`, is last-writer-wins, so an older
+  app's stale copy loses to newer work and its deletes are not merged back.
 - Money: owner, admin, office (`estimates` permission), and foremen when `settings.foremanSeesCosts` is true. Everyone else
   gets items without `priceCents`/`costCents`, settings without `labourRateCents`/`markupPct` and change orders without
   amounts or line prices (`redactForReader`, `pricesHidden: true`); their writes cannot change those fields.

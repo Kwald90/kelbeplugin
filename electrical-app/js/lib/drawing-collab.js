@@ -410,9 +410,14 @@ const byId = (list) => new Map((list || []).filter((x) => x?.id).map((x) => [x.i
  * - Tombstones and history: union (history by entry id, the longer-running copy of an entry wins).
  * - Layers: `incoming`'s, plus any layer a surviving item still sits on.
  * - Everything else (name, scale, underlay, view...): `incoming`'s; updatedAt is the later one.
+ * - A piece the area eraser cut (cutFrom/splitFrom) that one copy never saw (no piece, no
+ *   tombstone) goes when that copy deleted or changed the stroke it was cut from after the cut,
+ *   and that change wins: the whole-stroke delete or redraw beats a cut it did not know about.
  * Idempotent: merging a copy that already holds everything returns an equal copy.
  * A write without `tombstones` comes from an app from before tracking, which deletes by
- * leaving items out: it replaces the stored copy as before (last writer wins).
+ * leaving items out: it replaces the stored copy. The server never merges such a write, nor
+ * one from an older app that carried the stored tombstones over (access.js mergeWrite): both
+ * are last-writer-wins there, so a stale copy loses to the newer stored one.
  */
 export function mergeDrawing(current, incoming) {
   if (!current) return incoming;
@@ -424,11 +429,31 @@ export function mergeDrawing(current, incoming) {
     if (!tomb[id] || ms(t?.at) >= ms(tomb[id]?.at)) tomb[id] = t;
   }
   const dead = (it) => tomb[it.id] && ms(tomb[it.id].at) >= ms(itemTime(it));
+  const curTomb = current.tombstones || {}, incTomb = incoming.tombstones || {};
   for (const kind of ITEM_KINDS) {
     const a = current[kind] || [];
     const b = incoming[kind] || [];
     if (!a.length && !Array.isArray(incoming[kind])) continue;
-    const mine = byId(a);
+    const mine = byId(a), theirs = byId(b);
+    // A piece cut from stroke `src` on one device, while a copy that never saw the cut deleted
+    // or changed `src` later (and that change wins): the piece belongs to a stroke that is gone
+    // or was redrawn whole, so it goes too (else a deleted line comes back in part, or the
+    // erased gap reappears with the rest drawn twice).
+    const cutUnseen = (it) => {
+      const src = it.cutFrom || it.splitFrom;
+      if (!src || src === it.id) return false;
+      const t = ms(itemTime(it));
+      for (const [items, tb, other] of [[mine, curTomb, theirs], [theirs, incTomb, mine]]) {
+        if (items.has(it.id) || tb[it.id]) continue; // this copy knew the piece
+        const s = items.get(src), o = other.get(src);
+        if (!s && !tb[src]) continue;
+        // its edit of src came after the cut, or it deleted src at or after it (as dead() counts)
+        const changed = s ? ms(itemTime(s)) : ms(tb[src].at);
+        const later = s ? changed > t : changed >= t;
+        if (later && (!o || changed >= ms(itemTime(o)))) return true;
+      }
+      return false;
+    };
     const merged = [];
     const used = new Set();
     for (const it of b) {
@@ -442,7 +467,7 @@ export function mergeDrawing(current, incoming) {
       if (!it?.id || used.has(it.id)) continue;
       if (!dead(it)) merged.push(it);
     }
-    out[kind] = merged;
+    out[kind] = merged.filter((it) => !it?.id || !cutUnseen(it));
   }
   // a tombstone whose item came back with a later edit no longer applies
   for (const kind of ITEM_KINDS) for (const it of out[kind] || []) if (it?.id && tomb[it.id]) delete tomb[it.id];
