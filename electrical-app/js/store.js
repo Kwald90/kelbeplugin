@@ -267,6 +267,8 @@ export const store = {
       // Local defaults so screens and saveSettings work. Not tracked: untouched defaults are
       // never pushed (they would overwrite the company's real settings, adr-002).
       const s = { ...clone(DEFAULT_SETTINGS), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      // a company's own name and province (from /api/v1/me) instead of 'Your company' / Ontario
+      if (next.kind === 'company' && next.company) s.company = { ...s.company, ...next.company };
       bucket('settings').set('settings', s);
       persist('settings', 'settings');
     }

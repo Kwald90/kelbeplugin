@@ -414,7 +414,8 @@ async function startSynced(me) {
   mode = 'synced';
   session.setDemo(false);
   const p = me ? { userId: me.user.id, tenantId: me.tenant.id } : session.pointer();
-  await store.open({ kind: 'company', userId: p.userId, tenantId: p.tenantId });
+  const company = me?.tenant ? { name: me.tenant.name, ...(me.tenant.province ? { province: me.tenant.province } : {}) } : null;
+  await store.open({ kind: 'company', userId: p.userId, tenantId: p.tenantId, company });
   if (me) {
     store.setMeta('me', me);
     session.remember(me);
@@ -469,6 +470,8 @@ async function boot() {
     history.replaceState(null, '', `${location.pathname}${location.search}#/welcome`);
     return showGate('welcome');
   }
+  // A link from the website (app.fishtapehq.com/#/demo) opens the device-only demo straight away.
+  if (id === 'demo' && !session.isDemo()) { session.setDemo(true); history.replaceState(null, '', `${location.pathname}${location.search}#/dashboard`); }
   if (session.isDemo()) return startDemo();
   const res = await session.load();
   if (res.state === 'signed-in') {

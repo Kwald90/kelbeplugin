@@ -260,6 +260,8 @@ export default {
         card('Defaults', 'Applied to new estimates and invoices', defaults, saveRow('Save defaults', saveDefaults)),
         card('Document numbering', 'The next number each new document gets', numbering, saveRow('Save numbering', saveNumbering)),
         card('Box placement', 'Used when placing boxes on drawings', placementHost),
+        ctx.auth?.synced ? card('Your account', 'Password, two-step sign-in, your units and theme',
+          ui.button('Password and sign-in', { icon: 'key', href: '#/account' })) : null,
         card('Appearance', null, themeHost),
         store.synced ? card('Data', 'Your company’s data lives on the server and syncs to this device.',
           h('div', { class: 'muted' }, counts),

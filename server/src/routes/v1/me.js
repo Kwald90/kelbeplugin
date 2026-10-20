@@ -45,6 +45,8 @@ export async function meBody(db, row) {
     tenant: hasTenant ? {
       id: row.tenant_id, name: row.tenant_name, status: row.tenant_status, role, employeeId: row.employee_id || null,
       membershipId: row.membership_id, perms: [...permsForRole(role)],
+      // where the company was registered: seeds a new device's settings (store.open defaults)
+      province: plan?.province || null,
     } : null,
     memberships: memberships.map((m) => ({ tenantId: m.tenant_id, tenantName: m.tenant_name, role: m.role, status: m.status, tenantStatus: m.tenant_status })),
     entitlements: plan ? tenantEntitlements(plan) : null,

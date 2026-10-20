@@ -647,6 +647,26 @@ export default {
     };
     drawMfa();
 
+    // password: POST /api/v1/auth/password/change (signs out your other sessions)
+    const pwField = (label, autocomplete) => h('input', { class: 'input', type: 'password', autocomplete, required: true, 'aria-label': label, placeholder: label });
+    const curPw = pwField('Current password', 'current-password');
+    const newPw = pwField('New password', 'new-password');
+    const newPw2 = pwField('New password again', 'new-password');
+    const pwMsg = h('div', { role: 'status' });
+    const pwBtn = ui.button('Change password', { icon: 'key', disabled: offline });
+    pwBtn.addEventListener('click', busyButton(pwBtn, async () => {
+      put(pwMsg);
+      if (!curPw.value || !newPw.value) { put(pwMsg, note('Fill in your current and new password.', 'warning')); return; }
+      if (newPw.value !== newPw2.value) { put(pwMsg, note('The two new passwords are different.', 'warning')); return; }
+      try {
+        await api.post('/api/v1/auth/password/change', { currentPassword: curPw.value, newPassword: newPw.value });
+        curPw.value = newPw.value = newPw2.value = '';
+        put(pwMsg, note('Password changed. Your other devices are signed out.', 'success'));
+      } catch (e) { put(pwMsg, note(e.message, 'danger')); }
+    }));
+    const pwCard = card('Password', 'At least 12 characters. Changing it signs out your other devices.',
+      h('form', { class: 'stack', onSubmit: (e) => { e.preventDefault(); pwBtn.click(); } }, curPw, newPw, newPw2, pwMsg, h('div', { class: 'row' }, pwBtn)));
+
     const sync = syncPanel(app);
     root.append(ui.page({ title: 'Account', subtitle: `${acct.name}${me.user?.email ? ` · ${me.user.email}` : ''}`, actions: [
       ui.button(acct.crew ? 'Done: hand back the iPad' : 'Sign out', { variant: acct.crew ? 'primary' : 'secondary', icon: 'log-out', onClick: () => app.signOut() })] },
@@ -655,6 +675,7 @@ export default {
         companyCard,
         card('Sync', 'Every change is saved on this device first, then sent to the server.', sync),
         card('Your preferences', null, prefsHost),
+        acct.crew ? null : pwCard,
         acct.crew ? null : card('Two-step sign-in', 'Required for owners and admins.', mfaHost),
         acct.crew || !acct.membershipId ? null : card('Your crew PIN', 'For signing in on a shared iPad.',
           ui.button('Set my PIN', { icon: 'key', disabled: offline, onClick: () => setPin(acct.membershipId) })),

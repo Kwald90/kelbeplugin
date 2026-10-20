@@ -72,6 +72,7 @@ export function headerBlock(path) {
       </nav>
       <div class="site-head-actions">
         <a class="site-signin" data-app-link href="${APP_URL}">Sign in</a>
+        <a class="site-btn ghost" data-app-link="/#/demo" href="${APP_URL}#/demo">Try the demo</a>
         <a class="site-btn" href="${TRIAL_HREF}">Start free trial</a>
         <details class="site-menu">
           <summary><span class="site-burger" aria-hidden="true"></span><span class="sr-only">Menu</span></summary>

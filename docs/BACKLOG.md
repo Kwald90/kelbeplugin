@@ -63,6 +63,11 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** Sign-up: the new company's Settings start with the app defaults (province ON), not the province chosen at sign-up; seed `settings.company` (name, province) when the company is created. The welcome link is web-only (`session.js` does not ask for a bearer token on it in the iOS app).
 - **dev** Google/Microsoft sign-in in the iOS app (hidden there today): native OIDC through `ASWebAuthenticationSession` with PKCE, and a server endpoint that returns a bearer session instead of a cookie.
 
+## Requested next (Kelvin and Travis, 2026-10-20)
+
+- **dev** Permits on new jobs: "Does this job need a permit?" when a job is created; create the permit (authority by province, e.g. Manitoba Hydro), list the inspections it needs (rough-in, service, final), remind when each is due, and open the authority's online portal in one tap. No public booking API is known for Manitoba Hydro, so booking stays a person's click: VERIFY.
+- **dev** Canvas tool polish (precision, selection, eraser, lasso, undo) after the pen-dropout fix.
+
 ## Process
 
 - Cloud agents push straight to the deploy branch. Agents should work on their own branches and open pull requests; the deploy branch should only move by merge.
