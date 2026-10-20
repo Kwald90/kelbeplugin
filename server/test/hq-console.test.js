@@ -423,6 +423,9 @@ describe('developer, AI and the audit log', { skip }, () => {
     const d = await hq(staff.token, '/api/hq/developer');
     assert.equal(d.body.environment, 'test');
     assert.equal(d.body.migrations.pending.length, 0);
+    const spec = await hq(staff.token, '/api/hq/openapi.json');
+    assert.ok(spec.body.paths['/api/v1/help/articles'].get.summary);
+    assert.equal((await call(app, { url: '/api/hq/openapi.json', token: A.token })).status, 403);
     assert.ok(Array.isArray(d.body.errors.recent));
     await t.superPool.query("INSERT INTO integration_events (tenant_id, provider, event_id, kind) VALUES ($1, 'stripe', 'evt_1234567890abcdefghijklmnop', 'checkout.session.completed')", [A.tenantId]);
     const w = await hq(staff.token, '/api/hq/developer/webhooks');

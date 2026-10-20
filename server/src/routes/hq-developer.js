@@ -2,7 +2,7 @@
 //   GET /api/hq/developer            environment and version, migrations, recent server errors
 //   GET /api/hq/developer/usage      API requests per company and per API key (last N days)
 //   GET /api/hq/developer/webhooks   webhook deliveries: company integrations + Fishtape's Stripe
-// The OpenAPI explorer reads the public /api/v1/openapi.json; feature flags and developer
+// GET /api/hq/openapi.json is the API document for the explorer; feature flags and developer
 // health have their own pages.
 //
 // This plugin also counts requests app-wide (it skips encapsulation like hq-health.js):
@@ -80,6 +80,10 @@ async function hqDeveloperRoutes(app, { config, db }) {
       errors: { recent: ring.list(), byRoute: metrics?.errorRoutes || [], lastHour: metrics?.lastHour || null, since: metrics?.since || startedAt },
     };
   });
+
+  // The same document as the public /api/v1/openapi.json, under /api/hq/ so the explorer works
+  // on hq.fishtapehq.com (its nginx sends only /api/hq/ and sign-in to hq-api).
+  app.get('/api/hq/openapi.json', { config: hq, schema: { hide: true } }, async (req) => req.server.swagger());
 
   app.get('/api/hq/developer/usage', {
     config: hq,

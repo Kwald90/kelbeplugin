@@ -44,7 +44,7 @@ export default {
       },
 
       async api() {
-        const spec = await get('/api/v1/openapi.json');
+        const spec = await get('/api/hq/openapi.json');
         const ops = [];
         for (const [path, item] of Object.entries(spec.paths || {})) {
           for (const [method, op] of Object.entries(item)) {
