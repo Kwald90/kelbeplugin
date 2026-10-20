@@ -433,6 +433,19 @@ export default async function qboRoutes(app, { config, db, records }) {
   }, wrap(async (req) => {
     const c = await needConnection(req);
     let goLive = false;
+    // Setting the Stripe cutover reads the clearing account's balance as the check's opening balance (6.1, 5.13).
+    let opening = null;
+    const cutover = (req.body?.set || []).find((m) => m?.kind === 'option' && m.key === 'stripeCutover' && m.value);
+    if (cutover) {
+      const clearing = (req.body.set.find((m) => m?.kind === 'account' && m.key === 'stripeClearing')?.value)
+        ?? (await inTenant(req, async (tx) => (await tx.query("SELECT value FROM qbo_mappings WHERE tenant_id = $1 AND kind = 'account' AND key = 'stripeClearing'", [tx.tenantId])).rows[0]?.value));
+      if (clearing && /^\d{1,20}$/.test(String(clearing))) {
+        const client = createQboClient({ db, sealer: app.sealer, config, tenantId: req.principal.tenantId, purpose: 'reference' });
+        const acct = await client.read('Account', String(clearing));
+        const { toCents } = await import('../../qbo/map/canon.js');
+        opening = toCents(acct?.CurrentBalance ?? 0);
+      }
+    }
     const out = await inTenant(req, async (tx) => {
       const { mappings } = await loadMappings(tx, c.realm_hash);
       const refRows = (await tx.query("SELECT kind, data FROM qbo_reference WHERE tenant_id = $1 AND realm_hash = $2 AND kind IN ('TaxCode', 'TaxRate', 'TaxAgency')", [tx.tenantId, c.realm_hash])).rows;
@@ -456,6 +469,12 @@ export default async function qboRoutes(app, { config, db, records }) {
         if (!MAPPING_KINDS.includes(m?.kind) || !KEY_RE.test(String(m?.key || ''))) throw validationFailed('Bad mapping to remove.');
         await tx.query('DELETE FROM qbo_mappings WHERE tenant_id = $1 AND kind = $2 AND key = $3', [tx.tenantId, m.kind, m.key]);
         changed.push(`-${m.kind}.${m.key}`);
+      }
+      if (opening != null) {
+        await tx.query(
+          `INSERT INTO qbo_mappings (tenant_id, realm_hash, kind, key, value, updated_by) VALUES ($1, $2, 'option', 'stripeClearingOpeningCents', $3, 'system:qbo')
+           ON CONFLICT (tenant_id, kind, key) DO UPDATE SET value = EXCLUDED.value, realm_hash = EXCLUDED.realm_hash, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+          [tx.tenantId, c.realm_hash, JSON.stringify(opening)]);
       }
       await requeueStuck(tx);
       if (goLive) {

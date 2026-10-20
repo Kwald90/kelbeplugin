@@ -832,7 +832,54 @@ export async function reconcile(run, link, o = {}) {
     return { state };
   });
   if (final.planDrop) await setPaused(run.db, run.tenantId, true, 'plan').catch(() => {});
+  if (direction === 'pull' && final.state === 'synced' && DOCS.has(collection) && link.owner !== 'quickbooks' && !toRemote.length) {
+    return pullTaxCheck(run, link, written, label);
+  }
   return final.state;
+}
+
+/**
+ * After a pull of an estimate or invoice (4.8): Fishtape recomputes its own tax. Within 2 cents per
+ * rate, Fishtape's arithmetic is the truth (it is what the customer saw) and the override goes back to
+ * QuickBooks, unless the invoice has payments there, which only records meta.taxDeltaCents. More
+ * than 2 cents: needs_review (totals_differ).
+ */
+async function pullTaxCheck(run, link, obj, label) {
+  if (!run.ctx.features?.salesTax || !obj?.TxnTaxDetail || obj.GlobalTaxCalculation === 'TaxInclusive' || isVoidedInvoice(obj)) return 'synced';
+  const rec = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, link.collection, link.record_id));
+  if (!rec || rec.deleted || rec.data.status === 'void') return 'synced';
+  const totals = docTotals(rec.data);
+  const cmp = compareTax(totals, obj.TxnTaxDetail, run.ctx.rates, rec.data.issueDate || undefined);
+  const fresh = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLinkById(tx, link.id));
+  const meta = { ...(fresh?.meta || {}) };
+  if (cmp.equal) {
+    if (meta.taxDeltaCents == null) return 'synced';
+    delete meta.taxDeltaCents;
+    await txWrite(run, (tx) => updateLink(tx, run, link.id, { meta }));
+    return 'synced';
+  }
+  const delta = toCents(obj.TotalAmt) - totals.totalCents;
+  if (!cmp.withinTolerance) {
+    if (run.shadow) return 'needs_review';
+    await txWrite(run, async (tx) => {
+      const l = await updateLink(tx, run, link.id, { state: 'needs_review', reason: 'totals_differ', owner: 'quickbooks' });
+      await openReview(tx, run, l, { reason: 'totals_differ', label, message: `QuickBooks' tax differs from Fishtape's by more than 2 cents ($${(delta / 100).toFixed(2)} on the total).` });
+      await writeLog(tx, { direction: 'pull', outcome: 'warning', action: 'review', collection: link.collection, recordId: link.record_id, qboEntity: link.qbo_entity, label, message: 'Tax differs from QuickBooks by more than 2 cents', errorCode: 'totals_differ' });
+    });
+    return 'needs_review';
+  }
+  const hasPayments = link.collection === 'invoices' && toCents(obj.Balance) < toCents(obj.TotalAmt);
+  if (hasPayments || meta.taxDeltaCents === delta || run.shadow) {
+    if (!run.shadow && meta.taxDeltaCents !== delta) await txWrite(run, (tx) => updateLink(tx, run, link.id, { meta: { ...meta, taxDeltaCents: delta } }));
+    return 'synced';
+  }
+  const tax = await taxAfterWrite(run, fresh, link.collection, rec.data, obj, { requestParts: ['pull', rec.version] });
+  await txWrite(run, async (tx) => {
+    if (tax.outcome === 'overridden') delete meta.taxDeltaCents; else if (tax.outcome === 'delta') meta.taxDeltaCents = tax.deltaCents;
+    await updateLink(tx, run, link.id, { meta, sync_token: tax.obj?.SyncToken ?? fresh.sync_token, qbo_updated_at: lastUpdated(tax.obj) || fresh.qbo_updated_at });
+    if (tax.outcome === 'overridden') await writeLog(tx, { direction: 'push', outcome: 'ok', action: 'tax_override', collection: link.collection, recordId: link.record_id, qboEntity: link.qbo_entity, label, message: "QuickBooks' tax set to Fishtape's amounts" });
+  });
+  return 'synced';
 }
 
 /** Holds checked before a QuickBooks write (4.7, 4.8, 4.9, 4.11). Null when the write may go. */

@@ -287,6 +287,9 @@ describe('records, log, mappings, conflicts (7.5 to 7.7)', { skip }, () => {
     assert.equal((await put([{ kind: 'taxCode', key: 'GST+RST|MB', value: s.taxCodes.old8.Id }])).status, 400, 'the 8% code');
     assert.equal((await put([{ kind: 'account', key: 'income.default', value: s.accounts.bank.Id }])).status, 400, 'a bank is not income');
     assert.equal((await put([{ kind: 'account', key: 'stripeClearing', value: s.accounts.stripe.Id }])).status, 200);
+    assert.equal((await put([{ kind: 'option', key: 'stripeCutover', value: TODAY }])).status, 200);
+    const opening = (await t.superPool.query("SELECT value FROM qbo_mappings WHERE tenant_id = $1 AND kind = 'option' AND key = 'stripeClearingOpeningCents'", [A.tenantId])).rows[0];
+    assert.equal(opening?.value, 0, "the clearing account's balance at the cutover");
     assert.equal((await put([{ kind: 'option', key: 'syncFrom', value: 'yesterday' }])).status, 400);
     assert.equal((await put([{ kind: 'option', key: 'stripeVendorId', value: '1' }])).status, 400, 'engine-set options');
     assert.equal((await put([{ kind: 'item', key: 'material', value: '999999' }])).status, 400);
@@ -351,6 +354,30 @@ describe('field roles never see QuickBooks data (10.2)', { skip }, () => {
     for (const bad of ['qbo', 'SyncToken', 'realm', 'SECRET-COLLECTIONS-NOTE', 'Fishtape ref']) assert.ok(!text.includes(bad), bad);
     const st = await call(app, { url: '/api/v1/qbo/status', token: electrician.token });
     assert.equal(st.status, 403);
+  });
+});
+
+describe('reference lists keep only allow-listed fields (3.8, 10.2)', { skip }, () => {
+  test('an Employee or Vendor keeps no birth date, address, SIN, bill rate, tax id or notes', async () => {
+    const realmId = realms[A.tenantId];
+    fake.create(realmId, 'Employee', { GivenName: 'Riley', FamilyName: 'Watt', DisplayName: 'Riley Watt', BirthDate: '1990-04-01', SSN: '046454286', BillRate: 95, PrimaryAddr: { Line1: '1 Home St' }, PrimaryEmailAddr: { Address: 'riley@example.ca' }, Notes: 'private' });
+    fake.create(realmId, 'Vendor', { DisplayName: 'Guillevin', TaxIdentifier: '123456789', BillAddr: { Line1: '2 Supply Rd' }, Notes: 'net 30', PrimaryEmailAddr: { Address: 'ar@guillevin.example' } });
+    await t.superPool.query('UPDATE qbo_connections SET ref_refreshed_at = NULL WHERE tenant_id = $1', [A.tenantId]);
+    await refreshReference(deps, A.tenantId, { force: true });
+    const allowed = {
+      Employee: ['Id', 'DisplayName', 'GivenName', 'FamilyName', 'PrimaryEmailAddr', 'Active'],
+      Vendor: ['Id', 'DisplayName', 'PrimaryEmailAddr', 'Active'],
+      Account: ['Id', 'Name', 'AccountType', 'AccountSubType', 'Active', 'CurrentBalance'],
+      Item: ['Id', 'Name', 'Type', 'Active'],
+      TaxCode: ['Id', 'Name', 'Active', 'SalesTaxRateList', 'PurchaseTaxRateList'],
+      TaxRate: ['Id', 'Name', 'RateValue', 'AgencyRef', 'Active', 'EffectiveTaxRate'],
+      TaxAgency: ['Id', 'DisplayName', 'LastFileDate'],
+      PaymentMethod: ['Id', 'Name', 'Active'], Term: ['Id', 'Name', 'Active', 'DueDays'],
+    };
+    const rows = (await t.superPool.query('SELECT kind, data FROM qbo_reference WHERE tenant_id = $1', [A.tenantId])).rows;
+    assert.ok(rows.some((r) => r.kind === 'Employee' && r.data.DisplayName === 'Riley Watt'));
+    for (const r of rows) for (const k of Object.keys(r.data)) assert.ok(allowed[r.kind]?.includes(k), `${r.kind}.${k} stored`);
+    assert.ok(!JSON.stringify(rows).match(/046454286|1990-04-01|Home St|123456789|private|net 30/));
   });
 });
 
