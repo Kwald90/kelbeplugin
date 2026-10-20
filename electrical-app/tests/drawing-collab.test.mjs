@@ -300,3 +300,51 @@ test('job cost impact: estimate takeoff + change orders vs the drawings, who add
   // no estimate: nothing to compare
   assert.equal(jobCostImpact({ job: { id: 'j2' }, drawings: [], estimates: [], items: ITEMS }).reason, 'no-estimate');
 });
+
+test('area eraser: cutting a stroke is one edit by the eraser; the pieces keep its author', async () => {
+  const { eraseStrokes } = await import('../js/canvas/erase.js');
+  const line = { id: 'ln', layer: 'L1', tool: 'pen', color: '#1c1b19', size: 2, points: [] };
+  for (let x = 0; x <= 400; x += 10) line.points.push([x, 0, 0.5]);
+  const d = drawing();
+  const empty = baselineOf(d);
+  d.strokes.push(line);
+  let r = stampChanges(d, empty, JACKSON, T(1)); // Jackson draws it
+  let base = r.baseline;
+  let n = 0;
+  d.strokes = eraseStrokes(d.strokes, [200, 0], [200, 0], 8, { newId: () => `p${++n}` }).strokes;
+  assert.equal(d.strokes.length, 2);
+  r = stampChanges(d, base, MANNY, T(2)); // Manny rubs out the middle
+  base = r.baseline;
+  assert.equal(r.diff.add.length, 0, 'a cut is not a new mark');
+  assert.equal(r.diff.del.length, 0);
+  assert.equal(r.diff.edit.length, 1, 'one edit of the line');
+  assert.equal(r.diff.edit[0].id, 'ln');
+  for (const s of d.strokes) {
+    assert.deepEqual(s.by, { id: 'emp-j', name: 'Jackson Reid' }, 'still drawn by Jackson');
+    assert.equal(s.at, T(1));
+    assert.equal(s.editBy.id, 'emp-m', 'erased by Manny');
+  }
+  assert.equal(d.strokes[1].splitFrom, 'ln');
+  // rubbing out the whole second piece: still an edit of the line, since the first piece remains
+  d.strokes = eraseStrokes(d.strokes, [215, 0], [420, 0], 8, { newId: () => `p${++n}` }).strokes;
+  assert.equal(d.strokes.length, 1);
+  r = stampChanges(d, base, MANNY, T(3));
+  base = r.baseline;
+  assert.deepEqual([r.diff.add.length, r.diff.edit.length, r.diff.del.length], [0, 1, 0]);
+  assert.ok(d.tombstones.p1, 'the gone piece leaves a tombstone for the merge');
+  // and erasing what is left deletes the line
+  d.strokes = eraseStrokes(d.strokes, [-20, 0], [200, 0], 20).strokes;
+  r = stampChanges(d, base, MANNY, T(4));
+  assert.deepEqual([r.diff.add.length, r.diff.edit.length, r.diff.del.length], [0, 0, 1]);
+});
+
+test('a stroke drawn and cut before a save counts as one new mark', async () => {
+  const { eraseStrokes } = await import('../js/canvas/erase.js');
+  const d = drawing();
+  const base = baselineOf(d);
+  d.strokes.push({ id: 'ln', layer: 'L1', tool: 'pen', size: 2, points: [[0, 0, 0.5], [400, 0, 0.5]] });
+  d.strokes = eraseStrokes(d.strokes, [200, 0], [200, 0], 8, { newId: () => 'p1' }).strokes;
+  const r = stampChanges(d, base, JACKSON, T(1));
+  assert.deepEqual([r.diff.add.length, r.diff.edit.length], [1, 0]);
+  assert.ok(d.strokes.every((s) => s.by?.id === 'emp-j'));
+});

@@ -1,8 +1,9 @@
 // Canvas pen input in headless Chrome, on the demo (no server needed): writes "TRAVIS" fast with
 // a pen (trusted CDP pen events, and synthesized PointerEvents with pressure and coalesced
 // samples) and checks every letter's strokes and the V's corner; a pointercancel mid-V keeps the
-// stroke; a palm landing mid-V is ignored; a fast eraser swipe; finger pan and pinch; mouse and
-// finger drawing.
+// stroke; a palm landing mid-V is ignored; a fast eraser swipe (Area and Whole stroke); area-erasing
+// the middle of a long line; tool sizes; smoothness 0 vs 80; two- and three-finger taps (undo, redo)
+// versus a pan, a long press and the Pencil; finger pan and pinch; mouse and finger drawing.
 //   node electrical-app/tests/e2e/pen.e2e.mjs [appDir] [port] [profileDir]
 // Needs python (static server) and Chrome (CHROME_PATH to override).
 import { spawn } from 'node:child_process';
@@ -101,6 +102,7 @@ async function openCanvas() {
 }
 const state = () => ev(`(() => { const k = kelbeCanvas; return { n: k.d.strokes.length, view: { ...k.st.view }, strokes: k.d.strokes.map((s) => ({ tool: s.tool, pts: s.points.map((p) => [p[0], p[1]]) })) }; })()`);
 const toWorld = (v, [sx, sy]) => [(sx - v.x) / v.zoom, (sy - v.y) / v.zoom];
+const resetOpts = () => ev(`Object.keys(localStorage).filter((k) => k.startsWith('kc.canvas.opts')).forEach((k) => localStorage.removeItem(k))`);
 const canvasOrigin = () => ev(`(() => { const r = document.querySelector('.cv-canvas').getBoundingClientRect(); return [r.left, r.top]; })()`);
 
 // trusted pen via CDP (pointerType pen, with force)
@@ -270,16 +272,159 @@ try {
     check('pen draws after a pinch', (await state()).n === c.n + 1);
   }
 
-  // 5b. a quick eraser swipe removes every stroke it crosses, not just those under the samples
+  // 5b. a quick eraser swipe catches every stroke it crosses, not just those under the samples:
+  // in Area mode (the default) it cuts each in two; in Whole stroke mode it removes them
   {
     await openCanvas();
-    for (const x of [300, 340, 380, 420]) await cdpPenStroke(samples([[x, 300], [x, 400]], 11));
+    const four = async () => { for (const x of [300, 340, 380, 420]) await cdpPenStroke(samples([[x, 300], [x, 400]], 11)); };
+    await four();
     const b = await state();
     await ev(`kelbeCanvas.setTool('eraser')`);
+    check('eraser defaults to Area mode', (await ev(`kelbeCanvas.opts.eraser.mode`)) === 'area');
     await cdpPenStroke([[270, 350], [450, 350]]); // one jump across all four
     const a = await state();
-    check('fast eraser swipe removes all four crossed strokes', b.n === 4 && a.n === 0, `${b.n} -> ${a.n}`);
+    check('fast Area swipe cuts all four crossed strokes in two', b.n === 4 && a.n === 8 && a.strokes.every((s) => s.pts.length >= 2), `${b.n} -> ${a.n}`);
+    // switch to Whole stroke in the eraser's settings
+    await ev(`document.querySelector('.cv-wheel-center').click()`);
+    await waitFor(`!!document.querySelector('.cv-pop:not([hidden]) [data-mode="stroke"]')`);
+    await ev(`document.querySelector('.cv-pop [data-mode="stroke"]').click()`);
+    check('eraser mode toggle sets Whole stroke', (await ev(`kelbeCanvas.opts.eraser.mode`)) === 'stroke');
+    await ev(`document.querySelector('.cv-pop').hidden = true`);
     await ev(`kelbeCanvas.setTool('pen')`);
+    await openCanvas();
+    await four();
+    await ev(`kelbeCanvas.setTool('eraser')`);
+    await cdpPenStroke([[270, 350], [450, 350]]);
+    const c = await state();
+    check('fast Whole-stroke swipe removes all four crossed strokes', c.n === 0, `-> ${c.n}`);
+    await resetOpts(); // brush settings are remembered: the next canvas starts from the defaults
+    await ev(`kelbeCanvas.setTool('pen')`);
+  }
+
+  // 5c. Area eraser on a long line: erasing the middle leaves two pieces with the original ends; one undo restores it
+  {
+    await openCanvas();
+    await ev(`kelbeCanvas.opts.pen.smooth = 0`);
+    await cdpPenStroke(samples([[150, 450], [950, 450]], 9));
+    const b = await state();
+    const orig = b.strokes[0];
+    await ev(`kelbeCanvas.setTool('eraser')`);
+    await cdpPenStroke([[550, 420], [552, 480]]); // a short dab across the middle
+    const a = await state();
+    const [l, r] = a.strokes;
+    const v = a.view;
+    const er = (await ev(`kelbeCanvas.opts.eraser.size`)) / 2 / v.zoom; // eraser radius, world
+    check('area-erasing the middle of a long line leaves two pieces', a.n === 2, `n ${a.n}`);
+    check('the pieces keep the line\'s ends', !!r && JSON.stringify(l.pts[0]) === JSON.stringify(orig.pts[0]) && JSON.stringify(r.pts.at(-1)) === JSON.stringify(orig.pts.at(-1)));
+    const mid = toWorld(v, [551, 450])[0];
+    check('the gap is where the eraser went, about its width', !!r && l.pts.at(-1)[0] < mid - er * 0.9 && r.pts[0][0] > mid + er * 0.9 && r.pts[0][0] - l.pts.at(-1)[0] < er * 2 + 12, r ? `${l.pts.at(-1)[0].toFixed(1)}..${r.pts[0][0].toFixed(1)} r ${er.toFixed(1)}` : '');
+    await ev(`document.querySelector('button[aria-label^="Undo"]').click()`);
+    const u = await state();
+    check('one undo brings the whole line back', u.n === 1 && JSON.stringify(u.strokes[0].pts) === JSON.stringify(orig.pts), `n ${u.n}`);
+    await ev(`kelbeCanvas.setTool('pen')`);
+  }
+
+  // 5d. tool sizes: the popover slider and the quick size bar, each tool its own, remembered
+  {
+    await openCanvas();
+    await ev(`kelbeCanvas.setTool('pen')`);
+    const before = await ev(`kelbeCanvas.opts.pen.size`);
+    await ev(`document.querySelector('.cv-sizebar button[aria-label="Bigger"]').click()`);
+    const bigger = await ev(`kelbeCanvas.opts.pen.size`);
+    check('size bar Bigger grows the pen', bigger > before, `${before} -> ${bigger}`);
+    await ev(`document.querySelector('.cv-wheel-center').click()`);
+    await waitFor(`!!document.querySelector('.cv-pop:not([hidden]) input[name="size"]')`);
+    await ev(`(() => { const s = document.querySelector('.cv-pop input[name="size"]'); s.value = s.max; s.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    check('size slider top end is the pen\'s maximum', (await ev(`kelbeCanvas.opts.pen.size`)) === 24);
+    check('preview dot shows the size at this zoom', await ev(`(() => { const d = document.querySelector('.cv-pop .cv-size-dot'); return !!d && parseFloat(d.style.width) > 20; })()`));
+    await ev(`document.querySelector('.cv-pop').hidden = true`);
+    await cdpPenStroke(samples([[300, 600], [400, 600]], 9));
+    check('a new stroke uses the new size', (await ev(`kelbeCanvas.d.strokes.at(-1).size`)) === 24);
+    await ev(`kelbeCanvas.setTool('marker')`);
+    const m0 = await ev(`kelbeCanvas.opts.marker.size`);
+    await ev(`document.querySelector('.cv-sizebar button[aria-label="Smaller"]').click()`);
+    check('the marker keeps its own size', (await ev(`kelbeCanvas.opts.marker.size`)) < m0 && (await ev(`kelbeCanvas.opts.pen.size`)) === 24);
+    await ev(`kelbeCanvas.setTool('eraser')`);
+    await ev(`document.querySelector('.cv-sizebar button[aria-label="Bigger"]').click()`);
+    check('the eraser has a size bar too', (await ev(`document.querySelector('.cv-sizebar').hidden`)) === false && (await ev(`kelbeCanvas.opts.eraser.size`)) > 18);
+    const stored = await ev(`Object.keys(localStorage).filter((k) => k.startsWith('kc.canvas.opts')).map((k) => JSON.parse(localStorage.getItem(k))).some((o) => o.pen?.size === 24)`);
+    check('sizes are remembered on this device', stored);
+    await ev(`kelbeCanvas.setTool('select')`);
+    check('no size bar for Select', (await ev(`document.querySelector('.cv-sizebar').hidden`)) === true);
+    await ev(`kelbeCanvas.setTool('pen')`);
+    await resetOpts();
+  }
+
+  // 5e. smoothness: the same jittery line at 0 and at 80
+  {
+    await openCanvas();
+    const [cx, cy] = await canvasOrigin();
+    const jitter = [];
+    let seed = 3;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 - 0.5; };
+    for (let i = 0; i <= 160; i++) jitter.push([cx + 200 + i * 3, cy + 300 + (i % 160 ? rnd() * 7 : 0)]);
+    const wobble = async (smooth, id) => {
+      await ev(`kelbeCanvas.opts.pen.smooth = ${smooth}`);
+      await synthStroke(jitter.map(([x, y]) => [x, y + id * 0]), { id });
+      const s = (await state()).strokes.at(-1);
+      const ys = s.pts.slice(3, -3).map((p) => p[1]);
+      const mean = ys.reduce((a, b) => a + b, 0) / ys.length;
+      return { rms: Math.sqrt(ys.reduce((a, y) => a + (y - mean) ** 2, 0) / ys.length), end: s.pts.at(-1) };
+    };
+    const raw = await wobble(0, 61);
+    const smooth = await wobble(80, 62);
+    const v = (await state()).view;
+    const endW = toWorld(v, jitter.at(-1));
+    check('smoothness 80 takes out most of the jitter', smooth.rms < raw.rms * 0.5, `rms ${raw.rms.toFixed(2)} -> ${smooth.rms.toFixed(2)}`);
+    check('a smoothed line still ends where the pen lifted', Math.hypot(smooth.end[0] - endW[0], smooth.end[1] - endW[1]) < 0.01);
+    // the smoothness slider and its preview
+    await ev(`document.querySelector('.cv-wheel-center').click()`);
+    await waitFor(`!!document.querySelector('.cv-pop:not([hidden]) input[name="smooth"]')`);
+    await ev(`(() => { const s = document.querySelector('.cv-pop input[name="smooth"]'); s.value = 55; s.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    check('smoothness slider sets the pen\'s smoothness, with a preview', (await ev(`kelbeCanvas.opts.pen.smooth`)) === 55 && (await ev(`!!document.querySelector('.cv-pop canvas.cv-squiggle')`)));
+    await ev(`document.querySelector('.cv-pop').hidden = true`);
+    await resetOpts();
+  }
+
+  // 5f. finger taps: two fingers undo, three redo, a two-finger pan does neither
+  {
+    await openCanvas();
+    await cdpPenStroke(samples([[300, 300], [420, 340]], 9));
+    await cdpPenStroke(samples([[300, 400], [420, 440]], 9));
+    await sleep(500); // past the palm window after the pen lifts
+    const b = await state();
+    const tap = async (pts) => { await cdpTouch('touchStart', pts); await sleep(60); await cdpTouch('touchEnd', []); await sleep(120); };
+    await tap([[500, 500], [580, 520]]);
+    const a = await state();
+    check('two-finger tap undoes the last stroke', a.n === b.n - 1 && JSON.stringify(a.view) === JSON.stringify(b.view), `n ${b.n} -> ${a.n}`);
+    check('the gesture shows a toast', await ev(`[...document.querySelectorAll('.toast')].some((t) => t.textContent === 'Undo')`));
+    await tap([[500, 500], [560, 520], [620, 500]]);
+    const c = await state();
+    check('three-finger tap redoes it', c.n === b.n, `n ${a.n} -> ${c.n}`);
+    // a two-finger pan
+    await cdpTouch('touchStart', [[500, 500], [580, 500]]);
+    for (let i = 1; i <= 6; i++) await cdpTouch('touchMove', [[500 + i * 14, 500 + i * 6], [580 + i * 14, 500 + i * 6]]);
+    await cdpTouch('touchEnd', []);
+    await sleep(150);
+    const p = await state();
+    check('a two-finger pan does not undo', p.n === c.n && (p.view.x !== c.view.x || p.view.y !== c.view.y), `n ${c.n} -> ${p.n}`);
+    // a slow two-finger press is not a tap either
+    await cdpTouch('touchStart', [[500, 500], [580, 520]]); await sleep(450); await cdpTouch('touchEnd', []); await sleep(120);
+    check('a long two-finger press does not undo', (await state()).n === c.n);
+    // the Pencil down: fingers landing are palms, no tap
+    await ev(`(() => { const cv = document.querySelector('.cv-canvas'); cv.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 301, pointerType: 'pen', isPrimary: true, clientX: 200, clientY: 200, pressure: 0.5, buttons: 1 })); })()`);
+    await tap([[500, 500], [580, 520]]);
+    await ev(`(() => { const cv = document.querySelector('.cv-canvas'); cv.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 301, pointerType: 'pen', isPrimary: true, clientX: 200, clientY: 200, pressure: 0, buttons: 0 })); })()`);
+    await sleep(500);
+    const q = await state();
+    check('no tap while the Pencil is down', q.n === c.n + 1, `n ${c.n} -> ${q.n} (the pen dot stays)`);
+    // a chosen action: two-finger tap = zoom to fit
+    await ev(`localStorage.setItem('ft.gestures', JSON.stringify({ twoFingerTap: 'fit' }))`);
+    await ev(`kelbeCanvas.st.view.zoom = 3; kelbeCanvas.st.view.x -= 900`);
+    await tap([[500, 500], [580, 520]]);
+    const f = await state();
+    check('two-finger tap set to Zoom to fit fits instead', f.n === q.n && f.view.zoom < 3, `zoom ${f.view.zoom}`);
+    await ev(`localStorage.removeItem('ft.gestures')`);
   }
 
   // 6. mouse drawing (fresh drawing, no pen seen)

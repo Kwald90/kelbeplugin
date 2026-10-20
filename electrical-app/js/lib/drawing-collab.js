@@ -84,13 +84,19 @@ const growBox = (a, b) => (!b ? a : !a ? [...b] : [Math.min(a[0], b[0]), Math.mi
 
 // ---------- baseline and stamping ----------
 
-/** What the editor compares the next save against: id -> { kind, key, time, tag, box, pos }. */
+/**
+ * The stroke a piece belongs to: the area eraser cuts a stroke into pieces, the first keeping
+ * its id and the rest carrying splitFrom (canvas/erase.js). They count as one item in the history.
+ */
+const familyOf = (it) => it?.splitFrom || it?.id;
+
+/** What the editor compares the next save against: id -> { kind, key, time, tag, box, pos, family }. */
 export function baselineOf(d) {
   const m = new Map();
   for (const kind of ITEM_KINDS) {
     for (const it of d?.[kind] || []) {
       if (!it?.id) continue;
-      m.set(it.id, { kind, key: contentKey(it), time: itemTime(it), tag: tagOf(kind, it), box: itemBox(kind, it), pos: kind === 'objects' || kind === 'texts' ? [it.x, it.y] : null });
+      m.set(it.id, { kind, key: contentKey(it), time: itemTime(it), tag: tagOf(kind, it), box: itemBox(kind, it), pos: kind === 'objects' || kind === 'texts' ? [it.x, it.y] : null, family: familyOf(it) });
     }
   }
   return m;
@@ -110,12 +116,35 @@ export function stampChanges(d, baseline, who, now = new Date().toISOString()) {
   const diff = { add: [], del: [], move: [], edit: [] };
   const seen = new Set();
   d.tombstones ||= {};
+  // Pieces of one stroke cut by the area eraser (familyOf) count once per list: cutting a line
+  // in two is one edit of it, not an edit plus a new mark.
+  const present = new Set(), before = new Set();
+  for (const kind of ITEM_KINDS) for (const it of d[kind] || []) if (it?.id) present.add(familyOf(it));
+  for (const b of baseline.values()) before.add(b.family ?? null);
+  const once = (list) => {
+    const m = new Map();
+    return (fam, entry) => {
+      const e = m.get(fam);
+      if (e) e.box = growBox(e.box, entry.box);
+      else { const x = { ...entry, id: fam }; m.set(fam, x); diff[list].push(x); }
+    };
+  };
+  const addOnce = once('add'), editOnce = once('edit'), delOnce = once('del');
   for (const kind of ITEM_KINDS) {
     for (const it of d[kind] || []) {
       if (!it?.id) continue;
       seen.add(it.id);
       const b = baseline.get(it.id);
       const entry = { id: it.id, kind, tag: tagOf(kind, it), box: itemBox(kind, it) };
+      if (!b && it.splitFrom && before.has(it.splitFrom)) {
+        // a piece the eraser cut from a stroke that was already here: it keeps that stroke's
+        // author (copied onto it); whoever erased made the edit
+        delete d.tombstones[it.id];
+        it.editBy = by;
+        it.editAt = after(now, itemTime(it));
+        editOnce(it.splitFrom, entry);
+        continue;
+      }
       if (!b) {
         if (d.tombstones[it.id] && it.by) {
           // undo brought back a deleted item: it keeps its author, and its edit time passes
@@ -131,21 +160,25 @@ export function stampChanges(d, baseline, who, now = new Date().toISOString()) {
           it.by = by; it.at = after(now, t?.at);
           delete it.editBy; delete it.editAt;
         }
-        diff.add.push(entry);
+        addOnce(familyOf(it), entry);
       } else {
         const key = contentKey(it);
         if (key === b.key) continue;
         it.editBy = by;
         it.editAt = after(now, b.time);
         const moved = b.pos && contentKey({ ...it, x: b.pos[0], y: b.pos[1] }) === b.key;
-        diff[moved ? 'move' : 'edit'].push({ ...entry, box: growBox(entry.box, b.box) });
+        if (moved) diff.move.push({ ...entry, box: growBox(entry.box, b.box) });
+        else editOnce(familyOf(it), { ...entry, box: growBox(entry.box, b.box) });
       }
     }
   }
   for (const [id, b] of baseline) {
     if (seen.has(id)) continue;
     d.tombstones[id] = { at: after(now, b.time), by: by.id };
-    diff.del.push({ id, kind: b.kind, tag: b.tag, box: b.box });
+    const gone = { id, kind: b.kind, tag: b.tag, box: b.box };
+    const fam = b.family ?? id;
+    // part of a stroke whose other pieces are still here: the stroke was edited, not deleted
+    if (present.has(fam)) editOnce(fam, gone); else delOnce(fam, gone);
   }
   pruneTombstones(d.tombstones);
   return { diff, baseline: baselineOf(d) };

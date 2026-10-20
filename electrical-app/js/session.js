@@ -11,6 +11,7 @@
 // token in the iOS Keychain (lib/native.js), and sends them as Authorization and X-Fishtape-Device.
 import { getUnits, hasUnitsChoice, setUnits } from './lib/units.js';
 import { isNativeApp, getSecret, setSecret, removeSecret } from './lib/native.js';
+import { GESTURE_KEYS, getGesture, hasGestureChoice, setGesture } from './canvas/gestures.js';
 
 const K = {
   mode: 'ft.mode',            // 'demo' while the local-only demo is in use
@@ -181,18 +182,21 @@ export const session = {
   },
 };
 
-// ---- preferences that follow the person (units, theme) ----------------------
+// ---- preferences that follow the person (units, theme, canvas finger gestures) ----------------------
 
-const PREF_KEYS = ['units', 'theme'];
+const PREF_KEYS = ['units', 'theme', ...GESTURE_KEYS];
 
 function localPrefs() {
   let theme = 'system';
   try { theme = localStorage.getItem(K.theme) || 'system'; } catch { /* ignore */ }
-  return { units: hasUnitsChoice() ? getUnits() : null, theme };
+  // a gesture nobody picked on this device is null, so the profile's choice (or nothing) wins
+  const gestures = Object.fromEntries(GESTURE_KEYS.map((k) => [k, hasGestureChoice(k) ? getGesture(k) : null]));
+  return { units: hasUnitsChoice() ? getUnits() : null, theme, ...gestures };
 }
 
 function applyLocal(key, value) {
   if (key === 'units') setUnits(value);
+  if (GESTURE_KEYS.includes(key)) setGesture(key, value);
   if (key === 'theme') {
     try { if (value === 'system') localStorage.removeItem(K.theme); else localStorage.setItem(K.theme, value); } catch { /* ignore */ }
     if (typeof document !== 'undefined') {
@@ -219,7 +223,7 @@ export function reconcilePrefs({ local, server = {}, synced = null }) {
 }
 
 /**
- * Bring units and theme in line with the profile: local changes go up (PATCH /me/prefs),
+ * Bring units, theme and gestures in line with the profile: local changes go up (PATCH /me/prefs),
  * profile changes come down. localStorage stays the offline cache.
  * @returns {Promise<string[]>} keys that changed on this device
  */
