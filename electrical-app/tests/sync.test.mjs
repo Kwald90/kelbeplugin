@@ -66,6 +66,17 @@ test('a burst of edits to one record is one mutation; fields accumulate', () => 
   assert.equal(e.baseVersion, null);
   assert.equal(e.data.email, 'a@example.test');
   assert.equal(e.fields, null, 'a create carries the whole record');
+  assert.equal('fields' in toWire(e), false, 'sent without a field list: the whole record');
+});
+
+test("an edit to a synced record sends the fields it changed (a foreman's review is only the flag)", () => {
+  store.applyRemote('timeEntries', 'te1', { id: 'te1', employeeId: 'e1', clockIn: '2026-10-19T13:00:00.000Z', clockOut: null, flag: { text: 'off site' } }, 1);
+  store.update('timeEntries', 'te1', { flag: { text: 'off site', reviewedAt: '2026-10-19T21:05:00.000Z' } });
+  const e = store.queue.find((x) => x.collection === 'timeEntries' && x.id === 'te1');
+  const w = toWire(e);
+  assert.deepEqual(w.fields, ['flag']);
+  assert.equal(w.baseVersion, 1);
+  assert.equal(w.data.clockOut, null, 'the whole record still goes, for last-writer-wins elsewhere');
 });
 
 test('created and deleted before syncing leaves nothing to push', () => {

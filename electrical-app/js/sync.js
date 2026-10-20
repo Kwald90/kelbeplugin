@@ -81,6 +81,9 @@ export function toWire(e) {
   if (e.itemMerge) m.itemMerge = true;
   // Deletes carry their edit time so last-writer-wins can compare it.
   m.data = e.op === 'upsert' ? e.data : { deletedAt: e.at };
+  // The fields this device changed (null: the whole record). The server uses them where a stale
+  // copy must not overwrite the rest, e.g. a foreman's review of a time entry (auth/access.js).
+  if (e.op === 'upsert' && Array.isArray(e.fields)) m.fields = e.fields;
   return m;
 }
 

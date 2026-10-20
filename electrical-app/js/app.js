@@ -269,8 +269,9 @@ function switchUser() {
   });
 }
 
-function leaveDemo() {
+async function leaveDemo() {
   session.setDemo(false);
+  await stopTracking();
   restart('sign-in');
 }
 
@@ -363,6 +364,7 @@ async function signOut({ keepData = false } = {}) {
     }
     sync.stop();
   }
+  await stopTracking();
   const userId = session.me?.user?.id;
   await session.logout();
   if (shared) {
@@ -383,9 +385,15 @@ async function switchCompany(tenantId) {
     await api.post('/api/v1/auth/switch-tenant', { tenantId });
   } catch (e) { ui.toast(e.message, 'error'); return; }
   sync?.stop();
+  await stopTracking();
   await store.close();
   if (!session.device()) await clearCacheStorage();
   restart('dashboard');
+}
+
+/** Location stops with the session: the iOS geofence would otherwise outlive the page (lib/shift-tracker.js). */
+async function stopTracking() {
+  try { await tracker?.stop?.(); } catch { /* not running */ }
 }
 
 function onSessionEnded(err) {

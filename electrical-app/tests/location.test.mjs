@@ -161,13 +161,35 @@ describe('travel', () => {
   test('segments become entry writes: the open entry closes, the rest are new, the last stays open', () => {
     const segs = G.buildTravelSegments([fix(offset(A, 600), T('10:12')), fix(B, T('10:40'))], SITES, { start: { at: T('07:00'), jobId: 'jobA' }, end: T('12:00') });
     const { update, create } = G.entriesForSegments({ id: 'e1', employeeId: 'emp', clockIn: T('07:00'), jobId: 'jobA' }, segs);
-    assert.deepEqual(update, { kind: 'work', jobId: 'jobA', clockOut: T('10:12') });
+    assert.deepEqual(update, { kind: 'work', jobId: 'jobA', clockOut: T('10:12'), breakMins: 0, breakStart: null });
     assert.equal(create.length, 2);
     assert.equal(create[0].kind, 'travel');
     assert.equal(create[0].jobId, 'jobB');
     assert.equal(create[0].travelFromJobId, 'jobA');
     assert.equal(create[1].clockOut, null);
     assert.equal(create[1].source, 'auto-split');
+  });
+
+  test('the break goes with the segments: lunch at B stays at B, a running break keeps running', () => {
+    // 07:00 at A, left 07:20, at B from 07:45; a 30-minute lunch was taken (at B), now 13:00.
+    const segs = G.buildTravelSegments([{ type: 'exit', siteId: 'jobA', at: T('07:20') }, { type: 'enter', siteId: 'jobB', at: T('07:45') }], SITES, { start: { at: T('07:00'), jobId: 'jobA' }, end: T('13:00') });
+    assert.equal(segs.length, 3);
+    const open = { id: 'e1', employeeId: 'emp', clockIn: T('07:00'), jobId: 'jobA', breakMins: 30, breakStart: null };
+    const { update, create } = G.entriesForSegments(open, segs);
+    assert.deepEqual([update.breakMins, create[0].breakMins, create[1].breakMins], [0, 0, 30], 'not 30 minutes of break on a 20-minute stop at A');
+    const paid = (s, b) => (Date.parse(s.end) - Date.parse(s.start)) / 60000 - b;
+    assert.equal(paid(segs[0], update.breakMins) + paid(segs[1], create[0].breakMins) + paid(segs[2], create[1].breakMins), 360 - 30, 'the shift still pays 5.5 h');
+    // On break since 12:30 when the update is applied: the open entry keeps the break running.
+    const onBreak = G.entriesForSegments({ ...open, breakMins: 0, breakStart: T('12:30') }, segs);
+    assert.equal(onBreak.update.breakStart, null);
+    assert.equal(onBreak.create[1].breakStart, T('12:30'));
+    // A break started at A at 07:10 and still running: A gets its 10 minutes, travel all of its 25, B runs from 07:45.
+    const long = G.entriesForSegments({ ...open, breakMins: 0, breakStart: T('07:10') }, segs);
+    assert.deepEqual([long.update.breakMins, long.create[0].breakMins, long.create[1].breakStart], [10, 25, T('07:45')]);
+    // More recorded break than the work segments hold: nothing is lost.
+    const big = G.splitBreak({ breakMins: 400 }, segs);
+    assert.equal(big.reduce((s, b) => s + b.breakMins, 0), 400);
+    assert.ok(big[0].breakMins <= 20 && big[1].breakMins <= 25);
   });
 });
 
@@ -187,6 +209,30 @@ describe('maps and fixes', () => {
     const picked = pickRegions(many, { lat: A.lat + 0.29, lng: A.lng });
     assert.equal(picked.length, 18);
     assert.equal(picked[0].id, 'j29');
+  });
+
+  test('a map of people\'s points fetches tiles only around job sites, never around a point at home', async () => {
+    const M = await import('../js/lib/minimap.js');
+    const home = { lat: A.lat - 0.1, lng: A.lng - 0.1 }; // about 13 km from either site
+    const at = (p, z) => { const q = G.project(p.lat, p.lng, z); return [Math.floor(q.x / G.TILE), Math.floor(q.y / G.TILE)]; };
+    assert.ok(M.tileNearSites(15, ...at(A, 15), SITES), 'the site\'s own tile');
+    assert.ok(!M.tileNearSites(15, ...at(home, 15), SITES), 'not the tile at home');
+    assert.ok(!M.tileNearSites(15, ...at(home, 15), []), 'no sites, no tiles');
+    // The real map, drawn with a stand-in DOM: which tile URLs would the browser request?
+    const imgs = [];
+    const node = () => ({ style: {}, dataset: {}, classList: { add() {} }, setAttribute() {}, addEventListener() {}, append() {}, replaceChildren() {}, closest: () => null });
+    const h = (tag) => { const n = node(); if (tag === 'img') imgs.push(n); return n; };
+    const saved = { document: globalThis.document, raf: globalThis.requestAnimationFrame };
+    globalThis.document = { createElementNS: () => node() };
+    globalThis.requestAnimationFrame = () => 0;
+    try {
+      const tiles = (center, tilesNear) => { imgs.length = 0; M.miniMap({ h, center, zoom: 16, height: 220, tilesNear }).setView(); return imgs.map((i) => i.src); };
+      assert.ok(tiles(home, undefined).length > 0, 'the job screen\'s map loads every tile');
+      assert.deepEqual(tiles(home, SITES), [], 'My location at home: no tile request at all');
+      const nearA = tiles(A, SITES);
+      const [tx, ty] = at(A, 15);
+      assert.ok(nearA.some((u) => u.endsWith(`/tile/15/${ty}/${tx}`)), 'at the site the map still loads');
+    } finally { globalThis.document = saved.document; globalThis.requestAnimationFrame = saved.raf; }
   });
 });
 
@@ -286,6 +332,17 @@ describe('the clock keeps location to open shifts', () => {
     assert.equal(last.clockOut, null);
     assert.equal(last.jobId, 'jobB');
     assert.equal(store.list('timeEntries', (t) => t.employeeId === 'emp3').length, 3);
+  });
+
+  test('applying segments during a break keeps the break running on the new open entry', () => {
+    const open = C.clockIn(store, { employeeId: 'emp4', jobId: 'jobA', at: T('07:00') });
+    store.update('timeEntries', open.id, { breakStart: T('12:30') });
+    const segs = G.buildTravelSegments([{ type: 'exit', siteId: 'jobA', at: T('07:20') }, { type: 'enter', siteId: 'jobB', at: T('07:45') }], sites, { start: { at: T('07:00'), jobId: 'jobA' }, end: T('12:45') });
+    const last = C.applySegments(store, store.get('timeEntries', open.id), segs);
+    assert.equal(last.breakStart, T('12:30'));
+    assert.equal(store.get('timeEntries', open.id).breakStart, null);
+    const done = C.closeEntry(store, last.id, { at: T('13:00') });
+    assert.equal(done.breakMins, 30, 'the break is unpaid, not lost');
   });
 
   test('approving a week and reviewing a flag', () => {

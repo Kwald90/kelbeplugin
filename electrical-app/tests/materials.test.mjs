@@ -120,3 +120,32 @@ describe('the combined list', () => {
     assert.equal(MR.withoutMoney({ id: 'r', costCents: 5 }).costCents, undefined);
   });
 });
+
+describe('undoing a "From stock" move', () => {
+  test('the request opens again at the step it had reached', () => {
+    assert.deepEqual(MR.reopenAfterUndo({ status: 'fulfilled', sentAt: 'x', orderedAt: 'y', stockMoveId: 'm' }), { status: 'ordered', fulfilledAt: null, stockMoveId: null, fromLocationId: null });
+    assert.equal(MR.reopenAfterUndo({ status: 'fulfilled', sentAt: 'x' }).status, 'sent');
+    assert.equal(MR.reopenAfterUndo({ status: 'fulfilled' }).status, 'requested');
+  });
+
+  test('Undo move puts the stock back, removes the move and reopens its request', async () => {
+    globalThis.document ??= { addEventListener() {} };
+    const { store } = await import('../js/store.js');
+    const { applyMove, undoMove } = await import('../js/modules/inventory.js');
+    const { unbilledTm } = await import('../js/lib/tm.js');
+    await store.open({ kind: 'demo' });
+    const it = store.add('items', { name: 'Undo test strap', unit: 'ea', costCents: 25, stock: { vanU: 10 } });
+    const job = store.add('jobs', { title: 'Undo test', billingMode: 'tm' });
+    const r = store.add('materialRequests', { jobId: job.id, itemId: it.id, qty: 4, status: 'sent', sentAt: '2026-10-19T20:00:00.000Z' });
+    const { move } = applyMove(store, { type: 'use', itemId: it.id, fromLocationId: 'vanU', qty: 4, jobId: job.id, date: '2026-10-20' });
+    store.update('materialRequests', r.id, { status: 'fulfilled', fulfilledAt: '2026-10-20T15:00:00.000Z', stockMoveId: move.id, fromLocationId: 'vanU' });
+    assert.equal(store.get('items', it.id).stock.vanU, 6);
+    assert.equal(undoMove(store, store.get('stockMoves', move.id)), 1);
+    assert.equal(store.get('items', it.id).stock.vanU, 10);
+    assert.equal(store.get('stockMoves', move.id), null);
+    const back = store.get('materialRequests', r.id);
+    assert.deepEqual([back.status, back.stockMoveId, back.fulfilledAt], ['sent', null, null]);
+    const src = { timeEntries: [], stockMoves: store.list('stockMoves'), materialRequests: store.list('materialRequests'), items: store.list('items') };
+    assert.equal(unbilledTm({ job: store.get('jobs', job.id), settings: {}, ...src }).materials.length, 0, 'nothing used, nothing billed');
+  });
+});

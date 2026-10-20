@@ -101,6 +101,31 @@ export function mergeWrite(p, coll, existing, next, { itemMerge = false } = {}) 
   return mergeTask(existing, next, { worker: p.kind !== 'api_key' && !p.isManager });
 }
 
+/** What a manager's review or approval of a time entry changes (PWA lib/clock.js reviewFlag, approveEntries). */
+export const TIME_REVIEW_FIELDS = ['flag', 'approved', 'approvedAt', 'approvedBy'];
+const FLAG_REVIEW_KEYS = ['reviewedAt', 'reviewedBy', 'reviewNote'];
+
+/**
+ * A stale write (made on an older copy) that only reviews or approves a time entry: `fields`, the
+ * fields the device changed, are all review fields. Only those go onto the stored entry, so a
+ * foreman's old copy never puts back clock times the worker changed since (a clock-out, a
+ * corrected time). Returns the data to store, or null when this is not such a write.
+ */
+export function reviewMerge(coll, existing, next, fields) {
+  if (coll !== 'timeEntries' || !existing || !next || !Array.isArray(fields) || !fields.length) return null;
+  if (!fields.every((f) => TIME_REVIEW_FIELDS.includes(f))) return null;
+  const t = (iso) => Date.parse(iso) || 0;
+  const out = { ...existing, updatedAt: t(next.updatedAt) >= t(existing.updatedAt) ? next.updatedAt : existing.updatedAt };
+  for (const f of fields) {
+    if (f === 'flag' && existing.flag && next.flag) {
+      out.flag = { ...existing.flag };
+      for (const k of FLAG_REVIEW_KEYS) { if (k in next.flag) out.flag[k] = next.flag[k]; else delete out.flag[k]; }
+    } else if (f in next) out[f] = next[f];
+    else delete out[f];
+  }
+  return out;
+}
+
 // ---- money (prices, costs, rates) ---------------------------------------------
 // Crew never see prices or costs. Money roles: owner, admin, office (the `estimates`
 // permission), foremen when the company allows it (settings.foremanSeesCosts, loaded once per

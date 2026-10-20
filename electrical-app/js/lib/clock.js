@@ -99,7 +99,8 @@ export function applySegments(store, open, segments) {
   const cur = store.get('timeEntries', open?.id);
   if (!cur || cur.clockOut || !segments?.length) return cur;
   const { update, create } = entriesForSegments(cur, segments, { keepOpen: true });
-  let last = store.update('timeEntries', cur.id, { ...update, ...(update.clockOut ? { breakStart: null } : {}) });
+  // The break moves with the segments (geo.js splitBreak): a running one is never dropped.
+  let last = store.update('timeEntries', cur.id, update);
   for (const c of create) last = store.add('timeEntries', { ...c, locStatus: cur.locStatus || null });
   return last;
 }

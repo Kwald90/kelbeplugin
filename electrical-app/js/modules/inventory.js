@@ -2,6 +2,7 @@
 import { SYMBOL_IDS } from '../seed.js';
 import { store as appStore } from '../store.js';
 import { switchOn } from '../lib/modules.js';
+import { reopenAfterUndo } from '../lib/materials.js';
 
 /** Stock (shop, vans, moves) can be turned off while the price book stays (Settings → Modules). */
 const stockOn = (store) => switchOn(store.settings(), 'inventory');
@@ -217,7 +218,8 @@ export default {
           { key: 'x', label: '', render: (m) => ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: 'Undo move', onClick: async (e) => {
             e.stopPropagation();
             if (!(await ui.confirmDialog('Undo this move? Stock goes back to where it was.', { okLabel: 'Undo move' }))) return;
-            reverseMove(store, m); store.remove('stockMoves', m.id); ui.toast('Move undone');
+            const reopened = undoMove(store, m);
+            ui.toast(reopened ? 'Move undone. The material request is open again.' : 'Move undone');
           } }) },
         ],
         rows: moves,
@@ -323,6 +325,19 @@ export function applyMove(store, v) {
   store.update('items', it.id, { stock }, { summary: `stock ${it.name}` });
   const move = store.add('stockMoves', { itemId: it.id, fromLocationId: from, toLocationId: to, qty, jobId: v.jobId || null, date: v.date || new Date().toISOString().slice(0, 10), note: v.note || '' });
   return { move, warning };
+}
+
+/**
+ * Undo a move: stock goes back, the move goes, and a material request it fulfilled ("From stock")
+ * opens again, so it is neither left pointing at a missing move nor billed or costed as used.
+ * Returns how many requests were reopened.
+ */
+export function undoMove(store, m) {
+  reverseMove(store, m);
+  store.remove('stockMoves', m.id);
+  const reqs = store.list('materialRequests', (r) => r.stockMoveId === m.id);
+  for (const r of reqs) store.update('materialRequests', r.id, reopenAfterUndo(r), { summary: 'stock move undone' });
+  return reqs.length;
 }
 
 export function reverseMove(store, m) {

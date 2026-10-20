@@ -176,6 +176,14 @@ export function purchaseList(requests, { items = new Map(), jobs = [] } = {}) {
   return [...rows.values()].sort((a, b) => a.description.localeCompare(b.description));
 }
 
+/**
+ * The change to a request whose "From stock" move was undone: the stock went back, so the request
+ * is open again at the step it had reached (it can be taken from stock again, or fulfilled).
+ */
+export function reopenAfterUndo(r) {
+  return { status: r.orderedAt ? 'ordered' : r.sentAt ? 'sent' : 'requested', fulfilledAt: null, stockMoveId: null, fromLocationId: null };
+}
+
 /** Stock of an item by location, most first: [{ locationId, name, qty }] (only where there is some). */
 export function stockByLocation(item, locations = []) {
   const name = new Map(locations.map((l) => [l.id, l.name]));

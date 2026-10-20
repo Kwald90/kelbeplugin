@@ -293,17 +293,21 @@ function detailView(root, ctx, id) {
   }
 
   function buildInvoiceSheet(job) {
-    const last = store.list('invoices', (i) => i.jobId === job.id && i.tm?.to && i.status !== 'void').map((i) => i.tm.to).sort().at(-1);
-    const dayAfter = (d) => { const x = new Date(`${d}T12:00:00`); x.setDate(x.getDate() + 1); return ui.localDay(x); };
-    let from = last ? dayAfter(last) : (job.startDate || '');
+    const settings = store.settings();
+    // Start at the earliest record not billed yet: billedRefs already keeps billed ones out, so a
+    // later start (the day after the last invoice) would only hide time approved late.
+    let from = unbilledTm({ job, settings, ...tmSources(store), dayOf: ui.localDay }).firstDay || '';
     let to = ui.today();
     const preview = h('div', { class: 'stack' });
-    const settings = store.settings();
     const drawPreview = () => {
       ui.clear(preview);
       const u = unbilledTm({ job, settings, ...tmSources(store), from, to, dayOf: ui.localDay });
+      const all = unbilledTm({ job, settings, ...tmSources(store), dayOf: ui.localDay });
+      const count = (x) => x.labour.length + x.materials.length + x.pendingApproval;
+      const outside = count(all) - count(u);
+      const outsideNote = outside > 0 ? h('p', { class: 'muted', style: { margin: 0 }, dataset: { tmOutside: String(outside) } }, `${outside} record${outside === 1 ? '' : 's'} not billed yet fall${outside === 1 ? 's' : ''} outside these dates.`) : null;
       if (u.empty) {
-        preview.append(h('p', { class: 'muted', style: { margin: 0 } }, u.pendingApproval ? `Nothing approved in this range: ${u.pendingApproval} time entr${u.pendingApproval === 1 ? 'y is' : 'ies are'} waiting for approval.` : 'Nothing to bill in this range.'));
+        preview.append(h('p', { class: 'muted', style: { margin: 0 } }, u.pendingApproval ? `Nothing approved in this range: ${u.pendingApproval} time entr${u.pendingApproval === 1 ? 'y is' : 'ies are'} waiting for approval.` : 'Nothing to bill in this range.'), ...[outsideNote].filter(Boolean));
         return;
       }
       const draft = buildTmInvoice({ job, settings, issueDate: ui.today(), dueDate: ui.today(14), from, to, fmtDay: (d) => ui.fmtDate(d, { month: 'short', day: 'numeric' }), ...tmSources(store), dayOf: ui.localDay });
@@ -316,7 +320,7 @@ function detailView(root, ctx, id) {
         ],
         rows: draft.invoice.lines,
       }), h('div', { class: 'row' }, h('span', { class: 'grow muted' }, `Taxes from ${settings.company?.province || 'your province'} are added on the invoice.${u.missingCost ? ` ${u.missingCost} material line${u.missingCost === 1 ? ' has' : 's have'} no cost yet: set the price on the invoice.` : ''}`),
-        h('strong', { class: 'num' }, `${ui.fmtMoney(u.totalCents)} before tax`)));
+        h('strong', { class: 'num' }, `${ui.fmtMoney(u.totalCents)} before tax`)), ...[outsideNote].filter(Boolean));
     };
     const range = h('div', { class: 'form-grid' },
       ui.field({ label: 'From', name: 'from', type: 'date', value: from }),

@@ -7,7 +7,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { COLLECTIONS, TABLE_COLLECTIONS, collectionDef } from '../src/collections.js';
 import { PERMS, ROLES, permsForRole } from '../src/auth/permissions.js';
-import { canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, rowFilter, rowVisible, sanitizeForStorage } from '../src/auth/access.js';
+import { canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, reviewMerge, rowFilter, rowVisible, sanitizeForStorage } from '../src/auth/access.js';
 import { createValidator, schemaDir } from '../src/schemas.js';
 import { createSealer, normaliseRecoveryCode, recoveryCode } from '../src/lib/crypto.js';
 import { readConfig } from '../src/config.js';
@@ -228,6 +228,25 @@ describe('access rules', () => {
     assert.equal(merged.title, 'Boxes');
     assert.equal(merged.status, 'in-progress');
     assert.equal(mergeWrite(el, 'timeEntries', stored, stored), null);
+  });
+
+  test('a stale review or approval of a time entry takes only its own fields', () => {
+    const flag = { kind: 'off-site', text: '4.2 km from the job site', distanceM: 4200 };
+    // The foreman's copy is from before the clock-out; the stored entry has it.
+    const stale = { employeeId: 'e1', clockIn: '2026-10-19T13:00:00.000Z', clockOut: null, breakMins: 0, approved: false, flag, updatedAt: '2026-10-19T21:05:00.000Z' };
+    const stored = { ...stale, clockOut: '2026-10-19T21:00:00.000Z', breakMins: 30, note: 'done', updatedAt: '2026-10-19T21:00:00.000Z' };
+    const review = { ...stale, flag: { ...flag, reviewedAt: '2026-10-19T21:05:00.000Z', reviewedBy: 'emp-f', reviewNote: 'ok' } };
+    const out = reviewMerge('timeEntries', stored, review, ['flag']);
+    assert.equal(out.clockOut, stored.clockOut, 'the clock-out is kept');
+    assert.equal(out.breakMins, 30);
+    assert.equal(out.note, 'done');
+    assert.deepEqual(out.flag, review.flag);
+    assert.equal(out.updatedAt, review.updatedAt);
+    const approve = reviewMerge('timeEntries', { ...stored, clockIn: '2026-10-19T13:30:00.000Z' }, { ...stale, clockOut: stored.clockOut, approved: true, approvedAt: 'a', approvedBy: 'emp-f' }, ['approved', 'approvedAt', 'approvedBy']);
+    assert.deepEqual([approve.approved, approve.approvedBy, approve.clockIn], [true, 'emp-f', '2026-10-19T13:30:00.000Z'], "the worker's later correction survives the approval");
+    assert.equal(reviewMerge('timeEntries', stored, review, ['flag', 'clockOut']), null, 'an edit of the times is a normal write');
+    assert.equal(reviewMerge('timeEntries', stored, review, null), null, 'a whole-record write is a normal write');
+    assert.equal(reviewMerge('jobs', stored, review, ['flag']), null);
   });
 
   test('pay rates hidden, PINs never stored', () => {
