@@ -22,12 +22,14 @@ import settings from './settings.js';
 import integrations from './integrations.js';
 import assistant from './assistant.js';
 import billing from './billing.js';
+import today from './today.js';
+import workplan from './workplan.js';
 
 export const GROUPS = {
   home: 'Home', sales: 'Sales', work: 'Work', money: 'Money', people: 'People', field: 'Field', admin: 'Admin',
 };
 
 export const MODULES = [
-  dashboard, assistant, clients, leads, sequences, jobs, schedule, drawings, wireruns, estimates, invoices, inventory,
+  dashboard, today, assistant, clients, leads, sequences, jobs, schedule, workplan, drawings, wireruns, estimates, invoices, inventory,
   employees, time, sops, compliance, security, calcs, bending, panels, settings, integrations, billing,
 ];

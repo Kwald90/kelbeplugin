@@ -1,6 +1,7 @@
 // S11 Dashboard: today at a glance, plus every alert the other modules raise.
 import { invoiceBalanceCents, invoiceStatus, entryHours, moneyFormatter } from '../lib/money.js';
 import { provinceName } from '../lib/tax.js';
+import { workplanTiles } from './workplan.js';
 
 export default {
   id: 'dashboard',
@@ -136,6 +137,7 @@ export default {
       },
       stats,
       clockCard ? h('div', { style: { marginTop: 'var(--s4)' } }, clockCard) : null,
+      (() => { const wp = workplanTiles(ctx); return wp ? [...ui.section('Crew tasks'), wp] : null; })(),
       h('div', { class: 'grid-2', style: { marginTop: 'var(--s2)' } },
         h('div', null, ...ui.section('Needs attention'), alertList),
         h('div', null, ...ui.section('Today on site'), today)),

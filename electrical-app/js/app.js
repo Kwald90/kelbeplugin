@@ -26,7 +26,11 @@ const MODULE_COLLECTIONS = {
   drawings: ['drawings'], panels: ['panels'], inventory: ['items', 'locations', 'stockMoves'],
   compliance: ['permits', 'inspections', 'certifications', 'checklists'], sequences: ['sequences', 'enrolments', 'outbox'],
   security: ['checklists'], wireruns: ['wireRuns'], bending: ['bends', 'benderProfiles'],
+  workplan: ['workPlans', 'workTasks', 'taskTemplates', 'huddles'],
 };
+// Electricians and apprentices land on My day (their task list) instead of the dashboard.
+const FIELD_ROLES = ['electrician', 'apprentice'];
+let landed = false;
 
 let main, rail, cleanup = null;
 let mode = null; // 'synced' | 'demo'
@@ -76,6 +80,10 @@ function route() {
   if (!main) return;
   const { id, params, query } = parseHash();
   if (['sign-in', 'reset-password', 'forgot-password'].includes(id)) { nav('dashboard'); return; }
+  if (!landed) {
+    landed = true;
+    if (id === 'dashboard' && FIELD_ROLES.includes(auth.role()) && auth.can('today') && moduleUnlocked('today')) { nav('today'); return; }
+  }
   const mod = ALL.find((m) => m.id === id) || MODULES[0];
   if (typeof cleanup === 'function') { try { cleanup(); } catch (e) { console.error(e); } }
   cleanup = null;
