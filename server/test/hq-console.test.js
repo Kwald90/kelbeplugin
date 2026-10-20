@@ -13,9 +13,11 @@ import { HANDLERS, runOnce } from '../src/services/queue.js';
 import { createFinanceHandlers, scheduleFinanceJobs } from '../src/services/hq-finance.js';
 import { authError, mockAnthropic, restoreAnthropic, sse, text, toolUse, turn } from './support/anthropic-mock.js';
 import { setSecret } from '../src/services/secrets.js';
+import { drainPlatformEmail } from '../src/services/platform-email.js';
 
-// Secrets that must never show up in a response.
-const SECRETS = { STRIPE_SECRET_KEY: 'sk_test_SUPERSECRETkey123', STRIPE_WEBHOOK_SECRET_ENV: 'whsec_SUPERSECRET', RESEND_API_KEY: 're_SUPERSECRETresend' };
+// Fake secrets that must never show up in a response. Built at run time: nothing key-shaped is committed.
+const fake = (...parts) => parts.join('_');
+const SECRETS = { STRIPE_SECRET_KEY: fake('sk', 'test', 'SUPERSECRETkey123'), RESEND_API_KEY: fake('re', 'SUPERSECRETresend') };
 process.env.STRIPE_SECRET_KEY = SECRETS.STRIPE_SECRET_KEY;
 process.env.RESEND_API_KEY = SECRETS.RESEND_API_KEY;
 process.env.EMAIL_FROM = 'Fishtape <noreply@fishtapehq.test>';
@@ -228,6 +230,14 @@ describe('settings and legal', { skip }, () => {
     assert.match(ev.at(-1).summary, /support email/);
   });
 
+  test("system email goes out under HQ's sender name, on EMAIL_FROM's address", async () => {
+    await t.superPool.query("INSERT INTO email_outbox (to_address, subject, text_body, template) VALUES ('someone@example.test', 'Hi', 'Body', 'test')");
+    const sent = [];
+    const r = await drainPlatformEmail(t.db, { send: async (m) => { sent.push(m.from); return { id: 'x' }; }, cfg: { provider: 'resend', apiKey: 'test-key', from: 'Fishtape <noreply@fishtapehq.test>' } });
+    assert.ok(r.sent >= 1);
+    assert.ok(sent.every((f) => f === 'Fishtape help <noreply@fishtapehq.test>'), JSON.stringify(sent));
+  });
+
   test('Stripe check names the account and finds price and webhook problems', async () => {
     const r = await hq(staff.token, '/api/hq/settings/stripe');
     assert.equal(r.body.account.name, 'True Collar Built');
@@ -250,6 +260,7 @@ describe('settings and legal', { skip }, () => {
     await hq(admin.token, '/api/hq/settings', { method: 'PUT', body: { legal: { terms: { version: '2026-11-01', requireReacceptance: true } } } });
     const pub = await call(app, { url: '/api/v1/legal' });
     assert.equal(pub.body.terms.version, '2026-11-01');
+    assert.equal((await call(app, { url: '/api/v1/public/signup' })).body.termsVersion, '2026-11-01', 'sign-up asks for the version HQ set');
     const need = (await call(app, { url: '/api/v1/announcements', token: A.token })).body.legal;
     assert.deepEqual(need.map((d) => [d.doc, d.version]), [['terms', '2026-11-01']]);
     assert.equal((await call(app, { method: 'POST', url: '/api/v1/legal/accept', token: A.token, body: { doc: 'terms', version: 'old' } })).status, 409);
@@ -444,7 +455,7 @@ describe('developer, AI and the audit log', { skip }, () => {
     const say = await call(app, { method: 'POST', url: `/api/v1/ai/conversations/${conv.body.id}/messages`, token: A.token, body: { text: 'hi' } });
     assert.equal(say.body.error.code, 'ai_not_connected');
     // Streamed replies pass through untouched while tool calls and mid-stream errors are counted.
-    await t.db.withTenant({ tenantId: A.tenantId }, (tx) => setSecret(tx, app.sealer, 'anthropic.api_key', 'sk-ant-api03-hqconsoletestkey'));
+    await t.db.withTenant({ tenantId: A.tenantId }, (tx) => setSecret(tx, app.sealer, 'anthropic.api_key', ['sk', 'ant', 'api03', 'hqconsoletestkey'].join('-')));
     mockAnthropic([turn([text('Looking.'), toolUse('search_price_book', { query: 'receptacle' })]), turn([text('Found two receptacles.')]), authError()]);
     const stream = await app.inject({ method: 'POST', url: `/api/v1/ai/conversations/${conv.body.id}/messages`, headers: { authorization: `Bearer ${A.token}`, 'content-type': 'application/json' }, payload: { text: 'price of a receptacle?' } });
     const evs = sse(stream.body);

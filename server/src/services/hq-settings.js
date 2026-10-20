@@ -15,10 +15,32 @@ import { billingSettings, hqUrl, iso } from './hq-common.js';
 
 export const LEGAL_DOCS = ['terms', 'privacy'];
 
+/** "Fishtape <noreply@x>" -> { name: 'Fishtape', address: 'noreply@x' }. */
+export function parseFrom(from) {
+  const s = String(from || '').trim();
+  const m = /^\s*"?([^"<]*?)"?\s*<([^<>\s]+@[^<>\s]+)>\s*$/.exec(s);
+  if (m) return { name: m[1].trim(), address: m[2] };
+  return { name: '', address: /^[^\s<>"]+@[^\s<>"]+$/.test(s) ? s : '' };
+}
+
+/** EMAIL_FROM with HQ's sender name in front of the same address (the address never changes). */
+export function withSenderName(from, name) {
+  const { address } = parseFrom(from);
+  const clean = String(name || '').replace(/[\r\n"<>\\]/g, '').trim().slice(0, 80);
+  if (!address || !clean) return from;
+  return /^[A-Za-z0-9 .'-]+$/.test(clean) ? `${clean} <${address}>` : `"${clean}" <${address}>`;
+}
+
+/** The sender name HQ saved in Settings, or null while the EMAIL_FROM name is used as is. */
+export async function savedSenderName(q) {
+  const { rows } = await q.query("SELECT value->>'senderName' AS name FROM platform_settings WHERE key = 'support'");
+  return rows[0]?.name || null;
+}
+
 /** Defaults until HQ saves a value. */
 export function settingDefaults(env = process.env) {
   return {
-    support: { email: env.SUPPORT_EMAIL || 'support@fishtapehq.com', senderName: `${BRAND.name} support` },
+    support: { email: env.SUPPORT_EMAIL || 'support@fishtapehq.com', senderName: parseFrom(env.EMAIL_FROM).name || BRAND.name },
     legal: {
       terms: { version: TERMS_VERSION, url: '/site/terms.html', requireReacceptance: false, updatedAt: null },
       privacy: { version: TERMS_VERSION, url: '/site/privacy.html', requireReacceptance: false, updatedAt: null },

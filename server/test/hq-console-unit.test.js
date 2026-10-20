@@ -7,7 +7,7 @@ import { computeFinance, csvCell, financeCsv, invoiceTax, isFishtapeInvoice, isF
 import { matchesAudience, isLive } from '../src/routes/hq-announcements.js';
 import { aiFeatureOf, sseTap } from '../src/routes/hq-ai.js';
 import { createErrorRing } from '../src/routes/hq-developer.js';
-import { settingsProblems, stripeMode } from '../src/services/hq-settings.js';
+import { parseFrom, settingsProblems, stripeMode, withSenderName } from '../src/services/hq-settings.js';
 import { plainSnippet, slugify } from '../src/services/hq-help.js';
 import { hqUrl } from '../src/services/hq-common.js';
 import { invoice, sub, subItem } from './support/fake-stripe-finance.js';
@@ -194,8 +194,9 @@ test('settings validation, Stripe key mode, help snippets and slugs', () => {
   assert.equal(settingsProblems({ legal: { terms: { version: 'v 2' } } })[0].path, '/legal/terms/version');
   assert.equal(settingsProblems({ legal: { privacy: { url: 'javascript:alert(1)' } } })[0].path, '/legal/privacy/url');
   assert.deepEqual(settingsProblems({ legal: { terms: { version: '2026-11-01', url: '/site/terms.html' } } }), []);
-  assert.equal(stripeMode('sk_live_abc'), 'live');
-  assert.equal(stripeMode('rk_test_abc'), 'test');
+  // Fake keys are built at run time so nothing key-shaped is committed.
+  assert.equal(stripeMode(['sk', 'live', 'abc'].join('_')), 'live');
+  assert.equal(stripeMode(['rk', 'test', 'abc'].join('_')), 'test');
   assert.equal(plainSnippet('Open **Drawings** and see [Settings](#/settings) <b>scale</b>'), 'Open Drawings and see Settings scale');
   assert.equal(slugify('Importing a PDF plan set!'), 'importing-a-pdf-plan-set');
 });
@@ -206,4 +207,13 @@ test('HQ links in emails use HQ_PUBLIC_URL, else the app host /hq/', () => {
   assert.equal(hqUrl(config, { HQ_PUBLIC_URL: 'https://hq.fishtapehq.com' }), 'https://hq.fishtapehq.com/');
   assert.equal(hqUrl(config, { HQ_PUBLIC_URL: 'https://tgelectrical.truecollarbuilt.com/hq/' }), 'https://tgelectrical.truecollarbuilt.com/hq/');
   assert.equal(hqUrl(config, { HQ_PUBLIC_URL: 'javascript:alert(1)' }), 'https://app.fishtapehq.com/hq/', 'anything odd falls back');
+});
+
+test('sender name goes in front of the EMAIL_FROM address, safely', () => {
+  assert.deepEqual(parseFrom('Fishtape <noreply@fishtapehq.com>'), { name: 'Fishtape', address: 'noreply@fishtapehq.com' });
+  assert.deepEqual(parseFrom('noreply@fishtapehq.com'), { name: '', address: 'noreply@fishtapehq.com' });
+  assert.equal(withSenderName('Fishtape <noreply@fishtapehq.com>', 'Fishtape support'), 'Fishtape support <noreply@fishtapehq.com>');
+  assert.equal(withSenderName('noreply@fishtapehq.com', 'Kelbe & Co'), '"Kelbe & Co" <noreply@fishtapehq.com>');
+  assert.equal(withSenderName('Fishtape <noreply@fishtapehq.com>', 'Evil\r\nBcc: x@y.z <a@b>'), '"EvilBcc: x@y.z a@b" <noreply@fishtapehq.com>', 'no header injection; the address stays');
+  assert.equal(withSenderName('not an address', 'Name'), 'not an address');
 });

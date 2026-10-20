@@ -42,7 +42,7 @@ export default {
       h('fieldset', { class: 'hq-fieldset' }, h('legend', null, 'Support'),
         h('div', { class: 'form-grid' },
           f('Support email', 'email', s.support.email, { type: 'email', hint: 'Shown in the app\'s Help center' }),
-          f('Sender name', 'senderName', s.support.senderName, { hint: 'For support replies' }))),
+          f('Sender name', 'senderName', s.support.senderName, { hint: 'The From name on Fishtape email; the address stays EMAIL_FROM' }))),
       doc('terms', 'Terms of service'), doc('privacy', 'Privacy policy'),
       isAdmin ? h('div', { class: 'row' }, h('span', { class: 'grow' }), ui.button('Save settings', { variant: 'primary', type: 'submit', icon: 'save' })) : h('p', { class: 'muted hq-small' }, 'HQ admins change these.'));
       return form;

@@ -4,7 +4,7 @@
 // how to reach support instead.
 //   #/help            categories and articles
 //   #/help/<slug>     one article
-//   #/help/contact    the support form
+//   #/help/contact    the support form (POST /api/v1/support/requests; HQ files it in the Support mailbox)
 import { renderMarkdown } from '../lib/markdown.js';
 import { api, session } from '../session.js';
 
@@ -17,7 +17,7 @@ addEventListener('hashchange', (e) => {
   } catch { /* old browsers */ }
 });
 
-const MAX_SHOT = 2 * 1024 * 1024;
+const MAX_SHOT = 5 * 1024 * 1024; // the API's limit (server/src/email/support.js)
 let cache = null; // { categories, data, support, at }
 
 async function loadIndex() {
@@ -147,12 +147,14 @@ export default {
       let shot = null;
       const status = h('div', { role: 'status', 'aria-live': 'polite' });
       const subject = h('input', { name: 'subject', required: true, maxlength: 150, placeholder: 'e.g. Scale is off on sheet E2' });
-      const message = h('textarea', { name: 'message', required: true, rows: 7, maxlength: 5000, placeholder: 'What were you doing, what did you expect, and what happened?' });
+      const category = h('select', { name: 'category' }, [['question', 'A question'], ['problem', 'Something is not working'], ['billing', 'Billing'], ['idea', 'An idea'], ['other', 'Something else']]
+        .map(([v, l]) => h('option', { value: v }, l)));
+      const message = h('textarea', { name: 'message', required: true, rows: 7, maxlength: 10000, placeholder: 'What were you doing, what did you expect, and what happened?' });
       const shotName = h('span', { class: 'muted' }, 'No screenshot');
       const pick = ui.button('Attach a screenshot', { icon: 'image', onClick: async () => {
         const f = await ui.pickFile('image/png,image/jpeg,image/webp');
         if (!f) return;
-        if (f.size > MAX_SHOT) { ui.toast('Pick an image under 2 MB', 'error'); return; }
+        if (f.size > MAX_SHOT) { ui.toast('Pick an image under 5 MB', 'error'); return; }
         shot = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
         shotName.textContent = f.name;
       } });
@@ -163,17 +165,23 @@ export default {
         send.disabled = true;
         ui.clear(status);
         try {
-          await api.post('/api/v1/support/requests', { subject: subject.value.trim(), message: message.value.trim(), page: lastPage || '#/help', ...(shot ? { screenshot: shot } : {}) });
+          const r = await api.post('/api/v1/support/requests', {
+            subject: subject.value.trim(), message: message.value.trim(), category: category.value, page: lastPage || '#/help', ...(shot ? { screenshot: shot } : {}),
+          });
           ui.clear(form);
-          form.append(ui.empty({ icon: 'check', title: 'Message sent', text: 'We usually reply by email within one business day.', action: ui.button('Back to help', { onClick: () => nav('help') }) }));
+          form.append(ui.empty({
+            icon: 'check', title: 'Message sent',
+            text: `Your reference is ${r?.reference || 'on its way'}.${r?.confirmationEmailed ? ' We emailed you a copy.' : ''} We usually reply by email within one business day.`,
+            action: ui.button('Back to help', { onClick: () => nav('help') }),
+          }));
         } catch (err) {
           send.disabled = false;
-          const notYet = err.status === 404 || err.code === 'no_api';
           status.append(h('div', { class: 'help-error' }, ui.icon('alert', 18), h('div', null,
-            h('strong', null, notYet ? 'Messages from the app are not switched on yet.' : "Your message wasn't sent."),
-            h('div', null, notYet ? 'Email us instead: ' : `${err.message} You can also email `, h('a', { href: `mailto:${supportEmail}?subject=${encodeURIComponent(subject.value.trim())}` }, supportEmail), '.'))));
+            h('strong', null, "Your message wasn't sent."),
+            h('div', null, `${err.message} You can also email `, h('a', { href: `mailto:${supportEmail}?subject=${encodeURIComponent(subject.value.trim())}` }, supportEmail), '.'))));
         }
       } },
+      h('label', { class: 'field' }, h('span', null, 'What is it about?'), category),
       h('label', { class: 'field' }, h('span', null, 'Subject *'), subject),
       h('label', { class: 'field' }, h('span', null, 'Message *'), message),
       h('div', { class: 'row help-shot' }, pick, shotName),

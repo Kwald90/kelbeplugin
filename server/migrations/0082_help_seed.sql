@@ -486,11 +486,19 @@ Only an owner can make someone an owner or admin. A company always keeps at leas
 
 The employee record is what the schedule, time clock and SOP sign-offs use. The licence expiry badge turns to a warning within 30 days of the date and shows **expired** once it has passed.
 
-## Sign-in accounts and invites
+## Invite people to sign in
 
-When someone is added to your company with an email address, Fishtape emails them an invite. They tap the link and set a password. The link works for 7 days. If it runs out, they can use **Forgot password?** on the sign-in screen to get a new one.
+Owners and admins invite people from the [Set-up checklist](#/onboarding):
 
-In this version, the app has no button for sending invites yourself. To add a sign-in for a new person, contact Fishtape support.
+1. Open the **Invite the crew** step and press **Invite someone**.
+2. Enter their name and pick a role: Electrician, Apprentice, Foreman, Office or Admin.
+3. Enter their email if they will sign in on their own phone or computer. Leave it blank for crew who only sign in with a PIN on a shared iPad.
+4. Leave **Also add to Employees** ticked so they show up on the schedule and the time clock.
+5. Press **Invite**.
+
+With an email, Fishtape sends them an invite. They tap the link and set a password. The link works for 7 days. If it runs out, they can use **Forgot password?** on the sign-in screen to get a new one. Without an email, set their PIN on your [Account](#/account) page under **Crew PINs**.
+
+Each person counts as a user on your plan. [Billing](#/billing) shows how many your plan includes.
 
 Owners and admins must turn on two-step sign-in with an authenticator app. Other roles can sign in with email and password.
 
