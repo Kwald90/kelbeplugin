@@ -9,6 +9,7 @@ what) and the [backlog](BACKLOG.md) (what's open, and what needs Kelvin).
 | [code/](code/) | Canadian Electrical Code research, provincial adoption, sales tax | [code README](code/README.md) |
 | [field/](field/) | how the field tools work and the rules behind them | [wire runs](field/wire-runs.md) |
 | [ai/](ai/) | the assistant, CEC helper, background agents and MCP server | [AI README](ai/README.md) |
+| [integrations/](integrations/) | contracts for third-party integrations | [QuickBooks Online two-way sync](integrations/quickbooks.md) |
 | [mobile/](mobile/) | the iOS app: build, signing, App Store | [mobile README](mobile/README.md) |
 | [security/](security/) | threat model, CSP, secrets, vulnerability handling | [security README](security/README.md) |
 | [compliance/](compliance/) | SOC 2-aligned policies (no formal audit) | [compliance README](compliance/README.md) |
