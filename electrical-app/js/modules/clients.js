@@ -4,6 +4,7 @@ import { openLeadSheet } from './leads.js';
 import { moduleOn } from '../lib/modules.js';
 import { BILLING_MODES } from '../lib/tm.js';
 import { lastEdited } from './drawings.js';
+import { qboBadge, lookupAction } from '../lib/qbo-ui.js';
 
 const TYPES = ['residential', 'commercial', 'industrial'];
 const TYPE_TONE = { residential: 'info', commercial: 'accent', industrial: 'neutral' };
@@ -129,7 +130,7 @@ function detailView(root, ctx, id) {
 
     const contact = h('div', { class: 'card crm-contact' },
       h('div', { class: 'row' }, h('span', { class: 'avatar crm-avatar' }, ui.initials(c.name)),
-        h('div', { class: 'grow' }, h('h3', { style: { margin: 0 } }, c.name), ui.badge(c.type || '—', TYPE_TONE[c.type]))),
+        h('div', { class: 'grow' }, h('h3', { style: { margin: 0 } }, c.name), ui.badge(c.type || '—', TYPE_TONE[c.type]), qboBadge(ctx, 'clients', id, { record: c }))),
       h('div', { class: 'crm-contact-lines' },
         c.phone ? h('a', { href: 'tel:' + c.phone.replace(/[^0-9+]/g, ''), class: 'crm-line' }, icon('phone', 16), c.phone) : null,
         c.email ? h('a', { href: 'mailto:' + c.email, class: 'crm-line' }, icon('mail', 16), c.email) : null,
@@ -218,6 +219,7 @@ function detailView(root, ctx, id) {
         ui.button('Edit', { icon: 'edit', onClick: () => openClientSheet(ctx, c) }),
         on('leads') ? ui.button('New lead', { icon: 'funnel', onClick: () => openLeadSheet(ctx, null, { prefill: { clientId: id, contactName: c.name, email: c.email, phone: c.phone } }) }) : null,
         on('estimates') ? ui.button('New estimate', { icon: 'file-text', href: `#/estimates/new?clientId=${id}` }) : null,
+        lookupAction(ctx, { entity: 'customers', clientId: id }),
         ui.button('New job', { variant: 'primary', icon: 'plus', href: `#/jobs?new=1&clientId=${id}` }),
       ].filter(Boolean),
     }, h('div', { class: 'crm-detail' }, contact, h('div', { class: 'stack' }, stats, tabsEl, tabBody))));

@@ -1,10 +1,11 @@
 // Invoices & payments (S18): list with ageing, builder, payments, print.
 import { docTotals, invoicePaidCents, invoiceBalanceCents, invoiceStatus, moneyFormatter, combinedPct } from '../lib/money.js';
 import { newDocTax, taxComponents, TREATMENTS } from '../lib/tax.js';
-import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
+import { lineEditor, taxEditor, totalsPanel, previewDocument, clientName } from '../lib/doc-view.js';
 import { invoiceOnlineTools, payLinkBlock } from './integrations.js';
 import { moduleOn } from '../lib/modules.js';
 import { billingLabel, restoreConflicts } from '../lib/tm.js';
+import { qboBadge, noTaxReasonPicker, isSettlementPayment, SETTLEMENT_LABEL, settlementNote, lookupAction, needsNoTaxReason, keepsServerPaid, nextInvoiceStatus, docEditor } from '../lib/qbo-ui.js';
 
 const METHODS = ['e-transfer', 'cheque', 'card', 'cash', 'transfer'];
 
@@ -22,16 +23,26 @@ export default {
   },
 };
 
-/** Recompute the stored status from payments (never touches void). */
-export function syncInvoiceStatus(store, invId) {
+/**
+ * Status and balance as the invoice screens show them. A 'paid' the server set at the QuickBooks
+ * total (its own tax rounding, docs/integrations/quickbooks.md 4.8) stays paid with a balance of 0,
+ * although a cent or two is left by Fishtape's arithmetic (lib/qbo-ui.js keepsServerPaid).
+ */
+export function invoiceShown(store, inv) {
+  if (inv.status === 'void') return { status: 'void', balanceCents: 0 };
+  const paid = invoicePaidCents(store, inv.id);
+  if (keepsServerPaid(inv, paid, docTotals(inv).totalCents)) return { status: 'paid', balanceCents: 0 };
+  return { status: invoiceStatus(store, inv), balanceCents: invoiceBalanceCents(store, inv) };
+}
+
+/**
+ * Recompute the stored status from payments (never touches void). `moneyChanged` false (an edit
+ * that left the total as it was) keeps a 'paid' the server set within the tax rounding.
+ */
+export function syncInvoiceStatus(store, invId, { moneyChanged = true } = {}) {
   const inv = store.get('invoices', invId);
   if (!inv || inv.status === 'void') return inv;
-  const paid = invoicePaidCents(store, invId);
-  const total = docTotals(inv).totalCents;
-  let next = inv.status;
-  if (paid > 0 && paid >= total) next = 'paid';
-  else if (paid > 0) next = 'partial';
-  else if (inv.status === 'paid' || inv.status === 'partial') next = 'sent';
+  const next = nextInvoiceStatus(inv, invoicePaidCents(store, invId), docTotals(inv).totalCents, { moneyChanged });
   if (next !== inv.status) return store.update('invoices', invId, { status: next }, { summary: `${inv.number} → ${next}` });
   return inv;
 }
@@ -46,10 +57,8 @@ function renderList(root, ctx) {
   const draw = () => {
     ui.clear(host);
     const all = store.list('invoices').map((inv) => {
-      const status = invoiceStatus(store, inv);
-      const total = docTotals(inv).totalCents;
-      const balance = inv.status === 'void' ? 0 : total - invoicePaidCents(store, inv.id);
-      return { inv, status, total, balance };
+      const { status, balanceCents: balance } = invoiceShown(store, inv);
+      return { inv, status, total: docTotals(inv).totalCents, balance };
     });
     const open = all.filter((r) => !['void', 'draft', 'paid'].includes(r.status) && r.balance > 0);
     const buckets = { current: 0, d30: 0, d60: 0, d90: 0, d90p: 0 };
@@ -105,7 +114,7 @@ function renderList(root, ctx) {
           { key: 'due', label: 'Due', render: (r) => ui.fmtDate(r.inv.dueDate), sort: (r) => r.inv.dueDate || '' },
           { key: 'total', label: 'Total', align: 'right', render: (r) => money(r.total), sort: (r) => r.total },
           { key: 'balance', label: 'Balance', align: 'right', render: (r) => money(r.balance), sort: (r) => r.balance },
-          { key: 'status', label: 'Status', render: (r) => ui.statusBadge(r.status), sort: (r) => r.status },
+          { key: 'status', label: 'Status', render: (r) => h('span', { class: 'row-inline' }, ui.statusBadge(r.status), qboBadge(ctx, 'invoices', r.inv.id, { record: r.inv })), sort: (r) => r.status },
         ],
         rows,
         onRowClick: (r) => nav('#/invoices/' + r.inv.id),
@@ -147,6 +156,8 @@ async function createNew(ctx) {
       Object.assign(rec, invoiceTaxFromEstimate(e, rec));
       rec.lines = (e.lines || []).map((l) => ({ ...l }));
       if (t.markupCents) rec.lines.push({ itemId: null, description: `Materials markup (${e.markupPct}%)`, qty: 1, unitCents: t.markupCents, labourHours: 0, kind: 'other' });
+      // The estimate's "Why no tax?" reason comes along while the invoice is still untaxed.
+      if (e.taxNoneReason && needsNoTaxReason(rec)) rec.taxNoneReason = e.taxNoneReason;
     }
   } else if (query.jobId) {
     const job = store.get('jobs', query.jobId);
@@ -190,14 +201,33 @@ function renderDetail(root, ctx, id) {
     return;
   }
   const doc = inv;
-  const save = debounce(() => {
-    store.update('invoices', id, pick(doc));
-    const cur = syncInvoiceStatus(store, id);
-    if (cur && cur.status !== doc.status) { doc.status = cur.status; drawStatus(); }
-  }, 450);
+  // Saves only the fields changed here (never status, which its buttons write), and takes in what
+  // QuickBooks or another device changed while the invoice is open (contract 5.10): the whole
+  // record saved on every keystroke would write a pulled change back over the books.
+  const save = docEditor(store, 'invoices', id, doc, {
+    write: (patch, opts) => store.update('invoices', id, patch, opts),
+    onSaved: (patch, before, after) => {
+      // A notes edit keeps a 'paid' the server set; an edit that moves the total is worked out again.
+      syncInvoiceStatus(store, id, { moneyChanged: docTotals(before).totalCents !== docTotals(after).totalCents });
+      drawStatus();
+    },
+    onPulled: (fields, clashes) => {
+      if (clashes.length) ui.toast(`${doc.number} changed in QuickBooks or on another device while you were editing it. The latest version is shown; check your last change.`, 'info', 7000);
+      if (fields.some((f) => FORM_FIELDS.includes(f)) || (doc.status === 'void') !== readOnly) { redraw(); return; }
+      refreshPaid(); drawStatus();
+    },
+    onRemoved: () => { ui.toast(`${doc.number} was deleted on another device`, 'info', 4000); nav('#/invoices'); },
+  });
+  // Re-open the screen on the record as it now is, where it was scrolled to.
+  const redraw = () => {
+    if (typeof ctx.route !== 'function') { refreshPaid(); drawStatus(); return; }
+    const top = root.scrollTop;
+    ctx.route();
+    root.scrollTop = top;
+  };
   const paid = () => invoicePaidCents(store, id);
   const money = moneyFormatter(store.settings());
-  const changed = () => { totals.update(doc); save(); };
+  const changed = () => { totals.update(doc); noTax.update(); save(); };
 
   const clients = store.list('clients').sort((a, b) => a.name.localeCompare(b.name));
   const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
@@ -209,12 +239,14 @@ function renderDetail(root, ctx, id) {
   };
   const readOnly = doc.status === 'void';
   const taxNodes = taxEditor({ doc, store, onChange: changed, readOnly, dateKey: 'issueDate' });
+  // "Why no tax?" (QuickBooks contract 8.5): every company; each reason lands on its own GST return line.
+  const noTax = noTaxReasonPicker(ctx, doc, { onChange: () => save(), readOnly });
   const header = h('div', { class: 'form-grid' },
     fieldEl({ label: 'Client', name: 'clientId', type: 'select', value: doc.clientId || '', options: ui.recordOptions(clients) }, (v) => { doc.clientId = v || null; }),
     fieldEl({ label: 'Job', name: 'jobId', type: 'select', value: doc.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`) }, (v) => { doc.jobId = v || null; }),
     fieldEl({ label: 'Issue date', name: 'issueDate', type: 'date', value: doc.issueDate }, (v) => { doc.issueDate = v; taxNodes.recompute(); }),
     fieldEl({ label: 'Due date', name: 'dueDate', type: 'date', value: doc.dueDate }, (v) => { doc.dueDate = v; }),
-    taxNodes);
+    taxNodes, noTax);
   const notes = fieldEl({ label: 'Notes shown on the invoice', name: 'notes', type: 'textarea', value: doc.notes, span: true }, (v) => { doc.notes = v; });
   const editor = lineEditor({ doc, store, onChange: changed, readOnly });
   const totals = totalsPanel(doc, { showMarkup: false, paidCents: paid, money });
@@ -225,10 +257,9 @@ function renderDetail(root, ctx, id) {
   const drawStatus = () => {
     ui.clear(statusHost);
     const cur = store.get('invoices', id) || doc;
-    const st = invoiceStatus(store, cur);
-    const bal = invoiceBalanceCents(store, cur);
+    const { status: st, balanceCents: bal } = invoiceShown(store, cur);
     h(statusHost, null,
-      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), ui.statusBadge(st)),
+      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), qboBadge(ctx, 'invoices', id, { detail: true, record: cur }), ui.statusBadge(st)),
       h('div', { class: 'row' },
         cur.status === 'draft' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: () => setStatus('sent') }) : null,
         cur.status !== 'void' && bal > 0 ? ui.button('Record payment', { size: 'sm', variant: 'primary', icon: 'dollar', onClick: recordPayment }) : null,
@@ -236,21 +267,30 @@ function renderDetail(root, ctx, id) {
       invoiceOnlineTools(ctx, cur, bal),
       cur.estimateId && moduleOn(store.settings(), 'estimates') ? ui.button('Source estimate', { size: 'sm', variant: 'ghost', icon: 'file-text', href: '#/estimates/' + cur.estimateId }) : null,
       cur.tm ? h('div', { class: 'muted', dataset: { tmInvoice: '1' } }, `${billingLabel('tm')}: ${(cur.tm.timeEntryIds || []).length} time entr${(cur.tm.timeEntryIds || []).length === 1 ? 'y' : 'ies'}, ${(cur.tm.stockMoveIds || []).length + (cur.tm.materialRequestIds || []).length} material record(s)${cur.tm.from || cur.tm.to ? `, ${cur.tm.from || '…'} to ${cur.tm.to || '…'}` : ''}. Voiding frees them to bill again.`) : null,
-      cur.jobId ? ui.button('Open job', { size: 'sm', variant: 'ghost', icon: 'briefcase', href: '#/jobs/' + cur.jobId }) : null);
+      cur.jobId ? ui.button('Open job', { size: 'sm', variant: 'ghost', icon: 'briefcase', href: '#/jobs/' + cur.jobId }) : null,
+      cur.status === 'draft' ? lookupAction(ctx, { entity: 'invoices', clientId: cur.clientId }) : null);
   };
   const drawPayments = () => {
     ui.clear(paymentsHost);
     const pays = store.list('payments', (p) => p.invoiceId === id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-    paymentsHost.append(pays.length ? h('div', { class: 'list' }, pays.map((p) => h('div', { class: 'list-row' },
-      h('div', { class: 'grow' }, h('div', { class: 'title num' }, money(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), p.method, p.reference].filter(Boolean).join(' · '))),
-      ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: 'Delete payment', onClick: async () => {
-        if (!(await ui.confirmDialog(`Delete the ${money(p.amountCents)} payment?`, { okLabel: 'Delete' }))) return;
-        store.remove('payments', p.id); afterPayment();
-      } }))))
+    // A settlement payment (credit memos or journals applied in QuickBooks, contract 4.9) is written
+    // only by the QuickBooks sync: shown read-only, never edited or deleted here.
+    paymentsHost.append(pays.length ? h('div', { class: 'list' }, pays.map((p) => (isSettlementPayment(p)
+      ? h('div', { class: 'list-row', dataset: { settlement: '1' } },
+        h('div', { class: 'grow' }, h('div', { class: 'title num' }, money(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), SETTLEMENT_LABEL].filter(Boolean).join(' · '))),
+        settlementNote(ui))
+      : h('div', { class: 'list-row' },
+        h('div', { class: 'grow' }, h('div', { class: 'title num' }, money(p.amountCents)), h('div', { class: 'meta' }, [ui.fmtDate(p.date), p.method, p.reference].filter(Boolean).join(' · '))),
+        qboBadge(ctx, 'payments', p.id, { record: p }),
+        ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: 'Delete payment', onClick: async () => {
+          if (!(await ui.confirmDialog(`Delete the ${money(p.amountCents)} payment?`, { okLabel: 'Delete' }))) return;
+          store.remove('payments', p.id); afterPayment();
+        } })))))
       : h('p', { class: 'muted', style: { margin: 0 } }, 'No payments recorded.'));
   };
-  const afterPayment = () => { save.flush(); syncInvoiceStatus(store, id); const cur = store.get('invoices', id); doc.status = cur.status; refreshPaid(); drawStatus(); drawPayments(); };
-  const setStatus = (st) => { save.flush(); doc.status = st; store.update('invoices', id, { status: st }, { summary: `${doc.number} → ${st}` }); drawStatus(); ui.toast(`${doc.number} marked ${st}`, 'success'); };
+  // A payment added or deleted here: the status is worked out from the payments (moneyChanged).
+  const afterPayment = () => { save.flush(); syncInvoiceStatus(store, id); refreshPaid(); drawStatus(); drawPayments(); };
+  const setStatus = (st) => { save.write({ status: st }, { summary: `${doc.number} → ${st}` }); drawStatus(); ui.toast(`${doc.number} marked ${st}`, 'success'); };
   const voidIt = async () => {
     if (!(await ui.confirmDialog(`Void ${doc.number}? It stays on record but no longer counts as owed.`, { okLabel: 'Void' }))) return;
     setStatus('void'); nav('#/invoices/' + id);
@@ -285,8 +325,17 @@ function renderDetail(root, ctx, id) {
     });
   };
   drawStatus(); drawPayments();
+  // Payments that arrive from the server (Stripe, another device, a QuickBooks settlement).
+  const offPayments = store.on('payments', (e) => {
+    if (e?.remote && e.record?.invoiceId === id) { refreshPaid(); drawStatus(); drawPayments(); }
+  });
 
   const remove = async () => {
+    // Credited or paid in QuickBooks (4.9): that payment is QuickBooks', so the invoice stays; void it.
+    if (store.count('payments', (p) => p.invoiceId === id && isSettlementPayment(p))) {
+      ui.toast(`${doc.number} has a payment credited or paid in QuickBooks, which can't be deleted from Fishtape. Void the invoice instead.`, 'error', 6000);
+      return;
+    }
     const n = store.count('payments', (p) => p.invoiceId === id);
     if (!(await ui.confirmDialog(`Delete invoice ${doc.number}${n ? ` and its ${n} payment${n > 1 ? 's' : ''}` : ''}? Voiding keeps a record; deleting doesn't.`, { okLabel: 'Delete' }))) return;
     save.flush();
@@ -316,11 +365,8 @@ function renderDetail(root, ctx, id) {
       h('div', { class: 'card' }, h('h3', null, 'Totals'), totals),
       h('div', { class: 'card' }, h('h3', null, 'Payments'), paymentsHost)))));
 
-  return () => save.flush();
+  return () => { offPayments(); save.stop(); };
 }
 
-function pick(d) {
-  const { id, createdAt, updatedAt, ...rest } = d;
-  void id; void createdAt; void updatedAt;
-  return rest;
-}
+/** Invoice fields the detail screen shows in its form: changed elsewhere, the screen is drawn again. */
+const FORM_FIELDS = ['number', 'clientId', 'jobId', 'issueDate', 'dueDate', 'taxes', 'taxPct', 'taxProvince', 'taxTreatment', 'taxNoneReason', 'notes', 'lines', 'title'];

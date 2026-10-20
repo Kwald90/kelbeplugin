@@ -17,6 +17,7 @@ export const FEATURE_LABELS = {
   'ai.assistant': 'AI assistant', 'ai.cec': 'AI code helper', 'ai.background': 'Background AI agents', api: 'API access', mcp: 'MCP server for AI tools',
   'integrations.sms': 'SMS (Twilio)', 'integrations.facebook': 'Facebook Lead Ads', 'locations.multi': 'Multiple stock locations',
   sso: 'Single sign-on', 'setup.service': 'Setup done for you',
+  quickbooks: 'QuickBooks Online sync', purchasing: 'Supplier bills and purchase orders',
 };
 
 /** Features a plan adds over the one below it. */

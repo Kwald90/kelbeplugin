@@ -195,13 +195,24 @@ export default {
       { label: 'Next job number', name: 'job', type: 'number', min: 1, step: 1, value: s.nextNumbers?.job, hint: 'J-####' },
       { label: 'Next estimate number', name: 'estimate', type: 'number', min: 1, step: 1, value: s.nextNumbers?.estimate, hint: 'E-####' },
       { label: 'Next invoice number', name: 'invoice', type: 'number', min: 1, step: 1, value: s.nextNumbers?.invoice, hint: 'INV-####' },
+      { label: 'Next purchase order number', name: 'po', type: 'number', min: 1, step: 1, value: s.nextNumbers?.po ?? 5001, hint: 'PO-####' },
     ]));
     const saveNumbering = () => {
       if (!numbering.reportValidity()) return;
       const v = ui.readForm(numbering);
       const cur = store.settings().nextNumbers || {};
-      store.saveSettings({ nextNumbers: { job: v.job || cur.job, estimate: v.estimate || cur.estimate, invoice: v.invoice || cur.invoice } });
-      ui.toast('Numbering saved', 'success');
+      // Keep every counter, including ones this form doesn't show (purchase orders came later), and
+      // never move one back: a number handed out on another device while this form was open would
+      // be handed out again (and QuickBooks refuses a duplicate document number).
+      const next = { ...cur };
+      for (const k of ['job', 'estimate', 'invoice', 'po']) {
+        const want = Number(v[k]) || 0, have = Number(cur[k]) || 0;
+        next[k] = Math.max(want, have) || (k === 'po' ? 5001 : undefined);
+      }
+      for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
+      const lowered = ['job', 'estimate', 'invoice', 'po'].filter((k) => v[k] && Number(v[k]) < (Number(cur[k]) || 0));
+      store.saveSettings({ nextNumbers: next });
+      ui.toast(lowered.length ? 'Numbering saved. A counter can only go up: numbers below the next one may already be used.' : 'Numbering saved', lowered.length ? 'info' : 'success', lowered.length ? 6000 : undefined);
     };
 
     // modules (switches): what the company uses, separate from what the plan includes
@@ -367,7 +378,7 @@ export default {
           h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', null, 'Wipe all data'), h('div', { class: 'muted' }, 'Clears this device and reloads the demo data.')),
             ui.button('Wipe…', { variant: 'danger', icon: 'trash', onClick: wipe }))),
         card('Accounting and imports', 'Bring records in from other software; send invoices and payments to QuickBooks Online',
-          h('div', { class: 'row' }, ui.button('Import a file', { icon: 'upload', href: '#/import' }), ui.button('Export to QuickBooks', { icon: 'download', href: '#/import/export' })),
+          h('div', { class: 'row' }, ui.button('QuickBooks Online sync', { icon: 'link', href: '#/quickbooks' }), ui.button('Import a file', { icon: 'upload', href: '#/import' }), ui.button('Export to QuickBooks', { icon: 'download', href: '#/import/export' })),
           h('div', { class: 'row' }, ui.button('Developer & API keys', { variant: 'ghost', icon: 'key', href: '#/developer' }), ui.button('Set-up checklist', { variant: 'ghost', icon: 'check', href: '#/onboarding' }))),
         card('About', null,
           h('div', null, h('strong', null, BRAND.name), ` v${APP_VERSION}`),
