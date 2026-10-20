@@ -47,9 +47,14 @@ x-server: &server
     # HQ Mail attachments and original messages (docs/email/README.md). Written by the api
     # (Inbound Parse), read by hq-api (downloads) and the worker (sending attachments).
     MAIL_DIR: /var/lib/fishtape/mail
+    # Hero videos and posters uploaded in HQ -> Promotions; nginx serves them at /media/.
+    MEDIA_DIR: /var/lib/fishtape/media
+    # Under nginx's 72m request limit on /api/; hero clips at the documented specs are ~10 MB.
+    MEDIA_MAX_VIDEO_MB: "70"
   volumes:
     - /var/lib/fishtape-staging/status:/run/fishtape/status:ro
     - /var/lib/fishtape-staging/mail:/var/lib/fishtape/mail
+    - /var/lib/fishtape-staging/media:/var/lib/fishtape/media
   depends_on:
     postgres:
       condition: service_healthy

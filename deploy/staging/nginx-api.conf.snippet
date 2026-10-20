@@ -76,7 +76,7 @@ location ^~ /site/ {
     expires epoch;
     location ~ /\. { return 404; }
     location ~* \.(?:html|js|mjs|css|png|jpe?g|gif|webp|avif|svg|ico|woff2?)$ { try_files $uri =404; }
-    location = /site/ { return 302 /site/pricing.html; }
+    location = /site/ { return 302 /site/index.html; }
     return 404;
 }
 
@@ -88,7 +88,7 @@ location ^~ /site/ {
 # no listing, never executed (^~ stops any regex location, PHP included, from matching here).
 # Names never change, so a year's cache is safe; byte ranges (video seeking) are nginx's default.
 # Uploads arrive through /api/hq/ and so are capped by client_max_body_size in
-# fishtape-staging-proxy.conf (72m); the API's own cap is MEDIA_MAX_VIDEO_MB (150).
+# fishtape-staging-proxy.conf (72m); the API's own cap is MEDIA_MAX_VIDEO_MB (70 in compose).
 location ^~ /media/ {
     root /var/lib/fishtape-staging;
     autoindex off;
