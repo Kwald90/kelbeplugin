@@ -1,4 +1,4 @@
-// Outbound HTTP to providers (Stripe, Resend, Twilio, Graph API, Anthropic). One place, so
+// Outbound HTTP to providers (Stripe, Resend, Twilio, Graph API, Anthropic, QuickBooks). One place, so
 // tests can swap in a fake fetch (setFetch) and no test ever reaches the network, and so
 // provider errors are turned into short, safe messages: response bodies, keys and
 // customer details never reach logs or API responses.
@@ -29,13 +29,28 @@ export class ProviderError extends Error {
   }
 }
 
-/** Keep provider text short and free of anything that looks like an address, number or key. */
-export function scrub(text, max = 200) {
-  return String(text ?? '')
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Keep provider text short and free of anything that looks like an address, number, key or token.
+ * `names: true` (QuickBooks details, docs/integrations/quickbooks.md 5.8) also hides customer and
+ * item names: anything in quotes and the text after "name:" become […].
+ */
+export function scrub(text, max = 200, { names = false } = {}) {
+  let s = String(text ?? '');
+  if (names) {
+    s = s
+      .replace(/"[^"]*"|“[^”]*”|‘[^’]*’|(^|[\s(=:,])'[^']*'/g, (m, pre) => `${pre ?? ''}[…]`)
+      .replace(/\b(name\s*[:=])\s*[^.;,\n]+/gi, '$1 […]');
+  }
+  return s
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
     .replace(/\+?\d[\d\s().-]{7,}\d/g, '[number]')
     .replace(/\b(sk|rk|pk|whsec|re|AC|SK|EAA)[_A-Za-z0-9-]{8,}/g, '[key]')
     .replace(/\bSG\.[A-Za-z0-9_.-]{8,}/g, '[key]')
+    // OAuth tokens and other long opaque strings (base64url, optionally dot-separated like a JWT).
+    // A plain UUID stays: providers use them as request and object ids, and they are not secrets.
+    .replace(/[A-Za-z0-9_-]{32,}(?:\.[A-Za-z0-9_-]{4,})*/g, (m) => (UUID.test(m) ? m : '[token]'))
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, max);
@@ -69,7 +84,7 @@ export async function request(provider, url, opts = {}) {
   return { status: res.status, ok: res.ok, json, text, headers: res.headers };
 }
 
-const LABELS = { stripe: 'Stripe', resend: 'Resend', sendgrid: 'SendGrid', twilio: 'Twilio', facebook: 'Facebook', anthropic: 'Anthropic' };
+const LABELS = { stripe: 'Stripe', resend: 'Resend', sendgrid: 'SendGrid', twilio: 'Twilio', facebook: 'Facebook', anthropic: 'Anthropic', qbo: 'QuickBooks' };
 export const label = (p) => LABELS[p] || p;
 
 /** Default classification of an HTTP failure. Providers refine it with their own codes. */

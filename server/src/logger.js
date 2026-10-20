@@ -14,7 +14,8 @@ export const REDACT_PATHS = [
   '*.password_hash', '*.pin_hash', '*.secret_enc', '*.value',
 ];
 
-const SECRET_QUERY = /([?&](?:code|state|token|key|password|pin|id_token|access_token|hub\.verify_token|verify_token|secret|signature)=)[^&#]*/gi;
+// realmId/realm_id/ticket: the QuickBooks callback and connect-start URLs (docs/integrations/quickbooks.md 10.1).
+const SECRET_QUERY = /([?&](?:code|state|token|key|password|pin|id_token|access_token|hub\.verify_token|verify_token|secret|signature|realmId|realm_id|ticket)=)[^&#]*/gi;
 
 // The SendGrid Inbound Parse URL carries its secret as the last path segment.
 const SECRET_PATH = /(\/webhooks\/sendgrid\/inbound\/)[^/?#]+/gi;

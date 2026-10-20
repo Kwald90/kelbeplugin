@@ -37,6 +37,8 @@ esac
 # Values that are not secret are shown back in full.
 case "$NAME" in
   EMAIL_FROM|EMAIL_PROVIDER|HQ_NOTIFY_EMAIL|SUPPORT_EMAIL|PUBLIC_ORIGIN|HQ_PUBLIC_URL|TRIAL_DAYS|MAIL_DOMAIN) PLAIN=1 ;;
+  # QuickBooks: the environment, the app's client id (an identifier, not a secret) and the write switch.
+  QBO_ENVIRONMENT|QBO_CLIENT_ID|QBO_WRITES|QBO_READ_BUDGET|QBO_TENANT_READ_BUDGET|QBO_TRIAL_READ_BUDGET|WORKER_QBO_CONCURRENCY) PLAIN=1 ;;
   *) PLAIN=0 ;;
 esac
 

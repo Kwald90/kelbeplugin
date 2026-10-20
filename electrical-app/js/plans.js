@@ -29,6 +29,8 @@ export const FEATURE_PLAN = {
   today: 'starter', workplan: 'pro', kpis: 'pro',
   // material requests from the crew, sent to the office once a day
   materials: 'starter',
+  // QuickBooks Online two-way sync, and supplier bills, receipts and purchase orders
+  quickbooks: 'pro', purchasing: 'pro',
   // features inside modules
   'drawings.rooms': 'pro', 'wireruns.trace': 'pro', portal: 'pro', 'payments.online': 'pro', 'integrations.email': 'pro',
   'ai.assistant': 'business', 'ai.cec': 'business', 'ai.background': 'business', api: 'business', mcp: 'business',
