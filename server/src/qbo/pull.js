@@ -280,8 +280,42 @@ const inScope = (run, date, open) => {
   return open || !syncFrom || (date && date >= syncFrom);
 };
 
+const MARKER_RE = /Fishtape ref ([0-9a-f]{12})/;
+
+/**
+ * An unlinked object may be one of our own creates whose answer never arrived (a crash or a timeout
+ * before the link was written, 5.3): its marker, or for names the exact name of a pending create,
+ * points at the pending link. It is adopted there, never created a second time in Fishtape.
+ */
+async function adoptFromPull(run, entity, o) {
+  const text = [o.PrivateNote, o.Description, o.Memo].filter(Boolean).join(' ');
+  const m = MARKER_RE.exec(text);
+  const pendingLink = await tenantRead(run, async (tx) => {
+    if (m) {
+      return (await tx.query("SELECT * FROM qbo_links WHERE tenant_id = $1 AND qbo_id IS NULL AND qbo_entity = $2 AND meta->>'marker' = $3", [tx.tenantId, entity, m[0]])).rows[0] || null;
+    }
+    if (!['Customer', 'Vendor', 'Item'].includes(entity)) return null;
+    const { rows } = await tx.query("SELECT * FROM qbo_links WHERE tenant_id = $1 AND qbo_id IS NULL AND qbo_entity = $2 AND state = 'pending' AND meta ? 'sent'", [tx.tenantId, entity]);
+    for (const l of rows) {
+      const rec = await loadRecord(tx, l.collection, l.record_id);
+      const name = l.meta?.sendName || rec?.data?.name || (l.collection === 'jobs' ? [rec?.data?.number, rec?.data?.title].filter(Boolean).join(' ') : null);
+      if (name && String(name).trim().toLowerCase() === String(o.DisplayName || o.Name || '').trim().toLowerCase()) return l;
+    }
+    return null;
+  });
+  if (!pendingLink) return false;
+  if (run.shadow) return true;
+  const l = await txWrite(run, (tx) => updateLink(tx, run, pendingLink.id, {
+    qbo_id: String(o.Id), sync_token: null, qbo_updated_at: lastUpdated(o), snapshot: null, meta: { ...(pendingLink.meta || {}), sent: undefined },
+  }));
+  await txWrite(run, (tx) => writeLog(tx, { direction: 'pull', outcome: 'info', action: 'adopt', collection: l.collection, recordId: l.record_id, qboEntity: entity, message: 'Found our own earlier send in QuickBooks; linked it.' }));
+  await reconcile(run, l, { remote: o, direction: 'push' });
+  return true;
+}
+
 /** A QuickBooks object with no link: the creation rules of 4.1. */
 async function pullCreate(run, entity, o) {
+  if (await adoptFromPull(run, entity, o)) return null;
   const opt = (k, d) => optionOf(run.ctx.mappings, k, d);
   switch (entity) {
     case 'Customer':

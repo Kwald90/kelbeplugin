@@ -613,7 +613,9 @@ export async function reconcile(run, link, o = {}) {
       return 'conflict';
     }
     await txWrite(run, async (tx) => {
-      await updateLink(tx, run, link.id, { state: 'conflict', meta: { ...meta, fieldSeenAt: seen } });
+      // Device values held by records.js stay with the link until a person decides (5.2).
+      const heldNow = o.held && Object.keys(o.held).length ? { ...(meta.held || {}), ...o.held } : meta.held;
+      await updateLink(tx, run, link.id, { state: 'conflict', meta: { ...meta, fieldSeenAt: seen, ...(heldNow ? { held: heldNow } : {}) } });
       await openConflict(tx, run, { ...link, state: 'conflict' }, { kind: 'fields', label, fields: conflictRows(canonColl, conflicts) });
       await finishOutbox(tx, run, row);
       await writeLog(tx, { direction, outcome: 'conflict', action: 'conflict', actorType: row?.actor_type, collection, recordId: link.record_id, qboEntity: link.qbo_entity, label, message: `Changed on both sides: ${conflicts.map((c) => c.field).join(', ')}` });
@@ -924,15 +926,25 @@ export async function syncTenant(deps, tenantId, o = {}) {
     if (direction === 'both' && run.wrote && !timeUp(run)) await runPull(run, {});
     if (timeUp(run)) more = true;
   } catch (e) {
+    await releaseClaims(run);
     if (e instanceof BrakeError) {
       await tripBrake(run, e.count);
       return { ...run.stats, stopped: 'brake' };
     }
-    if (e instanceof PassStop) return { ...run.stats, stopped: e.reason, error: e.cause || null };
+    const stop = e instanceof PassStop ? e : passStopFor(e);
+    if (stop) return { ...run.stats, stopped: stop.reason, error: stop.cause || null };
     if (e instanceof FencedError) return { ...run.stats, stopped: 'fenced' };
     throw e;
   }
+  await releaseClaims(run);
   return { ...run.stats, more };
+}
+
+/** Rows this pass claimed but did not finish go back at once (a stopped pass, 5.3). */
+async function releaseClaims(run) {
+  if (run.shadow) return;
+  await run.db.withTenant({ tenantId: run.tenantId }, (tx) => tx.query(
+    'UPDATE qbo_outbox SET claimed_until = NULL, claimed_epoch = NULL WHERE tenant_id = $1 AND claimed_epoch = $2', [run.tenantId, run.epoch])).catch(() => {});
 }
 
 /** The safety brake (5.8): pause, log the counts, tell the office and HQ. */

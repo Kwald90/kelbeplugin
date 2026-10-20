@@ -178,8 +178,9 @@ async function resolveFields(run, link, c, choice, fields) {
   if (!rec || rec.deleted) throw new ApiError(409, 'qbo_record_gone', 'The Fishtape record is gone.');
   const obj = await run.client.read(link.qbo_entity, link.qbo_id);
   const ctx = ctxFor(run, link, link.collection);
-  const held = await run.db.withTenant({ tenantId: run.tenantId }, async (tx) => (await tx.query(
+  const queued = await run.db.withTenant({ tenantId: run.tenantId }, async (tx) => (await tx.query(
     'SELECT held FROM qbo_outbox WHERE tenant_id = $1 AND collection = $2 AND record_id = $3', [tx.tenantId, link.collection, link.record_id])).rows[0]?.held || {});
+  const held = { ...(link.meta?.held || {}), ...queued };
   const canonColl = canonCollection(link.collection, link.role);
   const moneyKeys = MONEY_RECORD_KEYS[canonColl] || {};
   await txWrite(run, async (tx) => {
@@ -194,7 +195,9 @@ async function resolveFields(run, link, c, choice, fields) {
   const B = { ...(link.snapshot || {}) };
   const names = rows.map((r) => r.field).filter((f) => fieldsOf(canonColl).includes(f));
   for (const f of names) B[f] = pick(f) === 'fishtape' ? (R[f] ?? null) : (L[f] ?? null);
-  const l = await txWrite(run, (tx) => updateLink(tx, run, link.id, { snapshot: B, state: 'pending', prev_values: {} }));
+  const meta = { ...(link.meta || {}) };
+  delete meta.held;
+  const l = await txWrite(run, (tx) => updateLink(tx, run, link.id, { snapshot: B, state: 'pending', prev_values: {}, meta }));
   await reconcile(run, l, { record: fresh, remote: obj, force: true, direction: 'push' });
 }
 
