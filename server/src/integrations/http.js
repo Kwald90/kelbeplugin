@@ -29,6 +29,8 @@ export class ProviderError extends Error {
   }
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Keep provider text short and free of anything that looks like an address, number, key or token.
  * `names: true` (QuickBooks details, docs/integrations/quickbooks.md 5.8) also hides customer and
@@ -47,7 +49,8 @@ export function scrub(text, max = 200, { names = false } = {}) {
     .replace(/\b(sk|rk|pk|whsec|re|AC|SK|EAA)[_A-Za-z0-9-]{8,}/g, '[key]')
     .replace(/\bSG\.[A-Za-z0-9_.-]{8,}/g, '[key]')
     // OAuth tokens and other long opaque strings (base64url, optionally dot-separated like a JWT).
-    .replace(/[A-Za-z0-9_-]{32,}(?:\.[A-Za-z0-9_-]{4,})*/g, '[token]')
+    // A plain UUID stays: providers use them as request and object ids, and they are not secrets.
+    .replace(/[A-Za-z0-9_-]{32,}(?:\.[A-Za-z0-9_-]{4,})*/g, (m) => (UUID.test(m) ? m : '[token]'))
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, max);

@@ -232,6 +232,7 @@ describe('errors', () => {
     const tok = ['eyJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwiYWxnIjoiZGlyIn0', 'abcdEFGHijkl', 'mnopQRST'].join('.');
     assert.ok(!scrub(`bad token ${tok} here`).includes('eyJ'));
     assert.match(scrub(`refresh AB11${'x'.repeat(40)}`), /\[token\]/);
+    assert.equal(scrub('request c0ffeeab-abcd-4efa-9abc-defabcdeabcd failed'), 'request c0ffeeab-abcd-4efa-9abc-defabcdeabcd failed', 'a UUID is an id, not a token');
   });
 });
 

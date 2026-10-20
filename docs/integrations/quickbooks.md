@@ -239,8 +239,7 @@ OAuth "connect someone else's books to my tenant" attack. So it uses a one-time 
    /api/v1/qbo/oauth/start?ticket=` (public) does **not** consume the ticket. It checks the ticket
    exists, is unexpired and in stage `ticket`; for `returnTo: 'web'` it also requires an `ft_session`
    cookie belonging to the ticket's user (else the `state_invalid` result). It answers a small static
-   **interstitial** page (headers as the done page, plus `form-action 'self' https://appcenter.intuit.com`
-   in the CSP: browsers apply `form-action` to the redirect that answers the POST too): "Connect
+   **interstitial** page (headers as the done page, plus `form-action 'self'` in the CSP): "Connect
    QuickBooks to the Fishtape company **<tenant name>**, requested by **<user email>**", a Connect button
    and a Cancel link. The button POSTs the ticket in a hidden field to `POST /api/v1/qbo/oauth/start`
    (public, `csrf: false`; the single-use ticket is the CSRF token). The POST consumes the ticket once:
@@ -595,8 +594,6 @@ CREATE POLICY qbo_api_usage_read ON qbo_api_usage FOR SELECT USING (true);
 CREATE POLICY qbo_api_usage_insert ON qbo_api_usage FOR INSERT WITH CHECK (tenant_id = app_tenant_id());
 CREATE POLICY qbo_api_usage_update ON qbo_api_usage FOR UPDATE USING (tenant_id = app_tenant_id())
   WITH CHECK (tenant_id = app_tenant_id());
--- Retention (13 months, 10.4): qbo_purge deletes a tenant's old months under withTenant.
-CREATE POLICY qbo_api_usage_delete ON qbo_api_usage FOR DELETE USING (tenant_id = app_tenant_id());
 
 -- Refresh tokens whose revoke failed (disconnect, purge, tenant close). Survives tenant deletion on
 -- purpose (no FK), so a live grant is never forgotten. Retried daily for 14 days.
@@ -614,7 +611,7 @@ CREATE TABLE qbo_revoke_pending (
 CREATE TABLE qbo_platform_events (
   id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   at          timestamptz NOT NULL DEFAULT now(),
-  kind        text NOT NULL CHECK (kind ~ '^[a-z][a-z0-9_]{1,39}$'),   -- digits allowed: intuit_5xx
+  kind        text NOT NULL CHECK (kind ~ '^[a-z_]{2,40}$'),
   -- platform_credentials, invalid_grant, reconnect_needed, webhook_signature, intuit_5xx, safety_brake,
   -- realm_mismatch, revoke_gave_up, budget_threshold
   environment text CHECK (environment IN ('sandbox', 'production')),
@@ -868,7 +865,7 @@ GRANT SELECT, INSERT, DELETE ON qbo_realms TO fishtape_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON qbo_oauth_states, qbo_revoke_pending TO fishtape_app;
 GRANT SELECT, INSERT, DELETE ON qbo_platform_events TO fishtape_app;
 GRANT SELECT ON qbo_platform_events TO fishtape_hq;
-GRANT SELECT, INSERT, UPDATE, DELETE ON qbo_api_usage TO fishtape_app;
+GRANT SELECT, INSERT, UPDATE ON qbo_api_usage TO fishtape_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON qbo_connections, qbo_links, qbo_outbox, qbo_inbox, qbo_conflicts,
   qbo_sync_log, qbo_mappings, qbo_reference, qbo_candidates, stripe_payouts TO fishtape_app;
 
@@ -876,10 +873,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON qbo_connections, qbo_links, qbo_outbox, 
 GRANT SELECT ON qbo_api_usage TO fishtape_hq;
 GRANT SELECT (tenant_id, environment) ON qbo_realms TO fishtape_hq;
 GRANT DELETE ON qbo_realms TO fishtape_hq;                                   -- HQ release (2.9)
--- lease_epoch is read by the HQ pause and release (SET lease_epoch = lease_epoch + 1).
 GRANT SELECT (tenant_id, environment, state, state_before, pause_reason, paused_since, reconnect_reason,
   features, connected_at, refresh_expires_at, refresh_hard_expires_at, last_pull_at, last_push_at,
-  last_webhook_at, last_check_at, throttled_until, disconnected_at, lease_epoch) ON qbo_connections TO fishtape_hq;
+  last_webhook_at, last_check_at, throttled_until, disconnected_at) ON qbo_connections TO fishtape_hq;
 GRANT UPDATE (state, state_before, pause_reason, paused_since, lease_epoch, lease_until, updated_at)
   ON qbo_connections TO fishtape_hq;                                         -- HQ pause and release (2.9)
 GRANT SELECT (tenant_id, collection, state, reason, updated_at) ON qbo_links TO fishtape_hq;
@@ -1085,9 +1081,8 @@ No QBO fields are added to any existing record. The only existing-record changes
 ```
 
 `listSecrets` skips `internal` names and `isSecretName` returns false for them (2.3), so the generic
-secret routes refuse them; a W1 test sends `PUT` and `DELETE /api/v1/secrets/qbo.refresh_token`
-(and the other two) as an owner and expects 400 with nothing stored or deleted (there is no `GET` of one
-secret: that route does not exist, so it answers 404 with nothing revealed). `providers.js` is **not** changed: QBO is not a paste-the-key
+secret routes refuse them; a W1 test sends `GET`, `PUT` and `DELETE /api/v1/secrets/qbo.refresh_token`
+(and the other two) as an owner and expects 400 with nothing stored or deleted. `providers.js` is **not** changed: QBO is not a paste-the-key
 provider and has no `PROVIDERS` entry, so `GET /api/v1/integrations` and `PUT /integrations/:provider`
 never touch these names. The `integration_settings` and `integration_events` CHECK constraints are not
 changed either; QBO keeps its own status tables.
@@ -2810,8 +2805,8 @@ HQ sees health, never customer data.
 - Roles: every QBO route returns 403 to foreman, electrician, apprentice, crew sessions and API keys;
   connect, disconnect and takeover return 403 to office; every write route returns 403 `mfa_required` to a
   session without two-step verification.
-- Secrets: `PUT` and `DELETE /api/v1/secrets/qbo.refresh_token`, `qbo.access_token` and
-  `qbo.realm_id` return 400 and change nothing; `GET` of one secret has no route (404) (W1).
+- Secrets: `GET`, `PUT` and `DELETE /api/v1/secrets/qbo.refresh_token`, `qbo.access_token` and
+  `qbo.realm_id` return 400 and change nothing (W1).
 - Leaks (W3 adds to `server/test/leaks.test.js`): no token, realm id, refresh token, verifier or ticket
   in any response body, header, log line or error, across connect, start, callback, status, look-ups and
   failures (use distinctive fake values like the existing `SECRET_VALUES` test). A forced 6240 with a
@@ -3014,9 +3009,7 @@ An in-memory QuickBooks used through `setFetch` (unit and route tests) or as a r
 
 Run against the Canadian sandbox (Plus, then Essentials) and record results in this file:
 
-1. PKCE support (2.2), read once by hand from the discovery document. **Done 2026-10-20:**
-   `https://developer.api.intuit.com/.well-known/openid_configuration` lists no
-   `code_challenge_methods_supported`, so `QBO_PKCE = false` (W1).
+1. PKCE support (2.2), read once by hand from the discovery document.
 2. `GlobalTaxCalculation` required; GST/PST MB gives two `TaxLine`s; per-rate rounding; override
    accepted on sales and on purchases; `ReadOnly` rates.
 3. Negative sales lines; `Amount` vs `Qty × UnitPrice` validation and how many `Qty` decimals QBO keeps

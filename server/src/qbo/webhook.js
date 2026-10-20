@@ -139,8 +139,18 @@ export async function ingestWebhook(db, sealer, cfg, events) {
   return { accepted, dropped };
 }
 
+// The alert only asks "any failed signature in the last hour", so a flood of bad posts writes at
+// most one event a minute per process instead of one row per request.
+const SIGNATURE_EVENT_EVERY_MS = 60_000;
+let lastSignatureEvent = 0;
+/** Tests: forget when the last signature event was written. */
+export function resetSignatureEvents() { lastSignatureEvent = 0; }
+
 /** Count a bad or missing signature (HQ alert qbo_webhook_signature). Nothing else is stored. */
 export async function recordSignatureFailure(db, cfg) {
+  const now = Date.now();
+  if (now - lastSignatureEvent < SIGNATURE_EVENT_EVERY_MS) return;
+  lastSignatureEvent = now;
   await platformEvent(db, 'webhook_signature', qboCfg(cfg).environment).catch(() => {});
 }
 

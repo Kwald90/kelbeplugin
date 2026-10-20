@@ -164,6 +164,8 @@ export function resetUsageCache() { Object.assign(workspaceCache, { month: null,
 
 // An Intuit 429 carrying the monthly-cap message, per environment: first seen at.
 const capSeen = new Map();
+// The last 429 per tenant in this process, so a call that waited in the limiter meanwhile checks again.
+const lastThrottle = new Map();
 
 // ---- the client -------------------------------------------------------------------------------
 
@@ -172,6 +174,7 @@ const ENTITIES = new Set(['Account', 'Attachable', 'Bill', 'BillPayment', 'Class
   'PurchaseOrder', 'TaxAgency', 'TaxCode', 'TaxRate', 'Term', 'TimeActivity', 'Transfer', 'Vendor']);
 const ID = /^\d{1,20}$/;
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,50}$/;
+const MIME = /^[a-z]+\/[a-z0-9.+-]+$/i;
 const REALM = '{realm}';
 
 function entityPath(entity) {
@@ -274,9 +277,13 @@ export function createQboClient(o) {
     if (!cfg.enabled) throw new QboError('unavailable', { variant: 'disabled', retry: false });
     const core = op.core || 0;
     const coreplus = op.coreplus || 0;
-    await gate(core > 0 ? 'core' : 'coreplus', coreplus);
+    const kind = core > 0 ? 'core' : 'coreplus';
+    await gate(kind, coreplus);
+    const queuedAt = Date.now();
     const release = await lim.acquire(tenantId, { maxInFlight });
     try {
+      // Intuit answered 429 while this call waited its turn: check throttled_until again before sending.
+      if ((lastThrottle.get(tenantId) ?? -1) >= queuedAt) await gate(kind, coreplus);
       let forced = false;
       for (;;) {
         const tok = o.token || await withAccessToken(db, sealer, o.config, tenantId, { force: forced });
@@ -338,6 +345,7 @@ export function createQboClient(o) {
 
   /** 429: stop every caller for 60 s; a monthly cap that lasts 10 minutes pauses the tenant (5.11). */
   async function onThrottled(fault) {
+    lastThrottle.set(tenantId, Date.now());
     await db.withTenant({ tenantId }, (tx) => tx.query(
       "UPDATE qbo_connections SET throttled_until = now() + interval '60 seconds', updated_at = now() WHERE tenant_id = $1", [tenantId])).catch(() => {});
     if (/month/i.test(`${fault?.message || ''} ${fault?.detail || ''}`)) {
@@ -428,6 +436,8 @@ export function createQboClient(o) {
     async upload({ entity, id }, { fileName, contentType, bytes }, { requestId } = {}) {
       entityPath(entity);
       if (!ID.test(String(id))) throw new Error('qbo: bad id');
+      // It goes into a part header and the metadata: never a line break or a parameter.
+      if (!MIME.test(String(contentType))) throw new Error('qbo: bad content type');
       const boundary = `fishtape${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
       const meta = { AttachableRef: [{ EntityRef: { type: entity, value: String(id) } }], FileName: fileName, ContentType: contentType, Category: 'Receipt' };
       const safeName = String(fileName).replace(/["\r\n]/g, '_');

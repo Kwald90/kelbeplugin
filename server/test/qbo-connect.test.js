@@ -20,7 +20,7 @@ import {
   SECRET_NAMES, completeCallback, createConnectTicket, disconnect, hasTakeoverOffer, loadConnection, qboRealmOwner, realmHash,
   resetTokenBreaker, setPaused, startFromTicket, startPage, takeover, tenantForRealm, tokenBreakerOpen, withAccessToken,
 } from '../src/qbo/connection.js';
-import { createQboPlatformHandlers, scheduleQboPlatformJobs } from '../src/qbo/platform-jobs.js';
+import { createQboPlatformHandlers, retryRevokes, scheduleQboPlatformJobs } from '../src/qbo/platform-jobs.js';
 import { refreshTokens } from '../src/qbo/oauth.js';
 import { rehashRealms } from '../scripts/qbo-rehash.js';
 
@@ -50,6 +50,8 @@ async function addUser(tenantId, role) {
 const conn = (tenantId) => t.db.withTenant({ tenantId }, loadConnection);
 const secret = (tenantId, name) => t.db.withTenant({ tenantId }, (tx) => getSecret(tx, sealer, name, INTERNAL));
 const connect = (who, realmId, o = {}) => connectViaFake(fake, { db: t.db, sealer, config: o.config || config, tenantId: who.tenantId, userId: o.userId || who.userId, realmId, ...o });
+const setState = (tenantId, state) => t.db.withTenant({ tenantId }, (tx) => tx.query('UPDATE qbo_connections SET state = $2 WHERE tenant_id = $1', [tenantId, state]));
+const pending = async () => (await t.superPool.query('SELECT count(*)::int AS n FROM qbo_revoke_pending')).rows[0].n;
 const expire = (tenantId) => t.db.withTenant({ tenantId }, (tx) => tx.query("UPDATE qbo_connections SET access_expires_at = now() - interval '1 minute' WHERE tenant_id = $1", [tenantId]));
 const audits = async (tenantId, action) => (await t.superPool.query('SELECT summary FROM audit_events WHERE tenant_id = $1 AND action = $2', [tenantId, action])).rows;
 const notes = async (tenantId, like) => (await t.superPool.query('SELECT title, body, ref FROM notifications WHERE tenant_id = $1 AND ref LIKE $2', [tenantId, like])).rows;
@@ -82,6 +84,8 @@ describe('connect', { skip }, () => {
     assert.equal(rows[0].ttl.minutes * 60 + (rows[0].ttl.seconds || 0), 120);
     assert.equal((await connect(A, newRealm())).result, 'ok');
     await assert.rejects(createConnectTicket(t.db, config, { tenantId: A.tenantId, userId: A.userId, returnTo: 'web' }), (e) => e.code === 'qbo_already_connected');
+    await assert.rejects(createConnectTicket(t.db, config, { tenantId: A.tenantId, userId: A.userId, returnTo: 'web', reconnect: true }),
+      (e) => e.statusCode === 409 && e.code === 'qbo_reconnect_not_allowed', 'nothing to reconnect during setup (2.6)');
   });
 
   test('interstitial: names the company and requester, does not consume the ticket; web tickets need the issuer session', async () => {
@@ -196,6 +200,21 @@ describe('connect', { skip }, () => {
     assert.equal(await conn(A.tenantId), null);
   });
 
+  test('a refused connect whose revoke fails keeps the token for the daily retries', async () => {
+    const A = await mkTenant('Border Retry Electric');
+    const us = newRealm({ country: 'US' });
+    fake.failToken({ kind: 'revoke', status: 503 });
+    assert.equal((await connect(A, us)).result, 'not_canada');
+    assert.equal(fake.grantAlive(us), true, 'the revoke failed');
+    const { rows } = await t.superPool.query('SELECT realm_hash FROM qbo_revoke_pending');
+    assert.equal(rows.length, 1, 'not dropped while the grant may be live');
+    assert.ok(Buffer.from(rows[0].realm_hash).equals(realmHash(sealer, config, us)));
+    await t.superPool.query('UPDATE qbo_revoke_pending SET next_try_at = now()');
+    assert.equal((await retryRevokes(t.db, sealer, config)).revoked, 1);
+    assert.equal(fake.grantAlive(us), false);
+    assert.equal(await pending(), 0);
+  });
+
   test('realm_in_use: never revoked, the holder keeps working, and a takeover offer is kept for 10 minutes', async () => {
     const A = await mkTenant('Holder Electric');
     const B = await mkTenant('Squatter Trial');
@@ -217,6 +236,7 @@ describe('connect', { skip }, () => {
     await t.db.withTenant({ tenantId: A.tenantId }, (tx) => tx.query(
       "INSERT INTO qbo_links (tenant_id, realm_hash, collection, record_id, qbo_entity, qbo_id, state) SELECT tenant_id, realm_hash, 'clients', 'c-1', 'Customer', '58', 'synced' FROM qbo_connections"));
     const other = newRealm();
+    await setState(A.tenantId, 'active');
     const wrong = await connect(A, other, { reconnect: true });
     assert.equal(wrong.result, 'wrong_company');
     assert.equal(fake.grantAlive(other), false, 'nobody holds the other realm: revoked');
@@ -417,6 +437,128 @@ describe('pause, disconnect, housekeeping', { skip }, () => {
     assert.equal(jobs.rows[0].dedupe_key, `qbo_sync:${A.tenantId}:sweep`);
   });
 
+  test('an HQ pause is never replaced or lifted by a user, budget, plan or brake pause; a stronger pause restarts paused_since', async () => {
+    const A = await mkTenant('Precedence Electric');
+    await connect(A, newRealm());
+    await setState(A.tenantId, 'active');
+    await setPaused(t.db, A.tenantId, true, 'hq');
+    await assert.rejects(setPaused(t.db, A.tenantId, true, 'user'), (e) => e.statusCode === 409 && e.code === 'qbo_pause_locked');
+    for (const r of ['tenant_budget', 'budget', 'plan']) await setPaused(t.db, A.tenantId, true, r);
+    await setPaused(t.db, A.tenantId, true, 'brake', { allowCount: 9 });
+    let c = await conn(A.tenantId);
+    assert.deepEqual([c.state, c.pause_reason, c.state_before], ['paused', 'hq', 'active']);
+    for (const r of ['user', 'budget', 'tenant_budget', 'plan']) {
+      await assert.rejects(setPaused(t.db, A.tenantId, false, r), (e) => e.code === 'qbo_pause_locked', r);
+    }
+    c = await conn(A.tenantId);
+    assert.deepEqual([c.state, c.pause_reason], ['paused', 'hq']);
+    await setPaused(t.db, A.tenantId, false, 'hq');
+    assert.equal((await conn(A.tenantId)).state, 'active');
+
+    // user, then plan: plan replaces it and its 60-day clock starts now; plan again keeps the clock;
+    // user again changes nothing.
+    await setPaused(t.db, A.tenantId, true, 'user');
+    await t.db.withTenant({ tenantId: A.tenantId }, (tx) => tx.query("UPDATE qbo_connections SET paused_since = now() - interval '90 days' WHERE tenant_id = $1", [A.tenantId]));
+    await setPaused(t.db, A.tenantId, true, 'plan');
+    c = await conn(A.tenantId);
+    assert.equal(c.pause_reason, 'plan');
+    assert.ok(c.paused_since > new Date(Date.now() - 60_000), 'the plan clock starts with the plan pause');
+    await t.db.withTenant({ tenantId: A.tenantId }, (tx) => tx.query("UPDATE qbo_connections SET paused_since = now() - interval '10 days' WHERE tenant_id = $1", [A.tenantId]));
+    await setPaused(t.db, A.tenantId, true, 'plan');
+    await setPaused(t.db, A.tenantId, true, 'user');
+    c = await conn(A.tenantId);
+    assert.equal(c.pause_reason, 'plan');
+    assert.ok(c.paused_since < new Date(Date.now() - 9 * 86400_000), 'same reason: same clock');
+    assert.equal(c.state_before, 'active');
+  });
+
+  test('a pause survives reconnect_needed, and its resume goes back to setup when the wizard was never applied', async () => {
+    const B = await mkTenant('Unfinished Setup Electric');
+    const r = newRealm();
+    await connect(B, r);
+    assert.equal((await conn(B.tenantId)).state, 'setup');
+    await setPaused(t.db, B.tenantId, true, 'hq');
+    fake.revokeRealm(r);
+    await expire(B.tenantId);
+    await assert.rejects(withAccessToken(t.db, sealer, config, B.tenantId), (e) => e.kind === 'auth');
+    let c = await conn(B.tenantId);
+    assert.deepEqual([c.state, c.pause_reason, c.state_before], ['reconnect_needed', 'hq', 'setup']);
+    await assert.rejects(setPaused(t.db, B.tenantId, false, 'user'), (e) => e.code === 'qbo_pause_locked', 'still locked under reconnect_needed');
+    assert.equal((await connect(B, r, { reconnect: true })).result, 'ok');
+    c = await conn(B.tenantId);
+    assert.deepEqual([c.state, c.pause_reason, c.state_before], ['paused', 'hq', 'setup'], 'back to the HQ pause, not to active');
+    await t.superPool.query('DELETE FROM jobs_queue WHERE tenant_id = $1', [B.tenantId]);
+    await setPaused(t.db, B.tenantId, false, 'hq');
+    c = await conn(B.tenantId);
+    assert.equal(c.state, 'setup', 'the wizard was never applied');
+    assert.equal(c.setup.phase, undefined);
+    const syncs = await t.superPool.query("SELECT 1 FROM jobs_queue WHERE tenant_id = $1 AND kind = 'qbo_sync'", [B.tenantId]);
+    assert.equal(syncs.rows.length, 0, 'no sync pass for a connection in setup');
+
+    // A pause with no usable state_before still resumes by the wizard: setup until it is applied.
+    await setPaused(t.db, B.tenantId, true, 'user');
+    await t.db.withTenant({ tenantId: B.tenantId }, (tx) => tx.query('UPDATE qbo_connections SET state_before = NULL WHERE tenant_id = $1', [B.tenantId]));
+    await setPaused(t.db, B.tenantId, false, 'user');
+    assert.equal((await conn(B.tenantId)).state, 'setup');
+    await t.db.withTenant({ tenantId: B.tenantId }, (tx) => tx.query(`UPDATE qbo_connections SET state = 'paused', pause_reason = 'user', state_before = NULL, setup = '{"phase":"done"}' WHERE tenant_id = $1`, [B.tenantId]));
+    await setPaused(t.db, B.tenantId, false, 'user');
+    assert.equal((await conn(B.tenantId)).state, 'active');
+  });
+
+  test('HQ release: housekeeping finishes the disconnect without revoking a realm another tenant now holds', async () => {
+    const run = (tenantId) => createQboPlatformHandlers({ sealer, config }).qbo_token_housekeeping({ db: t.db, job: { payload: { tenantId } } });
+    const release = async (tenantId) => {
+      await t.superPool.query("UPDATE qbo_connections SET state = 'disconnected', lease_epoch = lease_epoch + 1 WHERE tenant_id = $1", [tenantId]);
+      await t.superPool.query('DELETE FROM qbo_realms WHERE tenant_id = $1', [tenantId]);
+    };
+    const S = await mkTenant('Squatter Again');
+    const TG = await mkTenant('Rightful Again');
+    const R = newRealm();
+    assert.equal((await connect(S, R)).result, 'ok');
+    await release(S.tenantId);
+    assert.equal((await connect(TG, R)).result, 'ok', 'the rightful company connects after the release');
+    const before = await pending();
+    const out = await run(S.tenantId);
+    assert.equal(out.finished, 1);
+    assert.equal(fake.grantAlive(R), true, "not revoked: the grant is TG's now");
+    assert.equal(await pending(), before, 'and not queued for a later revoke either');
+    assert.equal((await t.superPool.query('SELECT count(*)::int AS n FROM tenant_secrets WHERE tenant_id = $1', [S.tenantId])).rows[0].n, 0, 'the old tokens are deleted');
+    await expire(TG.tenantId);
+    assert.ok((await withAccessToken(t.db, sealer, config, TG.tenantId)).accessToken, 'TG still refreshes');
+    assert.equal((await conn(TG.tenantId)).state, 'setup');
+
+    // The same for a released tenant that is then closed (the auto-disconnect path).
+    const S2 = await mkTenant('Closed Squatter');
+    const TG2 = await mkTenant('Rightful Too');
+    const R2 = newRealm();
+    await connect(S2, R2);
+    await release(S2.tenantId);
+    await connect(TG2, R2);
+    await t.superPool.query("UPDATE tenants SET status = 'closed' WHERE id = $1", [S2.tenantId]);
+    assert.equal((await run(S2.tenantId)).disconnected, 1);
+    assert.equal(fake.grantAlive(R2), true);
+    await expire(TG2.tenantId);
+    assert.ok((await withAccessToken(t.db, sealer, config, TG2.tenantId)).accessToken);
+  });
+
+  test('a failed revoke is dropped, never sent, once a tenant holds the realm again', async () => {
+    const A = await mkTenant('Back Again Electric');
+    const R = newRealm();
+    await connect(A, R);
+    await setState(A.tenantId, 'active');
+    fake.failToken({ kind: 'revoke', status: 503 });
+    await disconnect(t.db, sealer, config, A.tenantId, {});
+    assert.equal(await pending(), 1);
+    assert.equal((await connect(A, R, { reconnect: true })).result, 'ok', 'the same company within 30 days');
+    await t.superPool.query('UPDATE qbo_revoke_pending SET next_try_at = now()');
+    const out = await retryRevokes(t.db, sealer, config);
+    assert.deepEqual([out.held, out.revoked], [1, 0]);
+    assert.equal(await pending(), 0);
+    assert.equal(fake.grantAlive(R), true, 'the reconnected grant lives');
+    await expire(A.tenantId);
+    assert.ok((await withAccessToken(t.db, sealer, config, A.tenantId)).accessToken);
+  });
+
   test('disconnect without purge: revoked, secrets and realm row and queued jobs gone, the outbox kept, purge in 30 days', async () => {
     const A = await mkTenant('Leaving Electric');
     const realm = newRealm();
@@ -562,6 +704,21 @@ describe('pause, disconnect, housekeeping', { skip }, () => {
     await t.db.withTenant({ tenantId: A.tenantId }, (tx) => tx.query("UPDATE qbo_connections SET purge_after = now() - interval '1 minute' WHERE tenant_id = $1", [A.tenantId]));
     const out2 = await handlers.qbo_purge({ db: t.db, job: {} });
     assert.ok(out2.purgedTenants >= 1);
+    assert.equal(await conn(A.tenantId), null);
+    assert.equal((await audits(A.tenantId, 'qbo.purge')).length, 1);
+  });
+
+  test('a disconnected tenant with no realm or usage rows is still purged after 30 days (by the daily housekeeping)', async () => {
+    const A = await mkTenant('Forgotten Electric');
+    await connect(A, newRealm());
+    await disconnect(t.db, sealer, config, A.tenantId, {});
+    await t.superPool.query('DELETE FROM qbo_api_usage WHERE tenant_id = $1', [A.tenantId]);
+    await t.db.withTenant({ tenantId: A.tenantId }, (tx) => tx.query("UPDATE qbo_connections SET purge_after = now() - interval '1 minute' WHERE tenant_id = $1", [A.tenantId]));
+    const handlers = createQboPlatformHandlers({ sealer, config });
+    await handlers.qbo_purge({ db: t.db, job: {} });
+    assert.ok(await conn(A.tenantId), 'the hourly purge does not see it');
+    const out = await handlers.qbo_token_housekeeping({ db: t.db, job: { payload: { tenantId: A.tenantId } } });
+    assert.equal(out.purged, 1);
     assert.equal(await conn(A.tenantId), null);
     assert.equal((await audits(A.tenantId, 'qbo.purge')).length, 1);
   });

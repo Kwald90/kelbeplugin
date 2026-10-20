@@ -12,7 +12,7 @@ import { createSealer } from '../src/lib/crypto.js';
 import { setFetch } from '../src/integrations/http.js';
 import { createTenantWithOwner } from '../src/services/tenants.js';
 import { disconnect, setPaused } from '../src/qbo/connection.js';
-import { ingestWebhook, parseWebhook, receiveWebhook } from '../src/qbo/webhook.js';
+import { ingestWebhook, parseWebhook, receiveWebhook, resetSignatureEvents } from '../src/qbo/webhook.js';
 
 const KEY = randomBytes(32).toString('base64');
 const fake = createFakeQbo();
@@ -57,7 +57,8 @@ before(async () => {
 after(async () => { setFetch(null); await t?.close(); });
 
 describe('signatures', { skip }, () => {
-  test('bad or missing signature: 401, nothing stored, the failure counted', async () => {
+  test('bad or missing signature: 401, nothing stored, the failure counted at most once a minute', async () => {
+    resetSignatureEvents();
     const { raw } = signed([ce(RA, 'qbo.customer.updated.v1', 1)]);
     for (const sig of [undefined, '', fake.sign(raw, 'wrong'), fake.sign(Buffer.from('other'), VERIFIER)]) {
       const r = await post(raw, sig);
@@ -65,8 +66,11 @@ describe('signatures', { skip }, () => {
       assert.equal(r.body.error.code, 'invalid_signature');
     }
     assert.equal((await conn(A.tenantId)).dirty_at, null);
-    const { rows } = await t.superPool.query("SELECT count(*)::int AS n FROM qbo_platform_events WHERE kind = 'webhook_signature'");
-    assert.equal(rows[0].n, 4);
+    const count = async () => (await t.superPool.query("SELECT count(*)::int AS n FROM qbo_platform_events WHERE kind = 'webhook_signature'")).rows[0].n;
+    assert.equal(await count(), 1, 'a flood of bad posts is one event, not one row each');
+    resetSignatureEvents();
+    assert.equal((await post(raw, 'bad')).status, 401);
+    assert.equal(await count(), 2, 'counted again in the next minute');
   });
 
   test('during a rotation a body signed with the previous verifier is accepted, and refused once it is removed', async () => {

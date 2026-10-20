@@ -67,6 +67,9 @@ CREATE TABLE qbo_revoke_pending (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   environment   text NOT NULL CHECK (environment IN ('sandbox', 'production')),
   token_sealed  text NOT NULL CHECK (length(token_sealed) <= 2000),   -- sealed with AAD 'qbo-revoke:' || id
+  -- The realm the token was for. A retry never revokes while a tenant holds that realm again (the same
+  -- company reconnected, or another tenant after an HQ release): the revoke may end the whole grant.
+  realm_hash    bytea CHECK (realm_hash IS NULL OR length(realm_hash) = 32),
   attempts      integer NOT NULL DEFAULT 0,
   next_try_at   timestamptz NOT NULL DEFAULT now(),
   created_at    timestamptz NOT NULL DEFAULT now()

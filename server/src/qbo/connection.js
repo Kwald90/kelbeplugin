@@ -35,6 +35,7 @@ const REALM_ID_RE = /^\d{1,20}$/;
 const OFFICE = ['owner', 'admin', 'office'];
 const TICKET_TTL_S = 120;
 const FLOW_TTL_S = 600;
+const RECONNECT_FROM = ['reconnect_needed', 'paused', 'active', 'disconnected'];
 
 const b64 = (n = 32) => randomBytes(n).toString('base64url');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -167,6 +168,8 @@ export async function createConnectTicket(db, cfg, { tenantId, userId, returnTo,
   if (!who.entitled) throw featureNotInPlan('quickbooks');
   const conn = await tenantDb(db, tenantId, loadConnection);
   if (reconnect && !conn) throw new ApiError(409, 'qbo_not_connected', 'QuickBooks is not connected.');
+  // 2.6: a reconnect from reconnect_needed, paused, active or disconnected (before purge); not during setup.
+  if (reconnect && !RECONNECT_FROM.includes(conn.state)) throw new ApiError(409, 'qbo_reconnect_not_allowed', 'QuickBooks is connected and being set up; there is nothing to reconnect.');
   if (!reconnect && conn && conn.state !== 'disconnected') throw new ApiError(409, 'qbo_already_connected', 'QuickBooks is already connected. Use Reconnect.');
   const ticket = b64();
   await db.query(
@@ -261,9 +264,12 @@ export async function completeCallback(db, sealer, cfg, { code, state, realmId, 
   }
 
   const hash = realmHash(sealer, q, realmId);
-  // Revoke rule: revoke the new grant only when no tenant holds this realm (2.2).
+  // Revoke rule: revoke the new grant only when no tenant holds this realm (2.2). A failed revoke is
+  // kept for the daily retries, never just dropped while the grant may be live.
   const fail = async (result) => {
-    if ((await qboRealmOwner(db, hash)) == null) await revokeToken(q, tokens.refreshToken).catch(() => {});
+    if ((await qboRealmOwner(db, hash)) == null) {
+      await revokeToken(q, tokens.refreshToken).catch(() => queueRevoke(db, sealer, q.environment, tokens.refreshToken, hash).catch(() => {}));
+    }
     return back(result);
   };
 
@@ -307,7 +313,7 @@ export async function completeCallback(db, sealer, cfg, { code, state, realmId, 
  * The success path of a connect, inside the tenant's transaction (callback and takeover): tokens and
  * realm id stored, connection upserted, realm row, audit, notification, reference refresh queued.
  */
-async function connectTx(tx, sealer, q, { userId, displayName, tokens, realmId, hash, companyName, features, action = null, actor = null }) {
+async function connectTx(tx, sealer, q, { userId, displayName, tokens, realmId, hash, companyName, features, action = null, actor = null, request = null }) {
   const tenantId = tx.tenantId;
   const conn = await loadConnection(tx);
   if (conn && (!Buffer.from(conn.realm_hash).equals(hash) || conn.environment !== q.environment)) {
@@ -322,11 +328,13 @@ async function connectTx(tx, sealer, q, { userId, displayName, tokens, realmId, 
   await setSecret(tx, sealer, SECRET_NAMES.realm, realmId, 'system:qbo', INTERNAL);
 
   // A reconnect returns to the state before (2.6); from disconnected, active when the wizard was applied.
+  // A pause survives reconnect_needed (pause_reason stays set, state_before is the state before it).
   const setupDone = conn?.setup?.phase === 'done';
   let state = 'setup';
   if (conn) {
     if (['setup', 'active', 'paused'].includes(conn.state)) state = conn.state;
-    else if (conn.state === 'reconnect_needed' && conn.state_before) state = conn.state_before;
+    else if (conn.state === 'reconnect_needed' && conn.pause_reason) state = 'paused';
+    else if (conn.state === 'reconnect_needed' && ['setup', 'active'].includes(conn.state_before)) state = conn.state_before;
     else state = setupDone ? 'active' : 'setup';
   }
   await tx.query(
@@ -354,7 +362,7 @@ async function connectTx(tx, sealer, q, { userId, displayName, tokens, realmId, 
   await appendAudit(tx, tenantId, {
     actor: actor || { type: 'user', id: userId, label: displayName || null },
     action: action || (reconnect ? 'qbo.reconnect' : 'qbo.connect'),
-    collection: 'qbo_connections',
+    collection: 'qbo_connections', request: facts(request),
     summary: `${reconnect ? 'Reconnected' : 'Connected'} QuickBooks company ${label}`.slice(0, 300),
   });
   await notify(tx, {
@@ -409,12 +417,12 @@ export async function takeover(db, sealer, cfg, { tenantId, userId, actor = null
   if (own && (!Buffer.from(own.realm_hash).equals(hash) || own.environment !== q.environment)) {
     throw new ApiError(409, 'qbo_purge_required', 'Delete the links to the other QuickBooks company first.');
   }
-  const del = await db.query('DELETE FROM qbo_oauth_states WHERE id = $1 RETURNING id', [row.id]);
-  if (!del.rows[0]) throw notFound('No takeover offer is open. Connect to QuickBooks again.');
-
   const by = actor || { type: 'user', id: userId, label: who.displayName || null };
   const companyName = offer.companyName || 'QuickBooks company';
   await db.tx(async (client) => {
+    // Single use, in the same transaction: a failure below leaves the offer for another try.
+    const del = await client.query('DELETE FROM qbo_oauth_states WHERE id = $1 RETURNING id', [row.id]);
+    if (!del.rows[0]) throw notFound('No takeover offer is open. Connect to QuickBooks again.');
     const asTenant = async (id) => {
       await client.query("SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', '', true), set_config('app.portal_client_id', '', true)", [id]);
       await client.query('SELECT pg_advisory_xact_lock(tenant_lock_key($1))', [id]);
@@ -443,7 +451,7 @@ export async function takeover(db, sealer, cfg, { tenantId, userId, actor = null
     const tx = await asTenant(tenantId);
     await connectTx(tx, sealer, q, {
       userId, displayName: who.displayName, tokens: offer.tokens, realmId: offer.realmId, hash,
-      companyName: offer.companyName, features: offer.features || {}, action: 'qbo.takeover', actor: by,
+      companyName: offer.companyName, features: offer.features || {}, action: 'qbo.takeover', actor: by, request,
     });
   });
   return { ok: true };
@@ -595,13 +603,19 @@ const RECONNECT_TEXT = {
   error: 'QuickBooks refused the connection.',
 };
 
-/** Sync stops until an admin reconnects. Office roles are told once a day (2.5). */
+/**
+ * Sync stops until an admin reconnects. Office roles are told once a day (2.5). A pause in force
+ * stays recorded underneath (pause_reason, paused_since and its state_before are kept), so the
+ * reconnect returns to that pause and its resume to the state before it.
+ */
 export async function markReconnectNeeded(db, tenantId, reason) {
   if (!RECONNECT_TEXT[reason]) throw new Error(`qbo: unknown reconnect reason ${reason}`);
   await tenantDb(db, tenantId, async (tx) => {
     const { rows } = await tx.query(
       `UPDATE qbo_connections SET state = 'reconnect_needed', reconnect_reason = $2,
-          state_before = CASE WHEN state IN ('setup', 'active', 'paused') THEN state ELSE state_before END,
+          state_before = CASE WHEN state IN ('setup', 'active') THEN state ELSE state_before END,
+          pause_reason = CASE WHEN state = 'paused' THEN pause_reason END,
+          paused_since = CASE WHEN state = 'paused' THEN paused_since END,
           refreshing_until = NULL, lease_epoch = lease_epoch + 1, lease_until = NULL, updated_at = now()
         WHERE tenant_id = $1 AND state NOT IN ('reconnect_needed', 'disconnected') RETURNING environment`, [tenantId, reason]);
     if (!rows[0]) return;
@@ -616,31 +630,50 @@ export async function markReconnectNeeded(db, tenantId, reason) {
 
 // ---- pause and resume (2.5) ---------------------------------------------------------------------
 
-const PAUSE_REASONS = ['user', 'plan', 'budget', 'tenant_budget', 'brake', 'hq'];
+/** Pause reasons, weakest first. A stronger pause replaces a weaker one; a weaker one never replaces a stronger one. */
+export const PAUSE_ORDER = Object.freeze(['user', 'tenant_budget', 'budget', 'plan', 'brake', 'hq']);
 
 /**
- * Pause or resume. Pausing keeps the state it came from and fences a running pass. Resuming with
- * reason R lifts only a pause of reason R ('user' also lifts 'brake'); anything else is 409
- * qbo_pause_locked. A brake pause stores the tripped count in brake_allow_count (pass it as
+ * Where a resume goes: the state before the pause, else setup unless the wizard was applied. Never
+ * a blind 'active' (an unapplied wizard would then sync two sets of books).
+ */
+export const RESUME_STATE_SQL = "CASE WHEN state_before IN ('setup', 'active') THEN state_before WHEN setup->>'phase' = 'done' THEN 'active' ELSE 'setup' END";
+
+/**
+ * Pause or resume. Pausing keeps the state it came from and fences a running pass. When a pause is
+ * already in force the stronger reason stays (PAUSE_ORDER): an office user, a budget or the plan
+ * check never replaces an HQ pause, so they can never lift it either; a 'user' pause asked of an
+ * HQ-paused connection is 409 qbo_pause_locked. paused_since restarts when the reason changes (the
+ * 60-day plan clock counts from the plan pause). On a reconnect_needed connection the pause is
+ * recorded underneath, and the reconnect returns to it.
+ *
+ * Resuming with reason R lifts only a pause of reason R ('user' also lifts 'brake'); anything else is
+ * 409 qbo_pause_locked. A brake pause stores the tripped count in brake_allow_count (pass it as
  * allowCount when pausing); resuming it needs allowCount >= that count and allows that many writes
  * for one hour (5.8). A move back to active queues a sync with the sweep.
  */
 export async function setPaused(db, tenantId, paused, reason, { allowCount = null } = {}) {
-  if (!PAUSE_REASONS.includes(reason)) throw new Error(`qbo: unknown pause reason ${reason}`);
+  if (!PAUSE_ORDER.includes(reason)) throw new Error(`qbo: unknown pause reason ${reason}`);
   await tenantDb(db, tenantId, async (tx) => {
     if (paused) {
-      await tx.query(
-        `UPDATE qbo_connections SET state = 'paused',
-            state_before = CASE WHEN state = 'paused' THEN state_before ELSE state END,
-            pause_reason = $2, paused_since = CASE WHEN state = 'paused' THEN COALESCE(paused_since, now()) ELSE now() END,
+      const { rowCount } = await tx.query(
+        `UPDATE qbo_connections SET state = CASE WHEN state = 'reconnect_needed' THEN state ELSE 'paused' END,
+            state_before = CASE WHEN state IN ('setup', 'active') THEN state ELSE state_before END,
+            paused_since = CASE WHEN pause_reason = $2 THEN COALESCE(paused_since, now()) ELSE now() END,
+            pause_reason = $2,
             brake_allow_count = CASE WHEN $2 = 'brake' THEN $3 ELSE brake_allow_count END,
             brake_allow_until = CASE WHEN $2 = 'brake' THEN NULL ELSE brake_allow_until END,
             lease_epoch = lease_epoch + 1, lease_until = NULL, updated_at = now()
-          WHERE tenant_id = $1 AND state IN ('setup', 'active', 'paused')`, [tenantId, reason, allowCount == null ? null : Math.trunc(allowCount)]);
+          WHERE tenant_id = $1 AND (state IN ('setup', 'active')
+            OR (state IN ('paused', 'reconnect_needed') AND COALESCE(array_position($4::text[], pause_reason), 0) <= array_position($4::text[], $2)))`,
+        [tenantId, reason, allowCount == null ? null : Math.trunc(allowCount), PAUSE_ORDER]);
+      if (rowCount || reason !== 'user') return;
+      const conn = await loadConnection(tx);
+      if (conn?.pause_reason === 'hq') throw new ApiError(409, 'qbo_pause_locked', 'Paused by Fishtape support.', { pauseReason: 'hq' });
       return;
     }
     const conn = await loadConnection(tx);
-    if (!conn || conn.state !== 'paused') return;
+    if (!conn || !conn.pause_reason || !['paused', 'reconnect_needed'].includes(conn.state)) return;
     const lifts = reason === 'user' ? ['user', 'brake'] : [reason];
     if (!lifts.includes(conn.pause_reason)) {
       throw new ApiError(409, 'qbo_pause_locked', conn.pause_reason === 'hq' ? 'Paused by Fishtape support.' : "This pause can't be lifted here.", { pauseReason: conn.pause_reason });
@@ -653,10 +686,12 @@ export async function setPaused(db, tenantId, paused, reason, { allowCount = nul
       params.push(allowCount);
       brake = ", brake_allow_count = $2, brake_allow_until = now() + interval '1 hour'";
     }
+    // Under reconnect_needed only the pause is lifted; the reconnect then returns to state_before.
     const { rows } = await tx.query(
-      `UPDATE qbo_connections SET state = CASE WHEN state_before IN ('setup', 'active') THEN state_before ELSE 'active' END,
-          state_before = NULL, pause_reason = NULL, paused_since = NULL${brake}, updated_at = now()
-        WHERE tenant_id = $1 AND state = 'paused' RETURNING state`, params);
+      `UPDATE qbo_connections SET state = CASE WHEN state = 'reconnect_needed' THEN state ELSE ${RESUME_STATE_SQL} END,
+          state_before = CASE WHEN state = 'reconnect_needed' THEN state_before END,
+          pause_reason = NULL, paused_since = NULL${brake}, updated_at = now()
+        WHERE tenant_id = $1 AND state IN ('paused', 'reconnect_needed') RETURNING state`, params);
     if (rows[0]?.state === 'active') await enqueueSync(tx, tenantId, { sweep: true });
   });
 }
@@ -670,11 +705,14 @@ export async function purgeQboData(tx) {
   for (const t of PURGE_TABLES) await tx.query(`DELETE FROM ${t} WHERE tenant_id = $1`, [tx.tenantId]);
 }
 
-/** Keep a refresh token whose revoke failed, sealed, for daily retries (14 days). */
-export async function queueRevoke(q, sealer, environment, token) {
+/**
+ * Keep a refresh token whose revoke failed, sealed, for daily retries (14 days). `realmHash` lets a
+ * retry skip the revoke once a tenant holds that realm again.
+ */
+export async function queueRevoke(q, sealer, environment, token, realmHash = null) {
   const id = randomUUID();
-  await q.query('INSERT INTO qbo_revoke_pending (id, environment, token_sealed) VALUES ($1, $2, $3)',
-    [id, environment, sealer.seal('qbo-revoke', token, `qbo-revoke:${id}`)]);
+  await q.query('INSERT INTO qbo_revoke_pending (id, environment, token_sealed, realm_hash) VALUES ($1, $2, $3, $4)',
+    [id, environment, sealer.seal('qbo-revoke', token, `qbo-revoke:${id}`), realmHash]);
 }
 
 /** Steps 3 to 6 of 2.7 inside the tenant's transaction. Returns whether data was purged. */
@@ -708,24 +746,27 @@ async function disconnectTx(tx, { purge, actor, request = null, action = 'qbo.di
 /**
  * Disconnect (2.7): fence the engine, revoke at Intuit (a failure goes to qbo_revoke_pending), delete
  * the secrets, the realm row and queued qbo_* jobs, keep the outbox, then optionally purge.
- * `revoke: false` for a takeover or HQ path where the grant must stay live.
+ * `revoke: false` for a takeover or HQ path where the grant must stay live. Whatever `revoke` says,
+ * the token is never revoked while another tenant holds the realm (2.2): after an HQ release the
+ * realm may already be connected to its rightful company, and the revoke may end the whole grant.
  * @returns {Promise<{ purged: boolean }>}
  */
 export async function disconnect(db, sealer, cfg, tenantId, { actor = QBO_ACTOR, request = null, purge = false, revoke = true, action = 'qbo.disconnect', summary = null } = {}) {
   const q = qboCfg(cfg);
   const pre = await tenantDb(db, tenantId, async (tx) => {
     const { rows } = await tx.query(
-      'UPDATE qbo_connections SET lease_epoch = lease_epoch + 1, lease_until = NULL, updated_at = now() WHERE tenant_id = $1 RETURNING environment, state', [tenantId]);
+      'UPDATE qbo_connections SET lease_epoch = lease_epoch + 1, lease_until = NULL, updated_at = now() WHERE tenant_id = $1 RETURNING environment, state, realm_hash', [tenantId]);
     if (!rows[0]) return null;
     return { ...rows[0], token: revoke ? await getSecret(tx, sealer, SECRET_NAMES.refresh, INTERNAL) : null };
   });
   if (!pre) throw new ApiError(409, 'qbo_not_connected', 'QuickBooks is not connected.');
-  if (pre.token) {
+  const holder = pre.token ? await qboRealmOwner(db, pre.realm_hash) : null;
+  if (pre.token && (holder == null || holder === tenantId)) {
     try {
       if (!q.enabled || pre.environment !== q.environment) throw new Error('other environment');
       await revokeToken(q, pre.token);
     } catch {
-      await queueRevoke(db, sealer, pre.environment, pre.token);
+      await queueRevoke(db, sealer, pre.environment, pre.token, pre.realm_hash);
     }
   }
   const purged = await tenantDb(db, tenantId, (tx) => disconnectTx(tx, { purge, actor, request, action, summary }), { write: true });

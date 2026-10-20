@@ -168,6 +168,36 @@ describe('failures', { skip }, () => {
     await t.db.withTenant({ tenantId: A.tenantId }, (tx) => tx.query('UPDATE qbo_connections SET throttled_until = NULL WHERE tenant_id = $1', [A.tenantId]));
   });
 
+  test('a call that waited in the limiter while another got a 429 is not sent', async () => {
+    const id = fake.seed(REALM).items.labour.Id;
+    let entered;
+    const inLimiter = new Promise((r) => { entered = r; });
+    let open;
+    const opened = new Promise((r) => { open = r; });
+    const queued = createQboClient({
+      db: t.db, sealer, config, tenantId: A.tenantId, purpose: 'sync', log,
+      limiter: { acquire: async () => { entered(); await opened; return () => {}; } },
+    });
+    const second = queued.read('Item', id);
+    await inLimiter; // past its throttle check, waiting for its turn
+    fake.failNext({ status: 429 });
+    await assert.rejects(client().read('Item', id), (e) => e.kind === 'throttled');
+    const n = fake.calls.length;
+    open();
+    await assert.rejects(second, (e) => e.kind === 'throttled' && e.retryAfterS > 0);
+    assert.equal(fake.calls.length, n, 'not sent into the throttle');
+    await t.db.withTenant({ tenantId: A.tenantId }, (tx) => tx.query('UPDATE qbo_connections SET throttled_until = NULL WHERE tenant_id = $1', [A.tenantId]));
+  });
+
+  test('upload refuses a content type that could add headers or parts', async () => {
+    const c = client();
+    const n = fake.calls.length;
+    for (const contentType of ['image/jpeg\r\nX-Injected: 1', 'image/jpeg; charset=x', 'text', '']) {
+      await assert.rejects(c.upload({ entity: 'Purchase', id: '1' }, { fileName: 'r.jpg', contentType, bytes: Buffer.from([1]) }), /bad content type/);
+    }
+    assert.equal(fake.calls.length, n);
+  });
+
   test('5xx: retryable, a write is outcome-unknown, and the platform event is recorded', async () => {
     const c = client();
     fake.failNext({ status: 503 });
