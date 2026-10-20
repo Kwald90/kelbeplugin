@@ -248,6 +248,23 @@ completion survives a foreman's edit; the device gets the merged copy back as a 
 (`electrical-app/js/lib/kpis.js`) are shared with `GET /api/v1/kpis`. Notifications: a marked hook in
 `server/src/services/workplan-events.js` until a server `notify()` exists. Tables: `server/migrations/0100_workplan.sql`, generated with `node scripts/gen-collections-sql.js --migration 0100` (the registry entries carry `migration: '0100'`; `--all` rewrites every generated file).
 
+### Location while clocked in, timesheets and payroll (migrations 0140-0149)
+
+Part of the Time clock (every plan). Docs: `docs/field/timesheets.md`; privacy in `docs/compliance/privacy.md`.
+
+- `jobs.site`: `{ lat, lng, radiusM (default 150), source ('geocode'|'pin'|'manual'), label, setAt, setBy }`.
+- `timeEntries` gain `kind ('work'|'travel', missing = work)`, `travelFromJobId`, `clockInLoc`/`clockOutLoc`
+  `{ lat, lng, accuracyM, at, source }`, `siteCheck`, `flag { kind: 'off-site', distanceM, text, reviewedAt, reviewedBy }`,
+  `approvedAt`, `approvedBy`, `source`, `locStatus`. Travel is a plain time entry attributed to the job travelled to,
+  so per-job billing (time and materials) can price it later.
+- `locationPoints` (new): `employeeId, timeEntryId, jobId, at, lat, lng, accuracyM, source, device`. Readable and writable only
+  by the person (RESTRICTIVE RLS on the member's employee id, 0140/0141), never API keys, never changed, emptied by retention.
+- `locationConsents` (new): `employeeId, policyVersion, choice, at, via`; only the worker records it, managers read.
+- `settings.location { enabled, policyText, policyVersion, defaultRadiusM, retentionDays (90), liveCrewMap (false) }`,
+  `settings.payroll { otRule, weekStartsOn, format }`, `employees.payrollId`.
+- API: `GET /api/v1/location/live` (opt-in crew map). Worker job `location_retention` (daily).
+- iOS: `FishtapeGeofence` plugin + `@capacitor/geolocation` (`docs/mobile/README.md`).
+
 ## Definition of done (every workstream)
 
 - Tests with `node:test` next to the existing ones; run `node --test electrical-app/tests/*.test.mjs` (and `server` tests for A) and they pass.
