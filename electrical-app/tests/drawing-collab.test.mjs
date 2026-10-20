@@ -412,6 +412,31 @@ test('merge: pieces of a cut stroke go with a whole-stroke delete or redraw made
     assert.deepEqual(ids(m), ['S', 'S2']);
     assert.equal(m.strokes.find((s) => s.id === 'S').color, '#1f5fb8');
   }
+  // A deletes the left piece at 30, after C's unaware move at 20: the delete beats the move,
+  // so S goes and A's right piece stays (the move it lost to doesn't take S2 with it)
+  const late = structuredClone(A);
+  late.strokes = late.strokes.filter((s) => s.id !== 'S');
+  stampChanges(late, cutA.baseline, MANNY, T(30));
+  assert.deepEqual(ids(mergeDrawing(late, C)), ['S2']);
+  assert.deepEqual(ids(mergeDrawing(C, late)), ['S2']);
+
+  // a piece of a piece: a second pass cuts S2 at 15 into S2 and S3; B's unaware delete of S at 20
+  // takes every piece, and A's own later delete of the left piece S leaves S2 and S3 alone
+  const twice = structuredClone(A);
+  const twiceBase = baselineOf(twice);
+  twice.strokes = eraseStrokes(twice.strokes, [300, 0], [300, 0], 8, { newId: () => 'S3' }).strokes;
+  stampChanges(twice, twiceBase, MANNY, T(15));
+  assert.deepEqual(ids(twice), ['S', 'S2', 'S3']);
+  assert.deepEqual([twice.strokes[2].cutFrom, twice.strokes[2].splitFrom], ['S2', 'S']);
+  assert.deepEqual(ids(mergeDrawing(twice, B)), []);
+  assert.deepEqual(ids(mergeDrawing(B, twice)), []);
+  assert.deepEqual(ids(mergeDrawing(A, twice)), ['S', 'S2', 'S3'], 'A knew S2, so the second cut stands');
+  const left = structuredClone(A);
+  left.strokes = left.strokes.filter((s) => s.id !== 'S');
+  stampChanges(left, cutA.baseline, MANNY, T(30));
+  assert.deepEqual(ids(mergeDrawing(left, twice)), ['S2', 'S3']);
+  assert.deepEqual(ids(mergeDrawing(twice, left)), ['S2', 'S3']);
+
   // merging copies that both know the cut changes nothing
   const both = mergeDrawing(A, recol);
   assert.equal(JSON.stringify(mergeDrawing(both, both)), JSON.stringify(both));

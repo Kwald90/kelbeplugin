@@ -440,17 +440,22 @@ export function mergeDrawing(current, incoming) {
     // or was redrawn whole, so it goes too (else a deleted line comes back in part, or the
     // erased gap reappears with the rest drawn twice).
     const cutUnseen = (it) => {
-      const src = it.cutFrom || it.splitFrom;
-      if (!src || src === it.id) return false;
       const t = ms(itemTime(it));
-      for (const [items, tb, other] of [[mine, curTomb, theirs], [theirs, incTomb, mine]]) {
+      for (const [items, tb, other, otherTb] of [[mine, curTomb, theirs, incTomb], [theirs, incTomb, mine, curTomb]]) {
         if (items.has(it.id) || tb[it.id]) continue; // this copy knew the piece
-        const s = items.get(src), o = other.get(src);
-        if (!s && !tb[src]) continue;
+        // the stroke the piece was cut from; for a piece of a piece this copy never saw, the original
+        const known = (id) => id && id !== it.id && (items.has(id) || tb[id]);
+        const src = known(it.cutFrom) ? it.cutFrom : known(it.splitFrom) ? it.splitFrom : null;
+        if (!src) continue;
         // its edit of src came after the cut, or it deleted src at or after it (as dead() counts)
+        const s = items.get(src);
         const changed = s ? ms(itemTime(s)) : ms(tb[src].at);
-        const later = s ? changed > t : changed >= t;
-        if (later && (!o || changed >= ms(itemTime(o)))) return true;
+        if (s ? changed <= t : changed < t) continue;
+        // ...and that change wins over the other copy's: its later edit of src, or its later delete
+        const o = other.get(src), ot = otherTb[src];
+        if (o && changed < ms(itemTime(o))) continue;
+        if (ot && (s ? changed <= ms(ot.at) : changed < ms(ot.at))) continue;
+        return true;
       }
       return false;
     };
