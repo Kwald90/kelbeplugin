@@ -2,9 +2,9 @@
 import { docTotals, moneyFormatter } from '../lib/money.js';
 import { newDocTax } from '../lib/tax.js';
 import { mergeForTakeoff, sortSheets } from '../lib/plansets.js';
-import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
+import { lineEditor, taxEditor, totalsPanel, previewDocument, clientName } from '../lib/doc-view.js';
 import { moduleOn } from '../lib/modules.js';
-import { qboBadge, noTaxReasonPicker, lookupAction } from '../lib/qbo-ui.js';
+import { qboBadge, noTaxReasonPicker, lookupAction, docEditor } from '../lib/qbo-ui.js';
 
 const STATUSES = ['draft', 'sent', 'accepted', 'declined'];
 
@@ -202,7 +202,24 @@ function renderDetail(root, ctx, id) {
   }
   const doc = est;
   const money = moneyFormatter(store.settings());
-  const save = debounce(() => { store.update('estimates', id, pick(doc)); }, 450);
+  // Saves only the fields changed here (never status, which its buttons write), and takes in what
+  // QuickBooks or another device changed while the estimate is open (QuickBooks contract 5.10).
+  const save = docEditor(store, 'estimates', id, doc, {
+    write: (patch, opts) => store.update('estimates', id, patch, opts),
+    onPulled: (fields, clashes) => {
+      if (clashes.length) ui.toast(`${doc.number} changed in QuickBooks or on another device while you were editing it. The latest version is shown; check your last change.`, 'info', 7000);
+      if (fields.some((f) => FORM_FIELDS.includes(f))) { redraw(); return; }
+      drawStatus();
+    },
+    onRemoved: () => { ui.toast(`${doc.number} was deleted on another device`, 'info', 4000); nav('#/estimates'); },
+  });
+  // Re-open the screen on the record as it now is, where it was scrolled to.
+  const redraw = () => {
+    if (typeof ctx.route !== 'function') { drawStatus(); return; }
+    const top = root.scrollTop;
+    ctx.route();
+    root.scrollTop = top;
+  };
   // Invoicing or leads turned off (Settings → Modules): no buttons into them.
   const on = (m) => (ctx.on ? ctx.on(m) : moduleOn(store.settings(), m));
   const changed = () => { totals.update(doc); noTax.update(); save(); };
@@ -248,7 +265,7 @@ function renderDetail(root, ctx, id) {
         doc.jobId ? ui.button('Open job', { size: 'sm', icon: 'briefcase', href: '#/jobs/' + doc.jobId }) : ui.button('Create job', { size: 'sm', icon: 'briefcase', onClick: createJob }),
         on('invoices') ? ui.button('Create invoice', { size: 'sm', icon: 'receipt', onClick: () => { save.flush(); nav('#/invoices/new?estimateId=' + id); } }) : null) : null);
   };
-  const setStatus = (st) => { doc.status = st; save.flush(); store.update('estimates', id, { status: st }, { summary: `${doc.number} → ${st}` }); drawStatus(); ui.toast(`${doc.number} marked ${st}`, 'success'); };
+  const setStatus = (st) => { save.write({ status: st }, { summary: `${doc.number} → ${st}` }); drawStatus(); ui.toast(`${doc.number} marked ${st}`, 'success'); };
   const createJob = () => {
     save.flush();
     const job = store.add('jobs', {
@@ -256,8 +273,7 @@ function renderDetail(root, ctx, id) {
       address: doc.clientId ? (store.get('clients', doc.clientId)?.address || '') : '', status: 'scheduled',
       startDate: '', endDate: '', crewIds: [], estimateId: id, description: doc.notes || '', changeOrders: [],
     });
-    doc.jobId = job.id;
-    store.update('estimates', id, { jobId: job.id });
+    save.write({ jobId: job.id });
     drawStatus();
     ui.toast(`Job ${job.number} created`, 'success');
     return job;
@@ -317,8 +333,11 @@ function renderDetail(root, ctx, id) {
       h('div', { class: 'card' }, statusHost),
       h('div', { class: 'card' }, h('h3', null, 'Totals'), totals)))));
 
-  return () => save.flush();
+  return () => save.stop();
 }
+
+/** Estimate fields the detail screen shows in its form: changed elsewhere, the screen is drawn again. */
+const FORM_FIELDS = ['number', 'title', 'clientId', 'jobId', 'validUntil', 'labourRateCents', 'markupPct', 'taxes', 'taxPct', 'taxProvince', 'taxTreatment', 'taxNoneReason', 'notes', 'lines'];
 
 function pick(d) {
   const { id, createdAt, updatedAt, ...rest } = d;

@@ -201,9 +201,18 @@ export default {
       if (!numbering.reportValidity()) return;
       const v = ui.readForm(numbering);
       const cur = store.settings().nextNumbers || {};
-      // Keep every counter, including ones this form doesn't show (purchase orders came later).
-      store.saveSettings({ nextNumbers: { ...cur, job: v.job || cur.job, estimate: v.estimate || cur.estimate, invoice: v.invoice || cur.invoice, po: v.po || cur.po || 5001 } });
-      ui.toast('Numbering saved', 'success');
+      // Keep every counter, including ones this form doesn't show (purchase orders came later), and
+      // never move one back: a number handed out on another device while this form was open would
+      // be handed out again (and QuickBooks refuses a duplicate document number).
+      const next = { ...cur };
+      for (const k of ['job', 'estimate', 'invoice', 'po']) {
+        const want = Number(v[k]) || 0, have = Number(cur[k]) || 0;
+        next[k] = Math.max(want, have) || (k === 'po' ? 5001 : undefined);
+      }
+      for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
+      const lowered = ['job', 'estimate', 'invoice', 'po'].filter((k) => v[k] && Number(v[k]) < (Number(cur[k]) || 0));
+      store.saveSettings({ nextNumbers: next });
+      ui.toast(lowered.length ? 'Numbering saved. A counter can only go up: numbers below the next one may already be used.' : 'Numbering saved', lowered.length ? 'info' : 'success', lowered.length ? 6000 : undefined);
     };
 
     // modules (switches): what the company uses, separate from what the plan includes

@@ -31,6 +31,7 @@ const MODULE_COLLECTIONS = {
   security: ['checklists'], wireruns: ['wireRuns'], bending: ['bends', 'benderProfiles'],
   workplan: ['workPlans', 'workTasks', 'taskTemplates', 'huddles'], materials: ['materialRequests'],
   purchasing: ['vendors', 'bills', 'purchaseOrders'],
+  quickbooks: [], // nothing of QuickBooks is kept on the device (8.7): no read-only view without the plan
 };
 // Electricians and apprentices land on My day (their task list) instead of the dashboard.
 const FIELD_ROLES = ['electrician', 'apprentice'];

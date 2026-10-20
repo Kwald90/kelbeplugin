@@ -314,6 +314,19 @@ export function reasonText(rs) {
 
 const DOC_COLLECTIONS = ['estimates', 'invoices'];
 
+/** "Open in QuickBooks" only for an https address on Intuit's own domain; anything else is dropped. */
+export function safeQboUrl(url) {
+  if (typeof url !== 'string' || !url) return null;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    return u.protocol === 'https:' && !u.username && !u.password && (host === 'intuit.com' || host.endsWith('.intuit.com')) ? u.href : null;
+  } catch { return null; }
+}
+
+/** Look-up search text: % and _ are refused (the server would answer 400). */
+export const LOOKUP_BAD_CHARS = /[%_]/;
+
 /**
  * What the badge sheet offers for a record (8.5). Pure: the sheet turns these into buttons.
  * @returns {string[]} ids among retry, sendNow, renumber, unlink, asNew, link, approve, conflict, open
@@ -325,7 +338,7 @@ export function badgeActions(rs, { collection, record = null, url = null } = {})
     if (doc && record && record.status === 'draft') out.push('sendNow');
     return out;
   }
-  if (url) out.push('open');
+  if (safeQboUrl(url)) out.push('open');
   if (rs.state === 'unlinked') { out.push('asNew', 'link'); return out; }
   if (rs.conflictId) out.push(rs.state === 'needs_review' && rs.reason === 'origin' ? 'approve' : 'conflict');
   if (rs.state === 'error' || (rs.state === 'blocked' && rs.reason !== 'no_invoice')) out.push('retry');
@@ -342,6 +355,7 @@ export function badgeActions(rs, { collection, record = null, url = null } = {})
  */
 export function createStatusCache({ api = qboApi, ttlMs = 30_000, now = () => Date.now() } = {}) {
   const entries = new Map(); // key -> { at, p }
+  const watched = new WeakSet();
   const get = (key, load) => {
     const e = entries.get(key);
     if (e && now() - e.at < ttlMs) return e.p;
@@ -370,6 +384,16 @@ export function createStatusCache({ api = qboApi, ttlMs = 30_000, now = () => Da
       return { status: s, state: states[id] || null, mismatch: mism.find((m) => m.collection === collection && m.recordId === id) || null };
     },
     invalidate(collection) { if (collection) entries.delete(`records:${collection}`); else entries.clear(); },
+    /**
+     * Drop a collection's record states when this device changes one of its records, so a badge
+     * does not say "In QuickBooks" for 30 seconds after a local edit. Pulled changes (remote) do
+     * not count: a pull of many records would otherwise ask the server again for each one.
+     */
+    watch(store) {
+      if (!store?.on || watched.has(store)) return;
+      watched.add(store);
+      store.on('*', (e) => { if (e && !e.remote && QBO_COLLECTIONS.includes(e.coll)) entries.delete(`records:${e.coll}`); });
+    },
     clear() { entries.clear(); },
     size: () => entries.size,
   };
@@ -520,6 +544,126 @@ export function needsNoTaxReason(doc) {
 export const noneKeyFor = (reason) => (REASON_KEY[reason] ? `NONE|${REASON_KEY[reason]}` : 'NONE');
 
 export { TAX_NONE_REASONS };
+
+/** A "Why no tax?" reason left on a document that is taxed again (it is cleared on the next edit). */
+export const staleNoTaxReason = (doc) => Boolean(doc?.taxNoneReason) && !needsNoTaxReason(doc);
+
+// ---------------------------------------------------------------------------------------------
+// Invoices and estimates that QuickBooks writes too (4.8, 4.9, 5.10)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Cents of QuickBooks' own tax rounding a 'paid' set by the server may leave on this device (4.8):
+ * 2 per charged rate, the sync's tolerance. The server marks such an invoice paid at the
+ * QuickBooks total (meta.taxDeltaCents, which devices never see).
+ */
+export function taxRoundingCents(inv) {
+  const n = (Array.isArray(inv?.taxes) ? inv.taxes : []).filter((t) => (Number(t.pct) || 0) > 0).length;
+  return 2 * Math.max(1, n);
+}
+
+/**
+ * A stored 'paid' this device keeps although a cent or two is left: only the QuickBooks tax
+ * rounding remains. Never promotes another status, and never counts an overpayment.
+ */
+export function keepsServerPaid(inv, paidCents, totalCents) {
+  if (inv?.status !== 'paid' || !(paidCents > 0)) return false;
+  const left = totalCents - paidCents;
+  return left > 0 && left <= taxRoundingCents(inv);
+}
+
+/**
+ * The status to store after payments or an edit (void is never touched). Plain arithmetic, except
+ * that a 'paid' within the tax rounding is kept when this device changed no money: no payment
+ * added or deleted and no change to the total (`moneyChanged` false). An edit that moves the
+ * total, or any payment change made here, is worked out from the payments as before.
+ */
+export function nextInvoiceStatus(inv, paidCents, totalCents, { moneyChanged = true } = {}) {
+  if (!inv) return null;
+  if (inv.status === 'void') return 'void';
+  if (paidCents > 0 && paidCents >= totalCents) return 'paid';
+  if (!moneyChanged && keepsServerPaid(inv, paidCents, totalCents)) return 'paid';
+  if (paidCents > 0) return 'partial';
+  if (inv.status === 'paid' || inv.status === 'partial') return 'sent';
+  return inv.status;
+}
+
+/** Bookkeeping fields an editor never saves; status has its own buttons (save.write). */
+export const DOC_EDITOR_SKIP = ['id', 'createdAt', 'updatedAt', 'status'];
+const sameValue = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+const copyValue = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+const setOrDrop = (o, k, v) => { if (v === undefined) delete o[k]; else o[k] = v; };
+
+/** The fields of `doc` that differ from `base` (what was typed since the last save), never DOC_EDITOR_SKIP. */
+export function docChanges(doc, base, skip = DOC_EDITOR_SKIP) {
+  const keys = new Set([...Object.keys(doc || {}), ...Object.keys(base || {})]);
+  return [...keys].filter((k) => !skip.includes(k) && !sameValue(doc?.[k], base?.[k]));
+}
+
+/**
+ * Keeps an open estimate or invoice editor and the store in step, now that QuickBooks pulls write
+ * these records too (5.10). The form, the line editor and the tax editor change `doc` in place.
+ *
+ * - `save()` saves after `ms`, `save.flush()` at once: only the fields that differ from what this
+ *   screen last saved or took in, through `write(patch)` (the screen's store.update). The sync then
+ *   sends `fields: ['notes']`, and the server's per-field merge keeps what QuickBooks changed.
+ * - Status is never autosaved. `save.write(patch, opts)` saves a status (or a field a button sets)
+ *   on its own, after what was typed.
+ * - A change to this record made elsewhere (a QuickBooks pull, another device, another screen)
+ *   goes into `doc` and `onPulled(fields, clashes)` runs. A field changed here too and not saved
+ *   yet takes the other side's value and is listed in `clashes` (the screen says so): the books
+ *   win over an unsaved keystroke.
+ * - Deleted on another device: `onRemoved()`. `save.stop()` saves what is left and stops listening.
+ *
+ * @param {{ get: Function, on: Function }} records store.js's store (read and listen only)
+ * @param {(patch: object, opts?: object) => object|null} write saves a patch (store.update)
+ */
+export function docEditor(records, coll, id, doc, { write, ms = 450, onSaved = null, onPulled = null, onRemoved = null } = {}) {
+  const base = copyValue(doc);
+  let timer = null, gone = false;
+  const flush = () => {
+    clearTimeout(timer); timer = null;
+    if (gone) return null;
+    const fields = docChanges(doc, base);
+    const before = fields.length ? records.get(coll, id) : null;
+    if (!before) return null;
+    const patch = {};
+    // `base` first: the store's update event then finds nothing new.
+    for (const k of fields) { patch[k] = doc[k] === undefined ? null : copyValue(doc[k]); base[k] = copyValue(patch[k]); }
+    const after = write(patch);
+    onSaved?.(patch, before, after);
+    return after;
+  };
+  const off = records.on(coll, (e) => {
+    if (e?.record?.id !== id) return;
+    if (e.type === 'remove') {
+      clearTimeout(timer); timer = null; gone = true;
+      if (e.remote) onRemoved?.();
+      return;
+    }
+    const rec = e.record;
+    const pulled = [], clashes = [];
+    for (const k of new Set([...Object.keys(rec), ...Object.keys(base)])) {
+      if (k === 'id' || k === 'createdAt' || k === 'updatedAt' || sameValue(rec[k], base[k])) continue;
+      if (!sameValue(doc[k], base[k]) && !sameValue(doc[k], rec[k])) clashes.push(k);
+      setOrDrop(doc, k, copyValue(rec[k]));
+      setOrDrop(base, k, copyValue(rec[k]));
+      pulled.push(k);
+    }
+    if (pulled.length) onPulled?.(pulled, clashes);
+  });
+  const save = () => { if (gone) return; clearTimeout(timer); timer = setTimeout(flush, ms); };
+  save.flush = flush;
+  save.write = (patch, opts) => {
+    flush();
+    if (gone || !records.get(coll, id)) return null;
+    for (const [k, v] of Object.entries(patch)) { doc[k] = copyValue(v); base[k] = copyValue(v); }
+    return write(patch, opts);
+  };
+  save.pending = () => docChanges(doc, base);
+  save.stop = () => { flush(); off(); };
+  return save;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Wizard (8.3)
@@ -742,6 +886,7 @@ export function qboBadge(ctx, collection, recordId, opts = {}) {
   const cache = opts.cache || qboStatusCache;
   const host = ui.h('span', { class: 'qbo-badge-host', dataset: { qboFor: `${collection}:${recordId}` } });
   if (isOffline(ctx)) return host;
+  cache.watch?.(ctx.store);
   cache.recordState(collection, recordId).then((r) => {
     if (!r) return;
     const info = badgeFor(r.state, { mismatch: r.mismatch });
@@ -771,37 +916,48 @@ export function openRecordSheet(ctx, collection, id, { record = null, mismatch =
   const body = h('div', { class: 'stack qbo-sheet' }, h('p', { class: 'muted' }, 'Loading…'));
   const sheet = ui.openSheet({ title: `QuickBooks · ${COLLECTION_LABEL[collection] || collection}`, body, actions: [ui.button('Close', { variant: 'ghost', onClick: () => sheet.close() })] });
   const after = (msg) => { cache.invalidate(collection); cache.invalidate(); if (msg) ui.toast(msg, 'success'); sheet.close(); ctx.route?.(); };
-  const act = async (fn, msg) => {
-    try { await fn(); after(msg); } catch (e) { showError(ctx, e); }
+  // One request per tap: the button stays off until the server answers (a double tap would ask
+  // QuickBooks twice). `btn` is taken before any await: currentTarget is gone after the click.
+  const act = async (fn, msg, btn = null) => {
+    if (btn?.disabled) return;
+    if (btn) btn.disabled = true;
+    try { await fn(); after(msg); } catch (e) { showError(ctx, e); } finally { if (btn) btn.disabled = false; }
   };
   const draw = (view) => {
     ui.clear(body);
     const rs = view?.state || null;
     const info = badgeFor(rs, { mismatch });
     const q = view?.quickbooks || null;
+    const qUrl = safeQboUrl(q?.url);
     const money = (c) => ui.fmtMoney(c);
-    const acts = badgeActions(rs, { collection, record, url: q?.url || null });
+    const acts = badgeActions(rs, { collection, record, url: qUrl });
     const button = (which) => {
       switch (which) {
-        case 'open': return h('a', { class: 'btn secondary sm', href: q.url, target: '_blank', rel: 'noopener noreferrer' }, ui.icon('link', 16), h('span', null, 'Open in QuickBooks'));
-        case 'retry': return ui.button('Retry', { size: 'sm', icon: 'redo', onClick: () => act(() => qboApi.pushRecord(collection, id), 'Sending again') });
-        case 'sendNow': return ui.button('Send to QuickBooks now', { size: 'sm', variant: 'primary', icon: 'send', onClick: () => act(() => qboApi.pushRecord(collection, id, { force: true }), 'Sending to QuickBooks') });
-        case 'asNew': return ui.button('Send to QuickBooks as new', { size: 'sm', variant: 'primary', icon: 'send', onClick: async () => {
+        case 'open': return h('a', { class: 'btn secondary sm', href: qUrl, target: '_blank', rel: 'noopener noreferrer' }, ui.icon('link', 16), h('span', null, 'Open in QuickBooks'));
+        case 'retry': return ui.button('Retry', { size: 'sm', icon: 'redo', onClick: (e) => act(() => qboApi.pushRecord(collection, id), 'Sending again', e.currentTarget) });
+        case 'sendNow': return ui.button('Send to QuickBooks now', { size: 'sm', variant: 'primary', icon: 'send', onClick: (e) => act(() => qboApi.pushRecord(collection, id, { force: true }), 'Sending to QuickBooks', e.currentTarget) });
+        case 'asNew': return ui.button('Send to QuickBooks as new', { size: 'sm', variant: 'primary', icon: 'send', onClick: async (e) => {
+          const btn = e.currentTarget;
+          if (btn.disabled) return;
           if (!(await ui.confirmDialog('This creates a new record in QuickBooks. The QuickBooks record it was linked to stays as it is.', { title: 'Send as new?', okLabel: 'Send as new', danger: false }))) return;
-          act(() => qboApi.pushRecord(collection, id, { asNew: true }), 'Sending to QuickBooks as new');
+          act(() => qboApi.pushRecord(collection, id, { asNew: true }), 'Sending to QuickBooks as new', btn);
         } });
         case 'link': return ui.button('Link…', { size: 'sm', icon: 'link', onClick: () => linkSheet(ctx, collection, id, () => after('Linked')) });
-        case 'renumber': return ui.button('Renumber', { size: 'sm', icon: 'edit', onClick: async () => {
+        case 'renumber': return ui.button('Renumber', { size: 'sm', icon: 'edit', onClick: async (e) => {
+          const btn = e.currentTarget;
+          if (btn.disabled) return;
           const cur = record || ctx.store?.get?.(collection, id);
           const warn = cur?.sentAt ? `The customer has this as ${cur.number}. ` : '';
           if (!(await ui.confirmDialog(`${warn}Fishtape gives it the next free number and sends it again.`, { title: 'Renumber?', okLabel: 'Renumber', danger: Boolean(cur?.sentAt) }))) return;
-          act(async () => { const r = await qboApi.renumber(collection, id); ui.toast(`Now ${r?.number || 'renumbered'}`, 'success'); });
+          act(async () => { const r = await qboApi.renumber(collection, id); ui.toast(`Now ${r?.number || 'renumbered'}`, 'success'); }, null, btn);
         } });
-        case 'unlink': return ui.button('Unlink', { size: 'sm', variant: 'ghost danger', icon: 'x', onClick: async () => {
+        case 'unlink': return ui.button('Unlink', { size: 'sm', variant: 'ghost danger', icon: 'x', onClick: async (e) => {
+          const btn = e.currentTarget;
+          if (btn.disabled) return;
           if (!(await ui.confirmDialog('Both records are kept. Nothing is sent to QuickBooks for this record until you send it as new or link it again.', { title: 'Unlink from QuickBooks?', okLabel: 'Unlink' }))) return;
-          act(() => qboApi.unlink(collection, id), 'Unlinked');
+          act(() => qboApi.unlink(collection, id), 'Unlinked', btn);
         } });
-        case 'approve': return ui.button('Approve and send', { size: 'sm', variant: 'primary', icon: 'check', onClick: () => act(() => qboApi.resolve(rs.conflictId, { choice: 'fishtape' }), 'Approved; sending to QuickBooks') });
+        case 'approve': return ui.button('Approve and send', { size: 'sm', variant: 'primary', icon: 'check', onClick: (e) => act(() => qboApi.resolve(rs.conflictId, { choice: 'fishtape' }), 'Approved; sending to QuickBooks', e.currentTarget) });
         case 'conflict': return ui.button(rs?.state === 'needs_review' ? 'Check it' : 'Decide', { size: 'sm', variant: 'primary', icon: 'alert', href: `#/quickbooks/conflicts/${encodeURIComponent(rs.conflictId)}`, onClick: () => sheet.close() });
         default: return null;
       }
@@ -848,6 +1004,7 @@ export function linkSheet(ctx, collection, id, onDone) {
   const search = async () => {
     const q = input.value.trim();
     if (!entity) { if (/^\d{1,20}$/.test(q)) link(q); else ui.toast('A QuickBooks id is digits only', 'error'); return; }
+    if (LOOKUP_BAD_CHARS.test(q)) { ui.toast('Leave out % and _', 'error'); return; }
     ui.clear(results).append(h('p', { class: 'muted' }, 'Searching QuickBooks…'));
     try {
       const body = entity === 'customers' ? { q, limit: 25 } : { q: q || undefined, status: 'all', limit: 25, ...(ctx.store?.get?.(collection, id)?.clientId ? { clientId: ctx.store.get(collection, id).clientId } : {}) };
@@ -897,11 +1054,13 @@ export function noTaxReasonPicker(ctx, doc, { onChange, readOnly = false } = {})
   const { ui } = ctx;
   const { h } = ui;
   const host = h('div', { class: 'field span-2 qbo-notax', dataset: { noTax: '1' } });
-  const draw = () => {
+  const draw = (edited = false) => {
     ui.clear(host);
     const show = needsNoTaxReason(doc);
     host.hidden = !show;
     host.style.display = show ? '' : 'none';
+    // Taxed again after an edit: the old reason goes, so it never rides along on a taxed document.
+    if (edited && !readOnly && staleNoTaxReason(doc)) doc.taxNoneReason = null;
     if (!show) return;
     const kinds = doc.taxTreatment === 'none' ? [] : noTaxKinds(doc);
     const sel = h('select', { name: 'taxNoneReason', disabled: readOnly, 'aria-label': 'Why no tax?', onChange: (e) => { doc.taxNoneReason = e.target.value || null; drawHint(); onChange?.(); } },
@@ -919,7 +1078,8 @@ export function noTaxReasonPicker(ctx, doc, { onChange, readOnly = false } = {})
     host.append(h('span', null, 'Why no tax?', kinds.length ? h('span', { class: 'muted' }, ` (${kinds.join(', ')} lines)`) : null), sel, hint);
   };
   draw();
-  host.update = draw;
+  /** Call after every edit of the document (lines, treatment): redraws, and drops a reason no longer needed. */
+  host.update = () => draw(true);
   return host;
 }
 

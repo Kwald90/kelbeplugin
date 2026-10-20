@@ -281,8 +281,10 @@ async function startConnect(ctx, { reconnect = false, btn = null } = {}, reload)
   // the status every 3 seconds until it changes, then show it (2.2 step 4).
   const before = lastStatus?.state;
   let stop = false;
+  const until = Date.now() + 10 * 60_000; // Safari left open: stop asking after ten minutes
   const tick = async () => {
     if (stop) return;
+    if (Date.now() > until) { stop = true; reload?.(); return; }
     try {
       const s = await qboApi.status();
       if (s.state !== before) { stop = true; lastStatus = s; ctx.ui.toast(s.state === 'setup' || s.state === 'active' ? 'QuickBooks is connected' : 'QuickBooks status changed', 'success'); reload?.(); return; }
@@ -388,7 +390,10 @@ function optionsForm(ctx, opts, status, { wizard = false } = {}) {
   const { h } = ui;
   const features = status?.features || {};
   const fromQbo = features.taxFiledThrough || null;
-  const o = { ...Q.optionDefaults({ features }), ...(opts || {}) };
+  // Practice mode on or off is "Go live" (8.2): owners and admins only. The wizard starts with a
+  // practice week (13.10) unless one was already chosen.
+  const canSwitchWrites = isAdmin(ctx);
+  const o = { ...Q.optionDefaults({ features }), ...(wizard ? { writeMode: 'shadow' } : {}), ...(opts || {}) };
   const form = h('form', { class: 'stack qbo-options', onSubmit: (e) => e.preventDefault() },
     ui.formGrid([
       { label: 'Start syncing from', name: 'syncFrom', type: 'date', value: o.syncFrom, required: true, hint: 'Older documents stay only in QuickBooks, except open invoices and pending estimates.' },
@@ -415,11 +420,18 @@ function optionsForm(ctx, opts, status, { wizard = false } = {}) {
       syncFrom: v.syncFrom || null, importCustomers: v.importCustomers, timeOwner: v.timeOwner || null, timeLockedThrough: v.timeLockedThrough || null,
       stripeCutover: v.stripeCutover || null, numbering: v.numbering, items: v.items, jobsAsSubCustomers: v.jobsAsSubCustomers, syncTime: v.syncTime,
       pushDrafts: v.pushDrafts, pullJobCosts: v.pullJobCosts, recordStripeFees: v.recordStripeFees, recordStripePayouts: v.recordStripePayouts,
-      writeMode: v.practice ? 'shadow' : 'live',
     };
+    if (canSwitchWrites) out.writeMode = v.practice ? 'shadow' : 'live';
     if (!fromQbo) out.taxFiledThrough = v.taxFiledThrough || null;
     return out;
   };
+  if (!canSwitchWrites) {
+    const box = form.querySelector('input[name=practice]');
+    if (box) {
+      box.disabled = true;
+      box.closest('.field')?.append(h('span', { class: 'hint' }, 'An owner or admin turns practice mode on or off.'));
+    }
+  }
   return { el: form, read, valid: () => form.reportValidity() };
 }
 
@@ -505,8 +517,12 @@ function mappingsView(ctx, host, { wizard = false, onReady = null } = {}) {
 
     const taxKeys = [...new Set([...Q.companyTaxKeys(prov, date), ...Object.keys(draft.taxCode || {}), ...[...required()].filter((k) => k.startsWith('taxCode.')).map((k) => k.slice(8))])];
     const purchaseKeys = [...new Set([...Q.companyPurchaseKeys(prov, date), ...Object.keys(draft.purchaseTaxCode || {}), ...[...required()].filter((k) => k.startsWith('purchaseTaxCode.')).map((k) => k.slice(16))])];
-    const opts = draft.option || {};
-    const optionsBlock = optionsForm(ctx, opts, status, { wizard });
+    // Built from the draft, and every change goes back into it: a select change redraws the whole
+    // view, which must not lose an option typed in and not saved yet.
+    const optionsBlock = optionsForm(ctx, draft.option || {}, status, { wizard });
+    const keepOptions = () => { draft.option = { ...(draft.option || {}), ...optionsBlock.read() }; };
+    optionsBlock.el.addEventListener('input', keepOptions);
+    optionsBlock.el.addEventListener('change', keepOptions);
 
     const section = (title, intro, ...fields) => h('section', { class: 'card qbo-map-section' }, h('h3', null, title), intro ? h('p', { class: 'muted', style: { margin: 0 } }, intro) : null, h('div', { class: 'form-grid' }, fields));
     const miss = missing();
@@ -514,12 +530,7 @@ function mappingsView(ctx, host, { wizard = false, onReady = null } = {}) {
     if (onReady) onReady([...required()]);
 
     const saveButton = () => ui.button('Save', { variant: 'primary', icon: 'save', onClick: (e) => save(e.currentTarget) });
-    h(host, null,
-      miss.length ? banner(ui, 'warning', `${miss.length} required ${miss.length === 1 ? 'entry is' : 'entries are'} still empty. Sync waits until they are set.`)
-        : required().size ? banner(ui, 'info', 'Everything required is filled in. Save to keep it.') : null,
-      h('div', { class: 'row' }, h('span', { class: 'grow muted' }, 'Lists come from your QuickBooks company.'),
-        ui.button('Refresh the lists', { size: 'sm', variant: 'ghost', icon: 'redo', onClick: (e) => write(ctx, () => qboApi.refreshReference(), { ok: 'Reading the lists from QuickBooks; back in a minute', btn: e.currentTarget }) }),
-        saveButton()),
+    const sections = [
       section('Tax codes', 'Each Fishtape tax situation goes to the QuickBooks code with the same rates. A code whose rates differ (for example an old 8% PST rate) is refused.',
         taxKeys.map((key) => select('taxCode', key, codeOpts(false), { label: Q.taxKeyLabel(key, prov), fit: (code) => Q.taxCodeFit(key, code, { province: prov, date }) }))),
       section('Purchase tax codes', 'PST and RST you pay on purchases are added to the cost; only GST/HST/QST is claimed.',
@@ -538,6 +549,23 @@ function mappingsView(ctx, host, { wizard = false, onReady = null } = {}) {
         features.classes ? select('class', 'default', listOpts(ch.classes), { label: 'Class' }) : null,
         features.locations ? select('department', 'default', listOpts(ch.departments), { label: 'Location' }) : null,
         select('term', 'default', listOpts(ch.terms), { label: 'Terms' })) : null,
+    ];
+    // The wizard (8.3) puts the required entries first, in a section of their own.
+    let requiredSection = null;
+    if (wizard && required().size) {
+      const grid = h('div', { class: 'form-grid' });
+      for (const sec of sections) for (const el of sec ? [...sec.querySelectorAll('[data-map]')] : []) if (required().has(el.dataset.map)) grid.append(el);
+      if (grid.children.length) requiredSection = h('section', { class: 'card qbo-map-section', dataset: { required: '1' } }, h('h3', null, 'Required'), h('p', { class: 'muted', style: { margin: 0 } }, 'Sync waits until each of these is set.'), grid);
+      for (const sec of sections) if (sec && !sec.querySelector('[data-map]')) sec.remove();
+    }
+    h(host, null,
+      miss.length ? banner(ui, 'warning', `${miss.length} required ${miss.length === 1 ? 'entry is' : 'entries are'} still empty. Sync waits until they are set.`)
+        : required().size ? banner(ui, 'info', 'Everything required is filled in. Save to keep it.') : null,
+      h('div', { class: 'row' }, h('span', { class: 'grow muted' }, 'Lists come from your QuickBooks company.'),
+        ui.button('Refresh the lists', { size: 'sm', variant: 'ghost', icon: 'redo', onClick: (e) => write(ctx, () => qboApi.refreshReference(), { ok: 'Reading the lists from QuickBooks; back in a minute', btn: e.currentTarget }) }),
+        saveButton()),
+      requiredSection,
+      sections.filter((sec) => sec && sec.querySelector('[data-map]')),
       h('section', { class: 'card qbo-map-section' }, h('h3', null, 'Options, filed GST period and payroll lock'),
         h('p', { class: 'muted', style: { margin: 0 } }, 'Filed GST period: changes to a period already filed are held for you to confirm. Payroll lock: hours on or before the last pay period run are never changed from Fishtape.'),
         optionsBlock.el),
@@ -549,13 +577,18 @@ function mappingsView(ctx, host, { wizard = false, onReady = null } = {}) {
       const optSet = optionSets(data.mappings?.option, optionsBlock.read());
       const all = [...set.filter((s) => s.kind !== 'option'), ...optSet];
       if (!all.length && !remove.length) { ui.toast('Nothing changed', 'info'); return; }
+      // Say what changed (8.4), by the names on screen.
+      const nameOf = ({ kind, key }) => (kind === 'option'
+        ? host.querySelector(`[name="${key === 'writeMode' ? 'practice' : key}"]`)?.closest('.field')?.querySelector('span')?.textContent?.replace(/\s*\*$/, '')
+        : host.querySelector(`[data-map="${CSS.escape(`${kind}.${key}`)}"] select`)?.getAttribute('aria-label')) || key;
+      const names = [...all, ...remove].map(nameOf);
       const r = await write(ctx, () => qboApi.saveMappings({ set: all, remove }), { btn });
       if (!r) return;
       data = r;
       draft = JSON.parse(JSON.stringify(r.mappings || {}));
       suggested = new Set();
-      const n = all.length + remove.length;
-      ui.toast(`${n} mapping${n === 1 ? '' : 's'} saved. Records that were waiting or failed are being sent again.`, 'success', 4500);
+      const n = names.length;
+      ui.toast(`Saved ${n} change${n === 1 ? '' : 's'}: ${names.slice(0, 4).join('; ')}${n > 4 ? `; and ${n - 4} more` : ''}. Records that were waiting or failed are being sent again.`, 'success', 6000);
       draw();
     }
   };
@@ -772,10 +805,15 @@ function renderWizard(root, ctx) {
         draw();
       } catch (e) { ui.clear(host2).append(h('p', null, Q.errorText(e))); }
     };
-    const setField = async (c, field, side) => {
-      const fieldChoices = { ...(c.fieldChoices || {}), [field]: side };
-      // Reload: the plan's count of differences left to decide moves too.
-    if (await write(ctx, () => qboApi.setChoices([{ id: c.id, choice: 'link', fieldChoices }])) !== undefined) { c.fieldChoices = fieldChoices; load(); }
+    // Picks on one candidate go one after another, each with every pick so far: two quick taps
+    // never send {A} and then {B} with A lost. Reload after the last: the plan's count moves too.
+    const chains = new Map();
+    const setField = (c, field, side) => {
+      c.fieldChoices = { ...(c.fieldChoices || {}), [field]: side };
+      const fieldChoices = { ...c.fieldChoices };
+      const next = (chains.get(c.id) || Promise.resolve()).then(() => write(ctx, () => qboApi.setChoices([{ id: c.id, choice: 'link', fieldChoices }])));
+      chains.set(c.id, next);
+      next.then(() => { if (chains.get(c.id) === next) { chains.delete(c.id); load(); } });
     };
     const draw = () => {
       ui.clear(host2);
@@ -928,6 +966,12 @@ function renderConflict(root, ctx, id) {
     const r = await write(ctx, () => qboApi.resolve(id, body), { ok: 'Decided', btn });
     if (r !== undefined) nav('#/quickbooks/conflicts');
   };
+  // Choices that delete, void or unlink in the books are confirmed first.
+  const confirmThen = async (e, text, okLabel, body) => {
+    const btn = e.currentTarget;
+    if (!(await ui.confirmDialog(text, { title: 'Are you sure?', okLabel }))) return;
+    resolve(body, btn);
+  };
   const draw = (c) => {
     ui.clear(host);
     const href = Q.recordHref(c.collection, c.recordId);
@@ -961,13 +1005,19 @@ function renderConflict(root, ctx, id) {
           const approve = { origin: 'Approve and send', filed_period: 'Send it anyway', payroll_locked: 'Send it anyway', payout_items: 'I entered these in QuickBooks' }[c.reason] || "Use Fishtape's version";
           actions.push(ui.button(approve, { variant: 'primary', onClick: (e) => resolve({ choice: 'fishtape' }, e.currentTarget) }),
             ui.button(['origin', 'filed_period', 'payroll_locked'].includes(c.reason) ? "Don't send it" : "Keep QuickBooks' version", { onClick: (e) => resolve({ choice: 'quickbooks' }, e.currentTarget) }),
-            ui.button('Unlink', { variant: 'ghost danger', onClick: (e) => resolve({ choice: 'unlink' }, e.currentTarget) }));
+            ui.button('Unlink', { variant: 'ghost danger', onClick: (e) => confirmThen(e, `Unlink ${c.label || 'this record'} from QuickBooks? Both records are kept; nothing is sent for it until it is linked again or sent as new.`, 'Unlink', { choice: 'unlink' }) }));
         }
       } else if (c.kind === 'deleted') {
         actions.push(ui.button('Restore it', { variant: 'primary', onClick: (e) => resolve({ choice: 'restore' }, e.currentTarget) }),
-          ui.button('Delete it on the other side too', { variant: 'ghost danger', onClick: (e) => resolve({ choice: 'delete' }, e.currentTarget) }));
+          ui.button('Delete it on the other side too', { variant: 'ghost danger', onClick: (e) => confirmThen(e, `Delete ${c.label || 'this record'} on the other side too? In QuickBooks an invoice or payment is voided or deleted; in Fishtape the record is deleted.`, 'Delete it', { choice: 'delete' }) }));
       } else if (c.kind === 'merged') {
-        actions.push(ui.button('Unlink this record', { variant: 'primary', onClick: (e) => resolve({ choice: 'unlink', recordId: c.recordId }, e.currentTarget) }));
+        // 5.6: the person picks which of the merged Fishtape records to unlink (both, when the server lists both).
+        const ids = [...new Set([c.recordId, ...(Array.isArray(c.recordIds) ? c.recordIds : [])].filter(Boolean))];
+        const nameOf = (rid) => { const r = ctx.store?.get?.(c.collection, rid); return r?.number || r?.name || 'this record'; };
+        for (const rid of ids) {
+          const label = ids.length > 1 ? `Unlink ${nameOf(rid)}` : 'Unlink this record';
+          actions.push(ui.button(label, { variant: ids.length > 1 ? 'secondary' : 'primary', onClick: (e) => confirmThen(e, 'This Fishtape record stops syncing with the merged QuickBooks record. Nothing is deleted.', 'Unlink', { choice: 'unlink', recordId: rid }) }));
+        }
       }
     }
     host.append(resolved ? h('p', { class: 'muted' }, `Resolved${c.resolvedAt ? ` ${ui.fmtDateTime(c.resolvedAt)}` : ''}.`) : h('div', { class: 'row qbo-actions' }, Q.isOffline(ctx) ? [] : actions));

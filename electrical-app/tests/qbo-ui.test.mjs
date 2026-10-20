@@ -1,7 +1,9 @@
 // QuickBooks in the PWA (docs/integrations/quickbooks.md section 8, W4): badge words and actions,
 // status to text, who sees QuickBooks, mfa_required, the in-memory status cache (nothing stored on
 // the device), tax situations and code fits, the "Why no tax?" rule, wizard helpers and the API
-// wrapper (look-up terms in the body, never the URL).
+// wrapper (look-up terms in the body, never the URL); the invoice and estimate editors (only the
+// fields typed are saved, so a QuickBooks pull is never written back) and the invoice status rule
+// for QuickBooks' tax rounding.
 // Run: node --test electrical-app/tests/*.test.mjs
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,6 +11,9 @@ import { readFileSync } from 'node:fs';
 import * as Q from '../js/lib/qbo-ui.js';
 import { qboApi, query } from '../js/lib/qbo-api.js';
 import { taxComponents } from '../js/lib/tax.js';
+import { store } from '../js/store.js';
+import { enqueue } from '../js/sync.js';
+import { docTotals } from '../js/lib/money.js';
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 const ENT = (features) => ({ plan: 'pro', features });
@@ -101,6 +106,16 @@ describe('badges (8.5)', () => {
     assert.deepEqual(Q.badgeActions(null, { collection: 'invoices', record: { status: 'draft' } }), ['sendNow'], 'Send to QuickBooks now for a draft');
     assert.deepEqual(Q.badgeActions(null, { collection: 'invoices', record: { status: 'sent' } }), []);
     assert.ok(Q.badgeActions({ state: 'deleted_remote' }, { collection: 'timeEntries' }).includes('asNew'), 'Send to QuickBooks again');
+  });
+
+  test('"Open in QuickBooks" only for an https address on intuit.com', () => {
+    assert.equal(Q.safeQboUrl('https://app.qbo.intuit.com/app/invoice?txnId=1'), 'https://app.qbo.intuit.com/app/invoice?txnId=1');
+    assert.ok(Q.safeQboUrl('https://app.sandbox.qbo.intuit.com/app/invoice?txnId=1'));
+    for (const bad of ['javascript:alert(1)', 'http://app.qbo.intuit.com/x', 'https://intuit.com.evil.example/x', 'https://evilintuit.com/x', 'https://user:pw@app.qbo.intuit.com/', '//app.qbo.intuit.com/x', '', null, 42]) {
+      assert.equal(Q.safeQboUrl(bad), null, String(bad));
+    }
+    assert.ok(!Q.badgeActions({ state: 'synced' }, { collection: 'invoices', url: 'javascript:alert(1)' }).includes('open'), 'no button for a bad address');
+    assert.ok(Q.LOOKUP_BAD_CHARS.test('50%') && Q.LOOKUP_BAD_CHARS.test('a_b') && !Q.LOOKUP_BAD_CHARS.test("O'Brien"));
   });
 
   test('reason words for the sheet', () => {
@@ -215,6 +230,27 @@ describe('nothing from QuickBooks is stored on the device (8.7)', () => {
     assert.deepEqual(touched, [], `browser storage touched: ${touched.join(', ')}`);
   });
 
+  test('a local edit drops that collection\'s record states (the badge does not lag 30 seconds); pulls do not', async () => {
+    const api = fakeApi();
+    const cache = Q.createStatusCache({ api });
+    const fns = [];
+    const fakeStore = { on: (c, fn) => { assert.equal(c, '*'); fns.push(fn); return () => {}; } };
+    cache.watch(fakeStore);
+    cache.watch(fakeStore);
+    assert.equal(fns.length, 1, 'one listener per store');
+    await cache.records('invoices');
+    fns[0]({ coll: 'invoices', type: 'update', record: { id: 'inv-1' }, remote: true });
+    await cache.records('invoices');
+    assert.equal(api.calls.filter((c) => c === 'records:invoices').length, 1, 'a pulled change keeps the cache');
+    fns[0]({ coll: 'jobs', type: 'update', record: { id: 'j1' } });
+    fns[0]({ coll: 'auditLog', type: 'add', record: { id: 'a1' } });
+    await cache.records('invoices');
+    assert.equal(api.calls.filter((c) => c === 'records:invoices').length, 1, 'another collection keeps it');
+    fns[0]({ coll: 'invoices', type: 'update', record: { id: 'inv-1' } });
+    await cache.records('invoices');
+    assert.equal(api.calls.filter((c) => c === 'records:invoices').length, 2, 'asked again after the local edit');
+  });
+
   test('no badge data unless the connection is active; failures are not cached', async () => {
     let fail = true;
     const api = {
@@ -291,6 +327,14 @@ describe('tax situations, code fits and "Why no tax?" (4.8, 8.4, 8.5)', () => {
     assert.equal(Q.noneKeyFor(null), 'NONE');
   });
 
+  test('a reason left on a document that is taxed again is stale (the picker clears it on the next edit)', () => {
+    const doc = (treatment, reason) => ({ taxTreatment: treatment, taxProvince: 'MB', taxes: taxComponents({ province: 'MB', treatment, date: '2026-10-20' }), lines: [{ kind: 'labour' }], taxNoneReason: reason });
+    assert.equal(Q.staleNoTaxReason(doc('pst-all', 'relief')), true);
+    assert.equal(Q.staleNoTaxReason(doc('none', 'relief')), false, 'still needed');
+    assert.equal(Q.staleNoTaxReason(doc('pst-all', null)), false);
+    assert.equal(Q.staleNoTaxReason(null), false);
+  });
+
   test('settlement payments are recognised (read-only on invoices)', () => {
     assert.equal(Q.isSettlementPayment({ method: 'credit', source: 'quickbooks' }), true);
     assert.equal(Q.isSettlementPayment({ method: 'credit', source: 'stripe' }), false);
@@ -350,14 +394,26 @@ describe('wizard and mappings helpers (6, 8.3, 8.4)', () => {
 });
 
 describe('the API wrapper (section 7)', () => {
-  let calls, savedFetch;
+  let calls, savedFetch, answer;
   beforeEach(() => {
     calls = [];
+    answer = null;
     savedFetch = globalThis.fetch;
     globalThis.fetch = async (url, init) => {
       calls.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : undefined, headers: init.headers });
-      return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      return answer ? answer() : new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
+  });
+
+  test('a bare 202 (7.5 record sync, 7.6 reference refresh) is success, not "the server isn\'t answering"', async () => {
+    answer = () => new Response(null, { status: 202 });
+    assert.deepEqual(await qboApi.pushRecord('invoices', 'inv-1'), { queued: true });
+    assert.deepEqual(await qboApi.pushRecord('invoices', 'inv-1', { force: true }), { queued: true });
+    assert.deepEqual(await qboApi.refreshReference(), { queued: true });
+    answer = () => new Response('<html>static</html>', { status: 200, headers: { 'content-type': 'text/html' } });
+    await assert.rejects(qboApi.pushRecord('invoices', 'inv-1'), (e) => e.code === 'no_api', 'a static server answering 200 is still no_api');
+    answer = () => new Response(JSON.stringify({ error: { code: 'mfa_required', message: 'x' } }), { status: 403, headers: { 'content-type': 'application/json' } });
+    await assert.rejects(qboApi.refreshReference(), (e) => e.code === 'mfa_required');
   });
   afterEach(() => { globalThis.fetch = savedFetch; });
 
@@ -405,6 +461,192 @@ describe('the API wrapper (section 7)', () => {
     assert.deepEqual(calls[8].body, { bulk: { kind: 'customers', fieldsFrom: 'fishtape' } });
     assert.deepEqual(calls[9].body, { raiseNumbers: true });
     assert.equal(query({ a: 1, b: '', c: null, d: ['x', 'y'] }), '?a=1&d=x%2Cy');
+  });
+});
+
+describe('invoice status with QuickBooks\' tax rounding (4.8, 4.9)', () => {
+  // A Manitoba invoice of $1,000.00 + GST 5% + RST 7% = $1,120.00; QuickBooks rounded its tax to
+  // $1,119.99, the customer paid that, and the server marked it paid at the QuickBooks total.
+  const mb = (o = {}) => ({ id: 'inv-1', number: 'INV-3001', status: 'sent', lines: [{ kind: 'labour', qty: 1, unitCents: 100000 }],
+    taxes: taxComponents({ province: 'MB', treatment: 'pst-all', date: '2026-10-20' }), ...o });
+
+  test('the tolerance is 2 cents per charged rate', () => {
+    assert.equal(Q.taxRoundingCents(mb()), 4, 'GST + RST');
+    assert.equal(Q.taxRoundingCents({ taxes: [{ id: 'GST', pct: 5 }, { id: 'X', pct: 0 }] }), 2);
+    assert.equal(Q.taxRoundingCents({ taxes: [] }), 2, 'no tax: still 2');
+    assert.equal(Q.taxRoundingCents({}), 2);
+  });
+
+  test('paid by payments becomes paid; a part payment is partial; no payment goes back to sent', () => {
+    const total = docTotals(mb()).totalCents;
+    assert.equal(total, 112000);
+    assert.equal(Q.nextInvoiceStatus(mb(), 112000, total), 'paid');
+    assert.equal(Q.nextInvoiceStatus(mb(), 112500, total), 'paid', 'overpaid');
+    assert.equal(Q.nextInvoiceStatus(mb(), 50000, total), 'partial');
+    assert.equal(Q.nextInvoiceStatus(mb({ status: 'partial' }), 0, total), 'sent', 'a deleted payment');
+    assert.equal(Q.nextInvoiceStatus(mb({ status: 'draft' }), 0, total), 'draft');
+  });
+
+  test('a server-paid invoice with a cent left stays paid while this device changed no money', () => {
+    const paid = mb({ status: 'paid' });
+    assert.equal(Q.keepsServerPaid(paid, 111999, 112000), true);
+    assert.equal(Q.nextInvoiceStatus(paid, 111999, 112000, { moneyChanged: false }), 'paid', 'a notes edit');
+    assert.equal(Q.nextInvoiceStatus(paid, 111996, 112000, { moneyChanged: false }), 'paid', '4 cents: GST + RST');
+  });
+
+  test('more than the tolerance, an edit that moves the total, or a payment change here is worked out again', () => {
+    const paid = mb({ status: 'paid' });
+    assert.equal(Q.nextInvoiceStatus(paid, 111995, 112000, { moneyChanged: false }), 'partial', '5 cents is money owed');
+    assert.equal(Q.nextInvoiceStatus(paid, 112000, 112003), 'partial', 'the total edited up by 3 cents');
+    assert.equal(Q.nextInvoiceStatus(paid, 111999, 112000), 'partial', 'a payment deleted or added here: plain arithmetic');
+  });
+
+  test('a stored status other than paid is never promoted, and void and draft are left alone', () => {
+    assert.equal(Q.keepsServerPaid(mb({ status: 'partial' }), 111999, 112000), false);
+    assert.equal(Q.nextInvoiceStatus(mb({ status: 'partial' }), 111999, 112000, { moneyChanged: false }), 'partial');
+    assert.equal(Q.nextInvoiceStatus(mb({ status: 'sent' }), 111999, 112000, { moneyChanged: false }), 'partial');
+    assert.equal(Q.nextInvoiceStatus(mb({ status: 'void' }), 112000, 112000), 'void');
+    assert.equal(Q.nextInvoiceStatus(mb({ status: 'void' }), 0, 112000, { moneyChanged: false }), 'void');
+    assert.equal(Q.keepsServerPaid(mb({ status: 'paid' }), 0, 2), false, 'nothing paid: never kept');
+    assert.equal(Q.keepsServerPaid(mb({ status: 'paid' }), 112001, 112000), false, 'overpaid is plain paid');
+    assert.equal(Q.nextInvoiceStatus(null, 0, 0), null);
+  });
+});
+
+describe('invoice and estimate editors save only what was typed (5.10)', () => {
+  // The bookkeeper changes INV-3001's lines and due date in QuickBooks; the pull patches Fishtape
+  // while an office user has the invoice open on the desktop and then fixes a typo in the notes.
+  // Saving the whole record copied when the screen opened would write the old lines back as a
+  // fresh edit, and the sync would push them over the books.
+  let n = 0;
+  const open = async () => {
+    await store.open({ kind: 'company', userId: 'u-1', tenantId: `t-qbo-ui-${++n}` });
+    store.track((c) => enqueue(store, c, { newMid: () => `mid-${n}-${store.queue.length}` }));
+  };
+  const synced = (coll, rec, v = 3) => { store.applyRemote(coll, rec.id, rec, v); return store.get(coll, rec.id); };
+  const pull = (coll, id, patch) => synced(coll, { ...store.get(coll, id), ...patch }, (store.version(coll, id) || 3) + 1);
+  const inv = (o = {}) => ({ id: 'inv-3001', number: 'INV-3001', status: 'sent', dueDate: '2026-11-03', notes: 'Thanks', lines: [{ kind: 'labour', qty: 1, unitCents: 50000 }], ...o });
+  const editor = (doc, extra = {}) => {
+    const saved = [];
+    const ed = Q.docEditor(store, 'invoices', doc.id, doc, {
+      ms: 10_000,
+      write: (patch, opts) => { saved.push(Object.keys(patch)); return store.update('invoices', doc.id, patch, opts); },
+      ...extra,
+    });
+    return { ed, saved };
+  };
+
+  test('a pull while the invoice is open, then a notes edit: only the notes are queued, the pulled lines stay', async () => {
+    await open();
+    const doc = synced('invoices', inv());
+    const pulled = [];
+    const { ed, saved } = editor(doc, { onPulled: (f, c) => pulled.push([f, c]) });
+    pull('invoices', doc.id, { lines: [{ kind: 'labour', qty: 1, unitCents: 52000 }], dueDate: '2026-12-31' });
+    assert.deepEqual(pulled.map(([f, c]) => [[...f].sort(), c]), [[['dueDate', 'lines'], []]], 'the screen is told, with no clash');
+    assert.equal(doc.lines[0].unitCents, 52000, 'the open copy took the pulled lines');
+    doc.notes = 'Thanks!';
+    ed();
+    ed.flush();
+    assert.deepEqual(saved, [['notes']]);
+    const q = store.queue.filter((e) => e.id === doc.id);
+    assert.equal(q.length, 1);
+    assert.deepEqual(q[0].fields, ['notes'], 'the server merges only the notes from this device');
+    const now = store.get('invoices', doc.id);
+    assert.equal(now.lines[0].unitCents, 52000);
+    assert.equal(now.dueDate, '2026-12-31');
+    assert.equal(now.notes, 'Thanks!');
+    ed.stop();
+  });
+
+  test('status is never autosaved; a status button writes its own patch after what was typed', async () => {
+    await open();
+    const doc = synced('invoices', inv({ status: 'paid' }));
+    const { ed, saved } = editor(doc);
+    doc.status = 'sent'; // a stale copy of the status must not ride along
+    doc.notes = 'Paid by cheque';
+    ed.flush();
+    assert.deepEqual(saved, [['notes']]);
+    assert.equal(store.get('invoices', doc.id).status, 'paid');
+    doc.dueDate = '2026-11-10';
+    ed();
+    ed.write({ status: 'void' }, { summary: 'INV-3001 → void' });
+    assert.deepEqual(saved, [['notes'], ['dueDate'], ['status']]);
+    assert.equal(store.get('invoices', doc.id).status, 'void');
+    ed.stop();
+  });
+
+  test('nothing typed: nothing saved, even when the screen closes', async () => {
+    await open();
+    const doc = synced('invoices', inv());
+    const { ed, saved } = editor(doc);
+    pull('invoices', doc.id, { dueDate: '2027-01-15' });
+    ed.stop();
+    assert.deepEqual(saved, []);
+    assert.equal(store.queue.filter((e) => e.id === doc.id).length, 0);
+  });
+
+  test('a field changed both here (not saved yet) and in QuickBooks: QuickBooks wins and the screen says so', async () => {
+    await open();
+    const doc = synced('invoices', inv());
+    const pulled = [];
+    const { ed, saved } = editor(doc, { onPulled: (f, c) => pulled.push([f, c]) });
+    doc.lines = [{ kind: 'labour', qty: 2, unitCents: 50000 }];
+    doc.notes = 'Two visits';
+    ed();
+    pull('invoices', doc.id, { lines: [{ kind: 'labour', qty: 1, unitCents: 52000 }] });
+    assert.deepEqual(pulled, [[['lines'], ['lines']]]);
+    assert.equal(doc.lines[0].unitCents, 52000);
+    ed.flush();
+    assert.deepEqual(saved, [['notes']], 'the notes typed are still saved');
+    assert.equal(store.get('invoices', doc.id).lines[0].unitCents, 52000);
+    ed.stop();
+  });
+
+  test('the editor\'s own saves and status writes do not come back as pulled changes', async () => {
+    await open();
+    const doc = synced('invoices', inv());
+    const pulled = [];
+    const { ed } = editor(doc, { onPulled: (f) => pulled.push(f) });
+    doc.notes = 'x'; ed.flush();
+    ed.write({ status: 'partial' });
+    assert.deepEqual(pulled, []);
+    store.update('invoices', doc.id, { status: 'paid' }); // syncInvoiceStatus after a payment
+    assert.deepEqual(pulled, [['status']]);
+    assert.equal(doc.status, 'paid');
+    ed.stop();
+  });
+
+  test('deleted on another device: onRemoved, and a pending save does nothing', async () => {
+    await open();
+    const doc = synced('invoices', inv());
+    let removed = 0;
+    const { ed, saved } = editor(doc, { onRemoved: () => removed++ });
+    doc.notes = 'x'; ed();
+    store.applyRemote('invoices', doc.id, null, 9);
+    assert.equal(removed, 1);
+    assert.doesNotThrow(() => ed.stop());
+    assert.deepEqual(saved, []);
+    assert.equal(store.get('invoices', doc.id), null);
+  });
+
+  test('onSaved gets the record before and after, so the screen knows whether the total moved', async () => {
+    await open();
+    const doc = synced('invoices', inv({ status: 'paid' }));
+    const seen = [];
+    const { ed } = editor(doc, { onSaved: (patch, before, after) => seen.push(docTotals(before).totalCents !== docTotals(after).totalCents) });
+    doc.notes = 'n'; ed.flush();
+    doc.lines = [{ kind: 'labour', qty: 1, unitCents: 50003 }]; ed.flush();
+    assert.deepEqual(seen, [false, true]);
+    ed.stop();
+  });
+
+  test('docChanges never lists bookkeeping fields or status', () => {
+    const base = { id: 'a', createdAt: 'c', updatedAt: 'u', status: 'sent', notes: 'n', lines: [{ qty: 1 }] };
+    assert.deepEqual(Q.docChanges({ ...base, id: 'b', updatedAt: 'v', status: 'paid' }, base), []);
+    assert.deepEqual(Q.docChanges({ ...base, lines: [{ qty: 2 }], extra: null }, base), ['lines'], 'a new empty field is no change');
+    const gone = { ...base };
+    delete gone.notes;
+    assert.deepEqual(Q.docChanges(gone, base), ['notes']);
   });
 });
 

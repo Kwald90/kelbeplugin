@@ -42,6 +42,15 @@ const qboIdOf = (id) => {
 
 const LOOKUP_ENTITIES = { customers: 'customer', invoices: 'invoice', estimates: 'estimate' };
 
+/**
+ * Routes answered with a bare 202 (7.5 record sync, 7.6 reference refresh): request() wants JSON
+ * and calls any other answer 'no_api', so an empty 202 is read here as { queued: true }.
+ */
+export const accepted = (p) => p.catch((e) => {
+  if (e?.status === 202 && e.code === 'no_api') return { queued: true };
+  throw e;
+});
+
 export const qboApi = {
   // ---- 7.2 connection ------------------------------------------------------------------
   status: () => request('GET', `${BASE}/status`),
@@ -69,7 +78,7 @@ export const qboApi = {
   recordsStatus: (collection, ids) => request('GET', `${BASE}/records/status${query({ collection, ids: ids ? ids.slice(0, 200) : undefined })}`),
   record: (collection, id, { live = false } = {}) => request('GET', `${rec(collection, id)}${live ? '?live=1' : ''}`),
   /** Retry (no options), "Send to QuickBooks now" ({ force: true }) or "Send to QuickBooks as new" ({ asNew: true }). */
-  pushRecord: (collection, id, { force = false, asNew = false } = {}) => request('POST', `${rec(collection, id)}/sync`, { ...(force ? { force: true } : {}), ...(asNew ? { asNew: true } : {}) }),
+  pushRecord: (collection, id, { force = false, asNew = false } = {}) => accepted(request('POST', `${rec(collection, id)}/sync`, { ...(force ? { force: true } : {}), ...(asNew ? { asNew: true } : {}) })),
   renumber: (collection, id) => request('POST', `${rec(collection, id)}/renumber`),
   link: (collection, id, qboId) => request('PUT', `${rec(collection, id)}/link`, { qboId: qboIdOf(qboId) }),
   unlink: (collection, id) => request('DELETE', `${rec(collection, id)}/link`),
@@ -80,7 +89,7 @@ export const qboApi = {
   mappings: () => request('GET', `${BASE}/mappings`),
   /** set: [{ kind, key, value }], remove: [{ kind, key }]. Answers like mappings(). */
   saveMappings: ({ set = [], remove = [] } = {}) => request('PUT', `${BASE}/mappings`, { set, remove }),
-  refreshReference: () => request('POST', `${BASE}/reference/refresh`),
+  refreshReference: () => accepted(request('POST', `${BASE}/reference/refresh`)),
 
   // ---- 7.7 conflicts ---------------------------------------------------------------------
   conflicts: ({ status = 'open', cursor, limit } = {}) => request('GET', `${BASE}/conflicts${query({ status, cursor, limit })}`),

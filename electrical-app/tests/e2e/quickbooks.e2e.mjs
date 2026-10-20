@@ -16,11 +16,13 @@
 //   owner on a desktop (1280 x 800): connects (ticket, interstitial, consent, callback), walks the
 //     wizard (settings with a practice week, tax codes with the old 8% code refused, matching, the
 //     Review step refusing Apply until every difference has a side), applies; practice mode shows the
-//     "would change" list and writes nothing; goes live; resolves a conflict; picks "Why no tax?";
-//     sees a settlement payment read-only.
+//     "would change" list and writes nothing; goes live; on the mappings screen an option typed in
+//     survives a code change and is saved; resolves a conflict; picks "Why no tax?"; sees a
+//     settlement payment read-only.
 //   office user on a phone (390 x 844, no two-step sign-in): reads the status, gets mfa_required on
 //     Sync now; sends an invoice and its badge reaches "In QuickBooks"; a QuickBooks-side change
-//     arrives by signed webhook and shows on the invoice.
+//     arrives by signed webhook and shows on the invoice; a change pulled while the invoice is open
+//     is not written back by the next keystroke; the practice switch is an owner's.
 //   foreman on a phone: no QuickBooks in the rail, "No access", no badges, 403 from /api/v1/qbo/status.
 //
 //   cd server && npm install
@@ -689,6 +691,27 @@ try {
     return 'writeMode live';
   });
 
+  await step('mappings: options typed in survive a code change and are saved with it', async () => {
+    await own.goto('/#/quickbooks/mappings');
+    await own.waitFor('!!document.querySelector("main [data-map=\'item.other\'] select") && !!document.querySelector("main input[name=practice]")', 'the mappings screen');
+    await own.fill('main input[name=practice]', true);
+    await own.fill('main input[name=timeLockedThrough]', '2026-10-15');
+    // A select change redraws the screen; the options above must still be there afterwards.
+    await pickOption(own, 'main [data-map="item.other"] select', 'Labour');
+    const kept = await own.evaluate('({ practice: document.querySelector("main input[name=practice]").checked, locked: document.querySelector("main input[name=timeLockedThrough]").value })');
+    if (!kept.practice || kept.locked !== '2026-10-15') throw new Error(`the redraw dropped the options: ${J(kept)}`);
+    const before = mock.calls.length;
+    await own.click('Save', 'main');
+    await own.waitFor('/Saved \\d+ change/.test(document.body.innerText)', 'the saved toast');
+    const put = mock.calls.slice(before).find((c) => c.key === 'PUT /api/v1/qbo/mappings');
+    if (!put) throw new Error('no save');
+    if (mapGet('option', 'writeMode') !== 'shadow' || mapGet('option', 'timeLockedThrough') !== '2026-10-15' || mapGet('item', 'other') !== seedQ.items.labour.Id) throw new Error(J(mock.mappings));
+    const toast = await own.evaluate('[...document.querySelectorAll(".toast")].map((t) => t.innerText).join(" | ")');
+    // Back to live for the rest of the run.
+    mock.mappings.option.writeMode = 'live';
+    return `practice + payroll lock + item saved together; ${toast.slice(0, 160)}`;
+  });
+
   await step('office on a phone (no two-step sign-in): reads the status, mfa_required on Sync now', async () => {
     await signIn(olive, people.office);
     if (!(await railHas(olive, 'quickbooks'))) throw new Error('no QuickBooks for office');
@@ -750,6 +773,23 @@ try {
     const h = await row("SELECT updated_by FROM invoices WHERE tenant_id = $1 AND id = $2", [tg, invId]);
     if (h[0].updated_by !== 'system:qbo') throw new Error(J(h));
     return 'verified (401 unsigned, 200 signed), dirty_at set, due date 2026-12-31 on the phone, written by system:qbo';
+  });
+
+  await step('a change pulled while the invoice is open is not written back by the next keystroke (5.10)', async () => {
+    // The phone still shows the invoice. The bookkeeper changes its line in QuickBooks; the pull
+    // lands; the office user then types in the notes.
+    await asQbo((tx, p, who) => records.patchRecord(tx, p, 'invoices', invId, { lines: [{ description: 'Service call', qty: 2, unitCents: 9900, kind: 'labour', labourHours: 2 }] }, {}, who));
+    await synced(olive);
+    await olive.waitFor(`kelbe.store.get("invoices", ${J(invId)}).lines[0].unitCents === 9900`, 'the pull on the phone');
+    await olive.waitFor('!!document.querySelector("main textarea[name=notes]")', 'the invoice screen');
+    await olive.fill('main textarea[name=notes]', 'Gate code 4411');
+    await sleep(700);
+    const queued = await olive.evaluate(`kelbe.store.queue.filter((e) => e.id === ${J(invId)}).map((e) => e.fields)`);
+    await synced(olive);
+    const d = (await row('SELECT data, updated_by FROM invoices WHERE tenant_id = $1 AND id = $2', [tg, invId]))[0];
+    if (d.data.lines?.[0]?.unitCents !== 9900 || d.data.notes !== 'Gate code 4411' || d.data.dueDate !== '2026-12-31') throw new Error(J({ lines: d.data.lines, notes: d.data.notes, due: d.data.dueDate, queued }));
+    if (J(queued) !== J([['notes']])) throw new Error(`queued ${J(queued)}`);
+    return `queued fields ${J(queued)}; server keeps the QuickBooks line ($99.00) and the phone's notes`;
   });
 
   await step('a conflicting edit shows on the conflicts screen and is resolved per field', async () => {
@@ -828,14 +868,20 @@ try {
   });
 
   await step('phone layout: the QuickBooks screens fit 390 px', async () => {
+    let practiceLocked = null;
     for (const h of ['#/quickbooks', '#/quickbooks/activity', '#/quickbooks/conflicts', '#/quickbooks/mappings', '#/quickbooks/lookup']) {
       await olive.goto(`/${h}`);
       await olive.waitFor('!!document.querySelector("main .qbo-nav")', h);
       await sleep(600);
       await noSideScroll(olive, h);
+      if (h === '#/quickbooks/mappings') {
+        await olive.waitFor('!!document.querySelector("main input[name=practice]")', 'the options');
+        practiceLocked = await olive.evaluate('document.querySelector("main input[name=practice]").disabled');
+        await olive.shot('q13-phone-mappings');
+      }
     }
-    await olive.shot('q13-phone-mappings');
-    return '5 screens, no sideways scroll';
+    if (practiceLocked !== true) throw new Error('an office user can switch practice mode (Go live is an owner\'s)');
+    return '5 screens, no sideways scroll; the practice switch is read-only for office';
   });
 } catch {
   exitCode = 1;
