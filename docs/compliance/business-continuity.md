@@ -54,7 +54,7 @@ Office tools need a connection.
 ### Production host lost or unusable
 
 1. Provision a new VPS (dotmoose or another provider in Canada).
-2. Follow [deploy/production/README.md](../../deploy/production/README.md) from "Host prerequisites".
+2. Follow [deploy/production/README.md](../../deploy/production/README.md) from "First-time setup".
 3. Restore the newest good backup from offsite ([docs/runbooks/restore-from-backup.md](../runbooks/restore-from-backup.md)).
 4. Deploy the last release tag, point DNS at the new host, issue certificates, run `check-host.sh`.
 5. Tell tenants what happened and what data, if any, was lost.

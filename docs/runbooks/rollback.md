@@ -43,7 +43,8 @@ This rebuilds from the good commit (the image is usually still cached), runs the
 cd <checkout>/deploy/<env>
 sudo docker image ls fishtape.invalid/server          # the good commit's tag must be listed
 sudo IMAGE_TAG=<good commit> docker compose up -d --no-build api hq-api worker
-curl -fsS http://127.0.0.1:3410/api/readyz && curl -fsS http://127.0.0.1:3411/api/readyz
+curl -fsS http://127.0.0.1:3410/api/readyz && curl -fsS http://127.0.0.1:3411/api/readyz   # staging
+curl -fsS http://127.0.0.1:3420/api/readyz && curl -fsS http://127.0.0.1:3421/api/readyz   # production
 sudo docker tag fishtape.invalid/server:<good commit> fishtape.invalid/server:current
 echo <good commit> | sudo tee /var/lib/fishtape-<env>/current-image
 ```
