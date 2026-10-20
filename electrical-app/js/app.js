@@ -441,6 +441,7 @@ async function startSynced(me) {
   await startShell();
   addEventListener('focus', () => { refreshMe().catch(() => {}); });
   sync.start();
+  import('./lib/announcements.js').then((m) => m.startAnnouncements({ ui, api })).catch((e) => console.error(e));
 }
 
 async function boot() {

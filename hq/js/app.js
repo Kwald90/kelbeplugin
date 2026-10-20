@@ -15,6 +15,15 @@ const PAGES = [
   { id: 'billing', title: 'Billing', icon: 'dollar', load: () => import('./pages/billing.js') },
   { id: 'leads', title: 'Leads', icon: 'funnel', load: () => import('./pages/leads.js') },
   { id: 'flags', title: 'Feature flags', icon: 'sliders', load: () => import('./pages/flags.js') },
+  { id: 'finance', title: 'Finance', icon: 'briefcase', load: () => import('./pages/finance.js') },
+  { id: 'invoices', title: 'Invoices', icon: 'receipt', load: () => import('./pages/invoices.js') },
+  { id: 'users', title: 'Users', icon: 'id-card', load: () => import('./pages/users.js') },
+  { id: 'announcements', title: 'Announcements', icon: 'send', load: () => import('./pages/announcements.js') },
+  { id: 'help', title: 'Help center', icon: 'book', load: () => import('./pages/help.js') },
+  { id: 'developer', title: 'Developer', icon: 'wrench', load: () => import('./pages/developer.js') },
+  { id: 'ai', title: 'AI', icon: 'star', load: () => import('./pages/ai.js') },
+  { id: 'audit', title: 'Audit log', icon: 'list', load: () => import('./pages/audit.js') },
+  { id: 'settings', title: 'Settings', icon: 'settings', load: () => import('./pages/settings.js') },
 ];
 
 let me = null;
