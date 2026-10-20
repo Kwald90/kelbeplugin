@@ -1,6 +1,8 @@
 // Stripe with the company's own key: Checkout Sessions for invoice balances, a cheap
-// read-only connection test, and webhook signature checks (the SDK's constructEvent:
-// HMAC-SHA256 over "<t>.<raw body>", 300 s tolerance).
+// read-only connection test, webhook signature checks (the SDK's constructEvent:
+// HMAC-SHA256 over "<t>.<raw body>", 300 s tolerance), and the read-only calls the books need:
+// the fee of a payment, a payout and the balance transactions it paid out
+// (docs/integrations/quickbooks.md 4.9). Those return money, types and ids only.
 import Stripe from 'stripe';
 import { ProviderError, formEncode, httpFailure, request } from './http.js';
 
@@ -12,10 +14,10 @@ const headers = (key, idempotencyKey) => ({
   ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
 });
 
-function failure(r) {
+function failure(r, permission = 'Checkout Sessions: Write') {
   const e = r.json?.error || {};
   if (r.status === 401 || e.type === 'authentication_error') return new ProviderError('stripe', 'Stripe refused the key. Check it in Stripe > Developers > API keys.', { status: r.status, code: e.code, kind: 'auth' });
-  if (r.status === 403) return new ProviderError('stripe', 'This restricted key is missing a permission. Give it Checkout Sessions: Write.', { status: r.status, code: e.code, kind: 'auth' });
+  if (r.status === 403) return new ProviderError('stripe', `This restricted key is missing a permission. Give it ${permission}.`, { status: r.status, code: e.code, kind: 'auth' });
   return httpFailure('stripe', r.status, e.message, e.code);
 }
 
@@ -75,4 +77,84 @@ export function verifyStripeEvent(rawBody, signatureHeader, webhookSecret) {
 /** For tests and the setup guide: a valid Stripe-Signature header for a payload. */
 export function stripeTestHeader(payload, secret, timestamp) {
   return Stripe.webhooks.generateTestHeaderString({ payload, secret, ...(timestamp ? { timestamp } : {}) });
+}
+
+// ---- the books: fees and payouts (read-only) -----------------------------------------
+
+export const PAYMENT_INTENT_RE = /^pi_[A-Za-z0-9]{8,64}$/;
+export const PAYOUT_RE = /^po_[A-Za-z0-9]{8,64}$/;
+const READ_PERMS = 'Read on PaymentIntents, Charges, Balance transactions and Payouts';
+const isoOf = (unix) => (Number.isFinite(unix) ? new Date(unix * 1000).toISOString() : null);
+const idOf = (v) => (typeof v === 'string' ? v : typeof v?.id === 'string' ? v.id : null);
+const cents = (v) => (Number.isInteger(v) ? v : null);
+const expanded = (v) => (v && typeof v === 'object' ? v : null);
+
+async function readStripe(secretKey, path) {
+  const r = await request('stripe', `${API}${path}`, { headers: headers(secretKey) });
+  if (!r.ok) throw failure(r, READ_PERMS);
+  return r.json || {};
+}
+
+/**
+ * The fee Stripe took on a payment, from its charge's balance transaction. Throws a retryable
+ * ProviderError while Stripe has not settled the balance transaction yet.
+ * @returns {Promise<{ chargeId: string, balanceTransactionId: string, feeCents: number, netCents: number, currency: string, created: string|null }>}
+ */
+export async function fetchStripeFee(secretKey, paymentIntentId) {
+  if (!PAYMENT_INTENT_RE.test(String(paymentIntentId))) throw new ProviderError('stripe', 'This is not a Stripe payment reference.', { kind: 'invalid' });
+  const pi = await readStripe(secretKey, `/payment_intents/${paymentIntentId}?expand[]=latest_charge.balance_transaction`);
+  const charge = expanded(pi.latest_charge);
+  const bt = expanded(charge?.balance_transaction);
+  if (!charge || !bt || cents(bt.fee) == null || cents(bt.net) == null) {
+    throw new ProviderError('stripe', 'Stripe has not settled the fee for this payment yet. We\'ll try again.', { retry: true, kind: 'unavailable' });
+  }
+  return {
+    chargeId: String(charge.id), balanceTransactionId: String(bt.id), feeCents: bt.fee, netCents: bt.net,
+    currency: String(bt.currency || charge.currency || '').toLowerCase(), created: isoOf(charge.created),
+  };
+}
+
+/** Stripe's in_transit is still on its way: stored as pending (stripe_payouts has four states). */
+export function payoutStatus(status) {
+  return ['paid', 'failed', 'canceled'].includes(status) ? status : 'pending';
+}
+
+/**
+ * One payout. feeCents is Stripe's own fee for the payout (instant payouts), for information only.
+ * @returns {Promise<{ amountCents: number, currency: string, arrivalDate: string|null, status: string, automatic: boolean, livemode: boolean, feeCents: number|null }>}
+ */
+export async function fetchPayout(secretKey, payoutId) {
+  if (!PAYOUT_RE.test(String(payoutId))) throw new ProviderError('stripe', 'This is not a Stripe payout reference.', { kind: 'invalid' });
+  const po = await readStripe(secretKey, `/payouts/${payoutId}?expand[]=balance_transaction`);
+  return {
+    amountCents: cents(po.amount), currency: String(po.currency || '').toLowerCase(), arrivalDate: isoOf(po.arrival_date)?.slice(0, 10) || null,
+    status: payoutStatus(po.status), automatic: po.automatic !== false, livemode: Boolean(po.livemode), feeCents: cents(expanded(po.balance_transaction)?.fee),
+  };
+}
+
+const MAX_PAGES = 50;
+
+/**
+ * Every balance transaction an automatic payout paid out (charges, refunds, fees, adjustments and
+ * the payout itself), 100 a page. Descriptions and customer details are never kept.
+ * @returns {Promise<Array<{ id: string, type: string, amountCents: number, feeCents: number, paymentIntentId: string|null, created: string|null }>>}
+ */
+export async function fetchPayoutTransactions(secretKey, payoutId) {
+  if (!PAYOUT_RE.test(String(payoutId))) throw new ProviderError('stripe', 'This is not a Stripe payout reference.', { kind: 'invalid' });
+  const out = [];
+  let after = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const list = await readStripe(secretKey, `/balance_transactions?payout=${payoutId}&limit=100&expand[]=data.source${after ? `&starting_after=${encodeURIComponent(after)}` : ''}`);
+    const data = Array.isArray(list.data) ? list.data : [];
+    for (const t of data) {
+      const pi = idOf(expanded(t.source)?.payment_intent);
+      out.push({
+        id: String(t.id), type: String(t.type || 'other').slice(0, 40), amountCents: cents(t.amount) ?? 0, feeCents: cents(t.fee) ?? 0,
+        paymentIntentId: pi && PAYMENT_INTENT_RE.test(pi) ? pi : null, created: isoOf(t.created),
+      });
+    }
+    if (!list.has_more || !data.length) return out;
+    after = data[data.length - 1].id;
+  }
+  throw new ProviderError('stripe', 'This payout has too many transactions to list.', { kind: 'other' });
 }

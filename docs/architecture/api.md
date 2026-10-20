@@ -225,6 +225,49 @@ hold fewer than `limit` changes.
 
 None of the public endpoints say anything about tenants or users.
 
+## QuickBooks Online
+
+The full contract (every request and response shape, the rules behind them) is
+[docs/integrations/quickbooks.md](../integrations/quickbooks.md) section 7. In short:
+
+- Every `/api/v1/qbo/*` route is for office roles only (owner, admin, office sessions): field roles,
+  crew sessions and API keys get 403 `forbidden`. Connect, disconnect and takeover are owner/admin.
+  Every route that changes anything needs a two-step-verified session (403 `mfa_required`),
+  whatever the role. Plan feature `quickbooks` (Pro) except status and disconnect.
+- Responses never carry tokens, the realm id or Intuit request URLs. Look-up searches are POST bodies,
+  so customer names never sit in a URL.
+- Extra codes: 409 `qbo_not_connected`, `qbo_reconnect_needed`, `qbo_not_ready`, `qbo_busy`,
+  `qbo_pause_locked`, `qbo_already_linked`, `qbo_option_locked`, `setup_incomplete`; 429
+  `qbo_throttled` (`details.retryAfterS`), `lookup_budget`; 502 / 503 `qbo_unavailable`.
+
+| group | routes |
+| --- | --- |
+| Connection | `GET /api/v1/qbo/status`, `POST /api/v1/qbo/connect`, `GET`/`POST /api/v1/qbo/oauth/start`, `GET /api/v1/qbo/oauth/callback` (302 only), `GET /api/v1/qbo/oauth/done`, `GET /api/v1/qbo/launch`, `GET /api/v1/qbo/disconnected`, `POST /api/v1/qbo/connect/takeover`, `POST /api/v1/qbo/disconnect`, `POST /api/v1/qbo/pause` |
+| Webhook | `POST /api/v1/webhooks/qbo` (Intuit-signed; 401 `invalid_signature`) |
+| Setup wizard | `POST /api/v1/qbo/setup/scan`, `GET`/`PUT /api/v1/qbo/setup/matches`, `GET /api/v1/qbo/setup/plan`, `POST /api/v1/qbo/setup/apply`, `POST /api/v1/qbo/setup/cancel` |
+| Sync and records | `POST /api/v1/qbo/sync`, `GET /api/v1/qbo/records/status`, `GET /api/v1/qbo/records/{collection}/{id}`, `POST …/sync`, `POST …/renumber`, `PUT`/`DELETE …/link`, `GET /api/v1/qbo/checks`, `GET /api/v1/qbo/log` |
+| Mappings | `GET`/`PUT /api/v1/qbo/mappings`, `POST /api/v1/qbo/reference/refresh` |
+| Conflicts | `GET /api/v1/qbo/conflicts`, `GET /api/v1/qbo/conflicts/{id}`, `POST /api/v1/qbo/conflicts/{id}/resolve` |
+| Look-up | `POST /api/v1/qbo/lookup/{customers\|invoices\|estimates}`, `GET /api/v1/qbo/lookup/{entity}/{qboId}`, `POST …/import` |
+
+HQ (HQ staff unless noted; counts and states only, never the company's QuickBooks data):
+
+| method and path | notes |
+| --- | --- |
+| `GET /api/hq/tenants/{id}` | gains `quickbooks`: `{ connected, state, pauseReason, reconnectReason, environment, edition, connectedAt, lastPullAt, lastPushAt, lastWebhookAt, refreshExpiresAt, hardExpiresAt, links: { synced, pending, error, blocked, conflict, needs_review }, errors24h, conflictsOpen, inboxBacklog, outboxWaiting, outboxOldestAt, pausedSince, lastCheckAt, usageThisMonth: { core, coreplus, budget }, recentErrors: [{ at, direction, action, collection, errorCode, intuitTid }] }`, `{ connected: false, state: "not_connected" }`, or `null` on a server without the QuickBooks tables |
+| `POST /api/hq/tenants/{id}/quickbooks/pause` | `{ paused, reason }` (reason at least 5 characters); audited `hq.qbo.pause` in the company's log; answers the `quickbooks` block. Only HQ resumes an HQ pause (409 otherwise); 404 when the company has no connection |
+| `POST /api/hq/tenants/{id}/quickbooks/release` | HQ admin; `{ reason }`; disconnects the company and frees its QuickBooks company; audited `hq.qbo.release`; the worker then revokes and deletes the tokens |
+| `POST /api/hq/tenants/{id}/delete` | also queues `qbo_token_housekeeping` for the company at once, so its QuickBooks grant is revoked long before the purge |
+| `GET /api/hq/developer/quickbooks` | `{ enabled, environment, writesEnabled, month, budget, tenantBudget, trialBudget, intuitCap, production: { core, coreplus, pct }, sandbox: { core, coreplus }, states: { <state or paused:reason>: n }, top: [20 × { tenantId, tenantName, environment, coreplus, core, throttled, errors }], events24h: [{ kind, count, lastAt }], revokePending }` |
+
+Stripe (the company's own webhook, `POST /api/v1/webhooks/stripe/{tenantId}`) also takes
+`payout.paid`, `payout.failed`, `payout.canceled` and `payout.updated`: the payout is stored in
+`stripe_payouts`, the worker reads its balance transactions (`stripe_payout_fetch`) and queues it for
+QuickBooks. After every Stripe payment the worker reads its fee (`stripe_fee_fetch`) into the
+payment's `stripe.chargeId`, `stripe.balanceTransactionId`, `stripe.feeCents` and `stripe.netCents`.
+The amount the pay link charges and the invoice status both follow the amount due (total − payments,
+plus the QuickBooks tax adjustment when one applies).
+
 ## Public service status
 
 The status page (status.fishtapehq.com, `site/status.html`) reads these. They are part of the

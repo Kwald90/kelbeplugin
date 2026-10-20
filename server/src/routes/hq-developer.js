@@ -2,6 +2,7 @@
 //   GET /api/hq/developer            environment and version, migrations, recent server errors
 //   GET /api/hq/developer/usage      API requests per company and per API key (last N days)
 //   GET /api/hq/developer/webhooks   webhook deliveries: company integrations + Fishtape's Stripe
+//   GET /api/hq/developer/quickbooks Intuit calls this month against the read budget, by company
 // GET /api/hq/openapi.json is the API document for the explorer; feature flags and developer
 // health have their own pages.
 //
@@ -12,6 +13,8 @@
 import { hostname } from 'node:os';
 import { migrationStatus } from '../migrate.js';
 import { hqAudit, hqUrl, iso } from '../services/hq-common.js';
+import { hasQboTables } from '../services/hq-tenants.js';
+import { INTUIT_READ_CAP, qboBudgets, qboEnabled, usageMonth } from '../qbo/alerts.js';
 
 const RING = 100;
 const day = (d = new Date()) => d.toISOString().slice(0, 10);
@@ -116,6 +119,42 @@ async function hqDeveloperRoutes(app, { config, db }) {
           revoked: Boolean(r.revoked_at), lastUsedAt: iso(r.last_used_at), requests: r.requests, errors4xx: r.e4, errors5xx: r.e5,
         })),
         daily: daily.map((d) => ({ day: d.day, requests: d.requests, apiKeyRequests: d.api_key_requests || 0 })),
+      };
+    });
+  });
+
+  // QuickBooks for the whole workspace (docs/integrations/quickbooks.md 9): this month's Intuit
+  // calls against the budget and Intuit's cap, companies by connection state, the top 20 by
+  // CorePlus reads, and platform events. Counts and company names only.
+  app.get('/api/hq/developer/quickbooks', { config: hq, schema: { tags, summary: 'QuickBooks: this month\'s Intuit calls against the read budget, companies by state, top users (counts only)' } }, async () => {
+    const budgets = qboBudgets();
+    const month = usageMonth();
+    const base = {
+      enabled: qboEnabled(), environment: (process.env.QBO_ENVIRONMENT || '').trim() || null, writesEnabled: String(process.env.QBO_WRITES || 'on').trim().toLowerCase() !== 'off',
+      month, budget: budgets.workspace, tenantBudget: budgets.tenant, trialBudget: budgets.trial, intuitCap: INTUIT_READ_CAP,
+    };
+    return db.withHq(async (c) => {
+      if (!(await hasQboTables(c))) return { ...base, production: { core: 0, coreplus: 0, pct: 0 }, sandbox: { core: 0, coreplus: 0 }, states: {}, top: [], events24h: [], revokePending: 0 };
+      const totals = Object.fromEntries((await c.query(
+        `SELECT environment, COALESCE(sum(core_calls), 0)::bigint AS core, COALESCE(sum(coreplus_calls), 0)::bigint AS coreplus
+           FROM qbo_api_usage WHERE month = $1 GROUP BY environment`, [month])).rows.map((r) => [r.environment, { core: Number(r.core), coreplus: Number(r.coreplus) }]));
+      const prod = totals.production || { core: 0, coreplus: 0 };
+      const states = {};
+      for (const r of (await c.query("SELECT CASE WHEN state = 'paused' THEN 'paused:' || pause_reason ELSE state END AS s, count(*)::int AS n FROM qbo_connections GROUP BY 1")).rows) states[r.s] = r.n;
+      const top = (await c.query(
+        `SELECT u.tenant_id, t.name, u.environment, sum(u.coreplus_calls)::bigint AS coreplus, sum(u.core_calls)::bigint AS core, sum(u.throttled)::int AS throttled, sum(u.errors)::int AS errors
+           FROM qbo_api_usage u JOIN tenants t ON t.id = u.tenant_id WHERE u.month = $1
+          GROUP BY 1, 2, 3 ORDER BY coreplus DESC, core DESC LIMIT 20`, [month])).rows;
+      const events = (await c.query("SELECT kind, count(*)::int AS n, max(at) AS last_at FROM qbo_platform_events WHERE at > now() - interval '24 hours' GROUP BY kind ORDER BY n DESC")).rows;
+      const revoke = (await c.query('SELECT count(*)::int AS n FROM qbo_revoke_pending')).rows[0].n;
+      return {
+        ...base,
+        production: { ...prod, pct: Math.round((prod.coreplus / budgets.workspace) * 1000) / 10 },
+        sandbox: totals.sandbox || { core: 0, coreplus: 0 },
+        states,
+        top: top.map((r) => ({ tenantId: r.tenant_id, tenantName: r.name, environment: r.environment, coreplus: Number(r.coreplus), core: Number(r.core), throttled: r.throttled, errors: r.errors })),
+        events24h: events.map((e) => ({ kind: e.kind, count: e.n, lastAt: iso(e.last_at) })),
+        revokePending: revoke,
       };
     });
   });

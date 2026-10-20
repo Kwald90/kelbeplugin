@@ -46,6 +46,23 @@ are inside the drawing and wire-run records as data URLs.
 
 ## 2. Close (the company leaves)
 
+**QuickBooks first.** If the company connected QuickBooks, disconnect it before anything else, so
+Intuit's grant ends while Fishtape still holds the token to revoke it:
+
+- Best: an owner or admin presses **Disconnect from QuickBooks** on the company's QuickBooks
+  screen (revokes at Intuit, then deletes the tokens).
+- Otherwise: closing the company from HQ (Delete company…, step 2) queues
+  `qbo_token_housekeeping` for it at once, which revokes and disconnects. Check HQ > the company >
+  QuickBooks shows `disconnected` within a few minutes; if it does not, see
+  [quickbooks-support.md](quickbooks-support.md#a-token-that-will-not-revoke).
+- Closing by hand with the SQL below does not queue it: the daily housekeeping run disconnects
+  closed companies, but run it now with
+  `sql -c "INSERT INTO jobs_queue (kind, tenant_id, payload, dedupe_key) VALUES ('qbo_token_housekeeping', '$T', jsonb_build_object('tenantId', '$T'), 'qbo_token_housekeeping:$T')"`
+  after the `UPDATE tenants` line.
+
+A revoke Intuit refuses is retried from `qbo_revoke_pending` for 14 days, and survives the
+company's deletion. Records that came from QuickBooks stay the company's own records (in the export).
+
 ```bash
 sql -c "UPDATE tenants SET status = 'closed', updated_at = now() WHERE id = '$T'"
 sql -c "UPDATE sessions SET revoked_at = now() WHERE tenant_id = '$T' AND revoked_at IS NULL"
@@ -54,7 +71,8 @@ sql -c "UPDATE api_keys SET revoked_at = now() WHERE tenant_id = '$T' AND revoke
 
 A closed company can't sign in or sync (the API answers 403 `tenant_inactive`). Cancel its
 Fishtape subscription in Stripe. Remind the company to revoke the keys it gave Fishtape (Stripe,
-Twilio, Resend, Meta, Anthropic) at those providers.
+Twilio, Resend, Meta, Anthropic) at those providers, and to check Fishtape is gone from QuickBooks
+(Apps > My apps).
 
 ## 3. Delete (after the notice period in the agreement, 30 days by default)
 

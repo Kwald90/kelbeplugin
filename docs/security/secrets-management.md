@@ -5,7 +5,7 @@
 | Owner | Kelvin Waldner |
 | Applies to | Every password, key and token used by Fishtape, its hosts, CI and vendor accounts |
 | Review cadence | Annually, after a SEV1/SEV2 incident or a leak; inventory checked in each quarterly access review |
-| Last reviewed | 2026-10-19 |
+| Last reviewed | 2026-10-20 (QuickBooks secrets added) |
 | Related controls | CRY (encryption and keys), ACC (access) in `compliance/controls.yaml` |
 
 What each secret is, where it lives, who or what can read it, how it is made and rotated, and how
@@ -30,6 +30,8 @@ Staging and production have separate values for everything below. Nothing is sha
 | Fishtape's platform email key (password resets, MFA and security notices) | planned: `.env` | `api`, `worker` | the email provider's console | yearly; on suspicion | Email sent as Fishtape. Not in the contract yet. |
 | Fishtape's own Stripe key and webhook signing secret (subscriptions) | planned: `.env` (test-mode keys on staging) | `api`, `worker` | Stripe dashboard (restricted key) | yearly; on suspicion | Fishtape's own billing account. |
 | Meta app secret (if one Meta app serves every tenant's Lead Ads) | planned: `.env` | `api`, `worker` | Meta developer console | on suspicion | Forge or verify lead webhooks for every tenant. |
+| `QBO_CLIENT_SECRET` (Intuit app, one per environment: sandbox keys on staging, production keys only on a server whose hosting region matches what Intuit was told) | `.env`, set with `deploy/set-env.sh` (prompts hidden); the Intuit developer portal | root; `api`, `worker` | Intuit developer portal (Keys & credentials) | yearly; on suspicion; when anyone who saw it leaves ([procedure](../runbooks/rotate-secrets.md#quickbooks-intuit-app-client-secret)) | With `QBO_CLIENT_ID`: refresh any stolen QuickBooks refresh token, and run a sign-in flow posing as Fishtape's app. Not access to any company's books on its own. `QBO_CLIENT_ID` is not secret (it is in every authorize URL) but is set the same way. |
+| `QBO_WEBHOOK_VERIFIER`, `QBO_WEBHOOK_VERIFIER_PREVIOUS` (only during a rotation) | `.env`; the Intuit developer portal (Webhooks) | root; `api` | Intuit, when the webhook endpoint is saved | when Intuit rotates it or on suspicion ([procedure](../runbooks/rotate-secrets.md#quickbooks-webhook-verifier)) | Forged QuickBooks webhooks. They only mark a company to be pulled and name ids to read, so the harm is wasted reads (TM-QBO-03). |
 
 ### Secrets held by the application
 
@@ -42,6 +44,8 @@ Staging and production have separate values for everything below. Nothing is sha
 | Password reset and email verification tokens | hashed in the database; the email | the user | random | single use, short expiry | One account. |
 | API keys `ft_live_...`, `ft_test_...` | hash in `api_keys`; the tenant's systems | the tenant | random; shown once; a key id inside the key for lookup | by the tenant; optional expiry (planned); on leak | That tenant, within the key's scopes. |
 | Tenant integration secrets in `tenant_secrets`: Stripe key and webhook secret, Twilio SID and auth token, Resend key and webhook secret, Anthropic (or other AI) key, Meta page tokens | ciphertext in the database, and so in backups; plaintext only in `api`/`worker` memory while in use | the API and worker with `SECRETS_MASTER_KEY`; nobody through the UI after saving | in the vendor's console, by the tenant, following the in-app guide | by the tenant; on leak; when the tenant's staff change; a yearly reminder (planned) | That tenant's vendor account: payments and refunds, SMS spend, email from their domain, AI spend, their leads. |
+| QuickBooks tokens in `tenant_secrets`, marked `internal`: `qbo.refresh_token`, `qbo.access_token`, `qbo.realm_id` (Intuit requires the realm id encrypted at rest) | ciphertext in the database, and so in backups; plaintext only in `api`/`worker` memory while calling Intuit | QuickBooks code only, through `getSecret`/`setSecret` with `{ internal: true }`. The generic secret routes answer 400 for these names and `listSecrets` skips them, so no person reads them through any UI or API, owners included | Intuit, at connect; the refresh token rotates on every refresh | automatic (access token hourly, refresh token rolling 100 days, refreshed every 30 days by `qbo_token_housekeeping`; a hard expiry after 5 years means a reconnect); revoked at Intuit and deleted on disconnect | That company's books in QuickBooks, read and write, until revoked. Never in responses, logs, job payloads, audit summaries or HQ (TM-QBO-02). `realm_hash` (an HMAC of the realm id under a key derived from `SECRETS_MASTER_KEY`) finds the company for webhooks without decrypting anything. |
+| `qbo_revoke_pending.token_sealed` | a platform table (no tenant FK, so it survives a tenant's deletion), sealed with AAD `qbo-revoke:<row id>` | the worker's `qbo_token_housekeeping` | written when a revoke at Intuit fails (disconnect, purge, tenant close) | retried daily for 14 days, then deleted (`revoke_gave_up`, HQ alert) | One company's refresh token whose grant may still be live; same as the row above. |
 
 ### Operations keys
 
@@ -64,7 +68,7 @@ Staging and production have separate values for everything below. Nothing is sha
 | --- | --- | --- |
 | GitHub, email, password manager | password manager (keep the manager's own emergency kit offline) | MFA required; hardware keys or passkeys preferred |
 | DreamHost panel, dotmoose panel, CloudPanel admin (staging), DNS registrar | password manager | MFA required |
-| Stripe, Twilio, Resend, Meta, Apple developer, Google Cloud, Microsoft Entra, Anthropic console | password manager | MFA required |
+| Stripe, Twilio, Resend, Meta, Apple developer, Google Cloud, Microsoft Entra, Anthropic console, Intuit developer (the Fishtape app's keys and webhooks) | password manager | MFA required |
 | Monitoring (uptime, heartbeat), offsite storage | password manager | MFA where offered |
 | HQ staff sign-in (Kelvin) | password manager; TOTP app | TOTP required `[contract]`; passkeys planned |
 
@@ -145,10 +149,14 @@ second, decrypt-only key, each with an id (proposed addition to the contract:
    `kek_id` names.
 3. Run the re-wrap job: for every row with `kek_id = k1`, unwrap the data key with `k1`, wrap it
    with `k2`, update `kek_id`. The secret ciphertexts don't change, so this is quick.
-4. Confirm no rows still use `k1`. Remove the previous key from `.env` and restart.
-5. Keep `k1` in the password manager until every backup that still holds `k1`-wrapped rows has
+4. In the same maintenance window, run `node server/scripts/qbo-rehash.js`: the QuickBooks
+   `realm_hash` columns are HMACs under a key derived from `SECRETS_MASTER_KEY`, so they must be
+   recomputed or webhooks stop finding their company (contract 2.3). The script decrypts each
+   `qbo.realm_id` and rewrites the hashes, one transaction per tenant.
+5. Confirm no rows still use `k1`. Remove the previous key from `.env` and restart.
+6. Keep `k1` in the password manager until every backup that still holds `k1`-wrapped rows has
    aged out (about 8 weeks), because restoring one of them needs `k1`. Then destroy it.
-6. If `k1` leaked (rather than routine rotation), also ask the affected tenants to roll their
+7. If `k1` leaked (rather than routine rotation), also ask the affected tenants to roll their
    vendor keys: anyone holding `k1` and an older copy of the database can read the old values.
 
 Practise on staging before doing it in production.

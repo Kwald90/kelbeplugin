@@ -42,7 +42,11 @@ what) and the [backlog](BACKLOG.md) (what's open, and what needs Kelvin).
 
 [Stripe](../electrical-app/guides/stripe.md) · [Resend](../electrical-app/guides/resend.md) ·
 [Twilio](../electrical-app/guides/twilio.md) · [Facebook Lead Ads](../electrical-app/guides/facebook.md) ·
-[Anthropic](../electrical-app/guides/anthropic.md)
+[Anthropic](../electrical-app/guides/anthropic.md) · QuickBooks (`electrical-app/guides/quickbooks.md`,
+with the QuickBooks screens)
+
+QuickBooks Online sync: [the contract](integrations/quickbooks.md) ·
+[support runbook](runbooks/quickbooks-support.md) · [threat model TM-QBO](security/threat-model.md#quickbooks-online-sync-tm-qbo)
 
 ## Security
 
@@ -72,7 +76,7 @@ Controls mapped to the Trust Services Criteria: [`compliance/controls.yaml`](../
 [Roll back](runbooks/rollback.md) · [Restore from backup](runbooks/restore-from-backup.md) ·
 [Incident response](runbooks/incident-response.md) · [Rotate secrets](runbooks/rotate-secrets.md) ·
 [Onboard a company](runbooks/onboard-tenant.md) · [Offboard a company](runbooks/offboard-tenant.md) ·
-[On call](runbooks/on-call.md)
+[On call](runbooks/on-call.md) · [QuickBooks support](runbooks/quickbooks-support.md)
 
 ## Elsewhere in the repo
 

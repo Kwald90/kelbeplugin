@@ -6,6 +6,7 @@ import { effectivePlan, onTrial, tenantEntitlements } from './entitlements.js';
 import { extraSeats } from './billing.js';
 import { clipDeep, iso } from './hq-common.js';
 import { ENTRY_COORDS } from '../auth/access.js';
+import { qboBudgets, tenantBudget, usageMonth } from '../qbo/alerts.js';
 
 const TENANT_COLS = `t.id, t.slug, t.name, t.status, t.status_reason, t.status_changed_at, t.province, t.plan, t.plan_overrides,
   t.trial_ends_at, t.grace_ends_at, t.past_due_since, t.billing_status, t.billing_plan, t.billed_seats, t.current_period_end,
@@ -86,6 +87,7 @@ export async function tenantDetail(c, id) {
   const counts = await recordCounts(c, id);
   const devices = (await c.query('SELECT count(*) FILTER (WHERE revoked_at IS NULL)::int AS n FROM devices WHERE tenant_id = $1', [id])).rows[0].n;
   const keys = (await c.query('SELECT count(*) FILTER (WHERE revoked_at IS NULL)::int AS n FROM api_keys WHERE tenant_id = $1', [id])).rows[0].n;
+  const quickbooks = await qboHealth(c, t);
   const now = Date.now();
   return {
     ...tenantView(t),
@@ -102,6 +104,53 @@ export async function tenantDetail(c, id) {
     recordCounts: counts,
     devices,
     apiKeys: keys,
+    quickbooks,
+  };
+}
+
+/** Are the QuickBooks tables there (migration 0150)? HQ pages work on a server without them. */
+export async function hasQboTables(c) {
+  return (await c.query("SELECT to_regclass('public.qbo_connections') IS NOT NULL AS ok")).rows[0].ok;
+}
+
+const LINK_STATES = ['synced', 'pending', 'error', 'blocked', 'conflict', 'needs_review'];
+
+/**
+ * A company's QuickBooks health for HQ (docs/integrations/quickbooks.md section 9): states, times
+ * and counts from the columns HQ is granted (migration 0150), plus the last errors' codes and
+ * Intuit transaction ids for Intuit support. Never the QuickBooks company name, record ids,
+ * labels, messages or the realm. null when the server has no QuickBooks tables.
+ */
+export async function qboHealth(c, t, env = process.env) {
+  if (!(await hasQboTables(c))) return null;
+  const conn = (await c.query(
+    `SELECT environment, state, pause_reason, paused_since, reconnect_reason, features->>'edition' AS edition, connected_at,
+            refresh_expires_at, refresh_hard_expires_at, last_pull_at, last_push_at, last_webhook_at, last_check_at, throttled_until, disconnected_at
+       FROM qbo_connections WHERE tenant_id = $1`, [t.id])).rows[0];
+  if (!conn) return { connected: false, state: 'not_connected' };
+  const links = Object.fromEntries(LINK_STATES.map((s) => [s, 0]));
+  for (const r of (await c.query('SELECT state, count(*)::int AS n FROM qbo_links WHERE tenant_id = $1 GROUP BY state', [t.id])).rows) links[r.state] = r.n;
+  const one = async (sql, params = [t.id]) => (await c.query(sql, params)).rows[0];
+  const errors = await one("SELECT count(*)::int AS n FROM qbo_sync_log WHERE tenant_id = $1 AND outcome = 'error' AND at > now() - interval '24 hours'");
+  // For Intuit support: what failed and Intuit's transaction id (it names a request, not a customer).
+  const recent = (await c.query(
+    `SELECT at, direction, action, collection, error_code, intuit_tid FROM qbo_sync_log
+      WHERE tenant_id = $1 AND outcome = 'error' ORDER BY at DESC LIMIT 10`, [t.id])).rows;
+  const conflicts = await one("SELECT count(*)::int AS n FROM qbo_conflicts WHERE tenant_id = $1 AND status = 'open'");
+  const inbox = await one('SELECT count(*) FILTER (WHERE processed_at IS NULL)::int AS n FROM qbo_inbox WHERE tenant_id = $1');
+  const outbox = await one('SELECT count(*)::int AS n, min(enqueued_at) AS oldest FROM qbo_outbox WHERE tenant_id = $1');
+  const usage = await one(
+    `SELECT COALESCE(sum(core_calls), 0)::int AS core, COALESCE(sum(coreplus_calls), 0)::int AS coreplus
+       FROM qbo_api_usage WHERE tenant_id = $1 AND month = $2 AND environment = $3`, [t.id, usageMonth(), conn.environment]);
+  return {
+    connected: conn.state !== 'disconnected', state: conn.state, pauseReason: conn.pause_reason, reconnectReason: conn.reconnect_reason,
+    environment: conn.environment, edition: conn.edition || null,
+    connectedAt: iso(conn.connected_at), lastPullAt: iso(conn.last_pull_at), lastPushAt: iso(conn.last_push_at), lastWebhookAt: iso(conn.last_webhook_at),
+    refreshExpiresAt: iso(conn.refresh_expires_at), hardExpiresAt: iso(conn.refresh_hard_expires_at),
+    links, errors24h: errors.n, conflictsOpen: conflicts.n, inboxBacklog: inbox.n, outboxWaiting: outbox.n, outboxOldestAt: iso(outbox.oldest),
+    pausedSince: iso(conn.paused_since), lastCheckAt: iso(conn.last_check_at), throttledUntil: iso(conn.throttled_until), disconnectedAt: iso(conn.disconnected_at),
+    usageThisMonth: { core: usage.core, coreplus: usage.coreplus, budget: tenantBudget(t, qboBudgets(env)) },
+    recentErrors: recent.map((r) => ({ at: iso(r.at), direction: r.direction, action: r.action, collection: r.collection, errorCode: r.error_code, intuitTid: r.intuit_tid })),
   };
 }
 

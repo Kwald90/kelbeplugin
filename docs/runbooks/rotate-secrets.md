@@ -46,6 +46,50 @@ secrets. Replacing it without re-wrapping makes every stored tenant secret unrea
 - Suspected exposure, until then: treat every tenant secret as exposed. Ask each tenant to rotate
   their provider keys at the provider; generate a new master key; replace it in `.env`; restart;
   have tenants re-enter their keys in Settings. Record it as an incident.
+- QuickBooks, in the same maintenance window as any re-wrap: the `realm_hash` columns are HMACs
+  under a key derived from the master key, so after the re-wrap run
+  `sudo docker compose run --rm worker node scripts/qbo-rehash.js` (one transaction per company;
+  it decrypts each `qbo.realm_id` and rewrites the hashes in `qbo_realms`, `qbo_connections` and
+  every table that carries one). Then check the webhook still finds its company: HQ > Developer >
+  QuickBooks shows no `realm_mismatch`, and a test change in the sandbox company arrives. A new key
+  without a re-wrap loses the QuickBooks tokens too: every connected company must reconnect.
+
+## QuickBooks (Intuit app) client secret
+
+`QBO_CLIENT_SECRET` and `QBO_CLIENT_ID` belong to the Fishtape app in the Intuit developer portal,
+one pair per environment (sandbox keys on staging). Intuit does not keep the old and the new secret
+valid together, so expect a minute of token-refresh failures: the token breaker opens (no company
+is marked "reconnect needed") and HQ may get a `qbo_platform_credentials` alert.
+
+1. Intuit developer portal > the app > Keys & credentials (Development or Production) > reset or
+   regenerate the client secret. Copy it straight into the next step.
+2. On the server (prompts hidden; never paste it anywhere else):
+
+       ssh -t -i ~/.ssh/kelvindale_vps ubuntu@208.113.210.97 "sudo /var/www/tgelectrical/current/deploy/set-env.sh staging QBO_CLIENT_SECRET"
+
+   then `sudo docker compose up -d api worker` (hq-api does not call Intuit).
+3. Check: HQ > Developer > QuickBooks shows no new `platform_credentials` events after the restart,
+   and a connected sandbox company syncs (Sync now on its QuickBooks screen).
+4. Store the new value in the password manager. The old one is dead at Intuit already.
+
+A typo shows the same way as a leak test: the breaker reopens every 10 minutes and the alert keeps
+coming. Re-enter the value.
+
+## QuickBooks webhook verifier
+
+`QBO_WEBHOOK_VERIFIER` checks Intuit's webhook signatures. Rotate it without dropping events:
+
+1. Set `QBO_WEBHOOK_VERIFIER_PREVIOUS` to the current value (`set-env.sh <env> QBO_WEBHOOK_VERIFIER_PREVIOUS`).
+2. In the Intuit portal (Webhooks), save the endpoint again or regenerate the verifier; copy the new
+   token into `QBO_WEBHOOK_VERIFIER`. Restart `api`. A body signed with either is accepted.
+3. Once Intuit shows only the new verifier and HQ shows no `webhook_signature` events for a day,
+   remove `QBO_WEBHOOK_VERIFIER_PREVIOUS` and restart `api`.
+
+Lost events are not lost data: the 6-hourly catch-up (CDC) reads every change from the cursor.
+
+QuickBooks refresh tokens themselves are never rotated by hand: they rotate on every refresh. To end
+one company's access, disconnect it (the company's QuickBooks screen, or HQ > the company >
+Release QuickBooks company); see [quickbooks-support.md](quickbooks-support.md).
 
 ## OAuth client secrets (Google, Microsoft)
 
@@ -89,7 +133,7 @@ which ends their sessions; for HQ staff also clear `platform_role`.
 
 ## Vendor and personal accounts
 
-GitHub, DNS registrar, hosting panels, Stripe/Twilio/Resend/Meta/Apple/Google/Microsoft consoles:
+GitHub, DNS registrar, hosting panels, Stripe/Twilio/Resend/Meta/Apple/Google/Microsoft/Intuit consoles:
 change the password in the password manager, check MFA is still on, sign out other sessions, and
 review recent activity.
 

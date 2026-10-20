@@ -12,6 +12,7 @@ import { PRICE_KEYS, SELF_SERVE_PLANS } from './billing.js';
 import { DEPOSIT_CENTS, DEPOSIT_LOOKUP_KEY, TERMS_VERSION } from './signup.js';
 import { trialDays } from './tenants.js';
 import { billingSettings, hqUrl, iso } from './hq-common.js';
+import { qboBudgets } from '../qbo/alerts.js';
 
 export const LEGAL_DOCS = ['terms', 'privacy'];
 
@@ -103,10 +104,30 @@ export function envSettings(config, env = process.env) {
     { key: 'RESEND_API_KEY', label: 'Resend key (system email)', value: set(env.RESEND_API_KEY), secret: true, where: envFile },
     { key: 'STRIPE_SECRET_KEY', label: 'Stripe key (subscriptions)', value: stripeKey ? `set (${stripeMode(stripeKey)} mode)` : 'not set', secret: true, where: envFile },
     { key: 'STRIPE_WEBHOOK_SECRET', label: 'Stripe webhook signing secret', value: set(env.STRIPE_WEBHOOK_SECRET), secret: true, where: envFile },
+    ...qboSettings(env, envFile),
     { key: 'AI_MODEL', label: 'AI model', value: ai.model, where: envFile },
     { key: 'AI_EFFORT', label: 'AI effort', value: ai.effort, where: envFile },
     { key: 'AI_DEFAULT_MONTHLY_CAP_CENTS', label: 'Default AI cap per company', value: `US$${(ai.defaultMonthlyCapCents / 100).toFixed(2)} a month`, where: envFile },
     { key: 'GIT_SHA', label: 'Build', value: config.gitSha, where: 'set by the deploy script' },
+  ];
+}
+
+/** QuickBooks (docs/integrations/quickbooks.md 2.1): the switches and budgets, and whether the Intuit credentials are set. */
+function qboSettings(env, where) {
+  const set = (v) => (v ? 'set' : 'not set');
+  const environment = String(env.QBO_ENVIRONMENT || '').trim();
+  const b = qboBudgets(env);
+  const n = (v) => v.toLocaleString('en-CA');
+  return [
+    { key: 'QBO_ENVIRONMENT', label: 'QuickBooks', value: environment || 'not set (QuickBooks is off on this server)', where },
+    { key: 'QBO_WRITES', label: 'Sending to QuickBooks', value: String(env.QBO_WRITES || 'on').trim().toLowerCase() === 'off' ? 'off (platform kill switch: nothing is written to QuickBooks)' : 'on', where },
+    { key: 'QBO_READ_BUDGET', label: 'QuickBooks reads a month, all companies', value: `${n(b.workspace)} (Intuit's cap is 500,000)`, where },
+    { key: 'QBO_TENANT_READ_BUDGET', label: 'QuickBooks reads a month per company', value: n(b.tenant), where },
+    { key: 'QBO_TRIAL_READ_BUDGET', label: 'QuickBooks reads a month per company on trial', value: n(b.trial), where },
+    { key: 'QBO_CLIENT_ID', label: 'Intuit app client id', value: set(env.QBO_CLIENT_ID), secret: true, where },
+    { key: 'QBO_CLIENT_SECRET', label: 'Intuit app client secret', value: set(env.QBO_CLIENT_SECRET), secret: true, where },
+    { key: 'QBO_WEBHOOK_VERIFIER', label: 'Intuit webhook verifier', value: set(env.QBO_WEBHOOK_VERIFIER), secret: true, where },
+    { key: 'QBO_WEBHOOK_VERIFIER_PREVIOUS', label: 'Previous webhook verifier (rotation)', value: env.QBO_WEBHOOK_VERIFIER_PREVIOUS ? 'set (remove it once Intuit shows only the new one)' : 'not set', secret: true, where },
   ];
 }
 

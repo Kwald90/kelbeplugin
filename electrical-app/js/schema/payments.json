@@ -57,7 +57,7 @@
         "null"
       ],
       "maxLength": 40,
-      "description": "Known values: cash, check, card, transfer."
+      "description": "Known values: cash, check, card, transfer, credit. credit is written only by the QuickBooks sync: the part of an invoice settled in QuickBooks by credit memos or journal entries (source quickbooks); office users cannot create or edit it."
     },
     "reference": {
       "type": [
@@ -65,6 +65,73 @@
         "null"
       ],
       "maxLength": 200
+    },
+    "stripe": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Set on payments recorded from Stripe (source stripe). The fee fields are filled in by the worker shortly after the payment, for the books.",
+      "properties": {
+        "checkoutSessionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "paymentIntentId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "eventId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "livemode": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "chargeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200,
+          "description": "The Stripe charge (ch_...) of the PaymentIntent."
+        },
+        "balanceTransactionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200,
+          "description": "The charge's Stripe balance transaction (txn_...)."
+        },
+        "feeCents": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Stripe's fee on this payment, in integer cents."
+        },
+        "netCents": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "What reached the Stripe balance (amount − fee), in integer cents."
+        }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true

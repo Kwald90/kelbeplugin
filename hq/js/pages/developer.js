@@ -1,5 +1,6 @@
 // Developer: environment and version, the OpenAPI explorer (read-only, by tag), API usage
-// per company and per API key, webhook deliveries, recent server errors, and links to
+// per company and per API key, webhook deliveries, QuickBooks (Intuit calls against the read
+// budget, companies by state, counts only), recent server errors, and links to
 // developer health and feature flags. #/developer/<tab>.
 import { get } from '../api.js';
 import { ago, duration, sha } from '../fmt.js';
@@ -7,8 +8,9 @@ import { card, kv, loader } from '../kit.js';
 
 const TABS = [
   { id: 'overview', label: 'Overview' }, { id: 'api', label: 'API explorer' }, { id: 'usage', label: 'API usage' },
-  { id: 'webhooks', label: 'Webhooks' }, { id: 'errors', label: 'Server errors' },
+  { id: 'webhooks', label: 'Webhooks' }, { id: 'quickbooks', label: 'QuickBooks' }, { id: 'errors', label: 'Server errors' },
 ];
+const QBO_STATE_TONE = { active: 'success', setup: 'info', reconnect_needed: 'danger', disconnected: 'neutral' };
 const METHOD_TONE = { get: 'info', post: 'success', put: 'warning', patch: 'warning', delete: 'danger' };
 
 export default {
@@ -145,6 +147,38 @@ export default {
           rows: w.company,
           empty: h('div', { class: 'card flat muted' }, 'No webhook deliveries in the last 90 days.'),
         })), h('p', { class: 'muted hq-small' }, 'Each delivery is kept by id for 90 days so a retry is applied once. Payloads are not stored.'));
+      },
+
+      async quickbooks() {
+        const q = await get('/api/hq/developer/quickbooks');
+        ui.clear(body);
+        const pct = q.production.pct;
+        body.append(h('div', { class: 'grid hq-stats' },
+          ui.stat({ label: `Reads this month (${q.month.slice(0, 7)})`, value: ui.fmtNum(q.production.coreplus), hint: `${pct}% of the ${ui.fmtNum(q.budget)} budget · Intuit cap ${ui.fmtNum(q.intuitCap)}`, tone: pct >= 90 ? 'danger' : pct >= 70 ? 'accent' : null }),
+          ui.stat({ label: 'Writes this month', value: ui.fmtNum(q.production.core), hint: 'Free (Core calls)' }),
+          ui.stat({ label: 'Sandbox calls', value: ui.fmtNum(q.sandbox.coreplus + q.sandbox.core), hint: 'Never count toward the budget' }),
+          ui.stat({ label: 'This server', value: q.enabled ? q.environment : 'off', hint: q.enabled ? (q.writesEnabled ? 'Writes on' : 'QBO_WRITES=off: nothing is written') : 'QBO_ENVIRONMENT is not set', tone: q.enabled && !q.writesEnabled ? 'danger' : null })));
+        const states = Object.entries(q.states);
+        body.append(h('div', { class: 'grid-2' },
+          h('div', null, ...ui.section('Companies by state', states.length
+            ? h('div', { class: 'card flat' }, h('dl', { class: 'hq-kv' }, states.map(([s, n]) => [h('dt', null, ui.badge(s.replace(/_/g, ' ').replace(':', ': '), QBO_STATE_TONE[s] || 'warning')), h('dd', null, ui.fmtNum(n))])))
+            : h('div', { class: 'card flat muted' }, 'No company has connected QuickBooks.'))),
+          h('div', null, ...ui.section('Platform events (24 h)', q.events24h.length
+            ? h('div', { class: 'card flat' }, h('dl', { class: 'hq-kv' }, q.events24h.map((e) => [h('dt', { class: 'mono hq-small' }, e.kind), h('dd', null, `${ui.fmtNum(e.count)} · last ${ago(e.lastAt)}`)])))
+            : h('div', { class: 'card flat muted' }, 'None.')),
+          q.revokePending ? h('p', { class: 'hq-small' }, ui.badge(`${q.revokePending} revoke(s) pending`, 'warning'), ' tokens Intuit has not confirmed revoked yet; retried daily for 14 days.') : null)));
+        body.append(...ui.section('Most reads this month (top 20)', ui.table({
+          columns: [
+            { key: 'co', label: 'Company', render: (r) => h('a', { href: `#/tenants/${r.tenantId}` }, r.tenantName), sort: (r) => r.tenantName },
+            { key: 'env', label: 'Environment', render: (r) => r.environment },
+            { key: 'reads', label: 'Reads', align: 'right', render: (r) => ui.fmtNum(r.coreplus), sort: (r) => r.coreplus },
+            { key: 'pct', label: 'Of its budget', align: 'right', render: (r) => (r.environment === 'production' ? `${Math.round((r.coreplus / q.tenantBudget) * 100)}%` : '—') },
+            { key: 'writes', label: 'Writes', align: 'right', render: (r) => ui.fmtNum(r.core) },
+            { key: 'thr', label: 'Throttled / errors', align: 'right', render: (r) => `${r.throttled} / ${r.errors}` },
+          ],
+          rows: q.top,
+          empty: h('div', { class: 'card flat muted' }, 'No QuickBooks calls this month.'),
+        })), h('p', { class: 'muted hq-small' }, `Budgets: ${ui.fmtNum(q.tenantBudget)} reads a month per company (${ui.fmtNum(q.trialBudget)} on trial). Counts only; HQ never sees QuickBooks data.`));
       },
 
       async errors() {

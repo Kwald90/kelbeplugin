@@ -1,5 +1,6 @@
-// One company: plan, seats, billing, members (with MFA), plan editor with overrides,
-// suspend/reactivate, export, two-step delete, and time-boxed read-only support access.
+// One company: plan, seats, billing, members (with MFA), QuickBooks health with pause and
+// release, plan editor with overrides, suspend/reactivate, export, two-step delete, and
+// time-boxed read-only support access.
 import { FEATURE_PLAN, PLANS } from '/js/plans.js';
 import { del, get, patch, post } from '../api.js';
 import { TONE, ago, daysUntil, planName } from '../fmt.js';
@@ -7,6 +8,7 @@ import { TONE, ago, daysUntil, planName } from '../fmt.js';
 const COLLECTIONS = ['clients', 'leads', 'jobs', 'schedule', 'estimates', 'invoices', 'payments', 'items', 'employees', 'timeEntries', 'drawings',
   'wireRuns', 'bends', 'panels', 'permits', 'inspections', 'certifications', 'checklists', 'sops', 'sequences', 'enrolments', 'outbox', 'locations',
   'stockMoves', 'benderProfiles', 'settings', 'auditLog'];
+const QBO_PAUSE = { user: 'by the company', plan: 'plan below Pro', budget: 'workspace read budget used up', tenant_budget: 'its read budget used up', brake: 'safety brake', hq: 'by Fishtape support' };
 
 export default {
   render(root, { ui, params, nav, isAdmin, me }) {
@@ -73,6 +75,7 @@ export default {
         empty: ui.empty({ icon: 'users', title: 'No members' }),
       })));
 
+      if (t.quickbooks) host.append(...ui.section('QuickBooks', quickbooksCard()));
       host.append(...ui.section('Plan and features', planEditor()));
       host.append(...ui.section('Support access', supportSection()));
 
@@ -90,6 +93,60 @@ export default {
 
     function banner(tone, title, text) {
       return h('div', { class: ['hq-banner', tone] }, ui.icon('alert', 20), h('div', null, h('strong', null, title), text ? h('span', { class: 'hq-small' }, text) : null));
+    }
+
+    // ---- QuickBooks: health (counts only), pause/resume and release ------------------
+    function quickbooksCard() {
+      const q = t.quickbooks;
+      if (q.state === 'not_connected') return h('div', { class: 'card flat muted' }, 'Not connected to QuickBooks.');
+      const tone = { active: 'success', setup: 'info', paused: 'warning', reconnect_needed: 'danger', disconnected: 'neutral' }[q.state] || 'neutral';
+      const stateText = q.state === 'paused' ? `paused: ${QBO_PAUSE[q.pauseReason] || q.pauseReason}`
+        : q.state === 'reconnect_needed' ? `reconnect needed (${q.reconnectReason || 'unknown'})` : q.state;
+      const when = (v) => (v ? `${ui.fmtDateTime(v)} (${ago(v)})` : '—');
+      const n = (v, danger) => (v ? ui.badge(ui.fmtNum(v), danger ? 'danger' : 'warning') : '0');
+      const usage = q.usageThisMonth;
+      const rows = [
+        ['State', ui.badge(stateText, tone)],
+        ['QuickBooks', `${q.edition || 'edition unknown'} · ${q.environment}`],
+        ['Connected', when(q.connectedAt)],
+        ['Last pull / push', `${q.lastPullAt ? ago(q.lastPullAt) : 'never'} / ${q.lastPushAt ? ago(q.lastPushAt) : 'never'}`],
+        ['Last webhook', q.lastWebhookAt ? ago(q.lastWebhookAt) : 'never'],
+        ['Last daily check', q.lastCheckAt ? ago(q.lastCheckAt) : 'never'],
+        ['Links', Object.entries(q.links).filter(([, v]) => v).map(([k, v]) => `${k.replace(/_/g, ' ')} ${ui.fmtNum(v)}`).join(' · ') || 'none'],
+        ['Errors (24 h)', n(q.errors24h, true)],
+        ['Open conflicts', n(q.conflictsOpen)],
+        ['Webhook backlog', n(q.inboxBacklog)],
+        ['Waiting to send', q.outboxWaiting ? `${ui.fmtNum(q.outboxWaiting)} (oldest ${ago(q.outboxOldestAt)})` : '0'],
+        ['Reads this month', `${ui.fmtNum(usage.coreplus)} of ${ui.fmtNum(usage.budget)} · ${ui.fmtNum(usage.core)} writes`],
+        ['Token renews by', when(q.refreshExpiresAt)],
+        ['Reconnect before', when(q.hardExpiresAt)],
+      ];
+      if (q.pausedSince) rows.splice(1, 0, ['Paused since', when(q.pausedSince)]);
+      const hqPaused = q.state === 'paused' && q.pauseReason === 'hq';
+      const canPause = ['setup', 'active', 'paused'].includes(q.state) && !hqPaused;
+      return h('div', { class: ['card stack', q.state === 'reconnect_needed' || q.errors24h ? 'hq-danger-zone' : ''] },
+        h('dl', { class: 'hq-kv' }, rows.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])),
+        q.recentErrors.length ? h('details', null, h('summary', { class: 'hq-small' }, `Last ${q.recentErrors.length} errors (codes and Intuit transaction ids, for Intuit support)`),
+          h('div', { class: 'list' }, q.recentErrors.map((e) => h('div', { class: 'list-row hq-small' },
+            h('span', { class: 'grow' }, `${e.direction} ${e.action}${e.collection ? ` · ${e.collection}` : ''}${e.errorCode ? ` · fault ${e.errorCode}` : ''}`),
+            h('span', { class: 'mono muted' }, e.intuitTid || '—'), h('span', { class: 'muted' }, ago(e.at)))))) : null,
+        h('p', { class: 'muted hq-small', style: { margin: 0 } }, 'Counts only: HQ never sees the company\'s QuickBooks data. Pausing stops the sync until Fishtape resumes it; releasing disconnects this company so its QuickBooks company can be connected elsewhere.'),
+        h('div', { class: 'row' }, h('span', { class: 'grow' }),
+          canPause ? ui.button('Pause QuickBooks sync', { icon: 'stop', onClick: () => qboPause(true) }) : null,
+          hqPaused ? ui.button('Resume', { variant: 'primary', icon: 'play', onClick: () => qboPause(false) }) : null,
+          isAdmin && q.state !== 'disconnected' ? ui.button('Release QuickBooks company', { variant: 'danger', icon: 'unlock', onClick: qboRelease }) : null));
+    }
+
+    async function qboPause(paused) {
+      const reason = await ui.promptDialog('Reason (shown in the company\'s audit log)', { title: paused ? 'Pause QuickBooks sync' : 'Resume QuickBooks sync', okLabel: paused ? 'Pause' : 'Resume' });
+      if (reason == null) return;
+      act(() => post(`/api/hq/tenants/${id}/quickbooks/pause`, { paused, reason }), paused ? 'QuickBooks sync paused' : 'QuickBooks sync resumed')();
+    }
+
+    async function qboRelease() {
+      const reason = await ui.promptDialog('Reason (shown in the company\'s audit log). The company is disconnected from QuickBooks and its tokens are revoked by the worker.', { title: `Release ${t.name}'s QuickBooks company`, okLabel: 'Release' });
+      if (reason == null) return;
+      act(() => post(`/api/hq/tenants/${id}/quickbooks/release`, { reason }), 'QuickBooks company released')();
     }
 
     // ---- plan editor --------------------------------------------------------------
