@@ -152,6 +152,80 @@
               "null"
             ],
             "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "description": "'drawing' when raised from the drawings' cost impact."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000,
+            "description": "Who added or removed the items and when."
+          },
+          "drawingIds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 500,
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "estimateId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "createdBy": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 80
+              }
+            }
+          },
+          "createdAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
+          },
+          "lines": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 500,
+            "description": "Priced lines (same shape as estimate lines, plus the symbol they count). Prices are hidden from crew.",
+            "items": {
+              "type": "object"
+            }
           }
         }
       }

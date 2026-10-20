@@ -3,6 +3,8 @@
 //   area mode: a stroke loses only what lies inside the capsule. Its polyline is cut where it
 //              crosses the capsule's edge (cut points interpolated, pressure too) and the pieces
 //              outside stay as strokes of their own, every other field copied (by/at included).
+//              The first piece keeps the stroke's id; the others get new ids and splitFrom (the
+//              original's id), which drawing-collab.js uses to count the cut as one edit.
 //   stroke mode: anything the capsule touches goes, whole (the old behaviour).
 // Shapes that can't be cut into pieces of themselves (rectangles, measures, wires) always go whole.
 // Long strokes stay fast: a bounding-box check per stroke, then per chunk of 64 segments.
@@ -193,7 +195,9 @@ export function eraseStrokes(strokes, a, b, r, { mode = 'area', canErase = () =>
         const reach = r + (s.tool === 'highlighter' ? 0 : (s.size || 2) / 2);
         const src = s.tool === 'line' ? [s.points[0], s.points[s.points.length - 1]] : s.points;
         const pieces = splitPolyline(src, a, b, reach, { minLen });
-        if (pieces) repl = pieces.map((pts, i) => ({ ...s, id: i === 0 ? s.id : newId(), points: pts }));
+        // the other pieces remember the stroke they were cut from (the first one ever, for a piece
+        // of a piece), so the change history counts a cut as an edit of that stroke, not new marks
+        if (pieces) repl = pieces.map((pts, i) => (i === 0 ? { ...s, points: pts } : { ...s, id: newId(), splitFrom: s.splitFrom || s.id, points: pts }));
       } else if (strokeTouches(s, a, b, r)) repl = [];
     }
     if (repl) {

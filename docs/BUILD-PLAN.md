@@ -248,6 +248,34 @@ completion survives a foreman's edit; the device gets the merged copy back as a 
 (`electrical-app/js/lib/kpis.js`) are shared with `GET /api/v1/kpis`. Notifications: a marked hook in
 `server/src/services/workplan-events.js` until a server `notify()` exists. Tables: `server/migrations/0100_workplan.sql`, generated with `node scripts/gen-collections-sql.js --migration 0100` (the registry entries carry `migration: '0100'`; `--all` rewrites every generated file).
 
+### Module switches, billing mode per job, material requests (migrations 0130–0139)
+
+From Kelvin and Travis, 2026-10-20. Shared logic is pure and used by both sides: `electrical-app/js/lib/{modules,tm,materials}.js`.
+
+- **Module switches** (Settings → Modules, owner/admin): `settings.modules = { [switchId]: boolean }`, separate from the plan.
+  Missing `modules` (companies from before) = everything on; a new company starts with the `core` preset
+  (`DEFAULT_MODULES`); presets Recommended, Simple mode (schedule, time, drawings, estimates, invoices; jobs is always on),
+  Everything. Turned-off modules disappear from the rail, wheel, dashboard, job/client tabs and buttons, the bell,
+  onboarding and every `#/` link (a sweeper in `app.js`); their routes show a "turned off" page. Data is kept.
+  Server: writes into a turned-off module's collections (`COLLECTION_SWITCHES`) are refused with
+  403 `module_turned_off` (REST, sync, API keys, AI chat); reads never are (`server/src/services/modules.js`).
+- **Billing mode per job**: `jobs.billingMode 'tm'|'fixed'` (missing = fixed), `jobs.labourRateCents?`,
+  `clients.billingMode?` (default for new jobs), `settings.billing { defaultMode, travelRateCents }`, `timeEntries.travel`.
+  T&M: "Build invoice from time & material" (date range) turns approved time (travel at its rate) and material used
+  (stock moves out of a location onto the job, fulfilled requests without a stock move) at cost + markup into invoice
+  lines with provincial tax; the invoice keeps `tm { from, to, timeEntryIds, stockMoveIds, materialRequestIds }` so
+  nothing bills twice (voiding frees it). Fixed: time is never billed; the job shows estimate vs actual hours, cost, margin.
+- **Material requests**: collection `materialRequests` (`jobId, itemId?, description, qty, unit, note, urgent, employeeId,
+  status requested|sent|ordered|fulfilled|cancelled, sentAt, batchId, orderedAt, fulfilledAt, stockMoveId?, costCents?`),
+  table `material_requests` (0130, generated), batches `material_request_batches` (0131, one scheduled send per local
+  day). Crew see and change only their own, only while unsent; `costCents` (and price-book `costCents/priceCents`) are
+  stripped for readers without inventory/estimates/invoices. The worker queues each company's send at
+  `settings.materialRequests.sendAt` (default 15:00) in its zone (from the province, Manitoba = America/Winnipeg;
+  `materialRequests.timeZone` overrides); `POST /api/v1/material-requests/send` sends now;
+  `GET /api/v1/material-requests/schedule`. A send notifies owner/admin/office, emails `materialRequests.emailTo`
+  (else the company email) through the platform outbox, and audits. Plan feature `materials` (every plan).
+  E2E: `node electrical-app/tests/e2e/modules.e2e.mjs`.
+
 ## Definition of done (every workstream)
 
 - Tests with `node:test` next to the existing ones; run `node --test electrical-app/tests/*.test.mjs` (and `server` tests for A) and they pass.
@@ -256,3 +284,20 @@ completion survives a foreman's edit; the device gets the merged copy back as a 
 - No secrets in the repo. No network calls to production. No deploys or SSH (the lead does those).
 - Commit on your worktree branch with clear messages ending in the Co-Authored-By line. Do not push.
 - Finish with a short report: what you built, what you couldn't, open questions, and files outside your area you think need changes.
+
+### Collaborative drawings (who drew what, history, cost impact)
+
+- Every stroke, object, text and room carries `by { id, name }`, `at`, and `editBy`, `editAt` after a change, stamped on
+  save by diffing against the last saved state (`js/lib/drawing-collab.js`, `canvas/collab.js`). Items without them are
+  "Before tracking". Drawings add `history[]` (symbol counts per person and session, folded within 15 min, capped at 400),
+  `tombstones { id: { at, by } }`, `editedBy`, `editedAt`, `clientId`.
+- Drawing writes merge per object on the server (`mergeWrite` → `mergeDrawing`), like work tasks: union by id, later
+  edit wins, tombstones delete unless the item was edited after. A write without `tombstones` (older app) is last-writer-wins.
+- Money: owner, admin, office (`estimates` permission), and foremen when `settings.foremanSeesCosts` is true. Everyone else
+  gets items without `priceCents`/`costCents`, settings without `labourRateCents`/`markupPct` and change orders without
+  amounts or line prices (`redactForReader`, `pricesHidden: true`); their writes cannot change those fields.
+  `GET /api/v1/drawings/:id/cost-impact` compares the job's drawings with its estimate plus drawing change orders
+  (`js/lib/drawing-costs.js`); crew get counts and names only.
+- One set per customer: `planSet { id: 'cust-<clientId>' | 'job-<jobId>', customer: true }`, opened from
+  `#/drawings/customer?clientId=…&jobId=…`. Tests: `tests/drawing-collab.test.mjs`, `server/test/drawings.test.js`,
+  `tests/e2e/drawings-collab.e2e.mjs`.

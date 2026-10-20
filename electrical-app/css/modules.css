@@ -1,0 +1,67 @@
+/* Settings → Modules (switches), billing mode on jobs (T&M, estimate vs actual) and material requests. Tokens only. */
+
+/* ---- switches ---- */
+.mod-presets { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.mod-preset { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 56px; padding: var(--s2) var(--s4); border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface); color: inherit; font: inherit; text-align: left; cursor: pointer; flex: 1 1 160px; }
+.mod-preset:hover { background: var(--surface-2); }
+.mod-preset[aria-pressed="true"] { border-color: var(--accent-fill); background: var(--accent-soft); }
+.mod-preset strong { font-weight: 650; }
+.mod-preset span { font-size: var(--fs-xs); line-height: var(--lh-xs); color: var(--text-muted); }
+.mod-group { display: flex; flex-direction: column; }
+.mod-group h4 { margin: var(--s3) 0 var(--s1); font-size: var(--fs-xs); line-height: var(--lh-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.mod-row { display: flex; align-items: center; gap: var(--s3); min-height: 56px; padding: var(--s2) 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.mod-row:last-child { border-bottom: 0; }
+.mod-row .grow { min-width: 0; }
+.mod-row .title { font-weight: 600; }
+.mod-row .meta { font-size: var(--fs-xs); line-height: var(--lh-xs); color: var(--text-muted); }
+.mod-row.off .title { color: var(--text-muted); }
+
+/* An iOS-style switch on a real checkbox (keyboard and screen readers get a checkbox with role=switch). */
+.switch { appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 50px; height: 30px; margin: 0; border-radius: var(--r-pill); background: var(--border-input); cursor: pointer; transition: background var(--t-fast) var(--ease); }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: var(--surface); box-shadow: var(--shadow-card); transition: transform var(--t-fast) var(--ease); }
+.switch:checked { background: var(--success); }
+.switch:checked::after { transform: translateX(20px); }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---- billing mode, T&M and estimate vs actual ---- */
+.bill-choice { display: grid; gap: var(--s2); grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+.bill-choice label { display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s3); border-radius: var(--r-md); border: 1px solid var(--border); cursor: pointer; min-height: 56px; }
+.bill-choice label:has(input:checked) { border-color: var(--accent-fill); background: var(--accent-soft); }
+.bill-choice input { margin-top: 3px; accent-color: var(--accent-fill); width: 18px; height: 18px; flex: none; }
+.bill-choice .meta { font-size: var(--fs-xs); line-height: var(--lh-xs); color: var(--text-muted); }
+.tm-card { display: flex; flex-direction: column; gap: var(--s3); margin-top: var(--s4); }
+.tm-card .row { flex-wrap: wrap; }
+.tm-lines td { vertical-align: top; }
+.eva { display: grid; gap: var(--s3); }
+.eva-row { display: grid; grid-template-columns: minmax(90px, 140px) 1fr auto; gap: var(--s3); align-items: center; }
+.eva-row .label { color: var(--text-muted); font-size: var(--fs-sm); }
+.eva-bar { position: relative; height: 12px; border-radius: var(--r-pill); background: var(--surface-2); overflow: hidden; }
+.eva-bar > i { position: absolute; inset: 0 auto 0 0; border-radius: var(--r-pill); background: var(--success); }
+.eva-bar.over > i { background: var(--danger); }
+.eva-bar.near > i { background: var(--warning); }
+.eva-row .num { white-space: nowrap; }
+
+/* ---- material requests ---- */
+.mr-quick { display: flex; flex-direction: column; gap: var(--s3); }
+.mr-quick .form-grid { align-items: end; }
+.mr-picks { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.mr-pick { min-height: 36px; padding: 0 var(--s3); border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); color: inherit; font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.mr-pick[aria-pressed="true"] { border-color: var(--accent-fill); background: var(--accent-soft); font-weight: 600; }
+.mr-sched { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.mr-sched .grow { min-width: 200px; }
+.mr-job { margin-top: var(--s4); }
+.mr-job-head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
+.mr-job-head h3 { margin: 0; }
+.mr-row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.mr-row .grow { min-width: 180px; }
+.mr-row .qty { font-weight: 700; min-width: 64px; }
+.mr-row .mr-actions { display: flex; gap: var(--s1); flex-wrap: wrap; }
+.mr-stock { font-size: var(--fs-xs); line-height: var(--lh-xs); color: var(--success); }
+.mr-urgent { color: var(--danger); font-weight: 700; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.03em; }
+.mr-check { width: 22px; height: 22px; accent-color: var(--accent-fill); flex: none; }
+@media (max-width: 640px) {
+  .eva-row { grid-template-columns: 1fr auto; }
+  .eva-row .eva-bar { grid-column: 1 / -1; order: 3; }
+  .mr-row .mr-actions { width: 100%; }
+}

@@ -9,6 +9,7 @@
 // see sync.js). Local writes are reported to the tracker (sync.js) synchronously; nothing
 // here talks to the network.
 import { BRAND } from './brand.js';
+import { DEFAULT_MODULES } from './lib/modules.js';
 
 export const isBackupTag = (tag) => tag === BRAND.backupTag || BRAND.legacyBackupTags.includes(tag);
 
@@ -32,6 +33,7 @@ export const COLLECTIONS = [
   'wireRuns', 'bends', 'benderProfiles',
   'flhas', 'toolboxTalks', 'incidents', 'correctiveActions', 'safetyInspections', 'siteOrientations', 'jobSafety',
   'workPlans', 'workTasks', 'taskTemplates', 'huddles',
+  'materialRequests',
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -48,6 +50,13 @@ export const DEFAULT_SETTINGS = {
   units: 'metric', // company default; each user can switch (js/lib/units.js)
   currency: 'CAD',
   nextNumbers: { job: 1001, estimate: 2001, invoice: 3001 },
+  // Which modules the company uses (js/lib/modules.js). A new company starts with the
+  // recommended set; a settings record without `modules` (from before switches) has them all.
+  modules: { ...DEFAULT_MODULES },
+  // New jobs bill time & material or a fixed price (js/lib/tm.js); clients can override.
+  billing: { defaultMode: 'fixed', travelRateCents: null },
+  // Material requests go to the office once a day (js/lib/materials.js).
+  materialRequests: { sendAt: '15:00', emailTo: '' },
 };
 
 /**

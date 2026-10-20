@@ -11,6 +11,7 @@ export const COLLECTIONS = [
   'wireRuns', 'bends', 'benderProfiles',
   'flhas', 'toolboxTalks', 'incidents', 'correctiveActions', 'safetyInspections', 'siteOrientations', 'jobSafety',
   'workPlans', 'workTasks', 'taskTemplates', 'huddles',
+  'materialRequests',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -108,6 +109,13 @@ const DEFS = {
   },
   taskTemplates: { table: 'task_templates', gen: [], read: ['workplan'], write: ['workplan'], managerWrite: true, portal: null, migration: '0100' },
   huddles: { table: 'huddles', gen: [g('day', 'date')], read: ['workplan', 'kpis'], write: ['workplan'], managerWrite: true, portal: null, migration: '0100' },
+  // Material requests (migration 0130). Every role asks (jobs/today); crew see and change only
+  // their own (ownRows on employeeId) and only while unsent; office and managers handle them
+  // (auth/access.js). costCents is stripped for readers without money permissions.
+  materialRequests: {
+    table: 'material_requests', gen: [JOB, EMPLOYEE, STATUS, g('batch_id', 'batchId')], read: ['jobs', 'inventory', 'today'], write: ['jobs', 'inventory', 'today'],
+    ownRows: true, portal: null, maxBytes: 16 * KB, migration: '0130',
+  },
 };
 
 /** @type {Map<string, CollectionDef>} */

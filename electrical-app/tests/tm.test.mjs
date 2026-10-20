@@ -1,0 +1,149 @@
+// Billing mode per job (js/lib/tm.js): T&M invoice building and fixed-price job costing.
+// Run: node --test electrical-app/tests/*.test.mjs
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import * as TM from '../js/lib/tm.js';
+import { docTotals } from '../js/lib/money.js';
+
+const settings = { company: { province: 'MB' }, tax: { mode: 'province' }, labourRateCents: 9500, markupPct: 20, billing: { travelRateCents: 6000 } };
+const job = { id: 'j1', number: 'J-1001', title: 'Shop rewire', clientId: 'c1', billingMode: 'tm', crewIds: ['e1', 'e2'], changeOrders: [] };
+const employees = [
+  { id: 'e1', name: 'Sam Sparks', rateCents: 4000 },
+  { id: 'e2', name: 'Ana Apprentice', rateCents: 2500 },
+];
+const items = [
+  { id: 'i1', name: '3/4" EMT', unit: 'stick', costCents: 1000, priceCents: 2500 },
+  { id: 'i2', name: 'Two-hole strap 3/4"', unit: 'ea', costCents: 25, priceCents: 80 },
+];
+// UTC timestamps; dayOf below reads the UTC day so the test is the same in every time zone.
+const entry = (id, emp, day, inH, outH, extra = {}) => ({ id, employeeId: emp, jobId: 'j1', clockIn: `${day}T${inH}:00:00.000Z`, clockOut: `${day}T${outH}:00:00.000Z`, breakMins: 0, approved: true, ...extra });
+const timeEntries = [
+  entry('t1', 'e1', '2026-10-05', '14', '22'),                    // 8 h
+  entry('t2', 'e2', '2026-10-05', '14', '18'),                    // 4 h
+  entry('t3', 'e1', '2026-10-06', '13', '14', { travel: true }),   // 1 h travel
+  entry('t4', 'e1', '2026-10-06', '14', '20', { approved: false }), // waiting for approval: not billed
+  entry('t5', 'e1', '2026-10-09', '14', '16', { jobId: 'other' }), // another job
+  entry('t6', 'e2', '2026-10-20', '14', '18'),                    // outside the range
+];
+const stockMoves = [
+  { id: 'm1', itemId: 'i1', fromLocationId: 'van2', toLocationId: null, qty: 20, jobId: 'j1', date: '2026-10-05' }, // used on the job
+  { id: 'm2', itemId: 'i1', fromLocationId: 'shop', toLocationId: 'van2', qty: 40, jobId: 'j1', date: '2026-10-05' }, // a transfer, not use
+  { id: 'm3', itemId: 'i2', fromLocationId: 'van2', toLocationId: null, qty: 50, jobId: 'j1', date: '2026-10-06' },
+];
+const materialRequests = [
+  { id: 'r1', jobId: 'j1', itemId: null, description: 'PVC 1in coupling', qty: 10, unit: 'ea', status: 'fulfilled', fulfilledAt: '2026-10-06T18:00:00.000Z', costCents: 150 },
+  { id: 'r2', jobId: 'j1', itemId: 'i2', description: 'Two-hole strap', qty: 50, status: 'fulfilled', fulfilledAt: '2026-10-06T18:00:00.000Z', stockMoveId: 'm3' }, // counted by its stock move
+  { id: 'r3', jobId: 'j1', itemId: null, description: 'Mystery fitting', qty: 2, unit: 'ea', status: 'fulfilled', fulfilledAt: '2026-10-06T18:00:00.000Z' }, // no cost yet
+  { id: 'r4', jobId: 'j1', itemId: 'i1', qty: 5, status: 'ordered' }, // not here yet
+];
+const dayOf = (iso) => String(iso).slice(0, 10);
+const sources = { timeEntries, stockMoves, materialRequests, items, employees, invoices: [], dayOf };
+
+describe('time & material', () => {
+  test('modes and defaults: a job from before modes is fixed; client default beats the company', () => {
+    assert.equal(TM.jobBillingMode({}), 'fixed');
+    assert.equal(TM.jobBillingMode({ billingMode: 'tm' }), 'tm');
+    assert.equal(TM.defaultBillingMode({}, null), 'fixed');
+    assert.equal(TM.defaultBillingMode({ billing: { defaultMode: 'tm' } }, null), 'tm');
+    assert.equal(TM.defaultBillingMode({ billing: { defaultMode: 'tm' } }, { billingMode: 'fixed' }), 'fixed');
+    assert.equal(TM.defaultBillingMode({}, { billingMode: 'tm' }), 'tm', 'this customer is always T&M');
+    assert.deepEqual(TM.jobRates({ labourRateCents: 12000 }, settings), { labourRateCents: 12000, travelRateCents: 6000, markupPct: 20 });
+    assert.deepEqual(TM.jobRates({}, { labourRateCents: 9000 }), { labourRateCents: 9000, travelRateCents: 9000, markupPct: 0 }, 'travel defaults to the labour rate');
+  });
+
+  test('unbilled: approved time in range at the rates, material used at cost + markup', () => {
+    const u = TM.unbilledTm({ job, settings, from: '2026-10-01', to: '2026-10-10', ...sources });
+    assert.deepEqual(u.labour.map((l) => l.id).sort(), ['t1', 't2', 't3']);
+    assert.equal(u.hours, 12);
+    assert.equal(u.travelHours, 1);
+    assert.equal(u.pendingApproval, 1);
+    assert.equal(u.labourCents, 12 * 9500 + 6000);
+    // m1: 20 x $10.00 x 1.2 = $240; m3: 50 x $0.25 x 1.2 = $15; r1: 10 x $1.50 x 1.2 = $18; r3: no cost
+    assert.deepEqual(u.materials.map((m) => m.id).sort(), ['m1', 'm3', 'r1', 'r3']);
+    assert.equal(u.materialCents, 24000 + 1500 + 1800);
+    assert.equal(u.missingCost, 1);
+    assert.equal(u.totalCents, u.labourCents + u.materialCents);
+  });
+
+  test('the invoice: one labour line per person, travel apart, material lines, provincial tax', () => {
+    const { invoice } = TM.buildTmInvoice({ job, settings, issueDate: '2026-10-11', dueDate: '2026-10-25', from: '2026-10-01', to: '2026-10-10', ...sources });
+    assert.equal(invoice.billingMode, 'tm');
+    assert.equal(invoice.jobId, 'j1');
+    assert.equal(invoice.clientId, 'c1');
+    const labour = invoice.lines.filter((l) => l.kind === 'labour');
+    assert.deepEqual(labour.map((l) => [l.description.split(' (')[0], l.qty, l.unitCents]), [
+      ['Labour: Ana Apprentice', 4, 9500], ['Labour: Sam Sparks', 8, 9500], ['Travel: Sam Sparks', 1, 6000],
+    ]);
+    const mats = invoice.lines.filter((l) => l.kind === 'material');
+    assert.deepEqual(mats.map((l) => [l.description, l.qty, l.unitCents]), [
+      ['3/4" EMT', 20, 1200], ['Mystery fitting (price needed)', 2, 0], ['PVC 1in coupling', 10, 180], ['Two-hole strap 3/4"', 50, 30],
+    ]);
+    assert.deepEqual(invoice.tm, { from: '2026-10-01', to: '2026-10-10', timeEntryIds: ['t1', 't2', 't3'], stockMoveIds: ['m1', 'm3'], materialRequestIds: ['r1', 'r3'] });
+    // Manitoba: GST 5% + RST 7% on the whole contract, labour included (tax.js, Bulletin 031).
+    assert.deepEqual(invoice.taxes.map((t) => [t.id, t.pct]), [['GST', 5], ['RST', 7]]);
+    const t = docTotals(invoice);
+    assert.equal(t.subtotalCents, 12 * 9500 + 6000 + 24000 + 1800 + 1500);
+    assert.equal(t.taxCents, Math.round(t.subtotalCents * 0.05) + Math.round(t.subtotalCents * 0.07));
+  });
+
+  test('nothing is billed twice; voiding the invoice frees it', () => {
+    const { invoice } = TM.buildTmInvoice({ job, settings, issueDate: '2026-10-11', from: '2026-10-01', to: '2026-10-10', ...sources });
+    const after = TM.unbilledTm({ job, settings, ...sources, invoices: [{ ...invoice, id: 'inv1' }], from: '2026-10-01', to: '2026-10-31' });
+    assert.deepEqual(after.labour.map((l) => l.id), ['t6'], 'only the later entry is left');
+    assert.equal(after.materials.length, 0);
+    const voided = TM.unbilledTm({ job, settings, ...sources, invoices: [{ ...invoice, id: 'inv1', status: 'void' }], from: '2026-10-01', to: '2026-10-10' });
+    assert.equal(voided.labour.length, 3);
+    assert.throws(() => TM.buildTmInvoice({ job, settings, issueDate: '2026-10-11', from: '2026-11-01', to: '2026-11-30', ...sources }), /Nothing to bill/);
+  });
+
+  test('a fixed-price job never builds T&M lines', () => {
+    assert.throws(() => TM.buildTmInvoice({ job: { ...job, billingMode: 'fixed' }, settings, issueDate: '2026-10-11', ...sources }), /fixed price/);
+    assert.throws(() => TM.buildTmInvoice({ job: { ...job, billingMode: undefined }, settings, issueDate: '2026-10-11', ...sources }), /fixed price/);
+    const all = TM.unbilledAcrossJobs([{ ...job, billingMode: 'fixed' }, job], { settings, ...sources });
+    assert.equal(all.count, 1, 'only the T&M job counts');
+  });
+
+  test('Ontario HST and a job rate', () => {
+    const on = { ...settings, company: { province: 'ON' } };
+    const { invoice } = TM.buildTmInvoice({ job: { ...job, labourRateCents: 11000 }, settings: on, issueDate: '2026-10-11', from: '2026-10-05', to: '2026-10-05', ...sources });
+    assert.deepEqual(invoice.taxes.map((t) => [t.id, t.pct]), [['HST', 13]]);
+    assert.ok(invoice.lines.filter((l) => l.kind === 'labour').every((l) => l.unitCents === 11000));
+  });
+});
+
+describe('fixed price: estimate vs actual', () => {
+  const fixed = { ...job, billingMode: 'fixed', estimateId: 'e1', changeOrders: [{ id: 'co', amountCents: 50000, status: 'approved' }, { id: 'co2', amountCents: 99999, status: 'pending' }] };
+  const estimates = [{
+    id: 'e1', jobId: 'j1', status: 'accepted', markupPct: 0, taxes: [],
+    lines: [
+      { itemId: 'i1', description: 'EMT', qty: 30, unitCents: 2500, labourHours: 0.25, kind: 'material' }, // 7.5 h, cost 30 x $10
+      { itemId: null, description: 'Labour', qty: 10, unitCents: 9500, labourHours: 0, kind: 'labour' },   // 10 h
+    ],
+  }, { id: 'e2', jobId: 'j1', status: 'declined', lines: [{ qty: 1, unitCents: 999999, kind: 'other' }] }];
+
+  test('hours, cost and margin against the accepted estimate', () => {
+    const c = TM.jobCosting({ job: fixed, estimates, ...sources, now: new Date('2026-10-30T00:00:00Z') });
+    assert.equal(c.estimates, 1, 'the declined estimate is ignored');
+    assert.equal(c.contractCents, 30 * 2500 + 10 * 9500 + 50000, 'accepted estimate + approved change orders, before tax');
+    assert.equal(c.estHours, 17.5);
+    assert.equal(c.estMaterialCents, 30 * 1000);
+    assert.equal(c.estLabourCents, Math.round(17.5 * 3250), 'average crew cost rate');
+    // actual: every closed entry on the job, approved or not, at each person's cost rate
+    assert.equal(c.hours, 8 + 4 + 6 + 4);
+    assert.equal(c.travelHours, 1);
+    assert.equal(c.labourCents, (8 + 1 + 6) * 4000 + (4 + 4) * 2500);
+    assert.equal(c.materialCents, 20 * 1000 + 50 * 25 + 10 * 150, 'material used at cost (request r3 has none)');
+    assert.equal(c.costCents, c.labourCents + c.materialCents);
+    assert.equal(c.marginCents, c.contractCents - c.costCents);
+    assert.equal(c.hoursUsedPct, Math.round((23 / 17.5) * 100));
+    assert.ok(c.marginPct < 100);
+  });
+
+  test('a job with no estimate still reports actuals', () => {
+    const c = TM.jobCosting({ job: { ...fixed, estimateId: null }, estimates: [], ...sources });
+    assert.equal(c.estimates, 0);
+    assert.equal(c.contractCents, 50000);
+    assert.equal(c.hoursUsedPct, null);
+    assert.ok(c.hours > 0);
+  });
+});
