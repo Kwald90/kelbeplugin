@@ -985,12 +985,13 @@ export function renderKpis(host, ctx, { plan = null } = {}) {
 
   const draw = () => {
     const p = plan ? store.get('workPlans', plan.id) || plan : null;
-    const all = store.list('workTasks', p ? (t) => t.planId === p.id : null, { omit: [] });
+    // Only the range carries photos (evidence counts need them); the plan's progress doesn't.
+    const all = store.list('workTasks', (t) => (!p || t.planId === p.id) && t.date && t.date >= range.from && t.date <= range.to);
     const ids = p && crewOnly ? [...new Set([...(p.crewIds || []), ...all.map((t) => t.employeeId).filter(Boolean)])] : null;
     const k = K.crewKpis(all, { from: range.from, to: range.to, employeeIds: ids });
     const name = (id) => store.get('employees', id)?.name || 'Former employee';
     k.workers.sort((a, b) => name(a.employeeId).localeCompare(name(b.employeeId)));
-    const prog = p ? K.jobProgress(p, all, { today: t0 }) : null;
+    const prog = p ? K.jobProgress(p, store.list('workTasks', (t) => t.planId === p.id, { omit: ['photos'] }), { today: t0 }) : null;
     const v = (x, suffix = '') => (x == null ? '—' : `${x}${suffix}`);
     const typeCell = (s) => (s.byType.length ? h('div', { class: 'wp-types' }, s.byType.map((b) => h('div', null, h('span', { class: 'num' }, v(b.perHour)), ` ${b.unit || b.type}/h`, h('span', { class: 'muted' }, ` · ${b.type}`)))) : h('span', { class: 'muted' }, '—'));
     const columns = [

@@ -143,7 +143,9 @@ describe('public endpoints and URLs', { skip }, () => {
     const spec = (await call(app, { url: '/api/v1/openapi.json' })).body;
     const allowed = new Set(['limit', 'cursor', 'includeDeleted', 'version', 'since', 'link', 'collection', 'recordId', 'action',
       'clientId', 'jobId', 'status', 'stage', 'number', 'employeeId', 'leadId', 'sequenceId', 'relatedId', 'invoiceId', 'sku',
-      'itemId', 'permitId', 'result', 'date', 'drawingId']);
+      'itemId', 'permitId', 'result', 'date', 'drawingId',
+      // work plans: GET /api/v1/workTasks?planId=, GET /api/v1/kpis?from=&to= (ids and YYYY-MM-DD only)
+      'planId', 'from', 'to']);
     for (const [path, ops] of Object.entries(spec.paths)) {
       for (const op of Object.values(ops)) {
         for (const p of op.parameters || []) {

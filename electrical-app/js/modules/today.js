@@ -28,7 +28,9 @@ export default {
     const syncLine = h('div', { class: 'wp-syncline muted', role: 'status' });
 
     const jobs = () => new Map(store.list('jobs').map((j) => [j.id, j]));
-    const myTasks = () => store.list('workTasks', (t) => t.employeeId === empId);
+    // My tasks that matter today: anything open, plus finished ones from this week (photos are
+    // heavy, so older finished work stays out of memory).
+    const myTasks = () => { const since = W.addDays(ui.today(), -7); return store.list('workTasks', (t) => t.employeeId === empId && (t.status !== 'done' || (t.date || '') >= since)); };
 
     function paintSync(s) {
       const n = s?.waiting || 0;
@@ -153,12 +155,12 @@ export default {
     }
 
     // ---------- cards ----------
-    function card(t, { readOnly = false, jobById } = {}) {
+    function card(t, { readOnly = false, jobById, all = [] } = {}) {
       const job = jobById.get(t.jobId);
       const need = W.photosNeeded(t);
       const have = (t.photos || []).length;
       const isOpen = open.has(t.id);
-      const waiting = W.waitingOn(t, store.list('workTasks'));
+      const waiting = W.waitingOn(t, all);
       const openBlock = (t.blocks || []).filter((b) => !b.resolvedAt).at(-1);
       const pct = t.qty > 0 && t.qtyDone != null ? Math.min(100, Math.round((100 * t.qtyDone) / t.qty)) : null;
       const big = (label, opts) => ui.button(label, { size: 'lg', ...opts });
@@ -213,13 +215,13 @@ export default {
         unacked.length ? h('div', { class: 'wp-ack card' },
           h('div', { class: 'grow' }, h('strong', null, "Today's list is ready"), h('div', { class: 'muted' }, `${unacked.length} task${unacked.length === 1 ? '' : 's'}. Tap "Got it" once you've read them.`)),
           ui.button('Got it', { variant: 'primary', size: 'lg', icon: 'check', onClick: () => gotIt(unacked) })) : null,
-        carried.length ? [h('h2', { class: 'section' }, 'Still open from earlier'), h('div', { class: 'wp-cards' }, carried.map((t) => card(t, { jobById })))] : null,
+        carried.length ? [h('h2', { class: 'section' }, 'Still open from earlier'), h('div', { class: 'wp-cards' }, carried.map((t) => card(t, { jobById, all })))] : null,
         todays.length
-          ? h('div', { class: 'wp-cards' }, todays.map((t) => card(t, { jobById })))
+          ? h('div', { class: 'wp-cards' }, todays.map((t) => card(t, { jobById, all })))
           : ui.empty({ icon: ICON_TODAY, title: 'Nothing on your list today', text: empId ? 'Your foreman publishes the day\'s tasks the evening before or at the morning meeting. They show up here when your device syncs.' : 'Your account is not linked to an employee record yet, so it has no tasks. Ask an owner or admin to link it.' }),
         h('h2', { class: 'section' }, nextLabel),
         nextTasks.length
-          ? h('div', { class: 'wp-cards wp-preview' }, nextTasks.map((t) => card(t, { readOnly: true, jobById })))
+          ? h('div', { class: 'wp-cards wp-preview' }, nextTasks.map((t) => card(t, { readOnly: true, jobById, all })))
           : h('p', { class: 'muted' }, `${nextLabel}'s list isn't out yet.`),
       ];
     }
@@ -228,7 +230,7 @@ export default {
       const day = ui.today();
       const tomorrow = W.nextWorkDay(day);
       const people = store.list('employees', (e) => e.active !== false).sort((a, b) => a.name.localeCompare(b.name));
-      const tasks = store.list('workTasks', (t) => t.date === day && W.isPublished(t));
+      const tasks = store.list('workTasks', (t) => t.date === day && W.isPublished(t), { omit: ['photos'] });
       const jobById = jobs();
       return [
         h('div', { class: 'row', style: { marginBottom: 'var(--s3)' } },
