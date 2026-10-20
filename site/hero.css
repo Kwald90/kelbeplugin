@@ -1,7 +1,7 @@
 /* Landing-page hero (site/hero.js). Shared by site/index.html and the HQ > Promotions preview,
    so every rule is scoped to .hero. The hero is always dark (video), whatever the theme.
-   Contrast: all text sits on the scrim at >= 72% near-black. Worst case (a pure white frame)
-   that composites to about #474747: white text 9.4:1, the yellow eyebrow 4.9:1 (WCAG AA). */
+   Contrast: all text sits on the scrim at >= 76% near-black. Worst case (a pure white frame)
+   that composites to about #464645: white text 9.5:1, the yellow eyebrow 5.1:1 (WCAG AA). */
 :root {
   --hero-bg-1: #23262b;
   --hero-bg-2: #121315;
@@ -9,7 +9,7 @@
   --hero-ink-soft: rgba(255, 255, 255, .88);
   --hero-eyebrow: #f5b301;
   --hero-scrim-strong: rgba(12, 11, 10, .84);
-  --hero-scrim: rgba(12, 11, 10, .72);
+  --hero-scrim: rgba(12, 11, 10, .76);
   --hero-scrim-clear: rgba(12, 11, 10, 0);
   --hero-chip: rgba(12, 11, 10, .62);
   --hero-dot: rgba(255, 255, 255, .42);
@@ -36,9 +36,10 @@
 .hero[data-transition="slide"] .hero-layer.is-leaving { transform: translateX(-100%); }
 .hero[data-transition="slide"] .hero-layer.no-anim { transition: none !important; }
 
-/* Left to right on wide screens: dark under the text, clear on the right. */
+/* Left to right on wide screens: dark under the text, clear on the right. The text column ends
+   at max(616px, 50% + 56px) (1120px container, 600px copy), so the 76% stop sits past it. */
 .hero-scrim { z-index: 1; pointer-events: none;
-  background: linear-gradient(90deg, var(--hero-scrim-strong) 0, var(--hero-scrim) min(700px, 72%), var(--hero-scrim-clear) min(1180px, 100%)); }
+  background: linear-gradient(90deg, var(--hero-scrim-strong) 0, var(--hero-scrim) max(700px, calc(50% + 100px)), var(--hero-scrim-clear) max(1180px, calc(50% + 560px))); }
 
 /* ---- text ---- */
 .hero-inner { position: relative; z-index: 2; height: 100%; max-width: 1120px; margin: 0 auto; padding: var(--s7) var(--s4); display: flex; align-items: center; }

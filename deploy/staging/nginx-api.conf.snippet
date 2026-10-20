@@ -80,6 +80,25 @@ location ^~ /site/ {
     return 404;
 }
 
+# ---- Uploaded landing-page media (HQ > Promotions; docs/marketing/landing.md) ----
+# hq-api writes uploads to MEDIA_DIR under random names (32 hex + .mp4/.webm/.jpg/.png/.webp),
+# after checking their bytes. On the host that is /var/lib/fishtape-staging/media, bind-mounted
+# into the hq-api container (owned by the container's node user, 0755; files are 0644) and never
+# inside the code checkout. nginx only reads it: those five file types, everything else 404,
+# no listing, never executed (^~ stops any regex location, PHP included, from matching here).
+# Names never change, so a year's cache is safe; byte ranges (video seeking) are nginx's default.
+# Uploads arrive through /api/hq/ and so are capped by client_max_body_size in
+# fishtape-staging-proxy.conf (72m); the API's own cap is MEDIA_MAX_VIDEO_MB (150).
+location ^~ /media/ {
+    root /var/lib/fishtape-staging;
+    autoindex off;
+    location ~ "^/media/[a-f0-9]{32}\.(?:mp4|webm|jpg|png|webp)$" {
+        expires 1y;
+        try_files $uri =404;
+    }
+    return 404;
+}
+
 # ---- RFC 9116 security contact. Renew Expires every year (compliance calendar). ----
 location = /.well-known/security.txt {
     default_type text/plain;

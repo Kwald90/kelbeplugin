@@ -400,7 +400,7 @@ try {
     await waitFor('[...document.querySelectorAll(".hero-layer.is-front video.has-frame")].some((v) => !v.paused)', 'first clip playing', 15000);
     const s = await hero('({ headline: h.querySelector(".hero-headline").textContent, src: h.querySelector(".hero-layer.is-front video").getAttribute("src"), next: [...h.querySelectorAll(".hero-layer:not(.is-front) video")].map((v) => v.getAttribute("src") + " ready " + v.readyState) })');
     if (s.headline !== 'Three clips, no black frames' || s.src !== media['clip-1.mp4']) throw new Error(J(s));
-    heroBox = await evaluate('(() => { const r = document.getElementById("hero").getBoundingClientRect(); return { x: r.right - 130, y: r.top + 30, width: 120, height: 160 }; })()');
+    heroBox = await evaluate('(() => { const r = document.getElementById("hero").getBoundingClientRect(); return { x: r.right - 70, y: r.top + 30, width: 60, height: 160 }; })()');
     await shot('03-landing-video');
     return `playing ${s.src.slice(7, 15)}…; preloaded next: ${s.next.join(', ')}`;
   });
@@ -466,7 +466,7 @@ try {
     await waitFor('document.getElementById("hero").heroPlayer?.state.mode === "posters"', 'posters mode');
     const s = await hero('({ videos: h.querySelectorAll("video").length, poster: h.querySelector(".hero-layer.is-front img").getAttribute("src"), fade: h.style.getPropertyValue("--hero-fade"), transition: h.dataset.transition })');
     if (s.videos !== 0 || s.poster !== media['clip-1.jpg'] || s.fade !== '1600ms' || s.transition !== 'fade') throw new Error(J(s));
-    const box = await evaluate('(() => { const r = document.getElementById("hero").getBoundingClientRect(); return { x: r.right - 130, y: r.top + 30, width: 120, height: 160 }; })()');
+    const box = await evaluate('(() => { const r = document.getElementById("hero").getBoundingClientRect(); return { x: r.right - 70, y: r.top + 30, width: 60, height: 160 }; })()');
     const r = await watchHandovers(box, clipColours, 10500);
     if (r.bad.length) throw new Error(`${r.bad.length} blank frames: ${J(r.bad.slice(0, 3))}`);
     if (r.seq.length < 2) throw new Error(`no crossfade seen: ${r.seq}`);
