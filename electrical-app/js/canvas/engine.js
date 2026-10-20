@@ -8,6 +8,7 @@ import {
   pxPerM, roomGeometry, featureSpan, featureCorners, wallPoint, interiorPoint, polyBounds, pointInPoly,
 } from '../lib/placement.js';
 import { ROOM_TYPES } from '../lib/placement-rules.js';
+import { inkSegments } from './ink.js';
 
 export const LIGHT_PAPER = { bg: '#f7f6f2', line: 'rgba(28,27,25,0.10)' };
 export const FREEHAND = new Set(['pen', 'pencil', 'marker', 'highlighter']);
@@ -83,36 +84,34 @@ export function drawPaper(ctx, view, w, h, paper, colors) {
 }
 
 // ---------- strokes ----------
+// Smoothed midpoint to midpoint, with sharp corners (the tip of a V) kept sharp: see ./ink.js.
 function freehandPath(ctx, pts) {
   ctx.beginPath();
   ctx.moveTo(pts[0][0], pts[0][1]);
-  if (pts.length < 3) { for (const p of pts.slice(1)) ctx.lineTo(p[0], p[1]); return; }
-  for (let i = 1; i < pts.length - 1; i++) {
-    const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
-    ctx.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+  for (const sg of inkSegments(pts)) {
+    if (sg.q) ctx.quadraticCurveTo(sg.q[0], sg.q[1], sg.to[0], sg.to[1]);
+    else ctx.lineTo(sg.to[0], sg.to[1]);
   }
-  const last = pts[pts.length - 1];
-  ctx.lineTo(last[0], last[1]);
 }
 
 /** Pressure-varying stroke: each smoothed segment gets its own width. */
 function pressureStroke(ctx, pts, size, minF) {
+  const width = (p) => Math.max(0.4, size * (minF + (1 - minF) * (p ?? 0.5)));
   if (pts.length < 3) {
-    ctx.lineWidth = size * (minF + (1 - minF) * (pts[0][2] ?? 0.5));
+    ctx.lineWidth = width(pts[0][2]);
     freehandPath(ctx, pts);
     ctx.stroke();
     return;
   }
-  let px = pts[0][0], py = pts[0][1];
-  for (let i = 1; i < pts.length - 1; i++) {
-    const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
-    const p = pts[i][2] ?? 0.5;
-    ctx.lineWidth = Math.max(0.4, size * (minF + (1 - minF) * p));
+  let [px, py] = pts[0];
+  for (const sg of inkSegments(pts)) {
+    ctx.lineWidth = width(sg.p);
     ctx.beginPath();
     ctx.moveTo(px, py);
-    ctx.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+    if (sg.q) ctx.quadraticCurveTo(sg.q[0], sg.q[1], sg.to[0], sg.to[1]);
+    else ctx.lineTo(sg.to[0], sg.to[1]);
     ctx.stroke();
-    px = mx; py = my;
+    [px, py] = sg.to;
   }
 }
 
@@ -634,9 +633,8 @@ function svgPathFor(s) {
   }
   if (p.length < 3) return `M${f(p[0][0])} ${f(p[0][1])}` + p.slice(1).map((q) => `L${f(q[0])} ${f(q[1])}`).join('') + (p.length === 1 ? 'l0.01 0' : '');
   let out = `M${f(p[0][0])} ${f(p[0][1])}`;
-  for (let i = 1; i < p.length - 1; i++) out += `Q${f(p[i][0])} ${f(p[i][1])} ${f((p[i][0] + p[i + 1][0]) / 2)} ${f((p[i][1] + p[i + 1][1]) / 2)}`;
-  const l = p[p.length - 1];
-  return out + `L${f(l[0])} ${f(l[1])}`;
+  for (const sg of inkSegments(p)) out += sg.q ? `Q${f(sg.q[0])} ${f(sg.q[1])} ${f(sg.to[0])} ${f(sg.to[1])}` : `L${f(sg.to[0])} ${f(sg.to[1])}`;
+  return out;
 }
 
 const f2 = (n) => Math.round(n * 100) / 100;
