@@ -11,9 +11,10 @@ import { createRooms, swallowNextClick, ROOM_ICON, CHECK_ICON, WAND_ICON } from 
 import { addInkPoint, endInk } from './ink.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 import {
-  makePlanSet, sheetRecord, sheetName, sheetLabel, isDefaultDrawingName, sortSheets, neighbours, scaleTargets, hasOwnScale,
+  makePlanSet, sheetRecord, sheetName, sheetLabel, isDefaultDrawingName, sortSheets, neighbours, scaleTargets, hasOwnScale, customerSheetRecord,
 } from '../lib/plansets.js';
 import { isPdf, openPdf, renderSheet, renderImage, pickPages, importPages, chooseDialog, release } from './plansets-ui.js';
+import { createCollab, COLLAB_ICON } from './collab.js';
 
 const RAW = {
   wire: '<path d="M3 18c3 0 3-12 9-12s6 12 9 12"/><circle cx="3" cy="18" r="1.6"/><circle cx="21" cy="18" r="1.6"/>',
@@ -113,6 +114,8 @@ export function openEditor(root, ctx, id) {
   let dpr = 1, W = 0, H = 0;
   let baseDirty = true, rafId = 0, saveTimer = 0, contentDirty = false, destroyed = false;
   let rooms = null; // rooms, auto-place and code check (./rooms.js), created once the DOM exists
+  let collab = null; // who drew what, change history, cost impact, merge (./collab.js)
+  const seesMoney = ctx.auth.seesMoney?.() ?? false;
 
   root.classList.add('full-bleed');
   document.body.classList.add('canvas-open');
@@ -145,6 +148,7 @@ export function openEditor(root, ctx, id) {
     paperBtn,
     btn('upload', 'Import plan (image or PDF)', () => importUnderlay(), { class: 'wide-only' }),
     btn(RAW.check, 'Code check (CEC)', () => rooms.openCheck()),
+    btn(COLLAB_ICON, 'Changes and who drew what', () => collab.open()),
     btn('list', 'Takeoff', () => takeoffSheet(), { class: 'wide-only' }),
     btn('download', 'Export PNG', () => exportPNG(), { class: 'wide-only' }),
     btn('more', 'More', () => moreSheet()));
@@ -246,7 +250,7 @@ export function openEditor(root, ctx, id) {
 
   function changed(content = true) {
     baseDirty = true;
-    if (content) { contentDirty = true; rooms?.onChanged(); }
+    if (content) { contentDirty = true; rooms?.onChanged(); collab?.onChanged(); }
     scheduleSave();
     updateChrome();
     requestFrame();
@@ -270,6 +274,9 @@ export function openEditor(root, ctx, id) {
     // only on drawings that have them, so older drawings don't gain empty fields
     if (d.scaleSet !== undefined) patch.scaleSet = d.scaleSet;
     if (d.planSet !== undefined) patch.planSet = d.planSet;
+    if (d.clientId !== undefined) patch.clientId = d.clientId;
+    // who drew what: stamp changed items, record history and tombstones (./collab.js)
+    collab?.beforeSave(patch, contentDirty);
     if (contentDirty) {
       contentDirty = false;
       try {
@@ -362,6 +369,7 @@ export function openEditor(root, ctx, id) {
     g.setLineDash([]);
     // rooms: drafts, handles, ghosts and code-check markers
     rooms.overlay(g);
+    collab.overlay(g);
     // eraser cursor
     if (st.tool === 'eraser' && st.hover && !st.placing) {
       g.strokeStyle = dark ? '#ecebe7' : '#1c1b19'; g.lineWidth = 1 / v.zoom;
@@ -963,6 +971,7 @@ export function openEditor(root, ctx, id) {
       const hasSized = st.selection.some((s) => s.kind === 'object' || s.kind === 'text');
       const selObjs = st.selection.filter((s) => s.kind === 'object').map(findSel).filter(Boolean);
       parts.push(h('span', { class: 'cv-ctx-label' }, `${st.selection.length} selected`),
+        st.selection.length === 1 ? collab.selectionInfo(findSel(st.selection[0])) : null,
         tbtn('copy', 'Duplicate (Ctrl+D)', duplicateSel),
         hasObj ? tbtn(RAW.rotate, 'Rotate 45°', rotateSel) : null,
         hasObj ? tbtn(RAW.tag, 'Protection and height (GFCI, AFCI, TR)', () => rooms.deviceSheet(selObjs)) : null,
@@ -1025,7 +1034,7 @@ export function openEditor(root, ctx, id) {
           const priced = items.find((i) => i.symbol === sid);
           return h('button', { type: 'button', class: ['cv-symbol', st.placing === sid ? 'on' : null], dataset: { symbol: sid },
             onClick: () => { if (st.tool === 'eraser' || st.tool === 'hand') st.tool = 'select'; st.placing = sid; st.selection = []; s.close(); updateChrome(); ui.toast(`Tap the plan to place: ${SYMBOLS[sid].label}`); } },
-          symbolPreview(sid, ink, 48), h('span', null, SYMBOLS[sid].label), priced ? h('small', { class: 'muted' }, ui.fmtMoney(priced.priceCents)) : null);
+          symbolPreview(sid, ink, 48), h('span', null, SYMBOLS[sid].label), priced && seesMoney ? h('small', { class: 'muted' }, ui.fmtMoney(priced.priceCents)) : null);
         }))),
     });
   }
@@ -1118,16 +1127,17 @@ export function openEditor(root, ctx, id) {
             { key: 'sym', label: '', render: (r) => symbolPreview(r.sid, ink, 32) },
             { key: 'label', label: 'Symbol', render: (r) => h('div', null, h('div', null, SYMBOLS[r.sid].label), h('div', { class: 'muted', style: { fontSize: '12px' } }, r.item ? r.item.sku : 'Not in price book')) },
             { key: 'n', label: 'Count', align: 'right', render: (r) => String(r.n) },
-            { key: 'v', label: 'Value', align: 'right', render: (r) => r.item ? ui.fmtMoney(r.item.priceCents * r.n) : '—' },
-          ], rows,
+            seesMoney ? { key: 'v', label: 'Value', align: 'right', render: (r) => r.item ? ui.fmtMoney(r.item.priceCents * r.n) : '—' } : null,
+          ].filter(Boolean), rows,
         }) : ui.empty({ icon: RAW.outlet, title: 'No symbols yet', text: 'Place receptacles, switches and lights from the Symbols library to count them here.' }),
         wires.length ? h('p', { class: 'muted', style: { margin: 0 } }, `${wires.length} wire run${wires.length === 1 ? '' : 's'} drawn, about ${fmtWorldLength(wirePx, d, units())} at the drawing scale.`) : null,
-        rows.length ? h('div', { class: 'row' }, h('strong', { class: 'grow' }, 'Price-book value'), h('strong', { class: 'num' }, ui.fmtMoney(total))) : null,
+        rows.length && seesMoney ? h('div', { class: 'row' }, h('strong', { class: 'grow' }, 'Price-book value'), h('strong', { class: 'num' }, ui.fmtMoney(total))) : null,
         sheets.length > 1 ? h('p', { class: 'muted', style: { margin: 0 } }, `This sheet only. The whole set (${sheets.length} sheets) has ${setSymbols} symbol${setSymbols === 1 ? '' : 's'}.`) : null),
       actions: [
         ui.button('Close', { variant: 'ghost', onClick: () => s.close() }),
-        sheets.length > 1 ? ui.button(`Estimate whole set (${sheets.length})`, { icon: 'layers', disabled: !setSymbols, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromPlanSet=${encodeURIComponent(d.planSet.id)}`); } }) : null,
-        ui.button(sheets.length > 1 ? 'Estimate this sheet' : 'Create estimate', { variant: 'primary', icon: 'file-text', disabled: !rows.length, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromDrawing=${encodeURIComponent(id)}`); } }),
+        sheets.length > 1 && ctx.auth.can('estimates') ? ui.button(`Estimate whole set (${sheets.length})`, { icon: 'layers', disabled: !setSymbols, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromPlanSet=${encodeURIComponent(d.planSet.id)}`); } }) : null,
+        ctx.auth.can('estimates') ? ui.button(sheets.length > 1 ? 'Estimate this sheet' : 'Create estimate', { variant: 'primary', icon: 'file-text', disabled: !rows.length, onClick: () => { s.close(); flushSave(); nav(`#/estimates/new?fromDrawing=${encodeURIComponent(id)}`); } }) : null,
+        seesMoney && d.jobId ? ui.button('Cost impact', { icon: COLLAB_ICON, onClick: () => { s.close(); collab.open('cost'); } }) : null,
       ].filter(Boolean),
     });
   }
@@ -1169,6 +1179,8 @@ export function openEditor(root, ctx, id) {
           row(RAW.room, 'Draw a room', 'Walls, doors, windows and counters for auto-place and the code check', () => setTool('room')),
           row(RAW.wand, 'Auto-place boxes in every room', d.rooms.length ? `${d.rooms.length} room${d.rooms.length === 1 ? '' : 's'}: receptacles, switches, lights, alarms` : 'Draw a room first', () => rooms.autoPlace()),
           row(RAW.check, 'Code check', 'CEC 2024 receptacle rules, GFCI, AFCI, alarms', () => rooms.openCheck()),
+          row(COLLAB_ICON, 'Changes', 'History by person and day, and who drew what', () => collab.open('history')),
+          seesMoney ? row('dollar', 'Cost impact', d.jobId ? 'What the changes do to the estimate; create a change order' : 'Link to a job with an estimate first', () => collab.open('cost')) : null,
           row('sliders', 'Placement & check settings', 'Mounting heights, alarms, live check', () => rooms.settingsSheet()),
           row('upload', 'Import plan', 'Image or PDF. A PDF with several pages becomes a plan set, one drawing per sheet', importUnderlay),
           d.planSet?.id ? row('layers', 'Sheets in this set', `${d.planSet.name}: jump to any sheet`, sheetsSheet) : null,
@@ -1247,8 +1259,16 @@ export function openEditor(root, ctx, id) {
     const sheets = setSheets();
     if (!sheets.length) return;
     const symbolsOf = (x) => (x.objects || []).filter((o) => o.symbol).length;
+    const addSheet = () => {
+      flushSave();
+      const page = Math.max(...sheets.map((x) => x.planSet?.page || 1)) + 1;
+      const rec = store.add('drawings', customerSheetRecord({ setId: d.planSet.id, name: d.planSet.name, clientId: d.clientId || null, jobId: d.jobId || null, page, layers: d.layers }));
+      s.close();
+      nav('#/drawings/' + rec.id);
+    };
     const s = ui.openSheet({
       title: d.planSet.name,
+      actions: d.planSet.customer ? [ui.button('Add a sheet', { variant: 'primary', icon: 'plus', onClick: addSheet })] : [],
       body: h('div', { class: 'stack' },
         h('p', { class: 'muted', style: { margin: 0 } }, `${sheets.length} sheet${sheets.length === 1 ? '' : 's'}. Each sheet keeps its own scale and markup.`),
         h('div', { class: 'list cv-sheet-list' }, sheets.map((x) => {
@@ -1352,11 +1372,16 @@ export function openEditor(root, ctx, id) {
 
   async function importSet(doc, pages) {
     flushSave();
-    const setId = uid();
-    const base = { jobId: d.jobId, paper: d.paper, layers: d.layers };
+    // a customer's set keeps its id and name: the PDF's pages become more sheets of it
+    const cust = d.planSet?.customer ? d.planSet : null;
+    const setId = cust ? cust.id : uid();
+    const base = { jobId: d.jobId, paper: d.paper, layers: d.layers, clientId: d.clientId || null };
+    let next = cust ? Math.max(cust.page, ...setSheets().map((x) => x.planSet?.page || 1)) : 0;
     let first = true;
     const res = await importPages(ui, doc, pages, async (r) => {
-      const ps = makePlanSet({ id: setId, name: doc.name, page: r.page, label: r.label, pageCount: doc.numPages, pxPerPt: r.pxPerPt });
+      const ps = cust
+        ? makePlanSet({ id: setId, name: cust.name, page: first ? cust.page : ++next, label: r.label || `Sheet ${first ? cust.page : next}`, pageCount: null, pxPerPt: r.pxPerPt, customer: true })
+        : makePlanSet({ id: setId, name: doc.name, page: r.page, label: r.label, pageCount: doc.numPages, pxPerPt: r.pxPerPt });
       if (first && !destroyed && store.count('drawings', (x) => x.id === id)) {
         first = false;
         if (isDefaultDrawingName(d.name)) d.name = sheetName(ps.name, ps.label, ps.page);
@@ -1417,21 +1442,43 @@ export function openEditor(root, ctx, id) {
   rooms = createRooms({
     d, st, store, ui, auth: ctx.auth, wrap, z, checkpoint, changed, requestFrame, updateChrome, setTool, centerOn, label, isDark, layerOf, usable,
   });
+  collab = createCollab({
+    d, id, st, store, ui, auth: ctx.auth, nav, wrap, z, centerOn, requestFrame, isDark, layerOf, flushSave, size: () => ({ w: W, h: H }),
+  });
+
+  // Another device's copy of this drawing arrived (sync): merge it object by object, so both
+  // people's work stays. Local edits are saved (stamped) first. Undo history is cleared when
+  // the plan changed under it, so an undo can never delete someone else's work.
+  const offRemote = store.on('drawings', (e) => {
+    if (!e.remote || e.type !== 'update' || e.record?.id !== id || destroyed) return;
+    const remote = store.get('drawings', id);
+    const pendingLocal = Boolean(saveTimer);
+    flushSave();
+    const res = collab.mergeRemote(remote);
+    if (res.changed) { undo = []; redo = []; st.selection = st.selection.filter((x) => findSel(x)); if (!layerOf(st.activeLayer)) st.activeLayer = d.layers[d.layers.length - 1].id; }
+    if (res.dirty || pendingLocal) { contentDirty = true; scheduleSave(); }
+    baseDirty = true;
+    updateChrome(); renderSheetBar(); requestFrame();
+  });
 
   loadUnderlay();
   resize();
   updateChrome();
   renderSheetBar();
+  // #/drawings/<id>?focus=<history entry>: open the history and zoom to that change
+  if (ctx.query?.focus) { collab.open('history'); collab.focusEntry(ctx.query.focus); }
 
   // exposed for tests
   globalThis.kelbeCanvas = {
     d, st, setTool, fit, takeoff: () => takeoff(d), save: () => save(), rooms,
-    importFile: (file) => importUnderlay(file), sheets: () => setSheets(), goSheet,
+    importFile: (file) => importUnderlay(file), sheets: () => setSheets(), goSheet, collab,
   };
 
   return () => {
     destroyed = true;
     flushSave();
+    offRemote();
+    collab.destroy();
     rooms.destroy();
     cancelAnimationFrame(rafId);
     ro.disconnect(); mo.disconnect();

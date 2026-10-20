@@ -134,6 +134,13 @@
           "null"
         ]
       }
+    },
+    "foremanSeesCosts": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Foremen see prices, costs and the cost impact of drawing changes (owner, admin and office always do; crew never)."
     }
   },
   "additionalProperties": true

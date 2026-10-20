@@ -170,11 +170,12 @@ export default {
       { label: 'Labour rate (per hour)', name: 'labourRateCents', type: 'money', value: s.labourRateCents },
       { label: 'Material markup %', name: 'markupPct', type: 'number', step: '0.1', min: 0, value: s.markupPct, hint: 'Used to suggest sell prices from cost' },
       { label: 'Currency', name: 'currency', type: 'select', value: s.currency || 'CAD', options: CURRENCIES },
+      { label: 'Foremen see prices and costs', name: 'foremanSeesCosts', type: 'checkbox', value: s.foremanSeesCosts === true, hint: 'Owners, admins and the office always do; electricians and apprentices never do. Includes the cost impact of drawing changes.' },
     ]));
     const saveDefaults = () => {
       if (!defaults.reportValidity()) return;
       const v = ui.readForm(defaults);
-      store.saveSettings({ labourRateCents: v.labourRateCents, markupPct: v.markupPct ?? 0, currency: v.currency });
+      store.saveSettings({ labourRateCents: v.labourRateCents, markupPct: v.markupPct ?? 0, currency: v.currency, foremanSeesCosts: Boolean(v.foremanSeesCosts) });
       ui.setCurrency(v.currency);
       ui.toast('Defaults saved', 'success');
     };

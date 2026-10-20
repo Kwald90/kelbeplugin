@@ -1,6 +1,7 @@
 // Jobs (S15): list by status, job detail with money, drawings, change orders, crew, compliance.
 import { docTotals, invoiceBalanceCents, invoicePaidCents, entryHours } from '../lib/money.js';
 import { emergencyCard } from '../lib/safety-emergency.js';
+import { lastEdited } from './drawings.js';
 
 const STATUSES = ['lead', 'scheduled', 'in-progress', 'on-hold', 'complete', 'invoiced'];
 const ACTIVE = new Set(['scheduled', 'in-progress', 'on-hold']);
@@ -140,6 +141,8 @@ function detailView(root, ctx, id) {
   const { store, ui, nav, auth } = ctx;
   const { h } = ui;
   const canEdit = auth.isManager();
+  // Crew never see prices or costs (the server strips them too): no money tab or totals.
+  const showMoney = auth.seesMoney?.() ?? true;
   let tab = ctx.query.tab || 'overview';
   const host = h('div');
 
@@ -175,10 +178,11 @@ function detailView(root, ctx, id) {
       h('span', { class: 'ops-meta-item' }, avatars(ui, store, job.crewIds, 6)));
 
     const tabsList = [
-      { id: 'overview', label: 'Overview' }, { id: 'drawings', label: 'Drawings' }, { id: 'money', label: 'Estimates & invoices' },
+      { id: 'overview', label: 'Overview' }, { id: 'drawings', label: 'Drawings' }, showMoney ? { id: 'money', label: 'Estimates & invoices' } : null,
       { id: 'changes', label: `Change orders${job.changeOrders?.length ? ' ' + job.changeOrders.length : ''}` },
       { id: 'schedule', label: 'Schedule' }, { id: 'time', label: 'Time' }, { id: 'compliance', label: 'Compliance' }, { id: 'panels', label: 'Panels' },
-    ];
+    ].filter(Boolean);
+    if (!showMoney && tab === 'money') tab = 'overview';
     const panel = h('div', { class: 'ops-tabpanel' });
     const renderers = { overview, drawings, money, changes, schedule, time, compliance, panels };
     (renderers[tab] || overview)(panel, job, m);
@@ -190,6 +194,13 @@ function detailView(root, ctx, id) {
 
   function overview(el, job, m) {
     const pct = m.revenueCents ? Math.round((m.marginCents / m.revenueCents) * 100) : null;
+    if (!showMoney) {
+      el.append(h('div', { class: 'grid ops-stats' }, ui.stat({ label: 'Labour', value: ui.fmtHours(m.hours), hint: 'logged on this job' }),
+        ui.stat({ label: 'Change orders', value: String((job.changeOrders || []).length), hint: `${(job.changeOrders || []).filter((c) => c.status === 'pending').length} pending` })),
+      h('h2', { class: 'section' }, 'Scope'),
+      h('div', { class: 'card flat ops-scope' }, job.description ? job.description : h('span', { class: 'muted' }, 'No description yet.')));
+      return;
+    }
     el.append(
       h('div', { class: 'grid ops-stats' },
         ui.stat({ label: 'Estimate', value: ui.fmtMoney(m.estCents, { whole: true }), hint: m.coCents ? `+ ${ui.fmtMoney(m.coCents, { whole: true })} approved changes` : `${m.estimates.length} estimate(s)` }),
@@ -203,13 +214,17 @@ function detailView(root, ctx, id) {
   }
 
   function drawings(el, job) {
-    const rows = store.list('drawings', (d) => d.jobId === job.id, { omit: ['underlay', 'strokes', 'texts', 'rooms'] });
-    el.append(h('div', { class: 'row ops-sub-actions' }, ui.button('New drawing', { variant: 'primary', icon: 'pen', href: `#/drawings/new?jobId=${job.id}` })));
-    if (!rows.length) return el.append(ui.empty({ icon: 'pen', title: 'No drawings for this job', text: 'Import a plan and mark it up with symbols and wiring.' }));
+    const rows = store.list('drawings', (d) => d.jobId === job.id, { omit: ['underlay', 'strokes', 'texts', 'rooms', 'history', 'tombstones'] });
+    const client = job.clientId && store.get('clients', job.clientId);
+    // one drawing set per customer is the obvious default; separate drawings stay possible
+    el.append(h('div', { class: 'row ops-sub-actions' },
+      ui.button(client ? `Open ${client.name}'s drawings` : 'Open drawings', { variant: 'primary', icon: 'pen', href: `#/drawings/customer?jobId=${encodeURIComponent(job.id)}` }),
+      ui.button('New separate drawing', { icon: 'plus', href: `#/drawings/new?jobId=${job.id}` })));
+    if (!rows.length) return el.append(ui.empty({ icon: 'pen', title: 'No drawings for this job yet', text: `Open ${client ? `${client.name}'s` : 'the'} drawings to start the customer's plan set, then mark it up with symbols and wiring.` }));
     el.append(h('div', { class: 'grid' }, rows.map((d) => h('a', { class: 'card click ops-drawing', href: '#/drawings/' + d.id },
       h('div', { class: 'ops-thumb' }, d.thumb ? h('img', { src: d.thumb, alt: '' }) : ui.icon('pen', 28)),
       h('div', { style: { fontWeight: 600 } }, d.name),
-      h('div', { class: 'muted ops-small' }, `${(d.objects || []).length} symbols · updated ${ui.fmtDate(d.updatedAt)}`)))));
+      h('div', { class: 'muted ops-small' }, `${(d.objects || []).length} symbols · ${lastEdited(ui, d)}`)))));
   }
 
   function money(el, job, m) {
@@ -259,21 +274,22 @@ function detailView(root, ctx, id) {
     const approved = cos.filter((c) => c.status === 'approved').reduce((s, c) => s + (Number(c.amountCents) || 0), 0);
     const pending = cos.filter((c) => c.status === 'pending').reduce((s, c) => s + (Number(c.amountCents) || 0), 0);
     el.append(h('div', { class: 'row ops-sub-actions' },
-      canEdit ? ui.button('Add change order', { variant: 'primary', icon: 'plus', onClick: () => edit(null) }) : null,
+      canEdit && showMoney ? ui.button('Add change order', { variant: 'primary', icon: 'plus', onClick: () => edit(null) }) : null,
       h('span', { class: 'grow' }),
-      h('span', { class: 'muted' }, 'Approved '), h('strong', { class: 'num' }, ui.fmtMoney(approved)),
-      h('span', { class: 'muted' }, ' · Pending '), h('strong', { class: 'num' }, ui.fmtMoney(pending))));
+      showMoney ? [h('span', { class: 'muted' }, 'Approved '), h('strong', { class: 'num' }, ui.fmtMoney(approved)),
+        h('span', { class: 'muted' }, ' · Pending '), h('strong', { class: 'num' }, ui.fmtMoney(pending))] : null));
     el.append(ui.table({
       columns: [
         { key: 'date', label: 'Date', render: (c) => ui.fmtDate(c.date) },
-        { key: 'title', label: 'Change' },
-        { key: 'amount', label: 'Amount', align: 'right', render: (c) => ui.fmtMoney(c.amountCents) },
+        { key: 'title', label: 'Change', render: (c) => h('div', null, h('div', null, c.title || '—'),
+          c.source === 'drawing' ? h('div', { class: 'muted ops-small' }, ui.badge('From drawings', 'accent'), ' ', c.note || '', c.createdBy ? ` · raised by ${c.createdBy.name}` : '') : null) },
+        showMoney ? { key: 'amount', label: 'Amount', align: 'right', render: (c) => ui.fmtMoney(c.amountCents) } : null,
         { key: 'status', label: 'Status', render: (c) => ui.statusBadge(c.status) },
-        { key: 'act', label: '', render: (c) => (canEdit && c.status === 'pending' ? h('span', { class: 'row', onClick: (e) => e.stopPropagation() },
+        { key: 'act', label: '', render: (c) => (canEdit && showMoney && c.status === 'pending' ? h('span', { class: 'row', onClick: (e) => e.stopPropagation() },
           ui.button('Approve', { size: 'sm', icon: 'check', onClick: () => save(cos.map((x) => (x.id === c.id ? { ...x, status: 'approved' } : x))) }),
           ui.button('Reject', { size: 'sm', variant: 'ghost danger', onClick: () => save(cos.map((x) => (x.id === c.id ? { ...x, status: 'rejected' } : x))) })) : '') },
-      ],
-      rows: cos, onRowClick: canEdit ? edit : null,
+      ].filter(Boolean),
+      rows: cos, onRowClick: canEdit && showMoney ? edit : null,
       empty: ui.empty({ icon: 'edit', title: 'No change orders', text: 'Record scope changes and get them approved before the work.' }),
     }));
   }
