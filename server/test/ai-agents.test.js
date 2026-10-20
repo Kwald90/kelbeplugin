@@ -46,6 +46,9 @@ before(async () => {
   A.seed = await seed(A.token);
   C = await ownerTenant(t, app, 'Agents C Ltd');
   C.seed = await seed(C.token);
+  // Scans below look up to 15 days ahead; keep both companies on their (Business) trial past
+  // the 14-day default so the plan does not change under them.
+  await t.superPool.query("UPDATE tenants SET trial_ends_at = now() + interval '60 days' WHERE id = ANY($1)", [[A.tenantId, C.tenantId]]);
 });
 after(async () => { restoreAnthropic(); await app?.close(); await t?.close(); });
 

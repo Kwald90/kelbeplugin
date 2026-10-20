@@ -49,10 +49,16 @@ export default {
 
       const trialLeft = daysUntil(t.trialEndsAt);
       host.append(h('div', { class: 'grid hq-stats' },
-        ui.stat({ label: 'Plan in force', value: planName(t.effectivePlan), hint: t.plan === 'trial' ? `Trial · ${t.trialEndsAt ? (trialLeft >= 0 ? `${trialLeft} days left` : 'ended') : 'no end date'}` : `Set to ${planName(t.plan)}` }),
+        ui.stat({ label: 'Plan in force', value: planName(t.effectivePlan), hint: (t.onTrial ?? t.plan === 'trial') ? `Trial · ${t.trialEndsAt ? (trialLeft >= 0 ? `${trialLeft} days left` : 'ended') : 'no end date'}` : `Set to ${planName(t.plan)}` }),
         ui.stat({ label: 'Seats', value: `${t.seats.used} / ${t.seats.included ?? '∞'}`, hint: t.seats.extra ? `${t.seats.extra} extra user(s) billed` : 'within the plan', tone: t.seats.extra ? 'accent' : null }),
         ui.stat({ label: 'Billing', value: t.billing.status === 'none' ? 'Not subscribed' : t.billing.status.replace(/_/g, ' '), hint: t.billing.currentPeriodEnd ? `Renews ${ui.fmtDate(t.billing.currentPeriodEnd)}${t.billing.cancelAtPeriodEnd ? ' (cancels)' : ''}` : t.billing.hasCustomer ? 'Customer, no subscription' : 'No Stripe customer' }),
-        ui.stat({ label: 'Records', value: ui.fmtNum(Object.values(t.recordCounts).reduce((a, b) => a + b, 0)), hint: `${t.devices} devices · ${t.apiKeys} API keys` })));
+        ui.stat({ label: 'Records', value: ui.fmtNum(Object.values(t.recordCounts).reduce((a, b) => a + b, 0)), hint: `${t.devices} devices · ${t.apiKeys} API keys` }),
+        // Self-serve sign-up: the $1 deposit paid at Checkout and credited to the first invoice.
+        t.signup ? ui.stat({
+          label: 'Sign-up deposit', value: t.signup.depositPaid ? ui.fmtMoney(t.signup.depositCents ?? 100) : 'Not paid',
+          hint: `${t.signup.depositCredited ? 'Credited to the first invoice' : t.signup.creditError ? `Credit failed (${t.signup.creditError}): add it in Stripe` : 'Not credited yet'}${t.signup.emailVerified ? '' : ' · email not confirmed'}`,
+          tone: t.signup.creditError ? 'danger' : null,
+        }) : null));
 
       host.append(...ui.section('Members', ui.table({
         columns: [

@@ -1,0 +1,84 @@
+/* Sign-up page (site/signup.html). Mobile first; tokens only (on top of /css/tokens.css and site.css). */
+.su-main { max-width: 1120px; }
+.su-layout { display: grid; gap: var(--s5); padding-top: var(--s4); }
+.su-intro h1 { margin: 0 0 var(--s2); font-size: var(--fs-xl); line-height: var(--lh-xl); }
+.su-lede { margin: 0 0 var(--s4); color: var(--text-muted); font-size: var(--fs-lg); line-height: var(--lh-lg); }
+
+.su-summary { padding: var(--s4); border-radius: var(--r-lg); background: var(--accent-soft); margin-bottom: var(--s4); }
+.su-summary h2 { margin: 0 0 var(--s2); font-size: var(--fs-base); line-height: var(--lh-base); }
+.su-steps { margin: 0; padding-left: 1.25em; display: flex; flex-direction: column; gap: var(--s2); }
+.su-steps li { padding-left: var(--s1); }
+
+.su-card { padding: var(--s4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-card); }
+#su-form { display: flex; flex-direction: column; gap: var(--s4); }
+
+.su-field { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.su-field > label, .su-field > legend { font-size: var(--fs-sm); font-weight: 600; padding: 0; }
+.su-field input:not([type=checkbox]):not([type=radio]), .su-field select {
+  font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-input); border-radius: var(--r-md);
+  min-height: 48px; padding: 10px 12px; width: 100%;
+}
+.su-field input:focus, .su-field select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.su-field input[aria-invalid="true"], .su-field select[aria-invalid="true"] { border-color: var(--danger); }
+.su-hint { margin: 0; color: var(--text-muted); font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.su-err { margin: 0; color: var(--danger); font-size: var(--fs-sm); line-height: var(--lh-sm); font-weight: 600; }
+
+.su-pw { display: flex; gap: var(--s2); }
+.su-pw input { flex: 1; min-width: 0; }
+.su-show { flex: none; min-width: 72px; min-height: 48px; border-radius: var(--r-md); border: 1px solid var(--border-input); background: var(--surface-2); color: var(--text); font: 600 var(--fs-sm)/1 var(--font-sans); cursor: pointer; }
+
+.su-plan-list { display: grid; gap: var(--s2); }
+.su-plan { position: relative; display: flex; gap: var(--s3); align-items: flex-start; padding: var(--s3); border: 1px solid var(--border-input); border-radius: var(--r-md); cursor: pointer; background: var(--surface); }
+.su-plan:has(.su-radio:checked) { border-color: var(--accent-fill); box-shadow: 0 0 0 2px var(--accent-soft); background: var(--surface-2); }
+.su-radio { margin: 4px 0 0; width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+.su-radio:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+.su-plan-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.su-plan-top { display: flex; justify-content: space-between; gap: var(--s2); flex-wrap: wrap; }
+.su-plan-price { font-weight: 700; font-variant-numeric: tabular-nums; }
+.su-plan-price small { font-weight: 500; color: var(--text-muted); }
+.su-plan-meta { color: var(--text-muted); font-size: var(--fs-sm); line-height: var(--lh-sm); }
+
+.su-check { display: grid; grid-template-columns: 24px 1fr; gap: var(--s2) var(--s3); align-items: start; }
+.su-check input { width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--accent); }
+.su-check label { font-size: var(--fs-sm); line-height: var(--lh-sm); font-weight: 500; }
+.su-check .su-err { grid-column: 2; }
+
+.su-submit { width: 100%; min-height: 52px; font-size: var(--fs-base); }
+.su-fine { margin: 0; text-align: center; }
+
+.su-notice { margin: 0 0 var(--s4); padding: var(--s3); border-radius: var(--r-md); font-weight: 600; background: var(--surface-2); }
+.su-notice.info { background: var(--info-soft); color: var(--info); }
+.su-notice.warning { background: var(--warning-soft); color: var(--warning); }
+.su-notice.danger { background: var(--danger-soft); color: var(--danger); }
+.su-errors { margin: 0 0 var(--s4); padding: var(--s3) var(--s4); border-radius: var(--r-md); background: var(--danger-soft); color: var(--danger); }
+.su-errors p { margin: 0 0 var(--s1); }
+.su-errors ul { margin: 0; padding-left: 1.25em; }
+.su-errors a { color: var(--danger); font-weight: 600; }
+.su-errors:focus { outline: 2px solid var(--danger); outline-offset: 2px; }
+
+.su-done { max-width: 620px; margin: var(--s6) auto 0; }
+.su-done h1 { margin: var(--s2) 0; font-size: var(--fs-xl); line-height: var(--lh-xl); }
+.su-done h1:focus { outline: none; }
+.su-done .su-steps { margin: var(--s4) 0; }
+.su-done-mark { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--success-soft); color: var(--success); font-size: var(--fs-lg); font-weight: 800; }
+
+.su-legal { max-width: 760px; padding-top: var(--s4); }
+.su-legal h1 { margin: var(--s4) 0 var(--s1); font-size: var(--fs-xl); line-height: var(--lh-xl); }
+.su-legal h2 { margin: var(--s5) 0 var(--s2); font-size: var(--fs-lg); line-height: var(--lh-lg); }
+.su-draft { margin: 0; padding: var(--s3) var(--s4); border-radius: var(--r-md); background: var(--warning-soft); color: var(--warning); }
+
+.su-foot-links { display: flex; gap: var(--s4); flex-wrap: wrap; }
+.su-foot-links a { color: var(--text-muted); }
+
+@media (min-width: 900px) {
+  .su-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: var(--s7); align-items: start; padding-top: var(--s6); }
+  .su-intro { position: sticky; top: var(--s5); }
+  .su-intro h1 { font-size: var(--fs-display); line-height: var(--lh-display); }
+  .su-card { padding: var(--s5); }
+  #su-form { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); }
+  #su-form > .su-plans, #su-form > .su-check, #su-form > .su-submit, #su-form > .su-fine, #su-form > .su-field:has(#su-password), #su-form > .su-field:has(#su-email) { grid-column: 1 / -1; }
+}
+@media (max-width: 420px) {
+  .su-main { padding-left: var(--s3); padding-right: var(--s3); }
+  .site-head nav a[href="/site/pricing.html"] { display: none; }
+}

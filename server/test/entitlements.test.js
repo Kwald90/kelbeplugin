@@ -37,10 +37,22 @@ test('assertFeature and requireFeature refuse with feature_not_in_plan', async (
   await requireFeature(db, 'panels')({ principal: { tenantId: 't-pro' } });
 });
 
-test('new companies get a trial that ends: TRIAL_DAYS, default 30', async () => {
+test('new companies get a trial that ends: TRIAL_DAYS, default 14, at most 730 (Stripe)', async () => {
   const { trialDays } = await import('../src/services/tenants.js');
-  assert.equal(trialDays({}), 30);
-  assert.equal(trialDays({ TRIAL_DAYS: '14' }), 14);
-  assert.equal(trialDays({ TRIAL_DAYS: '0' }), 30);
-  assert.equal(trialDays({ TRIAL_DAYS: 'soon' }), 30);
+  assert.equal(trialDays({}), 14);
+  assert.equal(trialDays({ TRIAL_DAYS: '30' }), 30);
+  assert.equal(trialDays({ TRIAL_DAYS: '0' }), 14);
+  assert.equal(trialDays({ TRIAL_DAYS: 'soon' }), 14);
+  assert.equal(trialDays({ TRIAL_DAYS: '999' }), 730);
+});
+
+test('a trialing Stripe subscription counts as a trial with the chosen tier', async () => {
+  const { tenantEntitlements } = await import('../src/services/entitlements.js');
+  const ends = new Date(Date.now() + 14 * 86_400_000);
+  const e = tenantEntitlements({ plan: 'pro', billing_status: 'trialing', trial_ends_at: ends, plan_overrides: {} });
+  assert.equal(e.plan, 'pro');
+  assert.equal(e.onTrial, true);
+  assert.equal(e.trialEndsAt, ends.toISOString());
+  assert.ok(e.features.includes('drawings') && !e.features.includes('ai.assistant'));
+  assert.equal(tenantEntitlements({ plan: 'pro', billing_status: 'active', plan_overrides: {} }).onTrial, false);
 });

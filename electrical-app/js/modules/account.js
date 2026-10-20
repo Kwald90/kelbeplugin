@@ -36,6 +36,10 @@ let resetToken = null;
 /** app.js hands over the token from #/reset-password?token= and then strips it from the URL. */
 export function holdResetToken(token) { resetToken = typeof token === 'string' && token.length <= 200 ? token : null; }
 
+// The sign-up welcome email's one-time link (#/welcome?token=): same handling as a reset token.
+let welcomeToken = null;
+export function holdWelcomeToken(token) { welcomeToken = typeof token === 'string' && token.length <= 200 ? token : null; }
+
 const OIDC_ERRORS = {
   no_account: 'No account uses that sign-in yet. Ask your company owner for an invite, or sign in with your email.',
   expired: 'That sign-in took too long. Try again.',
@@ -87,6 +91,7 @@ export function renderGate(root, view, ctx) {
     'sign-in': () => signInView(go, ctx, o),
     forgot: () => forgotView(go, o),
     reset: () => resetView(go),
+    welcome: () => welcomeView(go, ctx),
     mfa: () => (o.mfa === 'enrol' ? enrolView(go, ctx) : verifyView(go, ctx)),
     crew: () => crewView(go, ctx, o),
     'no-company': () => noCompanyView(go, ctx, o),
@@ -195,6 +200,31 @@ function resetView(go) {
     h('div', { class: 'row gate-links' },
       h('a', { href: '#/sign-in', onClick: (e) => { e.preventDefault(); go('forgot'); } }, 'Ask for a new link'),
       h('a', { href: '#/sign-in', onClick: (e) => { e.preventDefault(); go('sign-in'); } }, 'Back to sign in')));
+}
+
+/**
+ * After self-serve sign-up: confirm the email with the welcome link, then straight on to
+ * two-step sign-in. A button press uses the link (not page load), so mail scanners that open
+ * links can't spend it.
+ */
+function welcomeView(go, ctx) {
+  const msg = h('div', { class: 'gate-msg' }, welcomeToken ? null : note('This link is missing its code or was already used. Sign in with your email and password instead.', 'warning'));
+  const submit = ui.button('Confirm my email', { variant: 'primary lg', type: 'submit', disabled: !welcomeToken });
+  submit.classList.add('wide');
+  const use = busyButton(submit, async () => {
+    put(msg);
+    try {
+      const r = await api.post('/api/v1/public/signup/welcome', { token: welcomeToken });
+      welcomeToken = null;
+      if (r.mfa) return go('mfa', { mfa: r.mfa });
+      ctx.restart('dashboard');
+    } catch (e) {
+      msg.append(note(e.code === 'invalid_token' ? 'This link has expired or was already used. Sign in with your email and password instead.' : e.message, 'danger'));
+    }
+  });
+  return gateCard(`Welcome to ${BRAND.name}`, 'Your trial has started. Confirm your email, then protect your company with a code from your phone.',
+    msg, h('form', { class: 'stack', onSubmit: (e) => { e.preventDefault(); use(); } }, submit),
+    h('div', { class: 'row gate-links' }, h('a', { href: '#/sign-in', onClick: (e) => { e.preventDefault(); go('sign-in'); } }, 'Sign in with your password instead')));
 }
 
 async function signOutToGate(go, extra = {}) {
