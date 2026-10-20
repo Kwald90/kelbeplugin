@@ -241,6 +241,27 @@ if [ "$MODE" = production ]; then
     check "$p is 404 on the app host" "$p answered $CODE on the app host (want 404)" [ "$CODE" = 404 ]
   done
 fi
+if [ "$MODE" = hq ]; then
+  # The console and the shared app assets it imports must load; the PWA must not be served here.
+  for p in /hq/js/app.js /hq/hq.css /hq/console.css /hq/sw.js /js/ui.js /js/brand.js /js/lib/markdown.js /css/tokens.css /css/app.css /css/help.css /icons/icon.svg; do
+    fetch "$p"
+    check "$p 200 on the HQ host" "$p answered $CODE on the HQ host (want 200: the console needs it)" [ "$CODE" = 200 ]
+  done
+  fetch /
+  if [ "$CODE" = 200 ] && grep -q '/hq/js/app.js' "$TMP/b"; then ok "/ is the HQ console"; else bad "/ answered $CODE without the HQ console (want hq/index.html)"; fi
+  check "/ is revalidated (Cache-Control: $(hdr cache-control))" "/ should be Cache-Control: no-cache, got '$(hdr cache-control)'" grep -qi '^cache-control:.*no-cache' "$TMP/h"
+  for p in /sw.js /manifest.webmanifest /hq/index.html /hq/ /hq/README.md /hq/.env /electrical-app/index.html /js/ /css/ /vendor/ /guides/resend.md /icons/ /index.html; do
+    fetch "$p"
+    if [[ "$CODE" == 2* ]]; then bad "$p answered $CODE on the HQ host (must not be served)"; else ok "$p -> $CODE on the HQ host"; fi
+  done
+  # hq-api only gets sign-in, the HQ endpoints and health; tenant routes are not proxied here.
+  for p in /api/v1/me /api/v1/clients /api/v1/openapi.json /api/v1/help/articles /api/mcp /api/docs; do
+    fetch "$p"
+    check "$p is 404 on the HQ host" "$p answered $CODE on the HQ host (want 404: not proxied)" [ "$CODE" = 404 ]
+  done
+  fetch /api/hq/openapi.json
+  if [[ "$CODE" == 2* ]]; then bad "/api/hq/openapi.json answered $CODE without credentials"; else ok "/api/hq/openapi.json without credentials -> $CODE"; fi
+fi
 if [ "$MODE" = marketing ] || [ "$MODE" = status ]; then
   # Only the routes these pages call are proxied; the rest of the API is not reachable here.
   for p in /api/v1/me /api/v1/clients /api/v1/openapi.json /api/hq/health /api/docs; do
