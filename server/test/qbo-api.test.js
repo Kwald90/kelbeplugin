@@ -249,6 +249,15 @@ describe('records, log, mappings, conflicts (7.5 to 7.7)', { skip }, () => {
     const send = await call(app, { method: 'POST', url: '/api/v1/qbo/records/clients/c-api/sync', token: A.token, body: {} });
     assert.equal(send.status, 202, JSON.stringify(send.body));
     assert.deepEqual(send.body, { queued: true, state: 'synced' });
+    // A Retry that ends in a hold answers the hold's state too, never the link row.
+    await call(app, { method: 'POST', url: '/api/v1/jobs', token: A.token, body: { id: 'j-api', number: 'J-API', title: 'Api job', clientId: 'c-api' } });
+    await call(app, { method: 'POST', url: '/api/v1/employees', token: A.token, body: { id: 'e-api', name: 'Api Worker' } });
+    const te = await call(app, { method: 'POST', url: '/api/v1/timeEntries', token: A.token, body: { id: 'te-api', employeeId: 'e-api', jobId: 'j-api', clockIn: '2026-10-20T14:00:00Z', clockOut: '2026-10-20T18:00:00Z', approved: true } });
+    assert.ok(te.status < 300, JSON.stringify(te.body));
+    await pass(A);
+    const held = await call(app, { method: 'POST', url: '/api/v1/qbo/records/timeEntries/te-api/sync', token: A.token, body: {} });
+    assert.equal(held.status, 202, JSON.stringify(held.body));
+    assert.deepEqual(held.body, { queued: true, state: 'blocked' });
     assert.match(view.body.quickbooks.url, /^https:\/\/app\.sandbox\.qbo\.intuit\.com\/app\/customerdetail\?nameId=\d+$/);
     assert.ok(view.body.log.some((l) => l.action === 'create'));
     const s1 = await call(app, { method: 'POST', url: '/api/v1/qbo/sync', token: A.token, body: { direction: 'push' } });

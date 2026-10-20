@@ -308,8 +308,9 @@ export default async function qboRoutes(app, { config, db, records }) {
     const summary = req.body?.asNew ? 'Sent to QuickBooks as new' : held ? `Sent to QuickBooks now, approving the hold (${held.reason || held.state})` : 'Sent to QuickBooks now';
     await inTenant(req, (tx) => appendAudit(tx, tx.tenantId, { actor: req.principal.actor, action: 'qbo.send', collection, recordId: id, summary, request: requestFacts(req), ...(held ? { meta: { approved: held.reason || held.state } } : {}) }));
     reply.code(202);
-    // The push ran at once under the lease; state is the link's state after it (7.5).
-    return { queued: true, state };
+    // The push ran at once under the lease; state is the link's state after it (7.5). A hold hands
+    // back the link row itself: answer only its state, never the row (realm hash, snapshot, meta).
+    return { queued: true, state: state && typeof state === 'object' ? (state.state ?? null) : state };
   }));
 
   app.post('/api/v1/qbo/records/:collection/:id/renumber', { ...write, schema: { tags, summary: 'Give a document the next number and send it again', params: recordParams, response: errorResponses } }, wrap(async (req) => {
