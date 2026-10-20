@@ -14,6 +14,7 @@ import { sendEmail as resendSend } from '../integrations/resend.js';
 import { sendMail as sendgridSend } from '../integrations/sendgrid.js';
 import { mailSettings } from '../email/config.js';
 import { createMailStore } from '../email/storage.js';
+import { savedSenderName, withSenderName } from './hq-settings.js';
 
 const BATCH = 20;
 export const MAX_ATTEMPTS = 6;
@@ -71,6 +72,11 @@ export async function recoverStuckEmail(db) {
  */
 export async function drainPlatformEmail(db, { send, cfg = platformEmailConfig() } = {}) {
   if (!cfg.apiKey || !cfg.from) return { skipped: 'not_configured' };
+  // The From name HQ set in Settings (platform_settings), on EMAIL_FROM's address. Messages with
+  // their own from_address (HQ Mail) keep it.
+  let senderName = null;
+  try { senderName = await savedSenderName(db); } catch { /* table missing on an old database: EMAIL_FROM as is */ }
+  if (senderName) cfg = { ...cfg, from: withSenderName(cfg.from, senderName) };
   const doSend = send || ((m) => providerSend(m, cfg));
   const out = { sent: 0, failed: 0, retrying: 0 };
   await recoverStuckEmail(db);

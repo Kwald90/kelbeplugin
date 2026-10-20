@@ -11,7 +11,7 @@ import { trialDaysLeft } from '../lib/trial.js';
 export const FEATURE_LABELS = {
   dashboard: 'Dashboard', clients: 'Clients', leads: 'Leads pipeline', jobs: 'Jobs', schedule: 'Schedule', estimates: 'Estimates',
   invoices: 'Invoices', employees: 'Employees', time: 'Time clock', sops: 'SOPs', calcs: 'CEC calculators', bending: 'Pipe bending',
-  wireruns: 'Wire runs', settings: 'Settings', billing: 'Billing', drawings: 'Drawings and takeoff', panels: 'Panel schedules', inventory: 'Inventory',
+  wireruns: 'Wire runs', settings: 'Settings', billing: 'Billing', help: 'Help center and support', drawings: 'Drawings and takeoff', panels: 'Panel schedules', inventory: 'Inventory',
   compliance: 'Permits and inspections', sequences: 'Follow-up sequences', security: 'Security audit', 'drawings.rooms': 'Auto-place boxes in rooms',
   'wireruns.trace': 'Trace wire runs on drawings', portal: 'Client portal', 'payments.online': 'Online invoice payments', 'integrations.email': 'Email (Resend)',
   'ai.assistant': 'AI assistant', 'ai.cec': 'AI code helper', 'ai.background': 'Background AI agents', api: 'API access', mcp: 'MCP server for AI tools',

@@ -1,0 +1,49 @@
+/* HQ console pages: finance, invoices, users, announcements, help center, developer, AI,
+   audit log, settings. Tokens only; builds on hq.css. */
+
+.hq-filters { align-items: flex-end; }
+.hq-filter { min-width: 140px; margin: 0; }
+.hq-filter-wide { min-width: 240px; }
+.hq-filter select, .hq-filter input { min-height: 38px; }
+.hq-list-btn { width: 100%; text-align: left; font: inherit; color: inherit; background: transparent; border: 0; border-bottom: 1px solid var(--border); }
+.hq-big { font-size: var(--fs-xl); font-weight: 700; font-variant-numeric: tabular-nums; }
+.hq-wrap { overflow-wrap: anywhere; }
+
+/* revenue chart: one series in the validated health-chart blue */
+.hq-rev { height: 140px; }
+.hq-rev-axis { display: grid; grid-template-columns: repeat(12, 1fr); text-align: center; font-size: var(--fs-xs); color: var(--text-muted); margin-top: 4px; }
+.hq-rev g:hover .req { opacity: .8; }
+
+.hq-bar-inline { grid-template-columns: 1fr 48px; min-width: 140px; }
+
+/* settings */
+.hq-fieldset { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--s3) var(--s4) var(--s4); margin: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.hq-fieldset legend { font-weight: 650; padding: 0 var(--s1); }
+.hq-settings .card { overflow: hidden; }
+
+/* developer: API explorer */
+.hq-api-tag summary { cursor: pointer; padding: var(--s1) 0; list-style: none; display: flex; align-items: center; gap: var(--s2); }
+.hq-api-tag summary::-webkit-details-marker { display: none; }
+.hq-api-tag summary::before { content: "›"; display: inline-block; transition: transform var(--t-fast); color: var(--text-muted); }
+.hq-api-tag[open] summary::before { transform: rotate(90deg); }
+.hq-api-tag .list { margin-top: var(--s2); }
+.hq-api-op { flex-direction: column; align-items: stretch; }
+.hq-api-op .row { gap: var(--s2); flex-wrap: wrap; }
+.hq-api-more { padding-top: var(--s2); }
+
+/* announcements preview (same look as the app's banner, js/lib/announcements.js) */
+.hq-ann-preview { display: flex; gap: var(--s3); align-items: flex-start; padding: var(--s3) var(--s4); border-radius: var(--r-lg); background: var(--info-soft); color: var(--text); }
+.hq-ann-preview.tone-success { background: var(--success-soft); }
+.hq-ann-preview.tone-warning { background: var(--warning-soft); }
+.hq-ann-preview svg { flex: none; margin-top: 2px; }
+.hq-ann-link { display: inline-block; margin-top: 4px; color: var(--accent); font-weight: 650; }
+
+/* help center editor */
+.hq-md-editor { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); align-items: start; }
+.hq-md-input { width: 100%; min-height: 420px; font-size: var(--fs-sm); line-height: 1.5; resize: vertical; }
+.hq-md-preview { min-height: 420px; max-height: 70vh; overflow-y: auto; padding: var(--s3) var(--s4); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+
+@media (max-width: 760px) {
+  .hq-filter, .hq-filter-wide { min-width: 0; flex: 1 1 140px; }
+  .hq-md-input, .hq-md-preview { min-height: 260px; }
+}

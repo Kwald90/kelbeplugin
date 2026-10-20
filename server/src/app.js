@@ -25,6 +25,13 @@ import hqComplianceRoutes from './routes/hq-compliance.js';
 import hqBillingRoutes from './routes/hq-billing.js';
 import hqLeadRoutes from './routes/hq-leads.js';
 import publicSignupRoutes from './routes/public-signup.js';
+import hqDeveloperRoutes from './routes/hq-developer.js';
+import hqAiRoutes from './routes/hq-ai.js';
+import hqFinanceRoutes from './routes/hq-finance.js';
+import hqSettingsRoutes from './routes/hq-settings.js';
+import hqUserRoutes from './routes/hq-users.js';
+import hqAnnouncementRoutes from './routes/hq-announcements.js';
+import hqHelpRoutes from './routes/hq-help.js';
 import hqMailRoutes from './routes/hq-mail.js';
 import mailWebhookRoutes from './routes/mail-webhooks.js';
 import promotionRoutes from './routes/promotions.js';
@@ -183,6 +190,9 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
 
   const deps = { config, db, records, email, oidcProviders: providers, stats, bodyLimit: SYNC_BODY_LIMIT };
   await app.register(hqHealthRoutes, deps);
+  // Before the other routes: their hooks count API usage and AI errors on every route.
+  await app.register(hqDeveloperRoutes, deps);
+  await app.register(hqAiRoutes, deps);
   await app.register(healthRoutes, deps);
   await app.register(authRoutes, deps);
   await app.register(meRoutes, deps);
@@ -201,6 +211,11 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(hqBillingRoutes, deps);
   await app.register(hqLeadRoutes, deps);
   await app.register(publicSignupRoutes, deps);
+  await app.register(hqFinanceRoutes, deps);
+  await app.register(hqSettingsRoutes, deps);
+  await app.register(hqUserRoutes, deps);
+  await app.register(hqAnnouncementRoutes, deps);
+  await app.register(hqHelpRoutes, deps);
   await app.register(hqMailRoutes, deps);
   await app.register(mailWebhookRoutes, deps);
   await app.register(promotionRoutes, deps);

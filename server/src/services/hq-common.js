@@ -23,6 +23,17 @@ export function parseEnvironments(v) {
 const DEFAULT_CONTROLS = fileURLToPath(new URL('../../../compliance/controls.yaml', import.meta.url));
 
 /**
+ * Where HQ lives, for links in emails: HQ_PUBLIC_URL (production: https://hq.fishtapehq.com/),
+ * else PUBLIC_ORIGIN + /hq/ (staging and local serve HQ on the app host). Ends with a slash,
+ * so `${hqUrl(config)}#/leads/<id>` is a deep link.
+ */
+export function hqUrl(config, env = process.env) {
+  const raw = String(env.HQ_PUBLIC_URL || '').trim();
+  const ok = /^(https:\/\/[^\s/]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)(\/[^\s]*)?$/.test(raw);
+  return ok ? (raw.endsWith('/') ? raw : `${raw}/`) : `${config.publicOrigin}/hq/`;
+}
+
+/**
  * HQ settings. config.js does not read these yet, so they come from the environment;
  * tests (and later config.js) can pass overrides as config.hq.
  * @param {import('../config.js').Config & { hq?: object }} config
@@ -30,6 +41,7 @@ const DEFAULT_CONTROLS = fileURLToPath(new URL('../../../compliance/controls.yam
 export function hqSettings(config, env = process.env) {
   return {
     notifyEmail: env.HQ_NOTIFY_EMAIL || '',
+    publicUrl: hqUrl(config, env),
     deployLogFile: env.DEPLOY_LOG_FILE || '',
     controlsFile: env.COMPLIANCE_CONTROLS_FILE || DEFAULT_CONTROLS,
     environments: parseEnvironments(env.HQ_ENVIRONMENTS),

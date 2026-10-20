@@ -46,7 +46,7 @@ import { randomToken, sha256 } from '../lib/crypto.js';
 import { hashSecret, passwordProblem } from '../auth/passwords.js';
 import { appendAudit } from './audit.js';
 import { PRICE_KEYS, SELF_SERVE_PLANS, createBilling, extraSeats } from './billing.js';
-import { hqSettings } from './hq-common.js';
+import { hqSettings, hqUrl } from './hq-common.js';
 import { enqueue } from './queue.js';
 import { EMAIL_RE, PROVINCES, insertTenantWithOwner, normaliseEmail, trialDays } from './tenants.js';
 
@@ -189,11 +189,25 @@ export function createSignups({ config, db, email, billing = createBilling({ con
     return ids;
   }
 
-  /** What the form needs to know: open or not, trial length, deposit. */
-  function options() {
+  /**
+   * The terms and privacy versions people accept now: what HQ set in Settings (platform_settings),
+   * else TERMS_VERSION. Loaded lazily: hq-settings.js imports constants from this file.
+   */
+  async function legalVersions(q = db) {
+    try {
+      const { readPlatformSettings } = await import('./hq-settings.js');
+      const { legal } = await readPlatformSettings(q);
+      return { terms: legal.terms.version || TERMS_VERSION, privacy: legal.privacy.version || TERMS_VERSION };
+    } catch {
+      return { terms: TERMS_VERSION, privacy: TERMS_VERSION };
+    }
+  }
+
+  /** What the form needs to know: open or not, trial length, deposit, the terms version. */
+  async function options() {
     return {
       open: Boolean(stripe), trialDays: trialDays(), depositCents: DEPOSIT_CENTS, currency: CURRENCY,
-      plans: SELF_SERVE_PLANS, maxUsers: MAX_USERS, termsVersion: TERMS_VERSION,
+      plans: SELF_SERVE_PLANS, maxUsers: MAX_USERS, termsVersion: (await legalVersions()).terms,
     };
   }
 
@@ -234,12 +248,13 @@ export function createSignups({ config, db, email, billing = createBilling({ con
     const days = trialDays();
     const expiresAt = new Date(Date.now() + settings.checkoutMinutes * 60_000);
     const passwordHash = await hashSecret(f.password);
+    const legal = await legalVersions();
     try {
       await db.query(
         `INSERT INTO signups (id, email, display_name, password_hash, company_name, province, plan, user_count, trial_days,
                               terms_version, terms_accepted_at, deposit_cents, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), $11, $12)`,
-        [id, f.email, f.name.slice(0, 200), passwordHash, f.companyName.slice(0, 200), f.province, f.plan, f.users, days, TERMS_VERSION, DEPOSIT_CENTS, expiresAt]);
+        [id, f.email, f.name.slice(0, 200), passwordHash, f.companyName.slice(0, 200), f.province, f.plan, f.users, days, legal.terms, DEPOSIT_CENTS, expiresAt]);
     } catch (e) {
       if (e.code === '23505') throw new ApiError(409, 'signup_pending', 'A sign-up with this email is already in progress. Try again in a minute.');
       throw e;
@@ -305,6 +320,12 @@ export function createSignups({ config, db, email, billing = createBilling({ con
         owner: { email: cur.email, displayName: cur.display_name || cur.email, passwordHash: cur.password_hash },
       });
       await tx.query('UPDATE tenants SET stripe_customer_id = $2, updated_at = now() WHERE id = $1', [tenantId, obj.customer]);
+      // The form's checkbox covered the terms (the version stored on the sign-up) and the privacy
+      // policy in force then: record both so the app does not ask again.
+      const legal = await legalVersions(tx);
+      await tx.query(
+        `INSERT INTO legal_acceptances (user_id, doc, version, accepted_at) VALUES ($1, 'terms', $2, $4), ($1, 'privacy', $3, $4) ON CONFLICT DO NOTHING`,
+        [userId, cur.terms_version, legal.privacy, cur.terms_accepted_at]);
       await billing.applySubscription(tenantId, sub, { reason: 'sign-up', q: tx });
       const token = randomToken(WELCOME_PREFIX);
       const paid = Number.isInteger(obj.amount_total) ? obj.amount_total : cur.deposit_cents;
@@ -327,7 +348,7 @@ export function createSignups({ config, db, email, billing = createBilling({ con
       });
       await notifyHq(tx, `New sign-up: ${cur.company_name.slice(0, 80)} (${planName} trial)`,
         `${cur.company_name} signed up for a ${planName} trial (${cur.user_count} user${cur.user_count === 1 ? '' : 's'}${cur.province ? `, ${cur.province}` : ''}). `
-        + `Deposit ${money(paid)} paid; the trial ends ${day(trialEndsAt)}.\n\nDetails in HQ: ${config.publicOrigin}/hq/#/tenants/${tenantId}\n`, tenantId);
+        + `Deposit ${money(paid)} paid; the trial ends ${day(trialEndsAt)}.\n\nDetails in HQ: ${hqUrl(config)}#/tenants/${tenantId}\n`, tenantId);
       return true;
     }, { write: true });
   }
@@ -343,7 +364,7 @@ export function createSignups({ config, db, email, billing = createBilling({ con
     if (sub?.id) { try { await needStripe().subscriptions.cancel(sub.id); } catch { /* HQ follows up */ } }
     await db.tx((c) => notifyHq(c, `Sign-up could not finish: ${row.company_name.slice(0, 80)}`,
       `A paid sign-up could not become a company (${failure.replace(/_/g, ' ')}). Its subscription was cancelled; refund the ${money(paid)} deposit in Stripe `
-      + `and contact them.\n\nHQ: ${config.publicOrigin}/hq/#/tenants\n`));
+      + `and contact them.\n\nHQ: ${hqUrl(config)}#/tenants\n`));
   }
 
   /** -$1.00 on the Stripe customer balance: it comes off the first invoice after the trial. */
