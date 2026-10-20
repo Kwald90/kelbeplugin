@@ -24,7 +24,13 @@ let ctx = null;
 let timer = null;
 let bar = null;
 let geofenceShift = null;
+// The iOS monitor outlives the page (a relaunch, a sign-out, the next person on a shared iPad):
+// until this page has matched it to the clock once, it may still be running for an old shift.
+let geofenceMatched = false;
 let busy = false;
+const clockingOut = new Set();
+// A clock-out fix this long after the tap is not where they clocked out (the app was put away).
+const CLOCK_OUT_FIX_MS = 60_000;
 const dismissed = new Set();
 const listeners = new Set();
 
@@ -79,18 +85,25 @@ export async function clockInFlow(c, { jobId = null, kind = 'work', note = '' } 
   return entry;
 }
 
-/** Take the clock-out fix while the shift is still open, then close it. */
+/**
+ * Take the clock-out fix while the shift is still open, then close it at the moment Clock out
+ * was tapped (not when the fix arrived: that can be 15 s later, or hours if the app was put away).
+ */
 export async function clockOutFlow(c, { note } = {}) {
   ctx = ctx || c;
-  const { store, ui } = c;
+  const { store } = c;
   const open = openEntry(store, c.auth.current().id);
-  if (!open) return null;
-  const { fix } = await shiftFix(open);
-  if (fix) attachFix(store, open.id, fix, 'out', open.kind === 'travel' ? [] : sites());
-  const done = closeEntry(store, open.id, { note });
-  hideBar();
-  refresh();
-  return done;
+  if (!open || clockingOut.has(open.id)) return null; // a second tap while the fix is coming
+  const at = new Date().toISOString();
+  clockingOut.add(open.id);
+  try {
+    const { fix } = await shiftFix(open);
+    if (fix && Math.abs(Date.parse(fix.at) - Date.parse(at)) <= CLOCK_OUT_FIX_MS) attachFix(store, open.id, fix, 'out', open.kind === 'travel' ? [] : sites());
+    const done = closeEntry(store, open.id, { note, at });
+    hideBar();
+    refresh();
+    return done;
+  } finally { clockingOut.delete(open.id); }
 }
 
 /** Start travel now (or at `at`, when a suggestion saw them leave). */
@@ -206,11 +219,12 @@ export function refresh() {
   const on = !!open && granted();
   if (!on) {
     if (timer) { clearInterval(timer); timer = null; }
-    if (geofenceShift) { geofenceShift = null; stopGeofence(); }
+    if (geofenceShift || (isNative() && !geofenceMatched)) { geofenceShift = null; geofenceMatched = true; stopGeofence(); }
     if (!open) hideBar();
     return;
   }
   if (isNative()) {
+    geofenceMatched = true;
     if (geofenceShift !== open.id) {
       geofenceShift = open.id;
       const last = ctx.store.list('locationPoints', (p) => p.timeEntryId === open.id).sort((a, b) => b.at.localeCompare(a.at))[0];
@@ -244,8 +258,19 @@ export function startShiftTracker(c) {
   return api;
 }
 
+/**
+ * Sign-out, crew hand-back, company switch: stop watching before the page goes. The next page
+ * may belong to someone else (or no one), and this person's shift is no longer on this screen.
+ */
+export async function stopShiftTracker() {
+  if (timer) { clearInterval(timer); timer = null; }
+  hideBar();
+  geofenceShift = null;
+  await stopGeofence();
+}
+
 export const api = {
-  checkNow, refresh, clockInFlow, clockOutFlow, startTravelFlow, arriveFlow, suggestArrival,
+  checkNow, refresh, clockInFlow, clockOutFlow, startTravelFlow, arriveFlow, suggestArrival, stop: stopShiftTracker,
   onSuggestion(fn) { listeners.add(fn); return () => listeners.delete(fn); },
   get watching() { return !!timer || !!geofenceShift; },
 };

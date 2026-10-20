@@ -6,11 +6,12 @@
 // a location onto the job, and fulfilled material requests that never became a stock move) at
 // cost + markup, become invoice lines. What an invoice billed is kept on the invoice
 // (`tm: { from, to, timeEntryIds, stockMoveIds, materialRequestIds }`), so nothing is billed
-// twice and voiding the invoice frees it again. No other record is changed.
+// twice and voiding the invoice frees it again (restoring it is refused once a newer invoice
+// billed any of them: restoreConflicts). No other record is changed.
 //
 // Fixed price: time is tracked for payroll and job costing only and never becomes an invoice
 // line. jobCosting() compares the estimate with what was spent: hours, cost and margin.
-import { docTotals, entryHours } from './money.js';
+import { docTotals, entryHours, lineCents } from './money.js';
 
 /**
  * Is this time entry travel? One model: `kind: 'travel'` (lib/timesheet.js, lib/clock.js). Entries saved
@@ -48,24 +49,49 @@ const defaultDay = (iso) => String(iso || '').slice(0, 10);
 const inRange = (day, from, to) => Boolean(day) && (!from || day >= from) && (!to || day <= to);
 const round2 = (n) => Math.round(n * 100) / 100;
 
+/** The records one T&M invoice bills: 'time:<id>', 'move:<id>', 'req:<id>'. */
+function invoiceRefs(inv) {
+  return [
+    ...(inv?.tm?.timeEntryIds || []).map((id) => `time:${id}`),
+    ...(inv?.tm?.stockMoveIds || []).map((id) => `move:${id}`),
+    ...(inv?.tm?.materialRequestIds || []).map((id) => `req:${id}`),
+  ];
+}
+
 /** Records a non-void invoice already billed: Set of 'time:<id>', 'move:<id>', 'req:<id>'. */
 export function billedRefs(invoices = []) {
   const out = new Set();
   for (const inv of invoices) {
     if (!inv?.tm || inv.status === 'void') continue;
-    for (const id of inv.tm.timeEntryIds || []) out.add(`time:${id}`);
-    for (const id of inv.tm.stockMoveIds || []) out.add(`move:${id}`);
-    for (const id of inv.tm.materialRequestIds || []) out.add(`req:${id}`);
+    for (const r of invoiceRefs(inv)) out.add(r);
   }
   return out;
 }
+
+/**
+ * What a voided T&M invoice would bill twice if it were restored: the records it bills that
+ * another non-void invoice has billed since the void freed them. Empty when it can come back.
+ */
+export function restoreConflicts(invoice, invoices = []) {
+  if (!invoice?.tm) return [];
+  const billed = billedRefs(invoices.filter((i) => i?.id !== invoice.id));
+  return invoiceRefs(invoice).filter((r) => billed.has(r));
+}
+
+/**
+ * Does a fulfilled request's stock move still stand for it? A move that was undone (deleted)
+ * no longer does, unless an invoice billed it before it went.
+ */
+const coveredByMove = (r, moveIds, billed = new Set()) => Boolean(r.stockMoveId) && (moveIds.has(r.stockMoveId) || billed.has(`move:${r.stockMoveId}`));
 
 /** Is a stock move material used on a job (out of a location, not into another)? */
 export const isJobUse = (m, jobId) => m.jobId === jobId && Boolean(m.fromLocationId) && !m.toLocationId && Number(m.qty) > 0;
 
 /**
  * What a T&M job has not billed yet, between `from` and `to` (YYYY-MM-DD, inclusive; either may
- * be empty for open-ended).
+ * be empty for open-ended). `firstDay` is the earliest day of anything left to bill (approved or
+ * waiting for approval): the invoice builder's default start. The totals are the amounts of the
+ * invoice's own lines (tmLines), so the preview and the invoice it builds always agree.
  * @param {object} o
  * @param {object} o.job
  * @param {object} o.settings company settings
@@ -80,13 +106,17 @@ export function unbilledTm({ job, settings, timeEntries = [], stockMoves = [], m
   const empById = new Map(employees.map((e) => [e.id, e]));
   const labour = [];
   let pendingApproval = 0;
+  let firstDay = '';
+  const seen = (day) => { if (day && (!firstDay || day < firstDay)) firstDay = day; };
   for (const t of timeEntries) {
     if (t.jobId !== job.id || !t.clockOut || billed.has(`time:${t.id}`)) continue;
     const day = dayOf(t.clockIn);
     if (!inRange(day, from, to)) continue;
+    seen(day);
     if (!t.approved) { pendingApproval++; continue; }
-    const hours = round2(entryHours(t));
-    if (hours <= 0) continue;
+    // Exact hours: tmLines adds them up per invoice line and rounds once there.
+    const hours = entryHours(t);
+    if (round2(hours) <= 0) continue;
     const e = empById.get(t.employeeId);
     const travel = isTravel(t);
     const rateCents = travel ? rates.travelRateCents : (Number(e?.billRateCents) > 0 && job.labourRateCents == null ? Number(e.billRateCents) : rates.labourRateCents);
@@ -94,35 +124,46 @@ export function unbilledTm({ job, settings, timeEntries = [], stockMoves = [], m
   }
   const materials = [];
   const unit = (costCents) => Math.round(costCents * (1 + rates.markupPct / 100));
+  const moveIds = new Set(stockMoves.map((m) => m.id));
+  // A move whose request was billed on its own (the move was missing then) is billed already.
+  const billedViaRequest = new Set(materialRequests.filter((r) => r.stockMoveId && billed.has(`req:${r.id}`)).map((r) => r.stockMoveId));
   for (const m of stockMoves) {
-    if (!isJobUse(m, job.id) || billed.has(`move:${m.id}`) || !inRange(m.date || dayOf(m.createdAt), from, to)) continue;
+    if (!isJobUse(m, job.id) || billed.has(`move:${m.id}`) || billedViaRequest.has(m.id)) continue;
+    const day = m.date || dayOf(m.createdAt);
+    if (!inRange(day, from, to)) continue;
+    seen(day);
     const it = itemById.get(m.itemId);
     const cost = it?.costCents;
-    materials.push({ source: 'move', id: m.id, itemId: m.itemId || null, description: it?.name || 'Material', unit: it?.unit || 'ea', qty: Number(m.qty),
+    materials.push({ source: 'move', id: m.id, day, itemId: m.itemId || null, description: it?.name || 'Material', unit: it?.unit || 'ea', qty: Number(m.qty),
       costCents: cost == null ? null : Number(cost), unitCents: cost == null ? 0 : unit(Number(cost)) });
   }
   for (const r of materialRequests) {
-    if (r.jobId !== job.id || r.status !== 'fulfilled' || r.stockMoveId || billed.has(`req:${r.id}`)) continue;
-    if (!inRange(dayOf(r.fulfilledAt || r.updatedAt || r.createdAt), from, to)) continue;
+    if (r.jobId !== job.id || r.status !== 'fulfilled' || coveredByMove(r, moveIds, billed) || billed.has(`req:${r.id}`)) continue;
+    const day = dayOf(r.fulfilledAt || r.updatedAt || r.createdAt);
+    if (!inRange(day, from, to)) continue;
+    seen(day);
     const it = r.itemId ? itemById.get(r.itemId) : null;
     const cost = r.costCents ?? it?.costCents ?? null;
-    materials.push({ source: 'request', id: r.id, itemId: r.itemId || null, description: it?.name || r.description || 'Material', unit: r.unit || it?.unit || 'ea', qty: Number(r.qty) || 0,
+    materials.push({ source: 'request', id: r.id, day, itemId: r.itemId || null, description: it?.name || r.description || 'Material', unit: r.unit || it?.unit || 'ea', qty: Number(r.qty) || 0,
       costCents: cost == null ? null : Number(cost), unitCents: cost == null ? 0 : unit(Number(cost)) });
   }
   const hours = round2(labour.filter((l) => !l.travel).reduce((s, l) => s + l.hours, 0));
   const travelHours = round2(labour.filter((l) => l.travel).reduce((s, l) => s + l.hours, 0));
-  const labourCents = labour.reduce((s, l) => s + Math.round(l.hours * l.rateCents), 0);
-  const materialCents = materials.reduce((s, m) => s + Math.round(m.qty * m.unitCents), 0);
+  const { lines } = tmLines({ labour, materials });
+  const sum = (kind) => lines.filter((l) => l.kind === kind).reduce((s, l) => s + lineCents(l), 0);
+  const labourCents = sum('labour');
+  const materialCents = sum('material');
   return {
     rates, labour, materials, hours, travelHours, labourCents, materialCents, totalCents: labourCents + materialCents,
-    missingCost: materials.filter((m) => m.costCents == null).length, pendingApproval,
+    missingCost: materials.filter((m) => m.costCents == null).length, pendingApproval, firstDay,
     empty: !labour.length && !materials.length,
   };
 }
 
 /**
  * Invoice lines from unbilledTm(): one labour line per person and rate (travel on its own line),
- * one material line per item and price (free-text requests by description).
+ * one material line per item and price (free-text requests by description). A labour line's
+ * hours are the exact sum of its entries, rounded once to 0.01 h.
  * @returns {{ lines: object[], refs: { timeEntryIds: string[], stockMoveIds: string[], materialRequestIds: string[] } }}
  */
 export function tmLines(u, { fmtDay = (d) => d } = {}) {
@@ -132,9 +173,10 @@ export function tmLines(u, { fmtDay = (d) => d } = {}) {
     const k = `${l.employeeId}|${l.travel}|${l.rateCents}`;
     if (!groups.has(k)) groups.set(k, { ...l, hours: 0, days: [] });
     const g = groups.get(k);
-    g.hours = round2(g.hours + l.hours);
+    g.hours += l.hours;
     g.days.push(l.day);
   }
+  for (const g of groups.values()) g.hours = round2(g.hours);
   for (const g of [...groups.values()].sort((a, b) => Number(a.travel) - Number(b.travel) || a.name.localeCompare(b.name))) {
     const days = [...new Set(g.days)].sort();
     const span = days.length > 1 ? `${fmtDay(days[0])} to ${fmtDay(days.at(-1))}` : fmtDay(days[0]);
@@ -220,8 +262,9 @@ export function jobCosting({ job, estimates = [], timeEntries = [], stockMoves =
   }
   let materialCents = 0;
   for (const m of stockMoves) if (isJobUse(m, job.id)) materialCents += Math.round(Number(m.qty) * (Number(itemById.get(m.itemId)?.costCents) || 0));
+  const moveIds = new Set(stockMoves.map((m) => m.id));
   for (const r of materialRequests) {
-    if (r.jobId !== job.id || r.status !== 'fulfilled' || r.stockMoveId) continue;
+    if (r.jobId !== job.id || r.status !== 'fulfilled' || coveredByMove(r, moveIds)) continue;
     materialCents += Math.round((Number(r.qty) || 0) * (Number(r.costCents ?? itemById.get(r.itemId)?.costCents) || 0));
   }
   const costCents = labourCents + materialCents;

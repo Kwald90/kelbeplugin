@@ -96,6 +96,69 @@ describe('time & material', () => {
     assert.throws(() => TM.buildTmInvoice({ job, settings, issueDate: '2026-10-11', from: '2026-11-01', to: '2026-11-30', ...sources }), /Nothing to bill/);
   });
 
+  test('a voided invoice cannot come back once a newer invoice billed its records', () => {
+    const range = { issueDate: '2026-10-11', from: '2026-10-01', to: '2026-10-10' };
+    const a = { ...TM.buildTmInvoice({ job, settings, ...range, ...sources }).invoice, id: 'invA', status: 'void' };
+    assert.deepEqual(TM.restoreConflicts(a, [a]), [], 'nothing else billed them: it can be restored');
+    // The void freed t1..t3, m1, m3, r1, r3; invoice B bills them again.
+    const b = { ...TM.buildTmInvoice({ job, settings, ...range, ...sources, invoices: [a] }).invoice, id: 'invB' };
+    assert.deepEqual(b.tm.timeEntryIds, a.tm.timeEntryIds);
+    const clash = TM.restoreConflicts(a, [a, b]);
+    assert.deepEqual(clash.sort(), ['move:m1', 'move:m3', 'req:r1', 'req:r3', 'time:t1', 'time:t2', 'time:t3']);
+    assert.deepEqual(TM.restoreConflicts(a, [a, { ...b, status: 'void' }]), [], 'B voided too: A may come back');
+    assert.deepEqual(TM.restoreConflicts({ id: 'x', status: 'void', lines: [] }, [a, b]), [], 'an invoice without T&M records never clashes');
+  });
+
+  test('the builder starts at the earliest unbilled day, so time approved after the last invoice is not hidden', () => {
+    // Billed up to Oct 15 at noon; Oct 15's shift was still waiting for approval, so it was skipped.
+    const day15 = entry('t15', 'e1', '2026-10-15', '14', '18', { approved: false });
+    const src = { ...sources, timeEntries: [entry('t14', 'e1', '2026-10-14', '14', '18'), day15], stockMoves: [], materialRequests: [] };
+    const first = { ...TM.buildTmInvoice({ job, settings, issueDate: '2026-10-15', from: '2026-10-14', to: '2026-10-15', ...src }).invoice, id: 'inv1' };
+    assert.deepEqual(first.tm.timeEntryIds, ['t14']);
+    // Approved later, plus a stock move back-dated to Oct 12.
+    const later = { ...src, timeEntries: [src.timeEntries[0], { ...day15, approved: true }], stockMoves: [{ id: 'mb', itemId: 'i1', fromLocationId: 'van2', qty: 2, jobId: 'j1', date: '2026-10-12' }], invoices: [first] };
+    const all = TM.unbilledTm({ job, settings, ...later });
+    assert.equal(all.firstDay, '2026-10-12', 'the default start covers everything not billed yet');
+    const second = TM.buildTmInvoice({ job, settings, issueDate: '2026-10-20', from: all.firstDay, to: '2026-10-20', ...later });
+    assert.deepEqual(second.invoice.tm.timeEntryIds, ['t15']);
+    assert.deepEqual(second.invoice.tm.stockMoveIds, ['mb']);
+    assert.equal(second.unbilled.totalCents, all.totalCents, 'the preview matches the job card');
+    assert.equal(TM.unbilledTm({ job, settings, ...later, invoices: [first, { ...second.invoice, id: 'inv2' }] }).firstDay, '', 'nothing left');
+    assert.equal(TM.unbilledTm({ job, settings, ...src }).firstDay, '2026-10-14', 'an entry waiting for approval counts too');
+  });
+
+  test('an undone stock move no longer hides its fulfilled request', () => {
+    // r2 was taken from stock as move m3; the move was undone (deleted) without reopening r2.
+    const src = { ...sources, stockMoves: stockMoves.filter((m) => m.id !== 'm3') };
+    const u = TM.unbilledTm({ job, settings, from: '2026-10-01', to: '2026-10-10', ...src });
+    assert.ok(u.materials.some((m) => m.source === 'request' && m.id === 'r2'), 'billed as the request');
+    const costed = TM.jobCosting({ job, ...src });
+    assert.equal(costed.materialCents, 20 * 1000 + 50 * 25 + 10 * 150, 'and costed');
+    // A move that an invoice billed before it was undone is not billed again through its request.
+    const billedMove = { id: 'inv0', status: 'sent', tm: { timeEntryIds: [], stockMoveIds: ['m3'], materialRequestIds: [] } };
+    assert.ok(!TM.unbilledTm({ job, settings, ...src, invoices: [billedMove] }).materials.some((m) => m.id === 'r2'));
+    // ...and a request billed on its own keeps its move (if it shows up later) off the next invoice.
+    const viaRequest = { id: 'inv1', status: 'sent', tm: { timeEntryIds: [], stockMoveIds: [], materialRequestIds: ['r2'] } };
+    assert.ok(!TM.unbilledTm({ job, settings, ...sources, invoices: [viaRequest] }).materials.some((m) => m.id === 'm3'));
+  });
+
+  test('hours are rounded once per invoice line, and the unbilled total is the invoice subtotal', () => {
+    const short = ['t1', 't2', 't3'].map((id, i) => ({ id, employeeId: 'e1', jobId: 'j1', clockIn: `2026-10-05T1${i}:00:00.000Z`, clockOut: `2026-10-05T1${i}:20:00.000Z`, breakMins: 0, approved: true }));
+    const src = { ...sources, timeEntries: short, stockMoves: [], materialRequests: [] };
+    const s9750 = { ...settings, labourRateCents: 9750 };
+    const { invoice, unbilled } = TM.buildTmInvoice({ job, settings: s9750, issueDate: '2026-10-11', ...src });
+    const labour = invoice.lines.filter((l) => l.kind === 'labour');
+    assert.deepEqual(labour.map((l) => l.qty), [1], 'three 20-minute entries bill as 1.00 h, not 0.99 h');
+    assert.equal(unbilled.totalCents, 9750);
+    assert.equal(unbilled.totalCents, docTotals(invoice).subtotalCents);
+    // Material at a fractional quantity: the preview still matches the invoice to the cent.
+    const mats = { ...sources, timeEntries: [], materialRequests: [], stockMoves: [
+      { id: 'q1', itemId: 'i2', fromLocationId: 'van2', qty: 2.5, jobId: 'j1', date: '2026-10-05' },
+      { id: 'q2', itemId: 'i2', fromLocationId: 'van2', qty: 2.5, jobId: 'j1', date: '2026-10-05' }] };
+    const m = TM.buildTmInvoice({ job, settings: { ...settings, markupPct: 0 }, issueDate: '2026-10-11', ...mats });
+    assert.equal(m.unbilled.totalCents, docTotals(m.invoice).subtotalCents);
+  });
+
   test('a fixed-price job never builds T&M lines', () => {
     assert.throws(() => TM.buildTmInvoice({ job: { ...job, billingMode: 'fixed' }, settings, issueDate: '2026-10-11', ...sources }), /fixed price/);
     assert.throws(() => TM.buildTmInvoice({ job: { ...job, billingMode: undefined }, settings, issueDate: '2026-10-11', ...sources }), /fixed price/);

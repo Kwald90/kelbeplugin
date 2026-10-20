@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { AUDIT_COLLECTION, TABLE_COLLECTIONS, collectionDef, isCollection } from '../collections.js';
 import { ApiError, badRequest, conflict, forbidden, notFound, tooLarge, validationFailed } from '../errors.js';
-import { ENTRY_COORDS, canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, restoreHiddenFields, rowFilter, rowVisible, sanitizeForStorage } from '../auth/access.js';
+import { ENTRY_COORDS, canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, reviewMerge, restoreHiddenFields, rowFilter, rowVisible, sanitizeForStorage } from '../auth/access.js';
 import { appendAudit, auditRowToRecord, describeRecord } from './audit.js';
 import { assertCollectionWritable, loadTenantPlan } from './entitlements.js';
 import { afterTaskWrite } from './workplan-events.js';
@@ -334,6 +334,7 @@ export function createRecords({ validator }) {
     if (typeof m.id !== 'string' || !ID_RE.test(m.id)) return 'id must be 1-128 characters: letters, digits, . _ : -';
     if (m.baseVersion != null && !(Number.isInteger(m.baseVersion) && m.baseVersion >= 0)) return 'baseVersion must be a non-negative integer or null.';
     if (m.op === 'upsert' && (!m.data || typeof m.data !== 'object' || Array.isArray(m.data))) return 'upsert needs a data object.';
+    if (m.fields != null && !(Array.isArray(m.fields) && m.fields.length <= 200 && m.fields.every((f) => typeof f === 'string' && f.length >= 1 && f.length <= 64))) return 'fields must be a list of field names or null.';
     return null;
   }
 
@@ -376,11 +377,12 @@ export function createRecords({ validator }) {
       }
       // Collections that merge (work tasks): field groups resolve on their own, so an offline
       // completion and a foreman's edit made meanwhile both survive. Never a whole-record loss.
-      const mergedData = !cur.deleted_at ? mergeWrite(p, coll, cur.data, data) : null;
+      // A time entry reviewed or approved on an older copy takes only those fields.
+      const fresh = m.baseVersion === cur.version;
+      const mergedData = !cur.deleted_at ? (mergeWrite(p, coll, cur.data, data) || (!fresh ? reviewMerge(coll, cur.data, data, m.fields) : null)) : null;
       if (mergedData) {
         const stored = prepare(coll, m.id, mergedData, cur.data, now);
         checkRules(p, coll, cur.data, stored);
-        const fresh = m.baseVersion === cur.version;
         if (!fresh) await keepHistory(tx, coll, m.id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, m.mid);
         const row = await updateRow(tx, def, m.id, stored, who);
         await audit(tx, who, 'record.update', coll, m.id, stored, fresh ? meta : { ...meta, conflict: 'merged' });
@@ -391,7 +393,6 @@ export function createRecords({ validator }) {
         return { mid: m.mid, status: 'ok', version: row.version, changeSeq: row.change_seq };
       }
       checkRules(p, coll, cur.deleted_at ? null : cur.data, data);
-      const fresh = m.baseVersion === cur.version;
       if (!fresh && clientTime(m.data.updatedAt, now) <= rowTime(cur)) {
         // Server copy is newer: it wins, the incoming change is kept in history.
         await keepHistory(tx, coll, m.id, { version: m.baseVersion, deleted: false, data }, 'rejected', who, m.mid);

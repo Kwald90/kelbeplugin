@@ -4,7 +4,7 @@ import { newDocTax, taxComponents, TREATMENTS } from '../lib/tax.js';
 import { lineEditor, taxEditor, totalsPanel, previewDocument, debounce, clientName } from '../lib/doc-view.js';
 import { invoiceOnlineTools, payLinkBlock } from './integrations.js';
 import { moduleOn } from '../lib/modules.js';
-import { billingLabel } from '../lib/tm.js';
+import { billingLabel, restoreConflicts } from '../lib/tm.js';
 
 const METHODS = ['e-transfer', 'cheque', 'card', 'cash', 'transfer'];
 
@@ -232,7 +232,7 @@ function renderDetail(root, ctx, id) {
       h('div', { class: 'row' },
         cur.status === 'draft' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: () => setStatus('sent') }) : null,
         cur.status !== 'void' && bal > 0 ? ui.button('Record payment', { size: 'sm', variant: 'primary', icon: 'dollar', onClick: recordPayment }) : null,
-        cur.status !== 'void' ? ui.button('Void', { size: 'sm', variant: 'ghost danger', onClick: voidIt }) : ui.button('Restore', { size: 'sm', onClick: () => { setStatus('draft'); syncInvoiceStatus(store, id); nav('#/invoices/' + id); } })),
+        cur.status !== 'void' ? ui.button('Void', { size: 'sm', variant: 'ghost danger', onClick: voidIt }) : ui.button('Restore', { size: 'sm', onClick: restore })),
       invoiceOnlineTools(ctx, cur, bal),
       cur.estimateId && moduleOn(store.settings(), 'estimates') ? ui.button('Source estimate', { size: 'sm', variant: 'ghost', icon: 'file-text', href: '#/estimates/' + cur.estimateId }) : null,
       cur.tm ? h('div', { class: 'muted', dataset: { tmInvoice: '1' } }, `${billingLabel('tm')}: ${(cur.tm.timeEntryIds || []).length} time entr${(cur.tm.timeEntryIds || []).length === 1 ? 'y' : 'ies'}, ${(cur.tm.stockMoveIds || []).length + (cur.tm.materialRequestIds || []).length} material record(s)${cur.tm.from || cur.tm.to ? `, ${cur.tm.from || '…'} to ${cur.tm.to || '…'}` : ''}. Voiding frees them to bill again.`) : null,
@@ -254,6 +254,15 @@ function renderDetail(root, ctx, id) {
   const voidIt = async () => {
     if (!(await ui.confirmDialog(`Void ${doc.number}? It stays on record but no longer counts as owed.`, { okLabel: 'Void' }))) return;
     setStatus('void'); nav('#/invoices/' + id);
+  };
+  // Voiding a T&M invoice freed its time and material; a newer invoice may have billed them since.
+  const restore = () => {
+    const clash = restoreConflicts(store.get('invoices', id), store.list('invoices'));
+    if (clash.length) {
+      ui.toast(`${doc.number} can't be restored: ${clash.length} of its time or material record${clash.length === 1 ? ' is' : 's are'} on a newer invoice now. Void that one first, or leave this one void.`, 'error', 6000);
+      return;
+    }
+    setStatus('draft'); syncInvoiceStatus(store, id); nav('#/invoices/' + id);
   };
   const recordPayment = () => {
     save.flush();

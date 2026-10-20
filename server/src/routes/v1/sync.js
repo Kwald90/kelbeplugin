@@ -15,6 +15,7 @@ const mutation = {
     op: { type: 'string', enum: ['upsert', 'delete'] },
     baseVersion: { type: ['integer', 'null'], description: 'Server version the client edited; null for a new record.' },
     data: { type: 'object', description: 'The whole record (upsert). Validated against the collection JSON Schema.' },
+    fields: { type: ['array', 'null'], items: { type: 'string' }, description: 'The top-level fields this client changed (null or absent: the whole record). A stale time-entry write that only reviews or approves applies just those fields.' },
   },
 };
 

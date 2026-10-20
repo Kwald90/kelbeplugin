@@ -150,6 +150,36 @@ describe('consent and approvals', { skip }, () => {
     const self = await pushOne(w1.token, { collection: 'timeEntries', id: 'te-flag', op: 'upsert', baseVersion: 1, data: { ...flagged, flag: { ...flagged.flag, reviewedAt: iso() }, updatedAt: iso() } });
     assert.equal(self.status, 'rejected');
   });
+
+  test("a foreman's review or approval on an old copy never reopens the shift or undoes the worker's times", async () => {
+    const flag = { kind: 'off-site', text: '4.2 km from the job site', distanceM: 4200 };
+    const open = { employeeId: 'emp-1', jobId: 'j1', kind: 'work', clockIn: iso(480), clockOut: null, breakMins: 0, approved: false, flag, updatedAt: iso(480) };
+    assert.equal((await pushOne(w1.token, { collection: 'timeEntries', id: 'te-stale', op: 'upsert', data: open })).status, 'ok');
+    // The foreman's device pulled it open (v1). The worker clocks out (v2).
+    const clockOut = iso(5);
+    const out = await pushOne(w1.token, { collection: 'timeEntries', id: 'te-stale', op: 'upsert', baseVersion: 1, data: { ...open, clockOut, breakMins: 30, updatedAt: clockOut } });
+    assert.equal(out.status, 'ok');
+    // A few minutes later the foreman taps Reviewed on the copy from v1.
+    const reviewed = { ...open, flag: { ...flag, reviewedAt: iso(1), reviewedBy: 'emp-f', reviewNote: 'Picked up material' }, updatedAt: iso(1) };
+    const r = await pushOne(foreman.token, { collection: 'timeEntries', id: 'te-stale', op: 'upsert', baseVersion: 1, data: reviewed, fields: ['flag'] });
+    assert.equal(r.status, 'conflict', 'the foreman takes the stored copy');
+    assert.equal(r.server.data.clockOut, clockOut);
+    const stored = (await call(app, { url: '/api/v1/timeEntries/te-stale', token: foreman.token })).body;
+    assert.equal(stored.clockOut, clockOut, 'still clocked out');
+    assert.equal(stored.breakMins, 30);
+    assert.deepEqual([stored.flag.reviewedBy, stored.flag.reviewNote, stored.flag.text], ['emp-f', 'Picked up material', flag.text]);
+    // The worker corrects the clock-in (v4); the foreman approves from the copy before that.
+    const clockIn = iso(470);
+    const fixed = await pushOne(w1.token, { collection: 'timeEntries', id: 'te-stale', op: 'upsert', baseVersion: 3, data: { ...stored, clockIn, updatedAt: iso(0.5) } });
+    assert.equal(fixed.status, 'ok');
+    const appr = await pushOne(foreman.token, { collection: 'timeEntries', id: 'te-stale', op: 'upsert', baseVersion: 3, data: { ...stored, approved: true, approvedAt: iso(0), approvedBy: 'emp-f', updatedAt: iso(0) }, fields: ['approved', 'approvedAt', 'approvedBy'] });
+    assert.equal(appr.status, 'conflict');
+    const after = (await call(app, { url: '/api/v1/timeEntries/te-stale', token: foreman.token })).body;
+    assert.deepEqual([after.approved, after.approvedBy, after.clockIn, after.clockOut], [true, 'emp-f', clockIn, clockOut], "approved, with the worker's correction");
+    // A bad field list is refused.
+    const bad = await pushOne(foreman.token, { collection: 'timeEntries', id: 'te-stale', op: 'upsert', baseVersion: 1, data: reviewed, fields: 'flag' });
+    assert.equal(bad.status, 'rejected');
+  });
 });
 
 describe('retention', { skip }, () => {

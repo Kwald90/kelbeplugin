@@ -229,19 +229,59 @@ export function buildTravelSegments(events, sites, { start, end, minTravelMin = 
 /**
  * Time entries for segments of one open shift: the open entry is closed at the first segment's
  * end (and takes that segment's kind and job), every later segment becomes a new entry, and the
- * last one stays open when `keepOpen`. Pure: returns { update, create[] } for the caller to save.
+ * last one stays open when `keepOpen`. The open entry's break is shared out (splitBreak).
+ * Pure: returns { update, create[] } for the caller to save.
  */
 export function entriesForSegments(open, segments, { keepOpen = true } = {}) {
   if (!open || !segments?.length) return { update: null, create: [] };
   const first = segments[0];
   const one = (s) => ({ kind: s.kind, jobId: s.jobId ?? null, ...(s.kind === 'travel' ? { travelFromJobId: s.fromJobId ?? null } : {}) });
   const last = segments.length - 1;
-  const update = { ...one(first), clockOut: last === 0 && keepOpen ? null : first.end };
+  // One segment that stays open: the entry is the same shift, its break untouched.
+  const breaks = last === 0 && keepOpen ? [{}] : splitBreak(open, segments, { keepOpen });
+  const update = { ...one(first), clockOut: last === 0 && keepOpen ? null : first.end, ...breaks[0] };
   const create = segments.slice(1).map((s, i) => ({
     ...one(s), employeeId: open.employeeId, clockIn: s.start, clockOut: i + 1 === last && keepOpen ? null : s.end,
-    breakMins: 0, breakStart: null, approved: false, source: 'auto-split', note: '',
+    ...breaks[i + 1], approved: false, source: 'auto-split', note: '',
   }));
   return { update, create };
+}
+
+/**
+ * An open entry's break shared out over its segments: [{ breakMins, breakStart }] per segment.
+ * - A running break counts in every closed segment it overlaps; the segment still open
+ *   (`keepOpen`) keeps it running from its own start at the earliest.
+ * - The break already taken (breakMins) has no time of day, so it goes to the last work
+ *   segment first, then earlier ones (travel last), never more than a segment's own length.
+ *   Any excess stays on the last segment tried, so the shift's total break never changes.
+ */
+export function splitBreak(open, segments, { keepOpen = true } = {}) {
+  const last = segments.length - 1;
+  const mins = (a, b) => Math.max(0, Math.round((ms(b) - ms(a)) / 60000));
+  const out = segments.map(() => ({ breakMins: 0, breakStart: null }));
+  const used = segments.map(() => 0);
+  const bs = open?.breakStart;
+  if (bs) {
+    segments.forEach((s, i) => {
+      const from = ms(bs) > ms(s.start) ? bs : s.start;
+      // (it may have started after the segments were worked out: it still runs)
+      if (i === last && keepOpen) { out[i].breakStart = from; used[i] = mins(from, s.end); return; }
+      if (ms(bs) >= ms(s.end)) return;
+      out[i].breakMins = mins(from, s.end);
+      used[i] = out[i].breakMins;
+    });
+  }
+  let left = Math.max(0, Math.round(Number(open?.breakMins) || 0));
+  const idx = segments.map((_, i) => i).reverse();
+  const order = [...idx.filter((i) => segments[i].kind !== 'travel'), ...idx.filter((i) => segments[i].kind === 'travel')];
+  for (const i of order) {
+    const take = Math.min(left, Math.max(0, mins(segments[i].start, segments[i].end) - used[i]));
+    out[i].breakMins += take;
+    used[i] += take;
+    left -= take;
+  }
+  if (left > 0) out[order[0]].breakMins += left;
+  return out;
 }
 
 // ---- Web Mercator (the small map) -----------------------------------------------------

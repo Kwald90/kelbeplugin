@@ -6,7 +6,9 @@
 // the Open Government Licence – Canada (commercial use allowed). Checked 2026-10-19: base layer
 // CBMT_CBCT_GEOM_3857 (JPEG) plus the CBMT_TXT_3857 labels (transparent PNG), zoom 0-15, Canada
 // only, no key. Closer zooms scale the zoom-15 tiles. Tiles are requested from the browser with no
-// referrer; they show where a job is, never where a person is (the overlay is drawn locally).
+// referrer; they show where a job is, never where a person is (the overlay is drawn locally). Maps
+// of people's points (My location, the crew map) pass `tilesNear`: the job sites. Only tiles near
+// a site are fetched; elsewhere the map stays blank and the points are drawn on the blank.
 import { project, unproject, metresPerPixel, TILE } from './geo.js';
 
 export const TILE_BASE = 'https://maps-cartes.services.geo.ca/server2_serveur2/rest/services/BaseMaps/CBMT_CBCT_GEOM_3857/MapServer/tile/{z}/{y}/{x}';
@@ -20,6 +22,23 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 export const tileUrl = (tpl, z, x, y) => tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
 
 /**
+ * Is tile x/y at zoom z within one tile of a job site's circle? The tiles a map of people's points
+ * may fetch: the request then shows a job site's area, never where someone was off site.
+ * @param {{ lat: number, lng: number, radiusM?: number }[]} sites
+ */
+export function tileNearSites(z, x, y, sites) {
+  for (const s of sites || []) {
+    if (!Number.isFinite(s?.lat) || !Number.isFinite(s?.lng)) continue;
+    const p = project(s.lat, s.lng, z);
+    const r = (Number(s.radiusM) || 0) / metresPerPixel(s.lat, z) + TILE;
+    const dx = Math.max(x * TILE - p.x, 0, p.x - (x + 1) * TILE);
+    const dy = Math.max(y * TILE - p.y, 0, p.y - (y + 1) * TILE);
+    if (dx * dx + dy * dy <= r * r) return true;
+  }
+  return false;
+}
+
+/**
  * @param {object} o
  * @param {Function} o.h            ui.h
  * @param {{ lat: number, lng: number }} o.center
@@ -29,8 +48,9 @@ export const tileUrl = (tpl, z, x, y) => tpl.replace('{z}', z).replace('{x}', x)
  * @param {{ lat, lng, label?, kind?: 'site'|'me'|'crew'|'point', title? }[]} [o.markers]
  * @param {(p: { lat: number, lng: number }) => void} [o.onPick]   tap to drop a pin (managers)
  * @param {string} [o.label]        accessible name
+ * @param {{ lat, lng, radiusM }[]} [o.tilesNear]  fetch only tiles near these job sites (maps of people's points)
  */
-export function miniMap({ h, center, zoom = 16, height = 240, circle = null, markers = [], onPick = null, label = 'Map' }) {
+export function miniMap({ h, center, zoom = 16, height = 240, circle = null, markers = [], onPick = null, label = 'Map', tilesNear = null }) {
   let c = { ...center };
   let z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(zoom)));
   let w = 0;
@@ -71,6 +91,7 @@ export function miniMap({ h, center, zoom = 16, height = 240, circle = null, mar
       if (ty < 0 || ty >= n) continue;
       for (let tx = Math.floor(left / size); tx <= Math.floor((left + w) / size); tx++) {
         const x = ((tx % n) + n) % n;
+        if (tilesNear && !tileNearSites(tz, x, ty, tilesNear)) continue;
         for (const [tpl, cls] of [[TILE_BASE, 'mm-base'], [TILE_LABELS, 'mm-labels']]) {
           const img = tileImg(tpl, tz, x, ty, cls);
           Object.assign(img.style, { left: `${Math.round(tx * size - left)}px`, top: `${Math.round(ty * size - top)}px`, width: `${size}px`, height: `${size}px` });
