@@ -1,5 +1,5 @@
 // Tokens, hashes and encryption. Nothing here logs or returns key material.
-import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /** Opaque random token: prefix + 32 random bytes, base64url. */
 export function randomToken(prefix, bytes = 32) {
@@ -54,6 +54,8 @@ function gcmOpen(key, { iv, ct, tag }, aad) {
  *   short-lived cookies.
  * - envelopeSeal/envelopeOpen: a fresh data key per value, wrapped by the master key.
  *   For tenant secrets, so the master key can be rotated by re-wrapping data keys.
+ * - mac: HMAC-SHA256 with a per-purpose subkey, for lookup hashes that must not be guessable
+ *   without the key (QuickBooks realm ids). A master-key change changes every mac.
  * @param {string} masterKeyB64
  */
 export function createSealer(masterKeyB64) {
@@ -80,6 +82,10 @@ export function createSealer(masterKeyB64) {
       } catch {
         return null;
       }
+    },
+    /** @returns {Buffer} 32 bytes */
+    mac(purpose, value) {
+      return createHmac('sha256', subkey(`mac:${purpose}`)).update(String(value), 'utf8').digest();
     },
     envelopeSeal(plaintext, aad = '') {
       const dek = randomBytes(32);

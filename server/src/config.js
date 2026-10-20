@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { parseEnv } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { readQboConfig } from './qbo/env.js';
 
 const ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -110,7 +111,11 @@ export function readConfig(env = process.env) {
     worker: {
       pollMs: int(env.WORKER_POLL_MS, 2000),
       concurrency: int(env.WORKER_CONCURRENCY, 2),
+      // Slots for qbo_* jobs only; the general slots never run them (docs/integrations/quickbooks.md 5.8).
+      qboConcurrency: int(env.WORKER_QBO_CONCURRENCY, 2),
     },
+    // QuickBooks Online (docs/integrations/quickbooks.md 2.1). qbo.enabled is false unless QBO_ENVIRONMENT is set.
+    qbo: readQboConfig({ ...env, APP_ENV: appEnv, PUBLIC_ORIGIN: publicOrigin }),
   };
 }
 

@@ -22,6 +22,11 @@ export const SECRETS = {
   'facebook.page_token': { provider: 'facebook', label: 'Facebook Page access token', guide: 'facebook' },
   'facebook.app_secret': { provider: 'facebook', label: 'Facebook app secret', guide: 'facebook' },
   'facebook.verify_token': { provider: 'facebook', label: 'Facebook webhook verify token', guide: 'facebook' },
+  // Internal: written and read only by the QuickBooks code with { internal: true }. The generic
+  // secret routes refuse them (isSecretName is false) and listSecrets never shows them.
+  'qbo.refresh_token': { provider: 'qbo', label: 'QuickBooks refresh token', guide: 'quickbooks', internal: true },
+  'qbo.access_token': { provider: 'qbo', label: 'QuickBooks access token', guide: 'quickbooks', internal: true },
+  'qbo.realm_id': { provider: 'qbo', label: 'QuickBooks company id', guide: 'quickbooks', internal: true },
 };
 
 const MAX_LEN = 4096;
@@ -32,12 +37,15 @@ function open(sealer, sealed, tenantId, name) {
   try { return sealer.envelopeOpen(sealed, aad(tenantId, name)); } catch { return null; }
 }
 
+/** A name a company may set, read or delete through the generic secret routes (never an internal one). */
 export function isSecretName(name) {
-  return Object.hasOwn(SECRETS, name);
+  return Object.hasOwn(SECRETS, name) && !SECRETS[name].internal;
 }
 
-function check(name) {
-  if (!isSecretName(name)) throw new Error(`unknown secret name: ${name}`);
+/** Internal names (QuickBooks tokens) need { internal: true }; everything else must be a public name. */
+function check(name, opts = {}) {
+  if (!Object.hasOwn(SECRETS, name)) throw new Error(`unknown secret name: ${name}`);
+  if (Boolean(SECRETS[name].internal) !== Boolean(opts.internal)) throw new Error(`secret ${name} is ${SECRETS[name].internal ? 'internal' : 'not internal'}`);
 }
 
 /** Last four characters for display, or the whole value for non-secret settings like a sender address. */
@@ -50,8 +58,8 @@ export function hintFor(name, value) {
  * @param {import('../db.js').TenantTx} tx
  * @param {ReturnType<import('../lib/crypto.js').createSealer>} sealer
  */
-export async function setSecret(tx, sealer, name, value, actor = null) {
-  check(name);
+export async function setSecret(tx, sealer, name, value, actor = null, opts = {}) {
+  check(name, opts);
   const v = String(value ?? '').trim();
   if (!v || v.length > MAX_LEN) throw new Error('secret value must be 1-4096 characters');
   const sealed = sealer.envelopeSeal(v, aad(tx.tenantId, name));
@@ -62,22 +70,22 @@ export async function setSecret(tx, sealer, name, value, actor = null) {
 }
 
 /** The plaintext, or null when unset or not authentic. Only integration code should call this. */
-export async function getSecret(tx, sealer, name) {
-  check(name);
+export async function getSecret(tx, sealer, name, opts = {}) {
+  check(name, opts);
   const { rows } = await tx.query('SELECT value_enc FROM tenant_secrets WHERE tenant_id = $1 AND name = $2', [tx.tenantId, name]);
   if (!rows[0]) return null;
   return open(sealer, rows[0].value_enc, tx.tenantId, name);
 }
 
 /** Several secrets at once, e.g. getSecrets(tx, sealer, ['twilio.account_sid', 'twilio.auth_token']). */
-export async function getSecrets(tx, sealer, names) {
+export async function getSecrets(tx, sealer, names, opts = {}) {
   const out = {};
-  for (const n of names) out[n] = await getSecret(tx, sealer, n);
+  for (const n of names) out[n] = await getSecret(tx, sealer, n, opts);
   return out;
 }
 
-export async function deleteSecret(tx, name) {
-  check(name);
+export async function deleteSecret(tx, name, opts = {}) {
+  check(name, opts);
   const { rowCount } = await tx.query('DELETE FROM tenant_secrets WHERE tenant_id = $1 AND name = $2', [tx.tenantId, name]);
   return rowCount > 0;
 }
