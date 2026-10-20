@@ -459,6 +459,9 @@ export function taskWriteProblem(who, existing, next) {
     const changed = [...new Set([...Object.keys(existing), ...Object.keys(next)])].filter((k) => !allowed.has(k) && !same(existing[k], next[k]));
     if (changed.length) return 'You can only record progress on your tasks.';
   }
+  if (existing && next && existing.status && existing.status !== 'draft' && next.status === 'draft') {
+    return "A published task can't go back to draft. Move it or remove it instead.";
+  }
   if (next && next.status === 'done' && existing?.status !== 'done') {
     const p = evidenceProblem(next);
     if (p) return p;

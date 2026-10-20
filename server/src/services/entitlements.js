@@ -95,6 +95,11 @@ export const COLLECTION_FEATURES = {
   wireRuns: ['wireruns'],
   bends: ['bending', 'calcs'],
   benderProfiles: ['bending', 'calcs'],
+  // Workers record progress on any plan ("My day" is Starter); planning needs Pro.
+  workTasks: ['today', 'workplan'],
+  workPlans: ['workplan'],
+  taskTemplates: ['workplan'],
+  huddles: ['workplan'],
 };
 
 /**

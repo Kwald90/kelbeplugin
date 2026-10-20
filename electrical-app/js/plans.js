@@ -22,6 +22,8 @@ export const FEATURE_PLAN = {
   calcs: 'starter', bending: 'starter', wireruns: 'starter', settings: 'starter', integrations: 'starter', billing: 'starter',
   drawings: 'pro', panels: 'pro', inventory: 'pro', compliance: 'pro', sequences: 'pro', security: 'pro',
   assistant: 'business',
+  // work plans: every worker's "My day" is in every plan; planning, meetings and KPIs are Pro
+  today: 'starter', workplan: 'pro', kpis: 'pro',
   // features inside modules
   'drawings.rooms': 'pro', 'wireruns.trace': 'pro', portal: 'pro', 'payments.online': 'pro', 'integrations.email': 'pro',
   'ai.assistant': 'business', 'ai.cec': 'business', 'ai.background': 'business', api: 'business', mcp: 'business',
