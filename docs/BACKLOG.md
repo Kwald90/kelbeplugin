@@ -66,6 +66,9 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 ## Requested next (Kelvin and Travis, 2026-10-20)
 
 - **dev** Permits on new jobs: "Does this job need a permit?" when a job is created; create the permit (authority by province, e.g. Manitoba Hydro), list the inspections it needs (rough-in, service, final), remind when each is due, and open the authority's online portal in one tap. No public booking API is known for Manitoba Hydro, so booking stays a person's click: VERIFY.
+- **dev** Trailer and van layout maps: draw shelves and bins; each price-book item lives in a bin; "where is it?" search; counts per bin feed inventory.
+- **dev** Tool tracking: QR/NFC tags first (Web NFC on Android, CoreNFC in the iOS app), check-out/check-in by person and job, overdue returns. Fixed RFID gate readers on trailers need hardware choice and an integration: research.
+- **K + dev** Accounting to replace QuickBooks (Kelvin and Travis want Sage-level): phase it. 1) job costing and supplier bills (AP) with receipt capture, 2) bank feeds and reconciliation, general ledger and financial statements, 3) payroll through a Canadian payroll provider integration (Wagepoint/Payworks) rather than computing CRA source deductions ourselves, with a CPA advising on the ledger design.
 - **dev** Canvas tool polish (precision, selection, eraser, lasso, undo) after the pen-dropout fix.
 
 ## Process

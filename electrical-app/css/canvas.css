@@ -55,7 +55,10 @@
 /* ---------- editor shell ---------- */
 body.canvas-open .wheel-fab, body.canvas-open .wheel, body.canvas-open .wheel-scrim, body.canvas-open .rail { display: none !important; }
 .cv { position: absolute; inset: 0; overflow: hidden; background: var(--paper); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.cv-canvas { position: absolute; inset: 0; display: block; touch-action: none; cursor: crosshair; }
+.cv-canvas {
+  position: absolute; inset: 0; display: block; touch-action: none; cursor: crosshair;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
 .cv[data-tool="hand"] .cv-canvas, .cv.space .cv-canvas { cursor: grab; }
 .cv.panning .cv-canvas { cursor: grabbing; }
 .cv[data-tool="select"] .cv-canvas { cursor: default; }
