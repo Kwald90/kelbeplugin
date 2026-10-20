@@ -287,6 +287,10 @@ try {
     junctionId = await olive.evaluate('kelbeCanvas.d.objects.find((o) => o.symbol === "junction").id');
     const stamped = await olive.evaluate('kelbeCanvas.d.objects.map((o) => o.by?.name + "@" + (o.at ? "t" : "-"))');
     if (!stamped.every((x) => x === 'Olive Office@t')) throw new Error(J(stamped));
+    // As if placed in an earlier session (an hour ago): a delete in the same session would just
+    // cancel the add, which is right for a slip but not the story this test tells.
+    const hourAgo = new Date(Date.now() - 3600e3).toISOString();
+    await olive.evaluate(`(() => { const c = kelbeCanvas; c.d.history = c.d.history.map((e) => ({ ...e, at: ${J(hourAgo)}, until: ${J(hourAgo)} })); c.save(); return true; })()`);
     await synced(olive);
     const s = await serverDrawing(drawingId);
     if (s?.objects?.length !== 3 || !s.history?.length) throw new Error('server: ' + J({ n: s?.objects?.length, h: s?.history }));
