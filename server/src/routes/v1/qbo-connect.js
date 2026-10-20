@@ -14,7 +14,7 @@ import {
   FLOW_COOKIE, FLOW_COOKIE_PATH, flowCookieOptions, createConnectTicket, startPage, startFromTicket, completeCallback, takeover,
   disconnect, setPaused, loadConnection, hasTakeoverOffer,
 } from '../../qbo/connection.js';
-import { PAGE_HEADERS, donePage, disconnectedPage } from '../../qbo/pages.js';
+import { PAGE_HEADERS, RESULT_TEXT, donePage, disconnectedPage } from '../../qbo/pages.js';
 import { budgetGate } from '../../qbo/client.js';
 import { errorResponses, tenantCtx } from '../util.js';
 
@@ -135,7 +135,9 @@ export default async function qboConnectRoutes(app, { config, db }) {
   });
 
   app.get('/api/v1/qbo/oauth/done', pub, async (req, reply) => {
-    const result = typeof req.query?.result === 'string' ? req.query.result.slice(0, 40) : 'exchange_failed';
+    // Only the page's own result keys (never an inherited name such as constructor).
+    const raw = typeof req.query?.result === 'string' ? req.query.result : '';
+    const result = /^[a-z_]{1,40}$/.test(raw) && Object.hasOwn(RESULT_TEXT, raw) ? raw : 'exchange_failed';
     for (const [k, v] of Object.entries(PAGE_HEADERS)) reply.header(k, v);
     return reply.code(200).send(donePage(result));
   });

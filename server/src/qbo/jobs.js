@@ -81,14 +81,19 @@ export function createQboHandlers(deps = {}) {
     return entitled;
   }
 
+  /** The plan check before any pass that calls Intuit (2.5). False when the job should not run. */
+  async function planAllows(db, job) {
+    const tenantId = job.tenant_id || job.payload?.tenantId;
+    if (!tenantId || !qboCfg(ready(db).config).enabled) return true;
+    const pre = await db.withTenant({ tenantId }, loadConnection);
+    return !(pre && ['active', 'setup', 'paused'].includes(pre.state) && !(await planGate(db, tenantId, pre)));
+  }
+
   return {
     async qbo_sync({ db, job }) {
-      const tenantId = job.tenant_id;
-      if (tenantId && qboCfg(ready(db).config).enabled) {
-        const pre = await db.withTenant({ tenantId }, loadConnection);
-        if (pre && ['active', 'setup', 'paused'].includes(pre.state) && !(await planGate(db, tenantId, pre))) return { skipped: 'plan' };
-      }
-      return tenantJob({ db, job }, async (d, id, epoch, conn) => {
+      if (!(await planAllows(db, job))) return { skipped: 'plan' };
+      const wantSweep = Boolean(job.payload?.sweep) || job.payload?.reason === 'hq_resume';
+      const out = await tenantJob({ db, job }, async (d, id, epoch, conn) => {
         // The first pass after any move back to active runs the sweep (2.5): the resume paths queue
         // payload.sweep (W1) or reason hq_resume (W6), and a connection never swept has no cursor yet.
         const sweep = Boolean(job.payload?.sweep) || job.payload?.reason === 'hq_resume' || conn.fishtape_cursor == null;
@@ -100,18 +105,29 @@ export function createQboHandlers(deps = {}) {
         if (r.error) delete r.error;
         return r;
       });
+      // A sweep that found the lease taken (an API action, a reference read) is not lost: it runs shortly.
+      // Two keys in turn, as a running job keeps its own key taken.
+      if (out?.busy && wantSweep) {
+        const key = `qbo_sync:${job.tenant_id}:sweep`;
+        await enqueue(db, { kind: 'qbo_sync', tenantId: job.tenant_id, payload: { sweep: true }, dedupeKey: job.dedupe_key === key ? `${key}2` : key, runAt: new Date(Date.now() + 30_000), maxAttempts: 5 });
+      }
+      return out;
     },
 
     async qbo_cdc({ db, job }) {
+      if (!(await planAllows(db, job))) return { skipped: 'plan' };
       return tenantJob({ db, job }, (d, id, epoch) => syncTenant(d, id, { epoch, direction: 'pull', purpose: 'cdc', workerId }));
     },
 
     async qbo_check({ db, job }) {
+      if (!(await planAllows(db, job))) return { skipped: 'plan' };
       return tenantJob({ db, job }, (d, id, epoch) => runCheck(d, id, { epoch }));
     },
 
     async qbo_reference_refresh({ db, job }) {
-      return tenantJob({ db, job }, (d, id, epoch) => refreshReference(d, id, { epoch, force: Boolean(job.payload?.force) }), { states: ['setup', 'active', 'paused'] });
+      // An HQ pause stops every Intuit call; budget pauses are left to the client's own budget gate.
+      return tenantJob({ db, job }, (d, id, epoch, conn) => (conn.state === 'paused' && conn.pause_reason === 'hq'
+        ? { skipped: 'hq' } : refreshReference(d, id, { epoch, force: Boolean(job.payload?.force) })), { states: ['setup', 'active', 'paused'] });
     },
 
     async qbo_setup_scan({ db, job }) {

@@ -9,15 +9,17 @@ import { QboError } from './client.js';
 import { QBO_RANK, upsertOutbox } from './hooks.js';
 import {
   makeRun, txWrite, getLink, getLinkById, updateLink, loadRecord, system, reconcile, tripBrake, BrakeError, PassStop, ctxFor,
-  linksByRemote, voidLocalInvoice,
+  linksByRemote, voidLocalInvoice, assertActive,
 } from './engine.js';
 import { processRecord, pushDelete } from './push.js';
 import { remoteDeleted } from './pull.js';
-import { fishtapeToCanon, qboToCanon, str } from './map/canon.js';
-import { canonCollection, fieldsOf, MONEY_RECORD_KEYS } from './map/merge.js';
+import { fishtapeToCanon, qboToCanon, canonEqual, str } from './map/canon.js';
+import { canonCollection, fieldsOf, MONEY_RECORD_KEYS, PUSH_ONLY_COLLECTIONS } from './map/merge.js';
 import { QBO_ENTITY } from './map/to-qbo.js';
 
 const ID = /^\d{1,20}$/;
+/** Review reasons where 'quickbooks' drops a held Fishtape edit: Fishtape goes back to QuickBooks' copy. */
+const DROP_REASONS = ['origin', 'filed_period', 'payroll_locked'];
 
 // ---- storage ----------------------------------------------------------------------------------------
 
@@ -135,6 +137,10 @@ export async function resolveConflict(deps, tenantId, conflictId, { choice, fiel
   if (!CHOICES[c.kind]?.includes(choice)) throw validationFailed(`Choose one of: ${CHOICES[c.kind].join(', ')}.`);
   const link = await run.db.withTenant({ tenantId }, (tx) => getLinkById(tx, c.link_id));
   if (!link) throw notFound();
+  // Paused (any reason) or in setup, sync is off (2.5): only choices that never call QuickBooks run.
+  const offline = choice === 'unlink' || c.kind === 'merged'
+    || (c.kind === 'review' && choice === 'quickbooks' && (!link.qbo_id || !DROP_REASONS.includes(c.reason || link.reason)));
+  if (!offline) assertActive(run);
   const by = who?.actor ? `${who.actor.type}:${who.actor.id ?? ''}` : 'system';
   const resolution = { choice, ...(fields ? { fields } : {}), ...(recordId ? { recordId } : {}) };
   const close = async (status = 'resolved') => txWrite(run, async (tx) => {
@@ -218,6 +224,7 @@ async function resolveReview(run, link, c, choice, who) {
   }
   if (choice === 'fishtape') {
     const meta = { ...(link.meta || {}) };
+    delete meta.originRejected;
     if (reason === 'filed_period') meta.filedConfirmed = true;
     if (reason === 'payout_items') meta.payoutApproved = true;
     let snapshot = link.snapshot;
@@ -240,6 +247,8 @@ async function resolveReview(run, link, c, choice, who) {
     else await processRecord(run, link.collection, link.record_id, { force: true, link: l, actorType: 'user' });
     return;
   }
+  // 'quickbooks' on a held Fishtape edit of a linked record: the edit is dropped for good (5.6).
+  if (link.qbo_id && DROP_REASONS.includes(reason)) { await dropHeldEdit(run, link, choice); return; }
   // 'quickbooks': QuickBooks' copy stays the truth, or the held write is dropped.
   await txWrite(run, async (tx) => {
     await closeConflict(tx, link.id, 'system', { choice });
@@ -250,6 +259,38 @@ async function resolveReview(run, link, c, choice, who) {
       await updateLink(tx, run, link.id, { state: 'synced', reason: null, owner: link.owner === 'quickbooks' ? 'both' : link.owner, sync_token: null });
     } else await updateLink(tx, run, link.id, { state: 'synced', reason: null, owner: 'quickbooks' });
   });
+}
+
+/**
+ * Drop a held edit (origin, filed period, pay period): QuickBooks' copy wins. The base takes Fishtape's
+ * value for every field that differs, so the merge writes QuickBooks' value into Fishtape (as the system
+ * actor) and the dropped edit is never sent later. A push-only record has no pull: it keeps its values,
+ * and its next send needs approval again (meta.originRejected).
+ */
+async function dropHeldEdit(run, link, choice) {
+  const rec = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, link.collection, link.record_id));
+  const canonColl = canonCollection(link.collection, link.role);
+  const pushOnly = PUSH_ONLY_COLLECTIONS.includes(canonColl);
+  const finish = async (tx, fields) => {
+    await closeConflict(tx, link.id, 'system', { choice });
+    await tx.query('DELETE FROM qbo_outbox WHERE tenant_id = $1 AND collection = $2 AND record_id = $3', [tx.tenantId, link.collection, link.record_id]);
+    return updateLink(tx, run, link.id, fields);
+  };
+  if (!rec || rec.deleted || pushOnly) {
+    const meta = { ...(link.meta || {}), ...(pushOnly && rec && !rec.deleted ? { originRejected: true } : {}) };
+    await txWrite(run, (tx) => finish(tx, { state: 'synced', reason: null, meta }));
+    return;
+  }
+  const obj = await run.client.read(link.qbo_entity, link.qbo_id);
+  const ctx = ctxFor(run, link, link.collection);
+  const L = fishtapeToCanon(link.collection, rec.data, ctx);
+  const R = qboToCanon(link.qbo_entity, obj, { ...ctx, collection: link.collection });
+  const B = { ...(link.snapshot || {}) };
+  for (const f of fieldsOf(canonColl)) if (!canonEqual(canonColl, f, L[f] ?? null, R[f] ?? null)) B[f] = L[f] ?? null;
+  const meta = { ...(link.meta || {}) };
+  delete meta.held;
+  const l = await txWrite(run, (tx) => finish(tx, { state: 'pending', reason: null, snapshot: B, prev_values: {}, owner: link.owner === 'quickbooks' ? 'both' : link.owner, meta }));
+  await reconcile(run, l, { record: rec, remote: obj, force: true, direction: 'push' });
 }
 
 /** Deleted on one side: restore it there, or delete it on the other (5.6). */

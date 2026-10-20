@@ -37,6 +37,7 @@ const CHOICES_OF = {
   payments: ['link', 'create_in_qbo', 'create_in_fishtape', 'skip'],
 };
 const SCAN_EVERY_MS = 15 * 60_000;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Creates per batch call (Intuit's pages say 10 or 30; VERIFY, 11.4 item 8). */
 export const BATCH_MAX = 10;
 const DOC_KINDS = new Set(['estimates', 'invoices']);
@@ -273,6 +274,7 @@ export async function updateMatches(tx, body, chosenBy) {
   if (Array.isArray(body?.choices)) {
     if (body.choices.length > 500) throw validationFailed('At most 500 choices at a time.');
     for (const c of body.choices) {
+      if (!UUID_RE.test(String(c?.id ?? ''))) throw validationFailed('Unknown candidate.');
       const row = (await tx.query('SELECT * FROM qbo_candidates WHERE tenant_id = $1 AND id = $2', [tx.tenantId, c?.id])).rows[0];
       if (!row) throw validationFailed('Unknown candidate.');
       if (row.applied_at) continue;
@@ -622,9 +624,10 @@ async function finishApply(run) {
   await txWrite(run, async (tx) => {
     // Edits queued during setup were decided by the wizard (linked, created or skipped): a record it
     // skipped is not created now. Later edits stay queued, and the sweep covers changes since the scan.
+    // Bills, purchase orders and time are not wizard choices (phase 7 queues them), so theirs stay.
     if (setup.scanStartedAt) {
       await tx.query(
-        `DELETE FROM qbo_outbox o WHERE o.tenant_id = $1 AND o.enqueued_at < $2 AND o.collection <> 'stripePayouts'
+        `DELETE FROM qbo_outbox o WHERE o.tenant_id = $1 AND o.enqueued_at < $2 AND o.collection NOT IN ('stripePayouts', 'bills', 'purchaseOrders', 'timeEntries')
             AND NOT EXISTS (SELECT 1 FROM qbo_links l WHERE l.tenant_id = o.tenant_id AND l.collection = o.collection AND l.record_id = o.record_id AND l.role = 'main' AND l.qbo_id IS NOT NULL)`,
         [run.tenantId, setup.scanStartedAt]);
     }

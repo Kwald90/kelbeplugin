@@ -137,10 +137,15 @@ export async function processRecord(run, collection, id, o = {}) {
   // Origin (5.2): money reaches the books only from people allowed to handle money.
   const actorType = o.actorType || 'system';
   const reviewOrigin = !o.force && ((MONEY_COLLECTIONS.has(collection) && ['api_key', 'agent', 'field_user'].includes(actorType))
-    || (collection === 'timeEntries' && ['api_key', 'agent'].includes(actorType)));
+    || (collection === 'timeEntries' && ['api_key', 'agent'].includes(actorType)) || link?.meta?.originRejected === true);
   if (reviewOrigin) {
-    const who = actorType === 'api_key' ? 'an API key' : actorType === 'agent' ? 'the assistant' : 'a field user';
-    return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, { kind: doc.kind }), row, state: 'needs_review', reason: 'origin', message: `Made by ${who}; approve to send to QuickBooks.`, label, review: { message: `Made by ${who}; approve to send to QuickBooks.` } });
+    const who = { api_key: 'an API key', agent: 'the assistant', field_user: 'a field user' }[actorType];
+    // A push-only record keeps a change the office chose not to send: every later send needs approval.
+    const message = who ? `Made by ${who}; approve to send to QuickBooks.` : 'Holds a change that was not sent to QuickBooks; approve to send it.';
+    return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, { kind: doc.kind }), row, state: 'needs_review', reason: 'origin', message, label, review: { message } });
+  }
+  if (o.force && link?.meta?.originRejected) {
+    link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { meta: { ...link.meta, originRejected: undefined } }));
   }
 
   // Holds (4.7, 4.8, 4.9, 4.10, 4.11).
@@ -156,6 +161,11 @@ export async function processRecord(run, collection, id, o = {}) {
   }
   if (link && (link.state === 'blocked' || link.state === 'error') && link.qbo_id) {
     link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { state: 'pending', reason: null, meta: { ...(link.meta || {}), dependsOn: undefined } }));
+  }
+
+  // A create whose tax step never finished (a crash or a failed override after the create, 4.8).
+  if (link && link.qbo_id && link.reason === 'tax_override' && link.snapshot == null && DOCS.has(collection) && !run.shadow && !o.prepareOnly) {
+    return resumeTaxStep(run, collection, record, link, { row, label });
   }
 
   let state;
@@ -318,7 +328,11 @@ async function ensureDependencies(run, collection, d, o) {
     const rec = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, coll, id));
     if (!rec || rec.deleted) { if (required) { blocked.push(l?.id || `${coll}:${id}`); } continue; }
     if (run.shadow) continue;
-    await processRecord(run, coll, id, { asDependency: true, depth: (o.depth || 0) + 1, actorType: 'system' });
+    // The dependency keeps its own writer for the origin rule (5.2): an API key's invoice waiting in the
+    // outbox is held for review even when an office payment needs it first.
+    const depActor = await run.db.withTenant({ tenantId: run.tenantId }, async (tx) => (await tx.query(
+      'SELECT actor_type FROM qbo_outbox WHERE tenant_id = $1 AND collection = $2 AND record_id = $3', [tx.tenantId, coll, id])).rows[0]?.actor_type || 'system');
+    await processRecord(run, coll, id, { asDependency: true, depth: (o.depth || 0) + 1, actorType: depActor });
     ({ l, ok } = await met());
     if (!ok && (required || l)) blocked.push(l?.id || `${coll}:${id}`);
   }
@@ -373,7 +387,9 @@ export async function createRemote(run, collection, record, link, o = {}) {
     } else if (e.kind === 'duplicate_number') {
       const found = await adoptBySearch(run, link, entity, build.body);
       if (found) return finishCreate(run, link, collection, record, found, build, { row, label, L, adopted: true });
-      await holdLink(run, { link, collection, recordId: record.id, entity, role, row, state: 'error', reason: 'duplicate_number', message: 'QuickBooks already has a document with this number. Renumber it.', label });
+      // Ours is not there: the next create (after Renumber) is a new request with its own id.
+      link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { meta: nextCreateMeta(link.meta) }));
+      await holdLink(run, { link, collection, recordId: record.id, entity, role: link.role, row, state: 'error', reason: 'duplicate_number', message: 'QuickBooks already has a document with this number. Renumber it.', label });
       return 'error';
     } else if (e.kind === 'duplicate_name' && NAME_ENTITIES.has(entity)) {
       const found = await adoptBySearch(run, link, entity, build.body);
@@ -408,7 +424,8 @@ export async function prepareCreate(run, collection, record, link, o = {}) {
     link = await txWrite(run, async (tx) => {
       const cur = link ? await getLinkById(tx, link.id) : await getLink(tx, collection, record.id, role);
       const id = cur?.id || (await import('node:crypto')).randomUUID();
-      const meta = { ...(cur?.meta || {}), marker: markerFor(id), createRequestId: requestIdFor([run.tenantId, id, 'create']), createStartedAt: new Date().toISOString() };
+      const gen = Number(cur?.meta?.createGen) || 0;
+      const meta = { ...(cur?.meta || {}), marker: markerFor(id), createRequestId: requestIdFor([run.tenantId, id, 'create', ...(gen ? [gen] : [])]), createStartedAt: new Date().toISOString() };
       delete meta.dependsOn;
       if (cur) return updateLink(tx, run, cur.id, { state: 'pending', reason: null, qbo_entity: entity, meta });
       return insertLink(tx, run, { id, collection, record_id: record.id, role, qbo_entity: entity, state: 'pending', owner: role === 'fee' || ['jobs', 'purchaseOrders', 'timeEntries', 'stripePayouts'].includes(collection) ? 'fishtape' : 'both', meta });
@@ -474,6 +491,18 @@ export async function createBatch(run, prepared) {
   return out;
 }
 
+/**
+ * Link meta for a create that definitely did not land (6140, or deleted again for its tax): the next
+ * create gets a new request id (a generation in the id), so Intuit's requestid replay never answers it
+ * with the earlier request's result (5.3).
+ */
+function nextCreateMeta(meta) {
+  const m = { ...(meta || {}), createGen: (Number(meta?.createGen) || 0) + 1 };
+  delete m.createRequestId;
+  delete m.sent;
+  return m;
+}
+
 /** The snapshot after a create (5.3 step 3): QBO's answer, Fishtape's value where both agree. */
 function createdSnapshot(collection, role, L, R) {
   const canonColl = canonCollection(collection, role);
@@ -501,7 +530,7 @@ async function finishCreate(run, link, collection, record, obj, build, { row, la
       const q = tax.cmp.perRate.map((r) => `$${(r.qboCents / 100).toFixed(2)}`).join(' + ');
       const f = tax.cmp.perRate.map((r) => `$${(r.fishtapeCents / 100).toFixed(2)}`).join(' + ');
       await txWrite(run, async (tx) => {
-        await updateLink(tx, run, link.id, { qbo_id: null, sync_token: null, state: 'error', reason: 'tax_mismatch', last_error: `QuickBooks tax ${q}, Fishtape ${f}. Check the tax code mapping.`, meta: { ...meta, createRequestId: undefined, marker: meta.marker } });
+        await updateLink(tx, run, link.id, { qbo_id: null, sync_token: null, state: 'error', reason: 'tax_mismatch', last_error: `QuickBooks tax ${q}, Fishtape ${f}. Check the tax code mapping.`, meta: nextCreateMeta(meta) });
         await finishOutbox(tx, run, row);
         await writeLog(tx, { direction: 'push', outcome: 'error', action: 'create', actorType: row?.actor_type, collection, recordId: record.id, qboEntity: entity, label, message: `QuickBooks tax ${q}, Fishtape ${f}; the QuickBooks copy was deleted again.`, errorCode: 'tax_mismatch' });
       });
@@ -545,6 +574,20 @@ async function finishCreate(run, link, collection, record, obj, build, { row, la
   });
   if (collection === 'bills' && d.receipt?.dataUrl && !adopted) await uploadReceipt(run, link, entity, written, d).catch(() => {});
   return 'synced';
+}
+
+/** The tax step of a create committed with its QuickBooks id but no snapshot (4.8): run it now. */
+async function resumeTaxStep(run, collection, record, link, { row, label }) {
+  const obj = await run.client.read(link.qbo_entity, link.qbo_id);
+  const ctx = ctxFor(run, link, collection);
+  const L = canonForCreate(run, collection, record.data, ctx);
+  const opts = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => writeOpts(run, tx, collection, record.data, null));
+  const build = canonToQbo(collection, L, ctx, { existing: null, ...opts });
+  const state = await finishCreate(run, link, collection, record, obj, build, { row, label, L });
+  if (state !== 'synced') return state;
+  // Anything Fishtape changed meanwhile goes now (the snapshot holds QuickBooks' value for it).
+  const fresh = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLinkById(tx, link.id));
+  return reconcile(run, fresh, { record, direction: 'push' });
 }
 
 /**

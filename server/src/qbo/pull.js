@@ -38,8 +38,9 @@ export async function runPull(run, { full = false } = {}) {
   const cursor = conn.cdc_cursor ? new Date(conn.cdc_cursor) : new Date(conn.connected_at || Date.now());
   let newCursor = null;
   if (full || Date.now() - cursor.getTime() > FULL_AFTER_MS) {
-    await fullReconcile(run);
-    newCursor = new Date(Date.now() - 60_000);
+    const started = new Date();
+    // The cursor moves only when the whole reconcile ran; otherwise the next pass runs it again.
+    if (await fullReconcile(run, { since: new Date(cursor.getTime() - 2 * 60_000) })) newCursor = new Date(started.getTime() - 60_000);
   } else {
     let since = new Date(cursor.getTime() - 2 * 60_000);
     let covered = true;
@@ -66,21 +67,59 @@ export async function runPull(run, { full = false } = {}) {
       WHERE tenant_id = $1`, [run.tenantId, newCursor, passStart]));
 }
 
+/** One object's failure is logged and never stops the pull; pass-ending errors go up (5.8). */
+async function pullError(run, entity, e) {
+  const stop = passStopFor(e);
+  if (stop) throw stop;
+  if (e?.name === 'BrakeError' || e?.name === 'FencedError' || e?.name === 'PassStop') throw e;
+  run.stats.errors++;
+  await tenantRead(run, (tx) => writeLog(tx, { direction: 'pull', outcome: 'error', action: 'pull', qboEntity: entity, message: e instanceof QboError ? e.message : 'Could not apply a QuickBooks change.', errorCode: e instanceof QboError ? e.kind : 'internal', intuitTid: e?.intuitTid || null })).catch(() => {});
+}
+
+/**
+ * Run fn with invoice settlement held back to its end (4.9): a QuickBooks payment and the invoice it
+ * paid arrive together, and the invoice (rank 3) comes before the payment (rank 4). Settling at once
+ * would count the payment as a settlement before its own Fishtape payment exists, and count it twice.
+ */
+async function withSettlesAfter(run, fn) {
+  if (run.settleLater) return fn();
+  run.settleLater = new Map();
+  let ok = false;
+  try {
+    const r = await fn();
+    ok = true;
+    return r;
+  } finally {
+    const later = run.settleLater;
+    run.settleLater = null;
+    if (ok) {
+      for (const { inv, o } of later.values()) {
+        try { await pullDeposit(run, inv, o); await settle(run, inv, o); } catch (e) { await pullError(run, 'Invoice', e); }
+      }
+    }
+  }
+}
+
+/** Settle a pulled invoice now, or at the end of the batch it came in (withSettlesAfter). */
+async function settleInvoice(run, inv, o) {
+  if (run.settleLater) { run.settleLater.set(inv.id, { inv, o }); return; }
+  await pullDeposit(run, inv, o);
+  await settle(run, inv, o);
+}
+
 /** By entity rank, then QuickBooks update time (5.4 step 5). */
 async function processObjects(run, objects) {
   objects.sort((a, b) => (ENTITY_RANK[a.entity] || 9) - (ENTITY_RANK[b.entity] || 9) || Date.parse(lastUpdated(a.o) || 0) - Date.parse(lastUpdated(b.o) || 0));
-  for (const { entity, o } of objects) {
-    if (timeUp(run)) return;
-    try {
-      await processRemote(run, entity, o);
-    } catch (e) {
-      const stop = passStopFor(e);
-      if (stop) throw stop;
-      if (e?.name === 'BrakeError' || e?.name === 'FencedError' || e?.name === 'PassStop') throw e;
-      run.stats.errors++;
-      await tenantRead(run, (tx) => writeLog(tx, { direction: 'pull', outcome: 'error', action: 'pull', qboEntity: entity, message: e instanceof QboError ? e.message : 'Could not apply a QuickBooks change.', errorCode: e instanceof QboError ? e.kind : 'internal', intuitTid: e?.intuitTid || null })).catch(() => {});
+  await withSettlesAfter(run, async () => {
+    for (const { entity, o } of objects) {
+      if (timeUp(run)) return;
+      try {
+        await processRemote(run, entity, o);
+      } catch (e) {
+        await pullError(run, entity, e);
+      }
     }
-  }
+  });
 }
 
 /** One QuickBooks object from CDC, a read or the inbox. */
@@ -107,10 +146,7 @@ export async function processRemote(run, entity, o) {
   }
   if (entity === 'Invoice') {
     const inv = mains.find((l) => l.collection === 'invoices');
-    if (inv) {
-      await pullDeposit(run, inv, o);
-      await settle(run, inv, o);
-    }
+    if (inv) await settleInvoice(run, inv, o);
   }
   if (entity === 'Payment') await pullPaymentLines(run, o, links);
   if (entity === 'Bill') {
@@ -354,7 +390,7 @@ async function pullCreate(run, entity, o) {
       const made = await createFromRemote(run, inv ? 'invoices' : 'estimates', entity, o);
       if (made && inv) {
         const link = made.link || await tenantRead(run, (tx) => getLink(tx, 'invoices', made.id));
-        if (link) { await pullDeposit(run, link, o); await settle(run, link, o); }
+        if (link) await settleInvoice(run, link, o);
       }
       return made;
     }
@@ -588,8 +624,33 @@ async function pullTimeActivity(run, conn) {
 
 // ---- full reconcile (5.4 step 1) ----------------------------------------------------------------------
 
-/** A cursor older than 29 days: every linked object is read by id; a missing one was deleted. */
-export async function fullReconcile(run) {
+/**
+ * A cursor older than 29 days (CDC reaches back 30): each entity is queried page by page for what
+ * changed since the old cursor, created objects included, and handled as a CDC batch would be; then
+ * every linked object not seen is read by id, and a missing one was deleted (5.4 step 1). Returns true
+ * when it ran to the end.
+ */
+export async function fullReconcile(run, { since = null } = {}) {
+  return withSettlesAfter(run, () => fullReconcileRun(run, since));
+}
+
+async function fullReconcileRun(run, since) {
+  const seen = new Set();
+  if (since) {
+    const entities = CDC_ENTITIES.filter((e) => !['Deposit', 'Transfer'].includes(e)).sort((a, b) => (ENTITY_RANK[a] || 9) - (ENTITY_RANK[b] || 9));
+    for (const entity of entities) {
+      if (timeUp(run)) return false;
+      let list;
+      try {
+        list = await run.client.query(`select * from ${entity} where MetaData.LastUpdatedTime >= '${since.toISOString()}'`, { all: true, max: 50_000 });
+      } catch (e) {
+        if (e instanceof QboError && e.kind === 'feature') continue; // not in this edition (5030)
+        throw passStopFor(e) || e;
+      }
+      for (const o of list) seen.add(`${entity}|${o.Id}`);
+      await processObjects(run, list.map((o) => ({ entity, o })));
+    }
+  }
   const links = await tenantRead(run, async (tx) => (await tx.query(
     "SELECT * FROM qbo_links WHERE tenant_id = $1 AND realm_hash = $2 AND qbo_id IS NOT NULL AND state NOT IN ('unlinked', 'deleted_local', 'deleted_remote') AND role IN ('main', 'fee')",
     [tx.tenantId, run.conn.realm_hash])).rows);
@@ -599,8 +660,9 @@ export async function fullReconcile(run) {
   for (const entity of order) {
     const ids = [...byEntity.get(entity)];
     for (let i = 0; i < ids.length; i += 50) {
-      if (timeUp(run)) return;
-      const chunk = ids.slice(i, i + 50);
+      if (timeUp(run)) return false;
+      const chunk = ids.slice(i, i + 50).filter((id) => !seen.has(`${entity}|${id}`));
+      if (!chunk.length) continue;
       const found = await run.client.query(`select * from ${entity} where Id in (${chunk.map((x) => `'${x}'`).join(', ')})`, { max: 1000 });
       const byId = new Map(found.map((o) => [String(o.Id), o]));
       for (const id of chunk) {
@@ -610,6 +672,7 @@ export async function fullReconcile(run) {
       }
     }
   }
+  return !timeUp(run);
 }
 
 export { setPaused };

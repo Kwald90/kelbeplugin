@@ -32,6 +32,7 @@ const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const LEASE_WAIT_MS = 10_000;
 const MAPPING_KINDS = ['item', 'taxCode', 'purchaseTaxCode', 'account', 'paymentMethod', 'depositTo', 'paidFrom', 'class', 'department', 'term', 'option'];
 const KEY_RE = /^[A-Za-z0-9+|._:-]{1,64}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ACCOUNT_KEYS = ['income.default', 'expense.default', 'jobCost.material', 'jobCost.subcontract', 'jobCost.equipment', 'jobCost.other', 'stripeClearing', 'stripeFees', 'stripePayoutBank'];
 const METHOD_KEYS = ['cash', 'check', 'card', 'transfer', 'e-transfer', 'other'];
 const PAID_FROM_KEYS = ['card', 'cash', 'cheque', 'debit', 'transfer'];
@@ -266,6 +267,7 @@ export default async function qboRoutes(app, { config, db, records }) {
       totalCents: l.meta?.qboTotalCents ?? null, balanceCents: l.meta?.qboBalanceCents ?? null, unappliedCents: l.meta?.unappliedCents ?? null, url,
     };
     if (req.query?.live === '1' && l.qbo_id) {
+      await lookupLimit(req); // look-up limits apply to the live read (7.5)
       const client = createQboClient({ db, sealer: app.sealer, config, tenantId: req.principal.tenantId, purpose: 'lookup' });
       const o = await client.read(l.qbo_entity, l.qbo_id);
       const { toCents } = await import('../../qbo/map/canon.js');
@@ -281,8 +283,12 @@ export default async function qboRoutes(app, { config, db, records }) {
     const { collection, id } = collectionParam(req);
     if (!QBO_COLLECTIONS.includes(collection)) throw validationFailed('This collection is not sent to QuickBooks.');
     await needConnection(req, { active: true });
+    // Send now with force passes the holds: a review it overrides is recorded as approved by this person.
+    const held = req.body?.force ? await inTenant(req, async (tx) => (await tx.query(
+      "SELECT state, reason FROM qbo_links WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 AND role = 'main' AND state IN ('needs_review', 'blocked')", [tx.tenantId, collection, id])).rows[0]) : null;
     const state = await withApiLease(req, (epoch) => pushRecord(deps, req.principal.tenantId, collection, id, { force: Boolean(req.body?.force), asNew: Boolean(req.body?.asNew), epoch }));
-    await inTenant(req, (tx) => appendAudit(tx, tx.tenantId, { actor: req.principal.actor, action: 'qbo.send', collection, recordId: id, summary: req.body?.asNew ? 'Sent to QuickBooks as new' : 'Sent to QuickBooks now', request: requestFacts(req) }));
+    const summary = req.body?.asNew ? 'Sent to QuickBooks as new' : held ? `Sent to QuickBooks now, approving the hold (${held.reason || held.state})` : 'Sent to QuickBooks now';
+    await inTenant(req, (tx) => appendAudit(tx, tx.tenantId, { actor: req.principal.actor, action: 'qbo.send', collection, recordId: id, summary, request: requestFacts(req), ...(held ? { meta: { approved: held.reason || held.state } } : {}) }));
     reply.code(202);
     return { state };
   }));
@@ -467,6 +473,12 @@ export default async function qboRoutes(app, { config, db, records }) {
       }
       for (const m of req.body?.remove || []) {
         if (!MAPPING_KINDS.includes(m?.kind) || !KEY_RE.test(String(m?.key || ''))) throw validationFailed('Bad mapping to remove.');
+        if (m.kind === 'option') {
+          // A removal is a change back to the default: the same rules as setting it (7.6).
+          if (!OPTIONS[m.key]) throw validationFailed(`${m.key} cannot be removed here.`);
+          if (m.key === 'jobsAsSubCustomers') await checkMapping(tx, c, { kind: 'option', key: m.key, value: true }, ctx);
+          if (m.key === 'writeMode' && mappings.option?.writeMode === 'shadow') goLive = true;
+        }
         await tx.query('DELETE FROM qbo_mappings WHERE tenant_id = $1 AND kind = $2 AND key = $3', [tx.tenantId, m.kind, m.key]);
         changed.push(`-${m.kind}.${m.key}`);
       }
@@ -513,7 +525,7 @@ export default async function qboRoutes(app, { config, db, records }) {
       let cur = '';
       if (q.cursor) {
         const [at, id] = String(q.cursor).split('|');
-        if (!at || !id || Number.isNaN(Date.parse(at))) throw validationFailed('Invalid cursor.');
+        if (!at || !UUID_RE.test(String(id || '')) || Number.isNaN(Date.parse(at))) throw validationFailed('Invalid cursor.');
         params.push(at, id); cur = ` AND (created_at, id) < ($3::timestamptz, $4::uuid)`;
       }
       params.push(lim + 1);

@@ -368,10 +368,22 @@ describe('offline device edits (5.10)', { skip }, () => {
     assert.match(open[0].fields[0].quickbooks, /^2 lines, \$435\.00$/);
     // Nothing was overwritten in QuickBooks.
     assert.equal(fake.get(T.realmId, 'Invoice', l.qbo_id).Line.find((x) => x.DetailType === 'SalesItemLineDetail').Amount, 150);
-    // Choosing the device's lines writes them to both sides.
+    // While it is open, an edit on each side re-runs the merge: the held lines keep it open and
+    // nothing is written either way (5.6).
+    await patch(T, 'invoices', 'inv-off', { notes: 'Office note' });
+    fake.edit(T.realmId, 'Invoice', l.qbo_id, { DueDate: '2031-03-31' });
+    await pass(T);
+    assert.equal((await conflicts(T)).length, 1, 'still open');
+    assert.equal(fake.get(T.realmId, 'Invoice', l.qbo_id).CustomerMemo.value, 'From the iPad', 'the office note waits');
+    assert.equal((await rec(T, 'invoices', 'inv-off')).dueDate, '2031-02-28', 'the QuickBooks due date waits');
+    assert.ok((await link(T, 'invoices', 'inv-off')).meta.held.lines, 'the device lines are still held');
+    // Choosing the device's lines writes them to both sides, with the other two changes.
     await withLeaseDo(T, (epoch) => resolveConflict(deps, T.tenantId, open[0].id, { choice: 'fishtape' }, whoOf(T.p), { epoch }));
     assert.equal((await rec(T, 'invoices', 'inv-off')).lines[1].qty, 5);
     assert.equal(fake.get(T.realmId, 'Invoice', l.qbo_id).TotalAmt, Math.round(575 * 1.12 * 100) / 100);
+    assert.equal(fake.get(T.realmId, 'Invoice', l.qbo_id).CustomerMemo.value, 'Office note');
+    assert.equal((await rec(T, 'invoices', 'inv-off')).dueDate, '2031-03-31');
+    assert.equal((await link(T, 'invoices', 'inv-off')).meta.held, undefined);
   });
 });
 

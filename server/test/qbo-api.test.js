@@ -189,6 +189,10 @@ describe('connect pages and webhook (7.2, 7.3)', { skip }, () => {
     const donePage = await app.inject({ method: 'GET', url: '/api/v1/qbo/oauth/done?result=ok' });
     assert.equal(donePage.statusCode, 200);
     assert.match(donePage.headers['content-security-policy'], /default-src 'none'/);
+    for (const odd of ['constructor', 'toString', '__proto__']) {
+      const r = await app.inject({ method: 'GET', url: `/api/v1/qbo/oauth/done?result=${odd}` });
+      assert.equal(r.statusCode, 200, `${odd} shows the generic page`);
+    }
     const st = await call(app, { url: '/api/v1/qbo/status', token: C.token });
     assert.equal(st.body.state, 'setup');
     assert.equal(st.body.companyName, 'Connect Books');
@@ -265,6 +269,15 @@ describe('records, log, mappings, conflicts (7.5 to 7.7)', { skip }, () => {
     assert.equal(one.body.kind, 'fields');
     const bad = await call(app, { method: 'POST', url: `/api/v1/qbo/conflicts/${c.id}/resolve`, token: A.token, body: { choice: 'nope' } });
     assert.equal(bad.status, 400);
+    const badCursor = await call(app, { url: '/api/v1/qbo/conflicts?cursor=2026-01-01T00:00:00Z%7Cx', token: office.token });
+    assert.equal(badCursor.status, 400, 'a cursor id that is not a uuid is a 400, not a 500');
+    // Paused by HQ (or by anyone): a choice that writes to QuickBooks waits for the resume (2.5).
+    const prev = (await t.superPool.query('SELECT state, pause_reason FROM qbo_connections WHERE tenant_id = $1', [A.tenantId])).rows[0];
+    await t.superPool.query("UPDATE qbo_connections SET state = 'paused', pause_reason = 'hq' WHERE tenant_id = $1", [A.tenantId]);
+    const paused = await call(app, { method: 'POST', url: `/api/v1/qbo/conflicts/${c.id}/resolve`, token: A.token, body: { choice: 'quickbooks' } });
+    await t.superPool.query('UPDATE qbo_connections SET state = $2, pause_reason = $3 WHERE tenant_id = $1', [A.tenantId, prev.state, prev.pause_reason]);
+    assert.equal(paused.status, 409);
+    assert.equal(paused.body.error.code, 'qbo_paused', JSON.stringify(paused.body));
     const r = await call(app, { method: 'POST', url: `/api/v1/qbo/conflicts/${c.id}/resolve`, token: A.token, body: { choice: 'quickbooks' } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.status, 'resolved');
@@ -300,6 +313,9 @@ describe('records, log, mappings, conflicts (7.5 to 7.7)', { skip }, () => {
     const locked = await put([{ kind: 'option', key: 'jobsAsSubCustomers', value: false }]);
     assert.equal(locked.status, 409, JSON.stringify(locked.body));
     assert.equal(locked.body.error.code, 'qbo_option_locked');
+    // Removing an option is setting it back to its default: engine-set options cannot be removed.
+    const rm = await call(app, { method: 'PUT', url: '/api/v1/qbo/mappings', token: A.token, body: { remove: [{ kind: 'option', key: 'stripeVendorId' }] } });
+    assert.equal(rm.status, 400, JSON.stringify(rm.body));
     const audit = (await t.superPool.query("SELECT count(*)::int AS n FROM audit_events WHERE tenant_id = $1 AND action = 'qbo.mappings'", [A.tenantId])).rows[0].n;
     assert.ok(audit >= 2);
   });

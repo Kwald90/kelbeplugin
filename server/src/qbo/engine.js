@@ -28,7 +28,7 @@ import { fishtapeToCanon, qboToCanon, isVoidedInvoice, canonEqual, str, toCents 
 import { canonToQbo, entityFor } from './map/to-qbo.js';
 import { canonToFishtape, linkMetaFromQbo } from './map/to-fishtape.js';
 import { threeWayMerge, canonCollection, fieldsOf, conflictRows, MONEY_RECORD_KEYS, PUSH_ONLY_COLLECTIONS } from './map/merge.js';
-import { expectedTax, lineTaxKey, kindsUsed, taxMismatchMessage, compareTax, taxOverride } from './map/tax.js';
+import { expectedTax, lineTaxKey, kindsUsed, taxMismatchMessage, compareTax, taxOverride, needsTaxReason } from './map/tax.js';
 import { requestIdFor } from './map/requestid.js';
 import { docTotals } from '../../../electrical-app/js/lib/money.js';
 import { runPush, processRecord } from './push.js';
@@ -605,6 +605,10 @@ export async function reconcile(run, link, o = {}) {
 
   const ctx = ctxFor(run, link, collection);
   const B = link.snapshot;
+  // While a conflict is open, the device values held for it count as L in every re-merge (5.2, 5.6):
+  // an unrelated edit on either side never closes it, and nothing is written until a person decides.
+  const heldOpen = link.state === 'conflict' && link.meta?.held && typeof link.meta.held === 'object' && Object.keys(link.meta.held).length ? link.meta.held : null;
+  const held = heldOpen ? { ...heldOpen, ...(o.held || {}) } : (o.held && typeof o.held === 'object' && Object.keys(o.held).length ? o.held : null);
 
   // Voids first (4.7): a QuickBooks void only sets the status; its zeroed lines never reach Fishtape.
   if (collection === 'invoices' && link.role === 'main' && isVoidedInvoice(obj)) return voidedRemote(run, link, record, obj, { row, label, B });
@@ -631,7 +635,7 @@ export async function reconcile(run, link, o = {}) {
     }
   }
 
-  const data = withHeld(record.data, o.held);
+  const data = withHeld(record.data, held);
   const L = fishtapeToCanon(collection, data, ctx);
   const R = qboToCanon(link.qbo_entity, obj, { ...ctx, collection });
 
@@ -649,7 +653,7 @@ export async function reconcile(run, link, o = {}) {
   }
   const prev = link.prev_values || {};
   const result = threeWayMerge(canonColl, B, L, R, {
-    localAt: record.data.updatedAt || null, remoteAt: seen, prevValues: prev, stale: Boolean(o.stale), held: o.held, remoteAlias: meta.remoteAlias || null,
+    localAt: record.data.updatedAt || null, remoteAt: seen, prevValues: prev, stale: Boolean(o.stale), held, remoteAlias: meta.remoteAlias || null,
   });
   if (meta.remoteAlias && result.aliasDropped.length) {
     meta.remoteAlias = { ...meta.remoteAlias };
@@ -658,7 +662,7 @@ export async function reconcile(run, link, o = {}) {
 
   if (result.conflicts.length) {
     // A held device value is shown against what Fishtape had before the pull (5.2).
-    const conflicts = result.conflicts.map((c) => (o.held && Object.prototype.hasOwnProperty.call(prev, c.field) ? { ...c, base: prev[c.field] } : c));
+    const conflicts = result.conflicts.map((c) => (held && Object.prototype.hasOwnProperty.call(prev, c.field) ? { ...c, base: prev[c.field] } : c));
     run.stats.conflicts++;
     if (run.shadow) {
       await shadowLog(run, { direction, action: 'conflict', collection, recordId: link.record_id, label, message: `Would open a conflict: ${conflicts.map((c) => c.field).join(', ')}` });
@@ -666,7 +670,7 @@ export async function reconcile(run, link, o = {}) {
     }
     await txWrite(run, async (tx) => {
       // Device values held by records.js stay with the link until a person decides (5.2).
-      const heldNow = o.held && Object.keys(o.held).length ? { ...(meta.held || {}), ...o.held } : meta.held;
+      const heldNow = held ? { ...(meta.held || {}), ...held } : meta.held;
       await updateLink(tx, run, link.id, { state: 'conflict', meta: { ...meta, fieldSeenAt: seen, ...(heldNow ? { held: heldNow } : {}) } });
       await openConflict(tx, run, { ...link, state: 'conflict' }, { kind: 'fields', label, fields: conflictRows(canonColl, conflicts) });
       await finishOutbox(tx, run, row);
@@ -691,6 +695,16 @@ export async function reconcile(run, link, o = {}) {
         return link.state;
       }
     }
+  }
+
+  // A pull never sends Fishtape's side of a record that is held (needs_review, blocked) or whose own
+  // push is still waiting in the outbox: that push re-checks the origin rule (5.2) and the holds. The
+  // fields not sent keep QuickBooks' value as their base, so the push still sees them as Fishtape edits.
+  const keepState = direction === 'pull' && !o.force && ['needs_review', 'blocked'].includes(link.state);
+  let deferred = [];
+  if (direction === 'pull' && !o.force && toRemote.length && (keepState || await outboxWaiting(run, link))) {
+    deferred = toRemote;
+    toRemote = [];
   }
 
   // Holds before anything is sent (4.7, 4.8, 4.11), unless a person approved (force).
@@ -764,8 +778,12 @@ export async function reconcile(run, link, o = {}) {
   }
 
   // Fishtape side.
-  if (toLocal.length) {
-    patch = canonToFishtape(collection, result.merged, ctxWrite, { existing: record.data, fields: toLocal, report });
+  if (toLocal.length) patch = canonToFishtape(collection, result.merged, ctxWrite, { existing: record.data, fields: toLocal, report });
+  if (held) {
+    // Held device values that now agree with QuickBooks become the record's values (5.2).
+    for (const [k, v] of Object.entries(held)) if (k !== 'updatedAt' && JSON.stringify(record.data[k] ?? null) !== JSON.stringify(v ?? null)) (patch ||= {})[k] = v;
+  }
+  if (patch) {
     if (Object.keys(patch).length) {
       const remoteAt = Date.parse(lastUpdated(obj) || '') || 0;
       const localAt = Date.parse(record.data.updatedAt || '') || 0;
@@ -793,11 +811,12 @@ export async function reconcile(run, link, o = {}) {
         return { state: 'blocked', planDrop: why === 'plan' };
       }
       if (collection === 'payments' && record.data.invoiceId) await system.refreshInvoice(tx, run, record.data.invoiceId);
-      if (collection === 'invoices' && toLocal.includes('lines')) await system.refreshInvoice(tx, run, link.record_id);
+      if (collection === 'invoices' && (toLocal.includes('lines') || 'lines' in patch)) await system.refreshInvoice(tx, run, link.record_id);
     }
     const newMeta = { ...meta, ...linkMeta(link.qbo_entity, written, ctxWrite, { pushed: built }) };
     if (written?.CustomerRef) newMeta.customerRef = ref(written.CustomerRef);
     newMeta.fieldSeenAt = {};
+    if (heldOpen) delete newMeta.held;
     if (patchedVersion != null) {
       const pulled = { ...(newMeta.pulledKeys || {}) };
       for (const k of recordKeysOf(collection, toLocal, patch)) pulled[k] = patchedVersion;
@@ -807,13 +826,13 @@ export async function reconcile(run, link, o = {}) {
     const prevValues = { ...prev };
     for (const f of toRemote) delete prevValues[f];
     for (const f of toLocal) prevValues[f] = L[f] ?? null;
-    let state = 'synced';
+    let state = keepState ? link.state : 'synced';
     let owner = link.owner;
-    let reason = null;
+    let reason = keepState ? link.reason : null;
     if (report.taxShape && link.owner !== 'quickbooks') { state = 'needs_review'; owner = 'quickbooks'; reason = 'tax_shape'; }
     const updated = await updateLink(tx, run, link.id, {
       ...(collection === 'payments' && link.role === 'main' && link.qbo_entity === 'Payment' && result.merged.invoiceRef ? { qbo_line: String(result.merged.invoiceRef) } : {}),
-      snapshot: { ...result.merged, extra: L.extra }, sync_token: written?.SyncToken ?? link.sync_token, qbo_updated_at: lastUpdated(written),
+      snapshot: { ...result.merged, ...Object.fromEntries(deferred.map((f) => [f, R[f] ?? null])), extra: L.extra }, sync_token: written?.SyncToken ?? link.sync_token, qbo_updated_at: lastUpdated(written),
       fishtape_version: patchedVersion ?? record.version, state, reason, owner, attempts: 0, last_error: null, next_attempt_at: null,
       meta: newMeta, prev_values: prevValues,
     });
@@ -832,7 +851,8 @@ export async function reconcile(run, link, o = {}) {
     return { state };
   });
   if (final.planDrop) await setPaused(run.db, run.tenantId, true, 'plan').catch(() => {});
-  if (direction === 'pull' && final.state === 'synced' && DOCS.has(collection) && link.owner !== 'quickbooks' && !toRemote.length) {
+  // The tax check compares like with like: not while Fishtape holds lines QuickBooks has not got yet.
+  if (direction === 'pull' && final.state === 'synced' && DOCS.has(collection) && link.owner !== 'quickbooks' && !toRemote.length && !deferred.length) {
     return pullTaxCheck(run, link, written, label);
   }
   return final.state;
@@ -882,10 +902,20 @@ async function pullTaxCheck(run, link, obj, label) {
   return 'synced';
 }
 
+/** True when the record has an outbox row waiting: its push runs the origin rule and the holds (5.2). */
+async function outboxWaiting(run, link) {
+  if (link.role !== 'main') return false;
+  return run.db.withTenant({ tenantId: run.tenantId }, async (tx) => (await tx.query(
+    'SELECT 1 FROM qbo_outbox WHERE tenant_id = $1 AND collection = $2 AND record_id = $3', [tx.tenantId, link.collection, link.record_id])).rows.length > 0);
+}
+
 /** Holds checked before a QuickBooks write (4.7, 4.8, 4.9, 4.11). Null when the write may go. */
 async function remoteHolds(run, link, collection, doc, L, R, B, toRemote, obj) {
   const filed = taxFiledThrough(run.ctx.features, run.ctx.mappings);
   const money = ['lines', 'date', 'taxes', 'number', 'amountCents'];
+  if (DOCS.has(collection) && toRemote.includes('lines') && needsTaxReason(doc)) {
+    return { state: 'blocked', reason: 'tax_reason', message: 'Pick why this has no tax.' };
+  }
   if ((DOCS.has(collection) || collection === 'bills') && filed) {
     const dates = [L.date, B?.date, R.date].filter(Boolean);
     if (dates.some((d) => d <= filed) && toRemote.some((f) => money.includes(f))) {
@@ -1088,12 +1118,26 @@ export async function tripBrake(run, count) {
 }
 
 /**
+ * API actions that call Intuit run only while sync is on (2.5): paused (by the office, HQ, the plan,
+ * a budget or the brake) and setup refuse with 409, like the routes' own check.
+ */
+export function assertActive(run) {
+  if (!run) throw new ApiError(409, 'qbo_not_connected', 'QuickBooks is not connected.');
+  const s = run.conn.state;
+  if (s === 'active') return;
+  if (s === 'paused') throw new ApiError(409, 'qbo_paused', 'QuickBooks sync is paused.', { pauseReason: run.conn.pause_reason });
+  if (s === 'setup') throw new ApiError(409, 'qbo_not_ready', 'Finish setting up QuickBooks first.');
+  if (s === 'reconnect_needed') throw new ApiError(409, 'qbo_reconnect_needed', 'Reconnect to QuickBooks first.');
+  throw new ApiError(409, 'qbo_not_connected', 'QuickBooks is not connected.');
+}
+
+/**
  * Reconcile one link by id (API: relink, resolve, Retry). Takes no lease itself: the caller holds it.
  * @returns {Promise<string>} the link state
  */
 export async function reconcileLink(deps, tenantId, linkId, { remote = null, force = false, epoch } = {}) {
   const run = await makeRun(deps, tenantId, { epoch, purpose: 'sync' });
-  if (!run) throw new ApiError(409, 'qbo_not_connected', 'QuickBooks is not connected.');
+  assertActive(run);
   const link = await run.db.withTenant({ tenantId }, (tx) => getLinkById(tx, linkId));
   if (!link) throw new ApiError(404, 'not_found', 'Not found.');
   try {
@@ -1112,7 +1156,7 @@ export async function reconcileLink(deps, tenantId, linkId, { remote = null, for
  */
 export async function pushRecord(deps, tenantId, collection, id, { force = false, asNew = false, epoch } = {}) {
   const run = await makeRun(deps, tenantId, { epoch, purpose: 'sync' });
-  if (!run) throw new ApiError(409, 'qbo_not_connected', 'QuickBooks is not connected.');
+  assertActive(run);
   if (asNew) {
     await txWrite(run, async (tx) => {
       const l = await getLink(tx, collection, id);
@@ -1121,9 +1165,15 @@ export async function pushRecord(deps, tenantId, collection, id, { force = false
       run.index.byRecord.delete(k3(collection, 'main', id));
     });
   }
+  // Send now is the office's own action: the record's waiting outbox row is claimed and finished with
+  // it (a later edit clears the claim and stays queued), so the next pass does not hold it again.
+  const row = await txWrite(run, async (tx) => (await tx.query(
+    `UPDATE qbo_outbox SET claimed_until = now() + interval '5 minutes', claimed_epoch = $4
+      WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 RETURNING *`, [tx.tenantId, collection, id, run.epoch])).rows[0] || null);
   try {
-    return await processRecord(run, collection, id, { force, sendNow: force });
+    return await processRecord(run, collection, id, { force, sendNow: force, actorType: 'user', ...(row ? { row, stale: row.stale, held: row.held } : {}) });
   } catch (e) {
+    if (row) await run.db.withTenant({ tenantId }, (tx) => tx.query('UPDATE qbo_outbox SET claimed_until = NULL, claimed_epoch = NULL WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 AND claimed_epoch = $4', [tenantId, collection, id, run.epoch])).catch(() => {});
     if (e instanceof BrakeError) { await tripBrake(run, e.count); return 'paused'; }
     if (e instanceof PassStop && e.cause) throw e.cause;
     throw e;

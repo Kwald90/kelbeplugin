@@ -20,7 +20,9 @@ import { amountDueCents, registerAmountDueAdjuster } from '../src/integrations/p
 import { taxComponents } from '../../electrical-app/js/lib/tax.js';
 import { refreshReference } from '../src/qbo/reference.js';
 import { acquireLease, releaseLease } from '../src/qbo/lease.js';
-import { syncTenant, makeRun, amountDueAdjustment } from '../src/qbo/engine.js';
+import { syncTenant, makeRun, amountDueAdjustment, pushRecord } from '../src/qbo/engine.js';
+import { scan, apply } from '../src/qbo/wizard.js';
+import { renumber } from '../src/qbo/lookup.js';
 import { processRecord } from '../src/qbo/push.js';
 import { ingestWebhook, parseWebhook } from '../src/qbo/webhook.js';
 import { resolveConflict } from '../src/qbo/conflicts.js';
@@ -229,6 +231,10 @@ describe('payments', { skip }, () => {
     fake.create(T.realmId, 'Payment', { CustomerRef: { value: (await link(T, 'clients', 'c-c')).qbo_id }, TotalAmt: 1120.01, Line: [{ Amount: 1120.01, LinkedTxn: [{ TxnId: l.qbo_id, TxnType: 'Invoice' }] }] });
     await pass(T);
     assert.equal((await rec(T, 'invoices', 'inv-c')).status, 'paid');
+    const pays = (await t.superPool.query("SELECT id, data FROM payments WHERE tenant_id = $1 AND data->>'invoiceId' = 'inv-c' AND deleted_at IS NULL", [T.tenantId])).rows;
+    assert.equal(pays.length, 1, 'exactly one Fishtape payment, no settlement payment');
+    assert.equal(pays[0].data.amountCents, 112001);
+    assert.ok(!pays.some((x) => x.id === 'credit-inv-c'));
   });
 
   test('more than 2 cents after a create: the QuickBooks copy is deleted again', async () => {
@@ -496,5 +502,201 @@ describe('Stripe payouts', { skip }, () => {
     await pass(T);
     assert.equal((await link(T, 'stripePayouts', 'po_GOOD00001')).state, 'deleted_local');
     assert.equal(fake.list(T.realmId, 'Transfer').filter((x) => x.Id === tr.qbo_id).length, 0);
+  });
+});
+
+// ---- findings of the W3 review: each test fails without its fix ---------------------------------
+
+const apiKey = (T) => ({ kind: 'api_key', tenantId: T.tenantId, userId: null, role: null, perms: new Set(), isManager: false, scopes: ['*:write'], crew: false, actor: { type: 'api_key', id: 'key-1', label: 'Zapier' } });
+async function leased(T, fn) {
+  const lease = await acquireLease(t.db, T.tenantId, 'test');
+  assert.ok(lease);
+  try { return await fn(lease.epoch); } finally { await releaseLease(t.db, T.tenantId, lease.epoch); }
+}
+const qboPayment = async (T, clientId, invQboId, amount) => fake.create(T.realmId, 'Payment', {
+  CustomerRef: { value: (await link(T, 'clients', clientId)).qbo_id }, TotalAmt: amount, Line: [{ Amount: amount, LinkedTxn: [{ TxnId: invQboId, TxnType: 'Invoice' }] }],
+});
+const paymentsOf = async (T, invoiceId) => (await t.superPool.query("SELECT id, data FROM payments WHERE tenant_id = $1 AND data->>'invoiceId' = $2 AND deleted_at IS NULL", [T.tenantId, invoiceId])).rows;
+const BIG_LINES = [{ description: 'Panel upgrade', qty: 20, unitCents: 100000, kind: 'material' }];
+
+describe('review findings', { skip }, () => {
+  test('a QuickBooks payment caught by a pull-only CDC pass is one Fishtape payment, never also a settlement', async () => {
+    const T = await setupTenant('Cdc Payment');
+    await create(T, 'clients', { id: 'c-p', name: 'Pay Client' });
+    await create(T, 'invoices', invoice({ id: 'inv-p', number: 'INV-60', clientId: 'c-p' }));
+    await pass(T);
+    const l = await link(T, 'invoices', 'inv-p');
+    await qboPayment(T, 'c-p', l.qbo_id, 100);
+    // The 6-hourly qbo_cdc pass pulls once: the invoice (rank 3) comes before its payment (rank 4).
+    await pass(T, { direction: 'pull', purpose: 'cdc' });
+    const pays = await paymentsOf(T, 'inv-p');
+    assert.equal(pays.length, 1, JSON.stringify(pays.map((x) => x.id)));
+    assert.equal(pays[0].data.amountCents, 10000);
+    assert.ok(!pays.some((x) => x.id === 'credit-inv-p'), 'no settlement payment');
+    assert.equal((await rec(T, 'invoices', 'inv-p')).status, 'partial');
+  });
+
+  test('an API-key edit is never sent by a pull: held for review, or waiting in the outbox', async () => {
+    const T = await setupTenant('Origin Pull');
+    await create(T, 'clients', { id: 'c-o', name: 'Origin Client' });
+    await create(T, 'invoices', invoice({ id: 'inv-o', number: 'INV-70', clientId: 'c-o' }));
+    await create(T, 'invoices', invoice({ id: 'inv-q', number: 'INV-71', clientId: 'c-o' }));
+    await pass(T);
+    const lo = await link(T, 'invoices', 'inv-o');
+    const lq = await link(T, 'invoices', 'inv-q');
+    // Held for origin review first, then QuickBooks changes the invoice (a payment there).
+    await patch(T, 'invoices', 'inv-o', { lines: BIG_LINES }, apiKey(T));
+    await pass(T);
+    assert.equal((await link(T, 'invoices', 'inv-o')).reason, 'origin');
+    await qboPayment(T, 'c-o', lo.qbo_id, 10);
+    await pass(T);
+    assert.equal(fake.get(T.realmId, 'Invoice', lo.qbo_id).TotalAmt, 1120, 'QuickBooks keeps its lines');
+    const held = await link(T, 'invoices', 'inv-o');
+    assert.equal(held.state, 'needs_review');
+    assert.equal(held.reason, 'origin');
+    // The edit and the QuickBooks change land in the same pass: the pull runs first.
+    await patch(T, 'invoices', 'inv-q', { lines: BIG_LINES }, apiKey(T));
+    await qboPayment(T, 'c-o', lq.qbo_id, 10);
+    await pass(T);
+    assert.equal(fake.get(T.realmId, 'Invoice', lq.qbo_id).TotalAmt, 1120);
+    assert.equal((await link(T, 'invoices', 'inv-q')).reason, 'origin');
+  });
+
+  test("rejecting an origin review ('quickbooks') puts QuickBooks' copy back in Fishtape and never sends the edit", async () => {
+    const T = await setupTenant('Origin Reject');
+    await create(T, 'clients', { id: 'c-r', name: 'Reject Client' });
+    await create(T, 'invoices', invoice({ id: 'inv-r', number: 'INV-80', clientId: 'c-r' }));
+    await pass(T);
+    const l = await link(T, 'invoices', 'inv-r');
+    await patch(T, 'invoices', 'inv-r', { lines: BIG_LINES }, apiKey(T));
+    await pass(T);
+    const review = (await openConflicts(T)).find((c) => c.record_id === 'inv-r');
+    await leased(T, (epoch) => resolveConflict(deps, T.tenantId, review.id, { choice: 'quickbooks' }, whoOf(T.p), { epoch }));
+    assert.equal((await rec(T, 'invoices', 'inv-r')).lines[0].qty, 1, "Fishtape is back to QuickBooks' lines");
+    await patch(T, 'invoices', 'inv-r', { notes: 'Office note' });
+    await pass(T);
+    const q = fake.get(T.realmId, 'Invoice', l.qbo_id);
+    assert.equal(q.TotalAmt, 1120, 'the rejected lines never reach QuickBooks');
+    assert.equal(q.CustomerMemo.value, 'Office note');
+    assert.equal((await link(T, 'invoices', 'inv-r')).state, 'synced');
+  });
+
+  test('a duplicate number in QuickBooks (6140) is error/duplicate_number; Renumber creates it once with a new request id', async () => {
+    const T = await setupTenant('Dup Number');
+    await create(T, 'clients', { id: 'c-d', name: 'Dup Client' });
+    await pass(T);
+    const cust = (await link(T, 'clients', 'c-d')).qbo_id;
+    fake.create(T.realmId, 'Invoice', { CustomerRef: { value: cust }, DocNumber: 'INV-90', TxnDate: TODAY, Line: [{ DetailType: 'SalesItemLineDetail', Amount: 1, SalesItemLineDetail: { ItemRef: { value: T.seed.items.labour.Id }, Qty: 1, UnitPrice: 1, TaxCodeRef: { value: T.seed.taxCodes.gst.Id } } }] });
+    await create(T, 'invoices', invoice({ id: 'inv-d', number: 'INV-90', clientId: 'c-d' }));
+    fake.resetCalls();
+    await pass(T, { direction: 'push' });
+    const l = await link(T, 'invoices', 'inv-d');
+    assert.equal(l.state, 'error', l.last_error);
+    assert.equal(l.reason, 'duplicate_number');
+    await leased(T, async (epoch) => {
+      const run = await makeRun(deps, T.tenantId, { epoch, purpose: 'sync' });
+      await renumber(run, 'invoices', 'inv-d');
+      await pushRecord(deps, T.tenantId, 'invoices', 'inv-d', { epoch });
+    });
+    const done = await link(T, 'invoices', 'inv-d');
+    assert.equal(done.state, 'synced', done.last_error);
+    const number = (await rec(T, 'invoices', 'inv-d')).number;
+    assert.notEqual(number, 'INV-90');
+    assert.equal(fake.list(T.realmId, 'Invoice').filter((x) => x.DocNumber === number).length, 1);
+    const creates = fake.calls.filter((c) => c.realmId === T.realmId && c.method === 'POST' && c.path === 'invoice' && c.requestId);
+    assert.ok(creates.length >= 2);
+    assert.equal(new Set(creates.map((c) => c.requestId)).size, creates.length, 'every create has its own request id');
+  });
+
+  test('a bill and a purchase order entered while the wizard is open reach QuickBooks after apply', async () => {
+    const T = await setupTenant('Setup Costs');
+    await t.superPool.query(`UPDATE qbo_connections SET state = 'setup', setup = '{}'::jsonb, cdc_cursor = NULL, fishtape_cursor = NULL WHERE tenant_id = $1`, [T.tenantId]);
+    await create(T, 'vendors', { id: 'v-s', name: 'Setup Supply' });
+    await create(T, 'bills', { id: 'b-s', kind: 'bill', vendorId: 'v-s', number: 'S-100', date: TODAY, status: 'open', lines: [{ description: 'Wire', qty: 1, unitCents: 10000, amountCents: 10000 }], taxes: [{ id: 'GST', label: 'GST', cents: 500 }], taxProvince: 'MB', totalCents: 10500 });
+    await create(T, 'purchaseOrders', { id: 'po-s', number: 'PO-100', vendorId: 'v-s', date: TODAY, status: 'open', lines: [{ description: 'Conduit', qty: 2, unitCents: 1500 }] });
+    await new Promise((r) => setTimeout(r, 20));
+    await leased(T, (epoch) => scan(deps, T.tenantId, { epoch }));
+    for (let i = 0; i < 30; i++) if ((await leased(T, (epoch) => apply(deps, T.tenantId, { epoch }))).finished) break;
+    await pass(T, { sweep: true });
+    await pass(T);
+    const bl = await link(T, 'bills', 'b-s');
+    assert.ok(bl?.qbo_id, `the bill is in QuickBooks (${bl?.state} ${bl?.last_error})`);
+    assert.equal(fake.list(T.realmId, 'Bill').length, 1);
+    const pl = await link(T, 'purchaseOrders', 'po-s');
+    assert.ok(pl?.qbo_id, `the purchase order is in QuickBooks (${pl?.state} ${pl?.last_error})`);
+  });
+
+  test('while paused, a resolve that would write to QuickBooks is refused; unlink still works', async () => {
+    const T = await setupTenant('Paused Resolve');
+    await create(T, 'clients', { id: 'c-z', name: 'Paused Client' });
+    await pass(T);
+    await create(T, 'invoices', invoice({ id: 'inv-z', number: 'INV-95', clientId: 'c-z' }), apiKey(T));
+    await create(T, 'invoices', invoice({ id: 'inv-y', number: 'INV-96', clientId: 'c-z' }), apiKey(T));
+    await pass(T);
+    const reviews = await openConflicts(T);
+    assert.equal(reviews.length, 2);
+    await t.superPool.query("UPDATE qbo_connections SET state = 'paused', pause_reason = 'hq', paused_since = now(), lease_until = NULL WHERE tenant_id = $1", [T.tenantId]);
+    const z = reviews.find((c) => c.record_id === 'inv-z');
+    await assert.rejects(leased(T, (epoch) => resolveConflict(deps, T.tenantId, z.id, { choice: 'fishtape' }, whoOf(T.p), { epoch })), (e) => e.code === 'qbo_paused' && e.statusCode === 409);
+    await assert.rejects(leased(T, (epoch) => pushRecord(deps, T.tenantId, 'invoices', 'inv-z', { force: true, epoch })), (e) => e.code === 'qbo_paused');
+    assert.equal(fake.list(T.realmId, 'Invoice').length, 0, 'nothing reached QuickBooks');
+    const y = reviews.find((c) => c.record_id === 'inv-y');
+    await leased(T, (epoch) => resolveConflict(deps, T.tenantId, y.id, { choice: 'unlink' }, whoOf(T.p), { epoch }));
+    assert.equal((await link(T, 'invoices', 'inv-y')).state, 'unlinked');
+  });
+
+  test('after more than 29 days without a pull, the full reconcile brings in what was created in QuickBooks meanwhile', async () => {
+    const T = await setupTenant('Long Gap');
+    await create(T, 'clients', { id: 'c-g', name: 'Gap Client' });
+    await create(T, 'invoices', invoice({ id: 'inv-g', number: 'INV-97', clientId: 'c-g' }));
+    await pass(T);
+    const cust = (await link(T, 'clients', 'c-g')).qbo_id;
+    const line = (amount) => [{ DetailType: 'SalesItemLineDetail', Amount: amount, SalesItemLineDetail: { ItemRef: { value: T.seed.items.labour.Id }, Qty: 1, UnitPrice: amount, TaxCodeRef: { value: T.seed.taxCodes.gst.Id } } }];
+    const gapInv = fake.create(T.realmId, 'Invoice', { CustomerRef: { value: cust }, DocNumber: '1050', TxnDate: TODAY, Line: line(200) });
+    const newCust = fake.create(T.realmId, 'Customer', { DisplayName: 'New In The Gap' });
+    const otherInv = fake.create(T.realmId, 'Invoice', { CustomerRef: { value: newCust.Id }, DocNumber: '1051', TxnDate: TODAY, Line: line(300) });
+    await t.superPool.query("UPDATE qbo_connections SET cdc_cursor = now() - interval '31 days' WHERE tenant_id = $1", [T.tenantId]);
+    const r = await pass(T, { direction: 'pull', purpose: 'cdc' });
+    assert.equal(r.stopped, undefined, JSON.stringify(r));
+    const pulled = (await t.superPool.query("SELECT record_id FROM qbo_links WHERE tenant_id = $1 AND collection = 'invoices' AND qbo_id = ANY($2)", [T.tenantId, [String(gapInv.Id), String(otherInv.Id)]])).rows;
+    assert.equal(pulled.length, 2, 'both invoices from the gap are in Fishtape');
+    assert.ok((await t.superPool.query("SELECT 1 FROM qbo_links WHERE tenant_id = $1 AND collection = 'clients' AND qbo_id = $2", [T.tenantId, String(newCust.Id)])).rows.length, 'with the new customer');
+    const cur = (await t.superPool.query('SELECT cdc_cursor FROM qbo_connections WHERE tenant_id = $1', [T.tenantId])).rows[0].cdc_cursor;
+    assert.ok(Date.now() - new Date(cur).getTime() < 10 * 60_000, 'the cursor moved to now');
+  });
+
+  test('a dependency keeps its own writer: an API key invoice needed by an office payment goes to review', async () => {
+    const T = await setupTenant('Dep Origin');
+    await create(T, 'clients', { id: 'c-k', name: 'Dep Client' });
+    await pass(T);
+    await create(T, 'invoices', invoice({ id: 'inv-k', number: 'INV-98', clientId: 'c-k' }), apiKey(T));
+    await create(T, 'payments', { id: 'pay-k', invoiceId: 'inv-k', amountCents: 5000, date: TODAY, method: 'check' });
+    // The API integration keeps editing, so the invoice's row is still waiting when the payment goes.
+    await t.superPool.query("UPDATE qbo_outbox SET not_before = CASE WHEN collection = 'invoices' THEN now() + interval '1 hour' ELSE now() - interval '1 second' END WHERE tenant_id = $1", [T.tenantId]);
+    await leased(T, (epoch) => syncTenant(deps, T.tenantId, { epoch, direction: 'push' }));
+    assert.equal(fake.list(T.realmId, 'Invoice').length, 0, 'the invoice waits for approval');
+    const li = await link(T, 'invoices', 'inv-k');
+    assert.equal(li.state, 'needs_review');
+    assert.equal(li.reason, 'origin');
+    assert.equal((await link(T, 'payments', 'pay-k')).state, 'blocked');
+  });
+
+  test('a create whose tax step never finished finishes it on the next pass instead of a base-less merge', async () => {
+    const T = await setupTenant('Tax Resume');
+    await create(T, 'clients', { id: 'c-t', name: 'Tax Client' });
+    await create(T, 'invoices', invoice({ id: 'inv-t', number: 'INV-99', clientId: 'c-t' }));
+    await pass(T);
+    const l = await link(T, 'invoices', 'inv-t');
+    // As if the worker stopped after the create was committed and before the tax step.
+    await t.superPool.query("UPDATE qbo_links SET reason = 'tax_override', snapshot = NULL, state = 'pending' WHERE tenant_id = $1 AND id = $2", [T.tenantId, l.id]);
+    await patch(T, 'invoices', 'inv-t', { notes: 'After the crash' });
+    await pass(T);
+    const after = await link(T, 'invoices', 'inv-t');
+    assert.equal(after.state, 'synced', after.last_error);
+    assert.equal(after.reason, null);
+    assert.ok(after.snapshot);
+    assert.equal((await openConflicts(T)).length, 0);
+    assert.equal(fake.list(T.realmId, 'Invoice').length, 1);
+    assert.equal(fake.get(T.realmId, 'Invoice', l.qbo_id).CustomerMemo.value, 'After the crash');
   });
 });
