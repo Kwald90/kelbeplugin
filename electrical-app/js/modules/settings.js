@@ -7,6 +7,8 @@ import { PROVINCES, TREATMENTS, treatmentsFor, treatmentHint, taxSetup, newDocTa
 import { adoptionFor, CODE_BOOKS } from '../lib/cec/provinces.js';
 import { placementSettings } from '../lib/placement-rules.js';
 import { logoField } from './onboarding.js';
+import { gesturePanel } from '../canvas/gestures.js';
+import { session, savePref } from '../session.js';
 
 export const APP_VERSION = '0.3.0';
 
@@ -263,6 +265,9 @@ export default {
         ctx.auth?.synced ? card('Your account', 'Password, two-step sign-in, your units and theme',
           ui.button('Password and sign-in', { icon: 'key', href: '#/account' })) : null,
         card('Appearance', null, themeHost),
+        card('Drawing', 'Finger gestures on the drawing canvas. Yours only: they follow you to your other devices when signed in.',
+          gesturePanel(ui, (k, v) => savePref(session.me, k, v)),
+          h('div', { class: 'muted' }, 'Brush size, smoothness and the eraser mode are set per tool on the canvas: tap the centre of the tool wheel.')),
         store.synced ? card('Data', 'Your company’s data lives on the server and syncs to this device.',
           h('div', { class: 'muted' }, counts),
           h('div', { class: 'row' }, ui.button('Export a copy', { icon: 'download', onClick: exportBackup })),

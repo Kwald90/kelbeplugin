@@ -3,12 +3,15 @@
 // import/export and takeoff.
 import { uid } from '../store.js';
 import {
-  drawPaper, drawContent, drawStroke, drawObject, hitTest, hitStroke, itemBounds, textBounds,
+  drawPaper, drawContent, drawStroke, drawObject, hitTest, itemBounds, textBounds,
   contentBounds, renderToCanvas, toSVG, takeoff, fmtWorldLength, segLen, wireLength, FREEHAND,
 } from './engine.js';
 import { SYMBOLS, SYMBOL_ORDER, symbolPreview } from './symbols.js';
 import { createRooms, swallowNextClick, ROOM_ICON, CHECK_ICON, WAND_ICON } from './rooms.js';
-import { addInkPoint, endInk } from './ink.js';
+import { createStabilizer, clampSmooth } from './stabilizer.js';
+import { eraseStrokes, distToSeg, segSegDist } from './erase.js';
+import { createTapDetector, getGesture, actionLabel, gesturePanel, TAP } from './gestures.js';
+import { session, savePref } from '../session.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 import {
   makePlanSet, sheetRecord, sheetName, sheetLabel, isDefaultDrawingName, sortSheets, neighbours, scaleTargets, hasOwnScale,
@@ -58,12 +61,13 @@ export const SWATCHES = [
 
 const PAPERS = [{ id: 'none', label: 'Blank' }, { id: 'dots', label: 'Dots' }, { id: 'grid', label: 'Grid' }, { id: 'iso', label: 'Isometric' }];
 
+// smooth: the stabilizer's 0–100 (./stabilizer.js); eraser mode: 'area' cuts strokes, 'stroke' removes them whole
 const DEFAULT_OPTS = () => ({
-  pen: { size: 3, opacity: 1, color: '#1c1b19' },
-  pencil: { size: 2, opacity: 1, color: '#5f5a51' },
-  marker: { size: 7, opacity: 0.9, color: '#1f5fb8' },
-  highlighter: { size: 20, opacity: 1, color: '#f5b301' },
-  eraser: { size: 18 },
+  pen: { size: 3, opacity: 1, color: '#1c1b19', smooth: 25 },
+  pencil: { size: 2, opacity: 1, color: '#5f5a51', smooth: 20 },
+  marker: { size: 7, opacity: 0.9, color: '#1f5fb8', smooth: 25 },
+  highlighter: { size: 20, opacity: 1, color: '#f5b301', smooth: 40 },
+  eraser: { size: 18, mode: 'area' },
   line: { size: 2.5, opacity: 1, color: '#1c1b19' },
   rect: { size: 2.5, opacity: 1, color: '#1c1b19' },
   wire: { size: 2.5, opacity: 1, color: '#c62f2f' },
@@ -71,10 +75,37 @@ const DEFAULT_OPTS = () => ({
   measure: { size: 1.5, opacity: 1, color: '#1c1b19' },
 });
 
-function loadOpts() {
-  try { return { ...DEFAULT_OPTS(), ...JSON.parse(localStorage.getItem('kc.canvas.opts') || '{}') }; } catch { return DEFAULT_OPTS(); }
+/**
+ * Size range per tool. Pens, shapes and text are in world units (they scale with the drawing, and
+ * the preview dot shows them at the current zoom); the eraser is in screen px, so it covers the
+ * same patch of glass at any zoom.
+ */
+export const TOOL_SIZES = {
+  pen: [0.5, 24], pencil: [0.5, 16], marker: [2, 48], highlighter: [6, 80], eraser: [4, 160],
+  line: [0.5, 24], rect: [0.5, 24], wire: [0.5, 16], text: [8, 96],
+};
+const SLIDER_STEPS = 1000;
+/** Sizes step finer when small: 0.1 under 2, 0.5 under 10, then whole numbers. */
+export function roundSize(v) { return v < 2 ? Math.round(v * 10) / 10 : v < 10 ? Math.round(v * 2) / 2 : Math.round(v); }
+export function clampSize(tool, v) { const [lo, hi] = TOOL_SIZES[tool] || [0.5, 80]; return Math.min(hi, Math.max(lo, roundSize(Number(v) || lo))); }
+// a log scale, so 0.5 to 24 is as easy to set at the small end as the big one
+const sizeToSlider = (tool, v) => { const [lo, hi] = TOOL_SIZES[tool]; return Math.round((Math.log(clampSize(tool, v) / lo) / Math.log(hi / lo)) * SLIDER_STEPS); };
+const sliderToSize = (tool, x) => { const [lo, hi] = TOOL_SIZES[tool]; return clampSize(tool, lo * (hi / lo) ** (x / SLIDER_STEPS)); };
+
+/** Brush settings for this person on this device (each tool keeps its own size, smoothness, colour). */
+function optsKey(ctx) {
+  const who = ctx?.auth?.account?.userId || (ctx?.auth?.synced ? null : ctx?.auth?.current?.()?.id);
+  return who ? `kc.canvas.opts.${who}` : 'kc.canvas.opts';
 }
-function saveOpts(o) { try { localStorage.setItem('kc.canvas.opts', JSON.stringify(o)); } catch { /* ignore */ } }
+function loadOpts(key) {
+  const def = DEFAULT_OPTS();
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(key) || localStorage.getItem('kc.canvas.opts') || '{}') || {}; } catch { /* use defaults */ }
+  for (const [tool, o] of Object.entries(saved)) if (def[tool] && o && typeof o === 'object') def[tool] = { ...def[tool], ...o };
+  for (const tool of Object.keys(TOOL_SIZES)) if (def[tool]) def[tool].size = clampSize(tool, def[tool].size);
+  return def;
+}
+function saveOpts(o, key) { try { localStorage.setItem(key, JSON.stringify(o)); } catch { /* ignore */ } }
 
 export function normalizeDrawing(d) {
   d.layers = d.layers?.length ? d.layers : [{ id: 'L1', name: 'Layer 1', visible: true, locked: false, opacity: 1 }];
@@ -99,11 +130,12 @@ export function openEditor(root, ctx, id) {
     return;
   }
   const d = normalizeDrawing(rec);
-  const opts = loadOpts();
+  const OPTS_KEY = optsKey(ctx);
+  const opts = loadOpts(OPTS_KEY);
   const st = {
     tool: 'pen', view: d.view && !(d.view.x === 0 && d.view.y === 0 && d.view.zoom === 1) ? { ...d.view } : null,
     activeLayer: d.layers[d.layers.length - 1].id, selection: [], placing: null, placeRot: 0,
-    wireDash: false, wireCurve: false, setScale: false, penSeen: false, space: false, hover: null,
+    wireDash: false, wireCurve: false, setScale: false, penSeen: false, space: false, hover: null, prevTool: null,
   };
   let undo = [], redo = [];
   let op = null;
@@ -188,7 +220,13 @@ export function openEditor(root, ctx, id) {
   const sheetLabelBtn = h('button', { class: 'cv-sheet-label', type: 'button', onClick: () => sheetsSheet() });
   const sheetBar = h('nav', { class: 'cv-bar cv-sheetbar', 'aria-label': 'Sheets in this plan set', hidden: true }, sheetPrev, sheetLabelBtn, sheetNext);
 
-  const wrap = h('div', { class: 'cv' }, canvas, topLeft, topRight, ctxBar, shapes, wheel, pop, zoomBar, sheetBar);
+  // quick size: bigger / the brush at its size (opens the settings) / smaller, for the tool in hand
+  const sizeUp = btn('plus', 'Bigger', () => stepSize(1), { size: 18 });
+  const sizeDown = btn('minus', 'Smaller', () => stepSize(-1), { size: 18 });
+  const sizeDotBtn = h('button', { class: 'cv-sizebar-dot', type: 'button', title: 'Size and brush settings', 'aria-label': 'Size and brush settings', onClick: () => togglePop(pop.hidden) });
+  const sizeBar = h('div', { class: 'cv-bar cv-sizebar', role: 'group', 'aria-label': 'Brush size' }, sizeUp, sizeDotBtn, sizeDown);
+
+  const wrap = h('div', { class: 'cv' }, canvas, topLeft, topRight, ctxBar, shapes, wheel, sizeBar, pop, zoomBar, sheetBar);
   root.append(wrap);
 
   // ---------- helpers ----------
@@ -412,6 +450,7 @@ export function openEditor(root, ctx, id) {
   // ---------- tools ----------
   function setTool(t) {
     if (op?.type === 'wire') finishWire();
+    if (t !== st.tool) st.prevTool = st.tool;
     st.tool = t;
     rooms?.toolChanged();
     st.placing = null;
@@ -466,19 +505,36 @@ export function openEditor(root, ctx, id) {
     return { id: uid(), layer: st.activeLayer, tool: 'wire', color: o.color, size: o.size, opacity: o.opacity, dash: st.wireDash, curve: st.wireCurve };
   }
 
-  function eraseAt(wx, wy) {
+  /**
+   * Erase along the eraser's path from a to b (world): the circle swept between two samples, so a
+   * fast swipe misses nothing. Area mode cuts strokes and keeps what is outside (./erase.js); whole
+   * mode removes every stroke touched. Symbols and labels always go whole. The first change of a
+   * drag takes the undo checkpoint, so one undo brings back everything the drag erased.
+   * @returns {boolean} whether anything changed
+   */
+  function eraseSweep(a, b) {
     const r = opts.eraser.size / 2 / z();
     const ok = (lid) => { const l = layerOf(lid); return l && usable(l); };
-    const hitS = d.strokes.filter((s) => ok(s.layer) && hitStroke(s, wx, wy, r));
-    const hitO = d.objects.filter((o) => ok(o.layer) && Math.hypot(o.x - wx, o.y - wy) <= 15 * (o.scale || 1) + r);
-    const hitT = d.texts.filter((t) => { if (!ok(t.layer)) return false; const b = textBounds(t); return wx >= b.x0 - r && wx <= b.x1 + r && wy >= b.y0 - r && wy <= b.y1 + r; });
-    if (!hitS.length && !hitO.length && !hitT.length) return;
+    const mode = opts.eraser.mode === 'stroke' ? 'stroke' : 'area';
+    const res = eraseStrokes(d.strokes, a, b, r, { mode, canErase: (s) => ok(s.layer), newId: uid, minLen: 1 / z() });
+    const hitO = d.objects.filter((o) => ok(o.layer) && distToSeg(o.x, o.y, a[0], a[1], b[0], b[1]) <= 15 * (o.scale || 1) + r);
+    const hitT = d.texts.filter((t) => {
+      if (!ok(t.layer)) return false;
+      const x = textBounds(t);
+      const inside = (p) => p[0] >= x.x0 && p[0] <= x.x1 && p[1] >= x.y0 && p[1] <= x.y1;
+      if (inside(a) || inside(b)) return true;
+      const c = [[x.x0, x.y0], [x.x1, x.y0], [x.x1, x.y1], [x.x0, x.y1]];
+      return c.some((p, i) => { const q = c[(i + 1) % 4]; return segSegDist(p[0], p[1], q[0], q[1], a[0], a[1], b[0], b[1]) <= r; });
+    });
+    if (!res.changed && !hitO.length && !hitT.length) return false;
     if (!op.cp) { checkpoint(); op.cp = true; }
-    const gone = new Set([...hitS, ...hitO, ...hitT].map((x) => x.id));
-    d.strokes = d.strokes.filter((s) => !gone.has(s.id));
-    d.objects = d.objects.filter((o) => !gone.has(o.id));
-    d.texts = d.texts.filter((t) => !gone.has(t.id));
-    changed();
+    d.strokes = res.strokes;
+    if (hitO.length || hitT.length) {
+      const gone = new Set([...hitO, ...hitT].map((x) => x.id));
+      d.objects = d.objects.filter((o) => !gone.has(o.id));
+      d.texts = d.texts.filter((t) => !gone.has(t.id));
+    }
+    return true;
   }
 
   function translateSel(dx, dy) {
@@ -530,13 +586,51 @@ export function openEditor(root, ctx, id) {
   function local(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
   const owns = (e) => !op || op.pid == null || op.pid === e.pointerId;
 
+  // Finger gestures (./gestures.js): a two- or three-finger tap and a one-finger hold run the
+  // person's chosen action. Palms never reach the detector, and the Pencil touching down cancels
+  // any tap in progress. A tap's fingers start a pinch like any two fingers; if they turn out to
+  // be a tap, the view goes back to where it was.
+  const taps = createTapDetector();
+  let holdTimer = 0, tapView = null;
+
+  function runGesture(key, view0) {
+    const act = getGesture(key);
+    if (act === 'none') return;
+    if (view0 && st.view && (view0.zoom !== st.view.zoom || view0.x !== st.view.x || view0.y !== st.view.y)) { st.view = view0; viewChanged(); }
+    let msg = actionLabel(act);
+    if (act === 'undo') { if (!undo.length && op?.type !== 'wire') msg = 'Nothing to undo'; else doUndo(); }
+    else if (act === 'redo') { if (!redo.length) msg = 'Nothing to redo'; else doRedo(); }
+    else if (act === 'wheel') msg = wrap.classList.toggle('wheel-min') ? 'Tool wheel hidden' : 'Tool wheel';
+    else if (act === 'lastTool') {
+      if (!st.prevTool) msg = 'No other tool yet';
+      else { setTool(st.prevTool); msg = ALL_TOOLS.find((t) => t.id === st.tool)?.label || msg; }
+    } else if (act === 'fit') fit();
+    ui.toast(msg, 'info', 1200);
+    if (globalThis.kelbeCanvas?.d === d) globalThis.kelbeCanvas.lastGesture = { key, act };
+  }
+  function onHold() {
+    // a finger that is drawing keeps drawing; one that pans (or rests) can be a hold
+    if (op && op.type !== 'pan') return;
+    if (!taps.holdDue(performance.now())) return;
+    if (op?.type === 'pan') { if (st.view && op.vx != null) { st.view.x = op.vx; st.view.y = op.vy; viewChanged(); } op = null; wrap.classList.remove('panning'); }
+    runGesture('longPress');
+  }
+
   function onDown(e) {
     const pen = e.pointerType === 'pen', touch = e.pointerType === 'touch';
     if (touch && (penDown != null || (st.penSeen && performance.now() - penUpAt < PALM_MS))) { palms.add(e.pointerId); return; }
     if (e.isPrimary) {
       // first contact of its kind: anything of that kind still listed lost its pointerup
       for (const [pid, p] of pointers) if (p.type === e.pointerType) pointers.delete(pid);
-      if (touch) { pinch = null; palms.clear(); }
+      if (touch) { pinch = null; palms.clear(); taps.cancel(); }
+    }
+    if (pen) { taps.cancel(); clearTimeout(holdTimer); }
+    if (touch) {
+      const [tx, ty] = local(e);
+      if (!taps.active) tapView = st.view ? { ...st.view } : null;
+      taps.down(e.pointerId, tx, ty, e.timeStamp);
+      clearTimeout(holdTimer);
+      if (taps.active === 1 && getGesture('longPress') !== 'none') holdTimer = setTimeout(onHold, TAP.holdMs + 20);
     }
     if (pen) {
       st.penSeen = true;
@@ -582,7 +676,10 @@ export function openEditor(root, ctx, id) {
       if (!needLayer()) return;
       const o = opts[t];
       const p = pen ? (e.pressure || 0.5) : 0.5;
-      op = { type: 'draw', pid: e.pointerId, start: [wx, wy], last: [wx, wy, p], stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: [[wx, wy, p]] } };
+      // the stabilizer owns the points: it may rewrite the last few when it finds a corner
+      const stab = createStabilizer({ smoothness: o.smooth ?? 0, zoom: z(), minDist: 0.8 / z() });
+      stab.add([wx, wy, p], e.timeStamp);
+      op = { type: 'draw', pid: e.pointerId, start: [wx, wy], last: [wx, wy, p], stab, stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: stab.points } };
     } else if (t === 'line' || t === 'rect' || t === 'measure') {
       if (!st.setScale && !needLayer()) return;
       const o = opts[t];
@@ -603,7 +700,7 @@ export function openEditor(root, ctx, id) {
       if (hit?.kind === 'text') editText(hit.item); else addText(wx, wy);
     } else if (t === 'eraser') {
       op = { type: 'erase', pid: e.pointerId, cp: false, lastW: [wx, wy] };
-      eraseAt(wx, wy);
+      if (eraseSweep([wx, wy], [wx, wy])) changed();
     } else if (t === 'select') {
       const hit = hitTest(d, wx, wy, 6 / z(), usable);
       if (hit) {
@@ -627,6 +724,7 @@ export function openEditor(root, ctx, id) {
   function onMove(e) {
     if (palms.has(e.pointerId)) return;
     const [sx, sy] = local(e);
+    if (e.pointerType === 'touch') taps.move(e.pointerId, sx, sy);
     if (pointers.has(e.pointerId)) { const p = pointers.get(e.pointerId); p.x = sx; p.y = sy; }
     if (pinch) { movePinch(); return; }
     if (!owns(e)) return;
@@ -644,19 +742,18 @@ export function openEditor(root, ctx, id) {
         break;
       case 'draw': {
         const pts = op.stroke.points;
-        if (e.shiftKey) { op.stroke.points = [pts[0], [wx, wy, pts[0][2]]]; op.straight = true; break; }
+        if (e.shiftKey || op.straight) { op.stroke.points = [pts[0], [wx, wy, pts[0][2]]]; op.straight = true; break; }
         // every sample since the last frame (a fast V can be only a few events apart otherwise),
-        // kept as sampled so its tip isn't smoothed away (./ink.js)
+        // through the stabilizer, which keeps corner tips exactly where they were (./stabilizer.js)
         let evs = e.getCoalescedEvents?.();
         if (!evs?.length) evs = [e];
-        const minDist = 0.8 / z();
         for (const ev of evs) {
           const [qx, qy] = toWorld(...local(ev));
           op.last = [qx, qy, ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5];
-          addInkPoint(pts, op.last, { minDist });
+          op.stab.add(op.last, ev.timeStamp);
         }
-        // where the pen is heading, drawn this frame only
-        const pred = e.getPredictedEvents?.() || [];
+        // where the pen is heading, drawn this frame only (raw ink only: smoothed ink trails the tip on purpose)
+        const pred = op.stab.smoothness ? [] : e.getPredictedEvents?.() || [];
         op.pred = pred.length ? pred.map((ev) => [...toWorld(...local(ev)), op.last[2]]) : null;
         break;
       }
@@ -681,13 +778,16 @@ export function openEditor(root, ctx, id) {
         break;
       }
       case 'erase': {
-        // sweep the path between samples so a quick swipe doesn't skip strokes it crossed
-        const step = Math.max(1, opts.eraser.size / 2) / z();
-        const [lx, ly] = op.lastW || [wx, wy];
-        const n = Math.min(64, Math.ceil(Math.hypot(wx - lx, wy - ly) / step));
-        for (let i = 1; i <= n; i++) eraseAt(lx + ((wx - lx) * i) / n, ly + ((wy - ly) * i) / n);
-        if (!n) eraseAt(wx, wy);
-        op.lastW = [wx, wy];
+        // every sample since the last frame, each swept from the one before
+        let evs = e.getCoalescedEvents?.();
+        if (!evs?.length) evs = [e];
+        let any = false;
+        for (const ev of evs) {
+          const p = toWorld(...local(ev));
+          if (eraseSweep(op.lastW || p, p)) any = true;
+          op.lastW = p;
+        }
+        if (any) changed();
         break;
       }
       case 'move': {
@@ -717,6 +817,11 @@ export function openEditor(root, ctx, id) {
     if (palms.delete(e.pointerId)) return;
     if (e.pointerId === penDown) { penDown = null; penUpAt = performance.now(); }
     pointers.delete(e.pointerId);
+    if (e.pointerType === 'touch') {
+      const n = e.type === 'pointercancel' ? (taps.cancel(), null) : taps.up(e.pointerId, e.timeStamp);
+      if (!taps.active) clearTimeout(holdTimer);
+      if (n) { pinch = null; if (op?.type !== 'wire') op = null; wrap.classList.remove('panning'); runGesture(n === 2 ? 'twoFingerTap' : 'threeFingerTap', tapView); return; }
+    }
     if (pinch) {
       if ([...pointers.values()].filter((p) => p.type === 'touch').length < 2) pinch = null;
       return;
@@ -734,7 +839,7 @@ export function openEditor(root, ctx, id) {
     if (cancelled && (cur.type === 'shape' || (cur.type === 'draw' && e.pointerType === 'touch'))) { requestFrame(); return; }
     if (cur.type === 'draw') {
       const s = cur.stroke;
-      if (!cur.straight) endInk(s.points, cur.last); // the last sample, not e: a cancel's coordinates can be 0,0
+      if (!cur.straight) cur.stab.end(cur.last); // catch up to the last sample, not e: a cancel's coordinates can be 0,0
       if (s.points.length === 1) s.points.push([s.points[0][0] + 0.01, s.points[0][1], s.points[0][2]]);
       checkpoint(); d.strokes.push(s); changed();
     } else if (cur.type === 'shape') {
@@ -914,7 +1019,31 @@ export function openEditor(root, ctx, id) {
   }
 
   // ---------- chrome ----------
-  function updateZoom() { zoomLabel.textContent = `${Math.round(z() * 100)}%`; }
+  function updateZoom() { zoomLabel.textContent = `${Math.round(z() * 100)}%`; renderSizeBar(); }
+
+  let sizeBarKey = '';
+  function renderSizeBar() {
+    const t = st.tool, o = opts[t];
+    const has = !st.placing && !!TOOL_SIZES[t] && !!o;
+    sizeBar.hidden = !has;
+    if (!has) return;
+    const key = `${t}|${o.size}|${o.color}|${o.opacity}|${z()}`;
+    if (key === sizeBarKey) return;
+    sizeBarKey = key;
+    ui.clear(sizeDotBtn).append(h('span', { class: 'cv-sizebar-well' }, sizeDot(t, o, 26)), h('span', { class: 'cv-sizebar-num' }, fmtSize(o.size)));
+    sizeBar.dataset.size = String(o.size);
+    sizeUp.disabled = o.size >= TOOL_SIZES[t][1];
+    sizeDown.disabled = o.size <= TOOL_SIZES[t][0];
+  }
+  /** One step bigger or smaller: a quarter each time, so small and big brushes step alike. */
+  function stepSize(dir) {
+    const t = st.tool, o = opts[t];
+    if (!o || !TOOL_SIZES[t]) return;
+    let v = clampSize(t, dir > 0 ? o.size * 1.25 : o.size / 1.25);
+    if (v === o.size) v = clampSize(t, o.size + dir * (o.size < 2 ? 0.1 : o.size < 10 ? 0.5 : 1));
+    setSize(t, v);
+    if (!pop.hidden) togglePop(true);
+  }
 
   function updateChrome() {
     titleBtn.textContent = d.name || 'Untitled';
@@ -926,7 +1055,7 @@ export function openEditor(root, ctx, id) {
     // wheel centre
     const o = curOpts();
     const isEraser = st.tool === 'eraser';
-    const sizePx = Math.max(6, Math.min(30, (o.size || 4) * (isEraser ? 0.8 : 1.4)));
+    const sizePx = Math.max(6, Math.min(30, TOOL_SIZES[st.tool] ? screenSize(st.tool, o.size) : (o.size || 4) * 1.4));
     centerDot.style.width = centerDot.style.height = sizePx + 'px';
     centerDot.style.background = isEraser ? 'transparent' : (o.color || '#1c1b19');
     centerDot.classList.toggle('eraser', isEraser);
@@ -977,7 +1106,61 @@ export function openEditor(root, ctx, id) {
   }
 
   let lastColor = opts.pen.color;
+  /** How wide a tool's size is on screen right now, in CSS px (the eraser's size already is). */
+  const screenSize = (t, size) => (t === 'eraser' ? size : size * z());
+  const fmtSize = (v) => (v < 10 ? String(v) : String(Math.round(v)));
+
+  /** Change a tool's size (clamped to its range), remember it, and refresh what shows it. */
+  function setSize(t, v) {
+    const o = opts[t];
+    if (!o || !TOOL_SIZES[t]) return;
+    o.size = clampSize(t, v);
+    saveOpts(opts, OPTS_KEY);
+    updateChrome();
+    requestFrame();
+  }
+
+  /** A dot the size of the brush at the current zoom (capped so it fits). */
+  function sizeDot(t, o, max = 44) {
+    const px = screenSize(t, o.size);
+    const shown = Math.max(2, Math.min(max, px));
+    const dot = h('span', { class: ['cv-size-dot', t === 'eraser' ? 'eraser' : null, px > max ? 'clipped' : null],
+      style: { width: shown + 'px', height: shown + 'px', background: t === 'eraser' ? 'transparent' : (o.color || '#1c1b19'), opacity: String(o.opacity ?? 1) } });
+    return dot;
+  }
+
+  // the smoothness preview: the same shaky line, run through the stabilizer at this setting
+  const SQUIGGLE = (() => {
+    let seed = 11;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 - 0.5; };
+    const out = [];
+    for (let i = 0; i <= 200; i++) {
+      const x = 10 + i * 1.12;
+      // a wave with one sharp V in the middle, plus a hand's tremor
+      const y = 26 + 12 * Math.sin(i / 14) + Math.max(0, 10 - Math.abs(i - 100)) * 1.6;
+      out.push([x + rnd() * 2.4, y + rnd() * 2.4, i * (1000 / 240)]);
+    }
+    return out;
+  })();
+  function drawSquiggle(c, t, o) {
+    const dprr = Math.min(globalThis.devicePixelRatio || 1, 3);
+    const w = 236, hh = 60;
+    c.width = Math.round(w * dprr); c.height = Math.round(hh * dprr);
+    const x = c.getContext('2d');
+    x.setTransform(dprr, 0, 0, dprr, 0, 0);
+    x.clearRect(0, 0, w, hh);
+    const dark = isDark();
+    // the raw samples, faint, under the smoothed line
+    x.strokeStyle = dark ? 'rgba(236,235,231,.25)' : 'rgba(28,27,25,.18)'; x.lineWidth = 1;
+    x.beginPath(); SQUIGGLE.forEach(([px, py], i) => (i ? x.lineTo(px, py) : x.moveTo(px, py))); x.stroke();
+    const stab = createStabilizer({ smoothness: o.smooth ?? 0, zoom: 1, minDist: 0.8 });
+    for (const [px, py, tt] of SQUIGGLE) stab.add([px, py, 0.6], tt);
+    stab.end();
+    drawStroke(x, { tool: t, color: o.color, size: Math.min(6, Math.max(1.5, o.size)), opacity: o.opacity ?? 1, points: stab.points }, d, { dark });
+  }
+
   function togglePop(force) {
+    if (force == null && wrap.classList.contains('wheel-min')) { wrap.classList.remove('wheel-min'); return; } // a tucked-away wheel opens first
     const show = force ?? pop.hidden;
     pop.hidden = !show;
     if (!show) return;
@@ -985,7 +1168,7 @@ export function openEditor(root, ctx, id) {
     const t = st.tool;
     if (t === 'select' || t === 'hand') {
       // no brush here: just the colour used by "Apply current colour" and the next pen
-      const pick = (c) => { lastColor = c; opts.pen.color = c; saveOpts(opts); if (st.selection.length) recolorSel(c); updateChrome(); togglePop(true); };
+      const pick = (c) => { lastColor = c; opts.pen.color = c; saveOpts(opts, OPTS_KEY); if (st.selection.length) recolorSel(c); updateChrome(); togglePop(true); };
       pop.append(h('div', { class: 'cv-pop-title' }, st.selection.length ? 'Colour selection' : 'Colour'),
         h('div', { class: 'cv-swatches', role: 'group', 'aria-label': 'Colours' },
           SWATCHES.map((s) => h('button', { type: 'button', class: ['cv-swatch', s.c === lastColor ? 'on' : null], title: s.n, 'aria-label': s.n, style: { background: s.c }, onClick: () => pick(s.c) }))));
@@ -993,24 +1176,63 @@ export function openEditor(root, ctx, id) {
     }
     const o = opts[t] || opts.pen;
     const isEraser = t === 'eraser';
-    const size = h('input', { type: 'range', min: isEraser ? 4 : 0.5, max: isEraser ? 80 : 40, step: 0.5, value: o.size, 'aria-label': 'Size',
-      onInput: (e) => { o.size = Number(e.target.value); sizeOut.textContent = o.size; saveOpts(opts); updateChrome(); } });
-    const sizeOut = h('output', null, String(o.size));
-    const rows = [h('div', { class: 'cv-pop-title' }, `${ALL_TOOLS.find((x) => x.id === t)?.label || 'Brush'} settings`),
-      h('label', { class: 'cv-range' }, h('span', null, 'Size'), size, sizeOut)];
+    const tName = ALL_TOOLS.find((x) => x.id === t)?.label || 'Brush';
+    const rows = [h('div', { class: 'cv-pop-title' }, `${tName} settings`)];
+    let squiggle = null;
+    if (TOOL_SIZES[t]) {
+      const [lo, hi] = TOOL_SIZES[t];
+      const sizeOut = h('output', { class: 'cv-size-out' }, fmtSize(o.size));
+      const dotHost = h('span', { class: 'cv-size-preview', title: isEraser ? 'Eraser size on screen' : `At ${Math.round(z() * 100)}% zoom` }, sizeDot(t, o));
+      const slider = h('input', { type: 'range', min: 0, max: SLIDER_STEPS, step: 1, value: sizeToSlider(t, o.size), 'aria-label': `${tName} size`, name: 'size',
+        'aria-valuetext': `${fmtSize(o.size)}${isEraser ? ' px' : ''}`, dataset: { min: lo, max: hi },
+        onInput: (e) => {
+          setSize(t, sliderToSize(t, Number(e.target.value)));
+          sizeOut.textContent = fmtSize(o.size);
+          e.target.setAttribute('aria-valuetext', `${fmtSize(o.size)}${isEraser ? ' px' : ''}`);
+          ui.clear(dotHost).append(sizeDot(t, o));
+          if (squiggle) drawSquiggle(squiggle, t, o);
+        } });
+      rows.push(h('div', { class: 'cv-size-row' }, h('label', { class: 'cv-range' }, h('span', null, 'Size'), slider, sizeOut), dotHost));
+    }
+    if (isEraser) {
+      const modeRow = h('div', { class: 'cv-seg', role: 'radiogroup', 'aria-label': 'Eraser mode' },
+        [['area', 'Area'], ['stroke', 'Whole stroke']].map(([id, label]) => h('button', { type: 'button', role: 'radio', class: 'cv-chip' + ((o.mode || 'area') === id ? ' on' : ''), 'aria-checked': String((o.mode || 'area') === id), dataset: { mode: id },
+          onClick: () => { o.mode = id; saveOpts(opts, OPTS_KEY); togglePop(true); } }, label)));
+      rows.push(h('div', { class: 'cv-pop-sub' }, h('span', null, 'Erase'), modeRow),
+        h('div', { class: 'cv-pop-hint' }, (o.mode || 'area') === 'area' ? 'Rubs out only what the circle touches.' : 'Removes each line it touches, whole.'));
+    }
+    if (FREEHAND.has(t)) {
+      const smOut = h('output', null, String(clampSmooth(o.smooth)));
+      squiggle = h('canvas', { class: 'cv-squiggle', role: 'img', 'aria-label': 'Preview of a shaky line at this smoothness' });
+      rows.push(h('label', { class: 'cv-range' }, h('span', null, 'Smoothness'),
+        h('input', { type: 'range', min: 0, max: 100, step: 1, value: clampSmooth(o.smooth), 'aria-label': `${tName} smoothness`, name: 'smooth',
+          onInput: (e) => { o.smooth = clampSmooth(e.target.value); smOut.textContent = String(o.smooth); saveOpts(opts, OPTS_KEY); drawSquiggle(squiggle, t, o); } }), smOut),
+      squiggle);
+    }
     if (!isEraser && o.opacity != null && t !== 'measure') {
       const opOut = h('output', null, Math.round(o.opacity * 100) + '%');
       rows.push(h('label', { class: 'cv-range' }, h('span', null, 'Opacity'),
         h('input', { type: 'range', min: 10, max: 100, step: 5, value: Math.round(o.opacity * 100), 'aria-label': 'Opacity',
-          onInput: (e) => { o.opacity = Number(e.target.value) / 100; opOut.textContent = e.target.value + '%'; saveOpts(opts); updateChrome(); } }), opOut));
+          onInput: (e) => { o.opacity = Number(e.target.value) / 100; opOut.textContent = e.target.value + '%'; saveOpts(opts, OPTS_KEY); updateChrome(); } }), opOut));
     }
     if (!isEraser) {
-      const pick = (c) => { o.color = c; lastColor = c; saveOpts(opts); updateChrome(); togglePop(true); };
+      const pick = (c) => { o.color = c; lastColor = c; saveOpts(opts, OPTS_KEY); updateChrome(); togglePop(true); };
       rows.push(h('div', { class: 'cv-swatches', role: 'group', 'aria-label': 'Colours (wire colours included)' },
         SWATCHES.map((s) => h('button', { type: 'button', class: ['cv-swatch', s.c.toLowerCase() === String(o.color).toLowerCase() ? 'on' : null], title: s.n, 'aria-label': s.n, style: { background: s.c }, onClick: () => pick(s.c) })),
         h('label', { class: 'cv-swatch custom', title: 'Custom colour' }, h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(o.color) ? o.color : '#1c1b19', 'aria-label': 'Custom colour', onChange: (e) => pick(e.target.value) }))));
     }
+    rows.push(h('button', { type: 'button', class: 'cv-pop-link', onClick: () => { pop.hidden = true; gesturesSheet(); } }, icon('sliders', 16), 'Finger gestures'));
     pop.append(...rows);
+    if (squiggle) drawSquiggle(squiggle, t, o);
+  }
+
+  function gesturesSheet() {
+    ui.openSheet({
+      title: 'Finger gestures',
+      body: h('div', { class: 'stack' },
+        h('p', { class: 'muted', style: { margin: 0 } }, 'What a tap with two or three fingers does on a drawing. Also in Settings → Drawing.'),
+        gesturePanel(ui, (k, v) => savePref(session.me, k, v))),
+    });
   }
 
   // ---------- sheets ----------
@@ -1170,6 +1392,7 @@ export function openEditor(root, ctx, id) {
           row(RAW.wand, 'Auto-place boxes in every room', d.rooms.length ? `${d.rooms.length} room${d.rooms.length === 1 ? '' : 's'}: receptacles, switches, lights, alarms` : 'Draw a room first', () => rooms.autoPlace()),
           row(RAW.check, 'Code check', 'CEC 2024 receptacle rules, GFCI, AFCI, alarms', () => rooms.openCheck()),
           row('sliders', 'Placement & check settings', 'Mounting heights, alarms, live check', () => rooms.settingsSheet()),
+          row('pointer', 'Finger gestures', `Two-finger tap: ${actionLabel(getGesture('twoFingerTap'))} · three-finger tap: ${actionLabel(getGesture('threeFingerTap'))}`, gesturesSheet),
           row('upload', 'Import plan', 'Image or PDF. A PDF with several pages becomes a plan set, one drawing per sheet', importUnderlay),
           d.planSet?.id ? row('layers', 'Sheets in this set', `${d.planSet.name}: jump to any sheet`, sheetsSheet) : null,
           row('list', 'Takeoff', 'Count symbols and create an estimate', takeoffSheet),
@@ -1425,12 +1648,13 @@ export function openEditor(root, ctx, id) {
 
   // exposed for tests
   globalThis.kelbeCanvas = {
-    d, st, setTool, fit, takeoff: () => takeoff(d), save: () => save(), rooms,
+    d, st, setTool, fit, takeoff: () => takeoff(d), save: () => save(), rooms, opts, undoDepth: () => undo.length, redoDepth: () => redo.length,
     importFile: (file) => importUnderlay(file), sheets: () => setSheets(), goSheet,
   };
 
   return () => {
     destroyed = true;
+    clearTimeout(holdTimer);
     flushSave();
     rooms.destroy();
     cancelAnimationFrame(rafId);
