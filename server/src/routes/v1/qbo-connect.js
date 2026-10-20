@@ -11,7 +11,7 @@ import { FEATURE_PLAN } from '../../../../electrical-app/js/plans.js';
 import { qboCfg } from '../../qbo/env.js';
 import { requireQboRole } from '../../qbo/roles.js';
 import {
-  FLOW_COOKIE, FLOW_COOKIE_PATH, flowCookieOptions, createConnectTicket, startPage, startFromTicket, completeCallback, takeover,
+  FLOW_COOKIE, FLOW_COOKIE_PATH, PREFLOW_COOKIE, flowCookieOptions, preflowCookieOptions, createConnectTicket, startPage, startFromTicket, completeCallback, takeover,
   disconnect, setPaused, loadConnection, hasTakeoverOffer,
 } from '../../qbo/connection.js';
 import { PAGE_HEADERS, RESULT_TEXT, donePage, disconnectedPage } from '../../qbo/pages.js';
@@ -63,6 +63,8 @@ export async function buildStatus(db, config, p) {
       connectedAt: iso(c.connected_at), connectedBy: by,
       syncFrom: (opt.find((o) => o.key === 'syncFrom')?.value) || (c.sync_from ? new Date(c.sync_from).toISOString().slice(0, 10) : null),
       lastPullAt: iso(c.last_pull_at), lastPushAt: iso(c.last_push_at),
+      // A full reconcile (after a month without pulls) that takes more than one pass (5.4).
+      catchingUp: Boolean(c.reconcile),
       counts: { pending: counts.pending, error: counts.error, blocked: counts.blocked, conflict: counts.conflict, needsReview: counts.needs_review, mismatch: counts.mismatch, waitingOffline: waiting },
       writeMode: opt.find((o) => o.key === 'writeMode')?.value === 'shadow' ? 'shadow' : 'live',
       refreshExpiresAt: iso(c.refresh_expires_at), hardExpiresAt: iso(c.refresh_hard_expires_at),
@@ -113,12 +115,17 @@ export default async function qboConnectRoutes(app, { config, db }) {
     const r = await startPage(db, config, ticket, { sessionUserId: req.auth?.session?.user_id || null });
     if (r.redirect) return reply.code(302).header('location', r.redirect).header('cache-control', 'no-store').send();
     for (const [k, v] of Object.entries(r.headers || {})) reply.header(k, v);
+    reply.setCookie(PREFLOW_COOKIE, r.preflowCookie, preflowCookieOptions(config));
     return reply.code(200).send(r.html);
   });
 
   app.post('/api/v1/qbo/oauth/start', { ...pub, config: { auth: 'public', csrf: false } }, async (req, reply) => {
     const ticket = typeof req.body?.ticket === 'string' && TICKET_RE.test(req.body.ticket) ? req.body.ticket : '';
-    const r = await startFromTicket(db, sealer, config, ticket);
+    const site = req.headers['sec-fetch-site'];
+    const r = await startFromTicket(db, sealer, config, ticket, {
+      preflow: req.cookies?.[PREFLOW_COOKIE] || null, fetchSite: typeof site === 'string' ? site : null, sessionUserId: req.auth?.session?.user_id || null,
+    });
+    reply.clearCookie(PREFLOW_COOKIE, { ...preflowCookieOptions(config), maxAge: 0 });
     if (r.flowCookie) reply.setCookie(FLOW_COOKIE, r.flowCookie, flowCookieOptions(config));
     return reply.code(302).header('location', r.redirect).header('cache-control', 'no-store').send();
   });

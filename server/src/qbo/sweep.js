@@ -8,12 +8,16 @@ import { collectionDef } from '../collections.js';
 import { assertEpoch } from './lease.js';
 import { QBO_COLLECTIONS, QBO_RANK, actorTypeOfUpdatedBy, upsertOutbox } from './hooks.js';
 
+/** New records read per collection in one sweep; the rest come in the next (the cursor stops before them). */
+export const SWEEP_LIMIT = 5000;
+
 /**
  * @param {object} deps { db }
- * @param {{ run?: object, epoch?: number }} [o] the pass (its epoch fences the writes)
- * @returns {Promise<{ queued: number }>}
+ * @param {{ run?: object, epoch?: number, limit?: number }} [o] the pass (its epoch fences the writes)
+ * @returns {Promise<{ queued: number, more: boolean }>} more: a collection had more new records than one sweep reads
  */
 export async function sweep(deps, tenantId, o = {}) {
+  const limit = o.limit || SWEEP_LIMIT;
   const epoch = o.run?.epoch ?? o.epoch ?? null;
   return deps.db.withTenant({ tenantId }, async (tx) => {
     if (epoch != null) await assertEpoch(tx, tenantId, epoch);
@@ -25,7 +29,16 @@ export async function sweep(deps, tenantId, o = {}) {
       return actorTypeOfUpdatedBy(s, s.startsWith('user:') ? roles.get(s.slice(5)) : null);
     };
     const cursor = Number(conn.fishtape_cursor || 0);
-    let maxSeq = cursor;
+    // The top is read once, before anything else: a row committed after this read is above it and is
+    // seen by the next sweep. The cursor moves to the top only when every collection was read to it;
+    // a collection cut off at the limit holds the cursor at the last row it read (the cursor is one for
+    // every collection, so the lowest such row wins), and the next sweep carries on from there.
+    let top = cursor;
+    for (const coll of QBO_COLLECTIONS) {
+      const m = await tx.query(`SELECT max(change_seq)::bigint AS m FROM ${collectionDef(coll).table} WHERE tenant_id = $1`, [tenantId]);
+      top = Math.max(top, Number(m.rows[0].m || 0));
+    }
+    let cutAt = null;
     let queued = 0;
     for (const coll of QBO_COLLECTIONS) {
       const def = collectionDef(coll);
@@ -45,19 +58,21 @@ export async function sweep(deps, tenantId, o = {}) {
       // 2: records newer than the cursor that have no link yet (the pass decides whether they are eligible).
       const fresh = await tx.query(
         `SELECT r.id, r.change_seq, r.updated_by FROM ${def.table} r
-          WHERE r.tenant_id = $1 AND r.change_seq > $2 AND r.deleted_at IS NULL
+          WHERE r.tenant_id = $1 AND r.change_seq > $2 AND r.change_seq <= $4 AND r.deleted_at IS NULL
             AND NOT EXISTS (SELECT 1 FROM qbo_links l WHERE l.tenant_id = r.tenant_id AND l.collection = $3 AND l.record_id = r.id AND l.role = 'main')
             AND NOT EXISTS (SELECT 1 FROM qbo_outbox o WHERE o.tenant_id = r.tenant_id AND o.collection = $3 AND o.record_id = r.id)
-          ORDER BY r.change_seq LIMIT 5000`, [tenantId, cursor, coll]);
+          ORDER BY r.change_seq LIMIT ${Number(limit)}`, [tenantId, cursor, coll, top]);
       for (const r of fresh.rows) {
         if (String(r.updated_by || '') === 'system:qbo') continue;
         await upsertOutbox(tx, { collection: coll, recordId: r.id, op: 'upsert', actorType: actor(r.updated_by), rank: QBO_RANK[coll], delayS: 0 });
         queued++;
       }
-      const top = await tx.query(`SELECT max(change_seq)::bigint AS m FROM ${def.table} WHERE tenant_id = $1`, [tenantId]);
-      maxSeq = Math.max(maxSeq, Number(top.rows[0].m || 0));
+      if (fresh.rows.length >= limit) {
+        const last = Number(fresh.rows[fresh.rows.length - 1].change_seq);
+        cutAt = cutAt == null ? last : Math.min(cutAt, last);
+      }
     }
-    await tx.query('UPDATE qbo_connections SET fishtape_cursor = $2, updated_at = now() WHERE tenant_id = $1', [tenantId, maxSeq]);
-    return { queued };
+    await tx.query('UPDATE qbo_connections SET fishtape_cursor = $2, updated_at = now() WHERE tenant_id = $1', [tenantId, cutAt ?? top]);
+    return { queued, more: cutAt != null };
   }, { write: true });
 }

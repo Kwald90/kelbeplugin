@@ -19,7 +19,7 @@ import { PROVINCES } from '../lib/tax.js';
 import { pickItems } from '../lib/doc-view.js';
 import { downscaleImage } from '../lib/safety-capture.js';
 import { requestName, qtyText } from '../lib/materials.js';
-import { qboBadge, allowedFor, qboStatusCache, connectionActive } from '../lib/qbo-ui.js';
+import { qboBadge, allowedFor, qboStatusCache, billPaidBy } from '../lib/qbo-ui.js';
 
 // A shopping cart (icons.js has none).
 const CART = '<circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h3l2.6 12.1a1 1 0 001 .9h9.7a1 1 0 001-.8L21 7H6"/>';
@@ -437,9 +437,15 @@ function renderBill(root, ctx, id) {
 
   // ---- status ----
   const statusHost = h('div', { class: 'stack' });
-  // With QuickBooks connected a bill's paid status comes only from QuickBooks (4.10): no Mark paid.
-  let qboPaid = false;
-  if (allowedFor(ctx)) qboStatusCache.status().then((s) => { if (connectionActive(s)) { qboPaid = true; drawStatus(); } }).catch(() => {});
+  // With QuickBooks connected a bill's paid status comes only from QuickBooks (4.10): no Mark paid,
+  // also while sync is paused or waits for a reconnect, and for any bill linked to QuickBooks.
+  let paidBy = null;
+  if (allowedFor(ctx, { plan: false })) {
+    Promise.all([qboStatusCache.status(), qboStatusCache.recordState('bills', id).catch(() => null)]).then(([s, r]) => {
+      paidBy = billPaidBy(s, r?.state || null);
+      if (paidBy) drawStatus();
+    }).catch(() => {});
+  }
   const setStatus = (status, extra = {}) => {
     ed.write({ status, ...extra }, { summary: `${billLabel(doc, vendorMap(store))} → ${status}` });
     drawAll();
@@ -458,16 +464,17 @@ function renderBill(root, ctx, id) {
       problems.length && doc.status !== 'void' ? h('ul', { class: 'pu-problems' }, problems.map((p) => h('li', { class: p.block ? 'block' : 'warn', dataset: { problem: p.code } }, p.message))) : null,
       h('div', { class: 'row pu-actions' },
         doc.status === 'draft' ? ui.button(doc.kind === 'receipt' ? 'Save receipt' : 'Enter bill', { size: 'sm', variant: 'primary', icon: 'check', onClick: enter }) : null,
-        doc.kind === 'bill' && doc.status === 'open' && !qboPaid ? ui.button('Mark paid', { size: 'sm', icon: 'dollar', onClick: () => { setStatus('paid'); ui.toast('Marked paid', 'success'); } }) : null,
-        doc.kind === 'bill' && doc.status === 'paid' && !qboPaid ? ui.button('Mark unpaid', { size: 'sm', onClick: () => setStatus('open') }) : null,
+        doc.kind === 'bill' && doc.status === 'open' && !paidBy ? ui.button('Mark paid', { size: 'sm', icon: 'dollar', onClick: () => { setStatus('paid'); ui.toast('Marked paid', 'success'); } }) : null,
+        doc.kind === 'bill' && doc.status === 'paid' && !paidBy ? ui.button('Mark unpaid', { size: 'sm', onClick: () => setStatus('open') }) : null,
         doc.status !== 'void' && doc.status !== 'draft' ? ui.button('Void', { size: 'sm', variant: 'ghost danger', onClick: async () => {
           if (!(await ui.confirmDialog(`Void this ${doc.kind}? It stays on record but no longer counts.`, { okLabel: 'Void' }))) return;
           setStatus('void');
         } }) : null,
         doc.status === 'void' ? ui.button('Restore', { size: 'sm', onClick: () => setStatus('draft') }) : null),
-      doc.kind === 'bill' && ['open', 'paid'].includes(doc.status) ? h('p', { class: 'muted pu-note', dataset: qboPaid ? { qboPaid: '1' } : {} }, qboPaid
+      // Only for a company with QuickBooks: without it, Mark paid is the whole story.
+      doc.kind === 'bill' && ['open', 'paid'].includes(doc.status) && paidBy ? h('p', { class: 'muted pu-note', dataset: { qboPaid: '1' } }, paidBy === 'quickbooks'
         ? 'Pay this bill in QuickBooks: it is marked paid here when the payment comes back.'
-        : 'With QuickBooks connected, paying the bill there marks it paid here.') : null,
+        : 'Pay this bill in QuickBooks: it is marked paid here when QuickBooks sync runs again.') : null,
       doc.purchaseOrderId && store.get('purchaseOrders', doc.purchaseOrderId) ? ui.button(`Purchase order ${store.get('purchaseOrders', doc.purchaseOrderId).number}`, { size: 'sm', variant: 'ghost', icon: 'file-text', href: '#/purchasing/orders/' + doc.purchaseOrderId }) : null,
       doc.jobId ? ui.button('Open job', { size: 'sm', variant: 'ghost', icon: 'briefcase', href: '#/jobs/' + doc.jobId }) : null,
       (doc.materialRequestIds || []).length ? h('a', { class: 'muted', href: '#/materials' }, `Covers ${doc.materialRequestIds.length} material request${doc.materialRequestIds.length === 1 ? '' : 's'}`) : null);

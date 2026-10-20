@@ -327,6 +327,8 @@ export function linkMetaFromQbo(entity, object, ctx = {}, { pushed = null } = {}
     }
     meta.unappliedCents = o.UnappliedAmt != null ? toCents(o.UnappliedAmt) : unapplied;
     meta.foreignLines = foreign;
+    // Where the money went: a Stripe payment's fee and payout are booked only from the clearing account (4.9).
+    meta.depositTo = str(o.DepositToAccountRef?.value ?? o.DepositToAccountRef);
     const excess = pushed && pushed.ownExcessCents != null ? pushed.ownExcessCents : linkInfo(ctx).meta.ownExcessCents;
     meta.ownExcessCents = Math.min(Math.max(0, meta.unappliedCents), Math.max(0, Math.round(Number(excess) || 0)));
   }

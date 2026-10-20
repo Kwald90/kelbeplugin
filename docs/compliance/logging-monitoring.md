@@ -79,7 +79,7 @@ secret does end up in a log, treat it as exposed: rotate it, then remove the log
 | Disk | `host-status.json`; `check-host.sh` warns at 70% and fails at 85% | Investigate at 70% | Partial |
 | Pending security updates, reboot required | `host-status.json`, `check-host.sh` | Weekly glance | Partial |
 | Code and dependency alerts | Dependabot, CodeQL, secret scanning, `security.yml` weekly run | GitHub email notifications | Partial (Dependabot security updates off) |
-| QuickBooks | The `qbo_alerts` job every 10 minutes (`server/src/qbo/alerts.js`), rules below; HQ > Developer > QuickBooks for the month's reads against the budget; HQ > the company > QuickBooks for one company's health | Email to `HQ_NOTIFY_EMAIL`, at most one per alert an hour (budget thresholds once a month) | Built with the QuickBooks sync |
+| QuickBooks | The `hq_qbo_alerts` job every 10 minutes (general worker pool) (`server/src/qbo/alerts.js`), rules below; HQ > Developer > QuickBooks for the month's reads against the budget; HQ > the company > QuickBooks for one company's health | Email to `HQ_NOTIFY_EMAIL`, at most one per alert an hour (budget thresholds once a month) | Built with the QuickBooks sync |
 
 ### QuickBooks alerts
 

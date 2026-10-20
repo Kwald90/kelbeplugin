@@ -235,6 +235,20 @@ describe('health, status, openapi', { skip }, () => {
     await strict.close();
   });
 
+  test('a QuickBooks backlog never marks the API unready (its pool is separate); it shows on its own', async () => {
+    const { app: strict } = await startApp(t, { env: { READY_MAX_QUEUE_LAG_S: '60' } });
+    const id = await enqueue(t.db, { kind: 'qbo_check' });
+    await t.superPool.query("UPDATE jobs_queue SET run_at = now() - interval '2 hours' WHERE id = $1", [id]);
+    try {
+      const r = await call(strict, { url: '/api/readyz' });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(r.body.checks.queue.ok, true);
+    } finally {
+      await t.superPool.query('DELETE FROM jobs_queue WHERE id = $1', [id]);
+      await strict.close();
+    }
+  });
+
   test('OpenAPI lists collections and sync', async () => {
     const r = await call(app, { url: '/api/v1/openapi.json' });
     assert.equal(r.status, 200);

@@ -30,8 +30,11 @@ const INTERNAL = Object.freeze({ internal: true });
 
 export const FLOW_COOKIE = 'ft_qbo_flow';
 export const FLOW_COOKIE_PATH = '/api/v1/qbo/oauth';
+/** Set by the interstitial (GET start) and required by its form's POST: binds the POST to the page (2.2). */
+export const PREFLOW_COOKIE = 'ft_qbo_pre';
 const TICKET_RE = /^[A-Za-z0-9_-]{43}$/;
 const REALM_ID_RE = /^\d{1,20}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OFFICE = ['owner', 'admin', 'office'];
 const TICKET_TTL_S = 120;
 const FLOW_TTL_S = 600;
@@ -42,6 +45,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tenantDb = (db, tenantId, fn, opts) => db.withTenant({ tenantId }, fn, opts);
 // A Fastify request or already-picked audit facts.
 const facts = (request) => (request?.headers ? requestFacts(request) : request || undefined);
+
+/**
+ * Cookie options for ft_qbo_pre (HttpOnly, Secure, SameSite=Strict, only on the OAuth paths, the
+ * ticket's 120 seconds). Strict: a form another site auto-submits never carries it, so a ticket alone
+ * (an attacker's own) cannot start a connect in someone else's browser without the interstitial.
+ */
+export function preflowCookieOptions(config = {}) {
+  return { httpOnly: true, secure: config.secureCookies ?? true, sameSite: 'strict', path: FLOW_COOKIE_PATH, maxAge: TICKET_TTL_S };
+}
 
 /** Cookie options for ft_qbo_flow (HttpOnly, Secure, SameSite=Lax, only on the OAuth paths, 10 minutes). */
 export function flowCookieOptions(config = {}) {
@@ -181,7 +193,9 @@ export async function createConnectTicket(db, cfg, { tenantId, userId, returnTo,
 
 /**
  * GET start: the interstitial (the ticket is not consumed). `web` tickets need the issuer's own session.
- * @returns {Promise<{ html: string, headers: object } | { redirect: string }>}
+ * The page's browser gets the pre-flow cookie (PREFLOW_COOKIE = preflowCookie, preflowCookieOptions);
+ * only its hash is kept on the ticket, and the POST must carry it.
+ * @returns {Promise<{ html: string, headers: object, preflowCookie: string } | { redirect: string }>}
  */
 export async function startPage(db, cfg, ticket, { sessionUserId = null } = {}) {
   const q = qboCfg(cfg);
@@ -194,27 +208,41 @@ export async function startPage(db, cfg, ticket, { sessionUserId = null } = {}) 
   const row = rows[0];
   if (!row) return { redirect: resultUrl(q, null, 'state_invalid') };
   if (row.return_to === 'web' && sessionUserId !== row.user_id) return { redirect: resultUrl(q, 'web', 'state_invalid') };
+  const preflow = b64();
+  const set = await db.query("UPDATE qbo_oauth_states SET preflow_hash = $2 WHERE ticket_hash = $1 AND stage = 'ticket' AND expires_at > now()", [sha256(ticket), sha256(preflow)]);
+  if (!set.rowCount) return { redirect: resultUrl(q, null, 'state_invalid') };
   return {
     html: interstitialPage({ tenantName: row.tenant_name, userEmail: row.email, ticket, cancelUrl: resultUrl(q, row.return_to, 'denied') }),
     headers: interstitialHeaders(q.oauth.authorize),
+    preflowCookie: preflow,
   };
 }
 
 /**
  * POST start: consumes the ticket once, stores sha256(state) and sha256(flow), and sends the browser
  * to Intuit. The route sets FLOW_COOKIE = flowCookie with flowCookieOptions().
+ *
+ * Only the interstitial's own form gets here (2.2, TM-QBO-01): the POST carries the pre-flow cookie
+ * its GET set (a cross-site auto-submit has none), a browser that says the POST came from another
+ * site is refused, and a `web` ticket needs its issuer's session. Without that, someone holding a
+ * ticket for their own company could send another person's browser straight to Intuit, past the
+ * page that names the company being connected.
+ * @param {{ preflow?: string|null, fetchSite?: string|null, sessionUserId?: string|null }} [o]
  * @returns {Promise<{ redirect: string, flowCookie?: string }>}
  */
-export async function startFromTicket(db, sealer, cfg, ticket) {
+export async function startFromTicket(db, sealer, cfg, ticket, { preflow = null, fetchSite = null, sessionUserId = null } = {}) {
   const q = qboCfg(cfg);
   if (!q.enabled) return { redirect: resultUrl(q, null, 'unavailable') };
   if (!TICKET_RE.test(String(ticket || ''))) return { redirect: resultUrl(q, null, 'state_invalid') };
+  if (fetchSite && fetchSite !== 'same-origin') return { redirect: resultUrl(q, null, 'state_invalid') };
+  if (!TICKET_RE.test(String(preflow || ''))) return { redirect: resultUrl(q, null, 'state_invalid') };
   const state = b64();
   const flow = b64();
   const { rows } = await db.query(
     `UPDATE qbo_oauth_states SET stage = 'authorizing', state_hash = $2, flow_hash = $3, expires_at = now() + make_interval(secs => $4)
-      WHERE ticket_hash = $1 AND stage = 'ticket' AND expires_at > now() RETURNING id, return_to`,
-    [sha256(ticket), sha256(state), sha256(flow), FLOW_TTL_S]);
+      WHERE ticket_hash = $1 AND stage = 'ticket' AND expires_at > now() AND preflow_hash = $5
+        AND (return_to <> 'web' OR user_id = $6::uuid) RETURNING id, return_to`,
+    [sha256(ticket), sha256(state), sha256(flow), FLOW_TTL_S, sha256(preflow), UUID_RE.test(String(sessionUserId || '')) ? sessionUserId : null]);
   if (!rows[0]) return { redirect: resultUrl(q, null, 'state_invalid') };
   let codeChallenge = null;
   if (QBO_PKCE) {
@@ -246,7 +274,8 @@ export async function completeCallback(db, sealer, cfg, { code, state, realmId, 
   const back = (result) => done(result, row.return_to, row.tenant_id);
   const flowOk = Boolean(row.live && flowCookie && row.flow_hash && timingSafeEqual(sha256(flowCookie), Buffer.from(row.flow_hash)));
   if (!flowOk) return back('state_invalid');
-  if (row.return_to === 'web' && sessionUserId && sessionUserId !== row.user_id) return back('state_invalid');
+  // A web connect finishes only in the browser of the user who asked for it (their session is there).
+  if (row.return_to === 'web' && sessionUserId !== row.user_id) return back('state_invalid');
 
   const who = await adminFacts(db, row.tenant_id, row.user_id);
   if (!who.admin) return back('forbidden');

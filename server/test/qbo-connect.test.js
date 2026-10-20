@@ -57,6 +57,11 @@ const audits = async (tenantId, action) => (await t.superPool.query('SELECT summ
 const notes = async (tenantId, like) => (await t.superPool.query('SELECT title, body, ref FROM notifications WHERE tenant_id = $1 AND ref LIKE $2', [tenantId, like])).rows;
 const events = async (kind, tenantId) => (await t.superPool.query('SELECT count(*)::int AS n FROM qbo_platform_events WHERE kind = $1 AND tenant_id IS NOT DISTINCT FROM $2', [kind, tenantId])).rows[0].n;
 const ticketOf = (url) => new URL(url).searchParams.get('ticket');
+/** The interstitial, then its form's POST with the pre-flow cookie the page set (2.2). */
+const startVia = async (ticket, userId) => {
+  const page = await startPage(t.db, config, ticket, { sessionUserId: userId });
+  return startFromTicket(t.db, sealer, config, ticket, { preflow: page.preflowCookie || null, sessionUserId: userId });
+};
 const resultOf = (url) => new URL(url).searchParams.get('result') ?? new URL(url.replace('#/quickbooks?', '?')).searchParams.get('connect');
 
 before(async () => {
@@ -108,7 +113,7 @@ describe('connect', { skip }, () => {
   test('start: consumes the ticket once, stores only hashes, and sends the browser to Intuit', async () => {
     const A = await mkTenant('Start Electric');
     const { url } = await createConnectTicket(t.db, config, { tenantId: A.tenantId, userId: A.userId, returnTo: 'web' });
-    const s = await startFromTicket(t.db, sealer, config, ticketOf(url));
+    const s = await startVia(ticketOf(url), A.userId);
     const to = new URL(s.redirect);
     assert.equal(to.origin + to.pathname, 'https://appcenter.intuit.com/connect/oauth2');
     assert.match(s.flowCookie, /^[A-Za-z0-9_-]{43}$/);
@@ -116,10 +121,30 @@ describe('connect', { skip }, () => {
     assert.equal(rows[0].stage, 'authorizing');
     assert.equal(rows[0].state_hash.length, 32);
     assert.ok(rows[0].left.minutes >= 9);
-    assert.equal(resultOf((await startFromTicket(t.db, sealer, config, ticketOf(url))).redirect), 'state_invalid', 'single use');
+    assert.equal(resultOf((await startVia(ticketOf(url), A.userId)).redirect), 'state_invalid', 'single use');
     const late = await createConnectTicket(t.db, config, { tenantId: A.tenantId, userId: A.userId, returnTo: 'app' });
     await t.superPool.query("UPDATE qbo_oauth_states SET expires_at = now() - interval '1 second' WHERE stage = 'ticket' AND tenant_id = $1", [A.tenantId]);
-    assert.equal(resultOf((await startFromTicket(t.db, sealer, config, ticketOf(late.url))).redirect), 'state_invalid', 'expired');
+    assert.equal(resultOf((await startVia(ticketOf(late.url), A.userId)).redirect), 'state_invalid', 'expired');
+  });
+
+  test("start: only the interstitial's own POST starts a connect (pre-flow cookie, same-origin, the issuer's session)", async () => {
+    const A = await mkTenant('Forged Start Electric');
+    const consumed = async (ticket) => (await t.superPool.query("SELECT stage FROM qbo_oauth_states WHERE ticket_hash = sha256($1::bytea)", [Buffer.from(ticket)])).rows[0]?.stage;
+    // A cross-site auto-submit of a ticket: the page was never shown, so there is no pre-flow cookie.
+    const app = ticketOf((await createConnectTicket(t.db, config, { tenantId: A.tenantId, userId: A.userId, returnTo: 'app' })).url);
+    assert.equal(resultOf((await startFromTicket(t.db, sealer, config, app)).redirect), 'state_invalid', 'no pre-flow cookie');
+    assert.equal(resultOf((await startFromTicket(t.db, sealer, config, app, { preflow: 'x'.repeat(43) })).redirect), 'state_invalid', 'a made-up pre-flow cookie');
+    assert.equal(await consumed(app), 'ticket', 'a refused POST leaves the ticket unused');
+    const page = await startPage(t.db, config, app, {});
+    assert.match(page.preflowCookie, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(resultOf((await startFromTicket(t.db, sealer, config, app, { preflow: page.preflowCookie, fetchSite: 'cross-site' })).redirect), 'state_invalid', 'a POST from another site');
+    assert.equal(await consumed(app), 'ticket');
+    assert.match((await startFromTicket(t.db, sealer, config, app, { preflow: page.preflowCookie, fetchSite: 'same-origin' })).flowCookie, /^[A-Za-z0-9_-]{43}$/);
+    // A web ticket: the POST needs the issuer's session too.
+    const web = ticketOf((await createConnectTicket(t.db, config, { tenantId: A.tenantId, userId: A.userId, returnTo: 'web' })).url);
+    const wp = await startPage(t.db, config, web, { sessionUserId: A.userId });
+    assert.equal(resultOf((await startFromTicket(t.db, sealer, config, web, { preflow: wp.preflowCookie, sessionUserId: null })).redirect), 'state_invalid', 'no session');
+    assert.ok((await startFromTicket(t.db, sealer, config, web, { preflow: wp.preflowCookie, sessionUserId: A.userId })).flowCookie);
   });
 
   test('callback success: tokens sealed, realm row, setup state, audit, office notice, reference refresh queued; nothing secret in the redirect', async () => {
@@ -158,7 +183,7 @@ describe('connect', { skip }, () => {
     const realm = newRealm();
     const begin = async (returnTo = 'web', userId = A.userId) => {
       const { url } = await createConnectTicket(t.db, config, { tenantId: A.tenantId, userId, returnTo });
-      const s = await startFromTicket(t.db, sealer, config, ticketOf(url));
+      const s = await startVia(ticketOf(url), userId);
       const back = await fake.authorize(s.redirect, { realmId: realm });
       return { s, back, cb: (o = {}) => completeCallback(t.db, sealer, config, { code: back.code, state: back.state, realmId: back.realmId, flowCookie: s.flowCookie, sessionUserId: userId, ...o }) };
     };
@@ -170,6 +195,8 @@ describe('connect', { skip }, () => {
     assert.equal((await f.cb({ flowCookie: undefined })).result, 'state_invalid');
     f = await begin();
     assert.equal((await f.cb({ sessionUserId: await addUser(A.tenantId, 'admin') })).result, 'state_invalid', 'web: another session');
+    f = await begin();
+    assert.equal((await f.cb({ sessionUserId: null })).result, 'state_invalid', "web: no session at all (the issuer's browser has it)");
     const admin = await addUser(A.tenantId, 'admin');
     f = await begin('app', admin);
     await t.superPool.query("UPDATE memberships SET role = 'office' WHERE user_id = $1", [admin]);

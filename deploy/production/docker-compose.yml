@@ -171,6 +171,9 @@ services:
   worker:
     <<: *server
     command: ["node", "src/worker.js"]
+    # A deploy stops the worker with SIGTERM: QuickBooks passes then end at their next step (up to a
+    # few seconds) and a long one is never killed half way, which would keep its job "running".
+    stop_grace_period: 5m
     healthcheck:
       disable: true
     cpus: ${WORKER_CPUS:-1}

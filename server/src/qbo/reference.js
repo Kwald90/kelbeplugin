@@ -5,7 +5,7 @@
 // webhooks, so this daily read is their only source; taxFiledThrough is the latest LastFileDate.
 // At most once every 5 minutes per tenant (5.11).
 import { writeLog } from './log.js';
-import { createQboClient } from './client.js';
+import { QboError, createQboClient } from './client.js';
 import { detectFeatures, loadConnection } from './connection.js';
 import { assertEpoch } from './lease.js';
 import { requeueStuck } from './engine.js';
@@ -78,15 +78,23 @@ export async function refreshReference(deps, tenantId, { force = false, epoch = 
     if (kind === 'Class' && !conn.features?.classes) { lists[kind] = []; continue; }
     if (kind === 'Department' && !conn.features?.locations) { lists[kind] = []; continue; }
     const q = NAMED.has(kind) ? `select * from ${kind} where Active in (true, false)` : `select * from ${kind}`;
-    lists[kind] = await client.query(q, { all: true, max: 20000 });
+    try {
+      lists[kind] = await client.query(q, { all: true, max: 20000 });
+    } catch (e) {
+      // One list this company cannot read (not in its edition, no permission) keeps its stored rows;
+      // the rest of the refresh goes on, so the reads already made are not spent for nothing.
+      if (e instanceof QboError && ['feature', 'permission'].includes(e.kind)) { lists[kind] = null; continue; }
+      throw e;
+    }
   }
   const info = await client.companyInfo();
   const prefs = await client.preferences();
-  const filed = lists.TaxAgency.map((a) => String(a.LastFileDate || '').slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().at(-1) || null;
+  const filed = (lists.TaxAgency || []).map((a) => String(a.LastFileDate || '').slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().at(-1) || null;
   let rows = 0;
   await deps.db.withTenant({ tenantId }, async (tx) => {
     if (epoch != null) await assertEpoch(tx, tenantId, epoch);
     for (const kind of REFERENCE_KINDS) {
+      if (lists[kind] == null) continue;
       const seen = [];
       for (const o of lists[kind]) {
         if (!/^\d{1,20}$/.test(String(o.Id))) continue;

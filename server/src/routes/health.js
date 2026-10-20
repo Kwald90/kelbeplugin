@@ -3,6 +3,7 @@
 import { readFileSync, statfsSync } from 'node:fs';
 import { X509Certificate } from 'node:crypto';
 import { migrationStatus } from '../migrate.js';
+import { QBO_KIND_PATTERN } from '../services/queue.js';
 
 async function timed(fn) {
   const t = process.hrtime.bigint();
@@ -15,13 +16,19 @@ function withTimeout(promise, ms) {
   return Promise.race([promise, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), ms); })]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * Queue counts and lag. The readiness lag leaves out the QuickBooks pool's own jobs (qbo_*): that
+ * pool is small and separate on purpose, so a QuickBooks backlog never marks the API unready or
+ * rolls back a deploy. Their lag is reported on its own (qbo_lag_s) for HQ health and the alerts.
+ */
 async function queueStats(db) {
   const { rows } = await db.query(
     `SELECT count(*) FILTER (WHERE status = 'queued')::int AS queued,
             count(*) FILTER (WHERE status = 'running')::int AS running,
             count(*) FILTER (WHERE status = 'failed' AND finished_at > now() - interval '24 hours')::int AS failed_24h,
-            COALESCE(EXTRACT(EPOCH FROM now() - min(run_at) FILTER (WHERE status = 'queued' AND run_at <= now())), 0)::int AS lag_s
-       FROM jobs_queue`);
+            COALESCE(EXTRACT(EPOCH FROM now() - min(run_at) FILTER (WHERE status = 'queued' AND run_at <= now() AND kind NOT LIKE $1)), 0)::int AS lag_s,
+            COALESCE(EXTRACT(EPOCH FROM now() - min(run_at) FILTER (WHERE status = 'queued' AND run_at <= now() AND kind LIKE $1)), 0)::int AS qbo_lag_s
+       FROM jobs_queue`, [QBO_KIND_PATTERN]);
   return rows[0];
 }
 
@@ -97,7 +104,7 @@ export default async function healthRoutes(app, { config, db, stats }) {
       uptimeSeconds: Math.round(process.uptime()),
       database: { latencyMs: Math.round(latency.ms * 10) / 10, pool: { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount } },
       migrations: { current: m.current, latest: m.latest, pending: m.pending },
-      queue: { queued: q.queued, running: q.running, failed24h: q.failed_24h, lagSeconds: q.lag_s },
+      queue: { queued: q.queued, running: q.running, failed24h: q.failed_24h, lagSeconds: q.lag_s, qboLagSeconds: q.qbo_lag_s },
       errors: { since: stats.since, total5xx: stats.total5xx, total4xx: stats.total4xx, byRoute: Object.fromEntries(stats.byRoute) },
       memory: { rssBytes: mem.rss, heapUsedBytes: mem.heapUsed },
       lastBackup,

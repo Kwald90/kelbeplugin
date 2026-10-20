@@ -253,9 +253,14 @@ OAuth "connect someone else's books to my tenant" attack. So it uses a one-time 
    in the CSP; browsers apply `form-action` to the 302 that answers the POST, so `'self'` alone would
    block the redirect to Intuit; tests use `QBO_OAUTH_BASE`): "Connect
    QuickBooks to the Fishtape company **<tenant name>**, requested by **<user email>**", a Connect button
-   and a Cancel link. The button POSTs the ticket in a hidden field to `POST /api/v1/qbo/oauth/start`
-   (public, `csrf: false`; the single-use ticket is the CSRF token). The POST consumes the ticket once:
-   it must exist, be unexpired and in stage `ticket`. It generates `state` (32 random bytes, base64url)
+   and a Cancel link. The page also sets `ft_qbo_pre=<pre-flow>` (32 random bytes; HttpOnly, Secure,
+   **SameSite=Strict**, `Path=/api/v1/qbo/oauth`, Max-Age 120) and stores `sha256(pre-flow)` on the
+   ticket. The button POSTs the ticket in a hidden field to `POST /api/v1/qbo/oauth/start` (public,
+   `csrf: false`). The POST consumes the ticket once: it must exist, be unexpired, in stage `ticket`,
+   carry the `ft_qbo_pre` cookie whose hash the ticket holds, not come from another site
+   (`Sec-Fetch-Site`, when sent, is `same-origin`) and, for `web`, come with the issuer's session. A
+   ticket alone (an attacker's own) therefore cannot be auto-submitted from another site past the
+   interstitial (TM-QBO-01). The pre-flow cookie is cleared. It generates `state` (32 random bytes, base64url)
    and `flow` (32 random bytes), stores
    `sha256(state)`, `sha256(flow)` and, when PKCE is on, the sealed PKCE verifier; moves the row to stage
    `authorizing` with a new 10-minute expiry; sets cookie `ft_qbo_flow=<flow>` (HttpOnly, Secure,
@@ -269,8 +274,7 @@ OAuth "connect someone else's books to my tenant" attack. So it uses a one-time 
    It checks, in order, and stops at the first failure:
    - the state row exists, stage `authorizing`, unexpired, and `sha256(cookie ft_qbo_flow)` equals its
      flow hash (else `state_invalid`); the row is deleted now (single use);
-   - for `web`, when an `ft_session` cookie is present it must belong to the same user (else
-     `state_invalid`);
+   - for `web`, the `ft_session` cookie must belong to the same user (else `state_invalid`);
    - the user is still an active owner or admin of that tenant and the tenant is entitled (else
      `forbidden` / `plan`);
    - Intuit sent `error` instead of `code` (the user cancelled): `denied`;
@@ -311,10 +315,11 @@ and records the answer in 11.4 (tests never call real Intuit URLs). If it lists
 Residual risk (threat model TM-QBO-01): an attacker sends a fresh ticket URL (their own tenant) to a
 QuickBooks admin of another company. Within 120 seconds that admin must open it, read past the
 interstitial that names the attacker's Fishtape company and email, press Connect and approve Intuit's
-consent screen. Only then would the admin's company connect to the attacker's tenant. Tickets are
-single use, expire in 120 s and are only issued to MFA-verified owners and admins; `web` tickets need the
-issuing user's own session at start; the connect notification names the QuickBooks company to every
-office user.
+consent screen. Only then would the admin's company connect to the attacker's tenant. A page that
+auto-submits the ticket cannot skip the interstitial: the POST needs the interstitial's own SameSite=Strict
+pre-flow cookie. Tickets are single use, expire in 120 s and are only issued to MFA-verified owners and
+admins; `web` tickets need the issuing user's own session at start, at the POST and at the callback; the
+connect notification names the QuickBooks company to every office user.
 
 ### 2.3 Token storage
 
@@ -2579,6 +2584,7 @@ their own company, not the realm id.
 | --- | --- | --- | --- |
 | `POST /api/v1/qbo/sync` | office | `{ direction: 'both'\|'push'\|'pull' }` | 202 `{ queued: true }`; `push` at most once a minute, `both`/`pull` at most once every 5 minutes per tenant (else 429 `qbo_throttled`, 5.11) |
 | `GET /api/v1/qbo/records/status?collection=&ids=` | office | `ids` comma list, max 200; omitted = every link of the collection | `{ data: { "<recordId>": RecordState } }` |
+| `GET /api/v1/qbo/waiting?limit=` | office | `limit` max 200 | records waiting to be sent (link state `blocked`), newest first: `{ data: [{ collection, recordId, reason, message, label, since }] }` (the overview's "Waiting" count, 8.2) |
 | `GET /api/v1/qbo/records/:collection/:id` | office | | `{ state: RecordState, quickbooks: { entity, qboId, docNumber, updatedAt, totalCents?, balanceCents?, unappliedCents?, url }, log: [LogEntry] (last 20), conflict: Conflict\|null }` (`qboId` is the object's id in the company's own books, not the realm id). Built from the link (snapshot, `meta.qboTotalCents`, `qboBalanceCents`, `unappliedCents`, `qbo_updated_at`): no QBO call. Add `?live=1` for a fresh read (one CorePlus call, counted, look-up limits apply). For clients, `balanceCents` is the QBO customer's balance from the last pull. |
 | `POST /api/v1/qbo/records/:collection/:id/sync` | office | `{ force?: boolean, asNew?: boolean }` | 202 `{ queued: true, state }`: the push runs at once under the tenant lease and `state` is the link's state after it. `{}` is Retry: the record's waiting outbox row is claimed and pushed with its own writer (`actor_type`), so an API key's, the assistant's or a field user's change still goes to origin review. `force: true` is "Send to QuickBooks now" (also pushes a draft): the office user approves, the holds of 4.7, 4.8, 4.11 and the origin rule are passed, and when the link was `needs_review` or `blocked` the `qbo.send` audit records the approved hold (`meta.approved`). `asNew` (only on an `unlinked` tombstone): delete the tombstone and create in QBO |
 | `POST /api/v1/qbo/records/:collection/:id/renumber` | office | | `{ number }` (estimates and invoices with `duplicate_number`) |
@@ -2870,7 +2876,7 @@ HQ sees health, never customer data.
 - The tenant block also returns `recentErrors` (the last 10: `at`, `direction`, `action`, `collection`,
   `errorCode`, `intuitTid`), `throttledUntil` and `disconnectedAt`; still no labels, messages, record ids
   or company name. HQ returns `quickbooks: null` on a server without the 0150 tables.
-- **Alerts** (W6 `server/src/qbo/alerts.js`, run by `qbo_alerts` every 10 minutes in the worker, email to
+- **Alerts** (W6 `server/src/qbo/alerts.js`, run by `hq_qbo_alerts` every 10 minutes in the worker's general pool, email to
   `HQ_NOTIFY_EMAIL` through `platform-email.js`, at most one email per alert kind per hour). Sources:
   `qbo_platform_events` (3.2), `jobs_queue` (failed `qbo_*` jobs), `qbo_api_usage`, and, for the inbox
   backlog, a per-tenant `withTenant` loop over connected tenants like the dispatcher's:
@@ -2969,7 +2975,7 @@ HQ sees health, never customer data.
 
 | Id | Threat | Mitigation |
 | --- | --- | --- |
-| TM-QBO-01 | OAuth login CSRF: someone else's QuickBooks connected to an attacker's tenant | Ticket (120 s, single use, owner/admin with MFA) + interstitial naming the Fishtape company and requester + flow cookie + state row; `web` tickets need the issuer's session; connect notification names the company (2.2) |
+| TM-QBO-01 | OAuth login CSRF: someone else's QuickBooks connected to an attacker's tenant | Ticket (120 s, single use, owner/admin with MFA) + interstitial naming the Fishtape company and requester + the interstitial's SameSite=Strict pre-flow cookie required by the POST (no cross-site auto-submit) + flow cookie + state row; `web` tickets need the issuer's session at start, POST and callback; connect notification names the company (2.2) |
 | TM-QBO-02 | Token theft from the database or backups | Envelope encryption with AAD; key outside the database; revoke on disconnect; generic secret routes refuse QBO names |
 | TM-QBO-03 | Forged webhooks driving reads or writes | HMAC on the raw body (two verifiers during rotation); events only mark the tenant dirty or name an id to read; webhook-only signals confirmed by a read |
 | TM-QBO-04 | Cross-tenant routing of webhook events | realm hash unique per tenant; events stored under the tenant found by hash only |
@@ -3272,8 +3278,8 @@ export async function revokeToken(cfg, token): void
 
 // connection.js
 export async function createConnectTicket(db, cfg, { tenantId, userId, returnTo, reconnect }): { url }
-export async function startPage(db, cfg, ticket, { sessionUserId }): { html } | { redirect }   // GET: interstitial, ticket not consumed
-export async function startFromTicket(db, sealer, cfg, ticket): { redirect, flowCookie }       // POST: consumes the ticket
+export async function startPage(db, cfg, ticket, { sessionUserId }): { html, headers, preflowCookie } | { redirect }   // GET: interstitial, ticket not consumed
+export async function startFromTicket(db, sealer, cfg, ticket, { preflow, fetchSite, sessionUserId }): { redirect, flowCookie }   // POST: consumes the ticket
 export async function completeCallback(db, sealer, cfg, { code, state, realmId, error, flowCookie, sessionUserId }): { redirect, tenantId|null, result }
 export async function takeover(db, sealer, cfg, { tenantId, userId, actor, request }): { ok }
 export async function qboRealmOwner(db, realmHash): string|null
@@ -3575,7 +3581,7 @@ export async function booksInQbo(tx, env?): object|null   // the qbo_connections
 export function enqueueFeeFetch(q, tenantId, paymentId, delayMs = 120000): Promise<void>  // stripe_fee_fetch, dedupe stripe_fee_fetch:<tenant>:<payment>
 export async function amountDueCents(tx, invoice): number   // docTotals total − payments + adjustment
 // qbo/alerts.js
-export const QBO_ALERT_HANDLERS // { qbo_alerts }
+export const QBO_ALERT_HANDLERS // { hq_qbo_alerts } (general pool)
 export async function scheduleQboAlerts(db): void   // every 10 minutes
 ```
 
@@ -4031,3 +4037,70 @@ the contract. Items already folded into the sections above are listed here once,
 - 9: alerts do nothing while QuickBooks is off; budget alerts go out once per threshold per month; a
   tenant gets 50% and 80% steps. The HQ block adds `recentErrors`, `throttledUntil` and
   `disconnectedAt` (folded into 9). HQ pause, resume and release as in 2.9.
+
+## 16. Release review fixes (revision 4)
+
+The release review's confirmed defects, fixed in the code with a test each (`server/test/qbo-review.test.js`
+and the files named). Read the sections above with these in mind; migration `0152_qbo_review_fixes.sql`.
+
+- 2.2, TM-QBO-01: the interstitial's pre-flow cookie binds the POST to the page (above); `web` connects
+  need the issuer's session at the callback too.
+- 2.5: `qbo_setup_scan`, `qbo_setup_apply` and `qbo_reference_refresh` run the plan check first like
+  the sync jobs; a plan pause also stops the reference reads.
+- 4.5: an employee hired after setup is linked from the waiting time entry's sheet ("Link employee…"):
+  `PUT /api/v1/qbo/records/employees/:id/link { qboId, entity?: 'Employee'|'Vendor' }` writes a synced,
+  QuickBooks-owned link and queues that employee's `blocked/employee_not_linked` time entries. `GET
+  /qbo/mappings` lists `choices.employees`.
+- 4.7, 4.8: a Fishtape void of an invoice, and a delete of an invoice or a bill, dated on or before
+  `taxFiledThrough` go to `needs_review/filed_period`. Approving sends the void or delete; "keep
+  QuickBooks" restores the Fishtape record. The same applies to a deleted time entry held by the pay-period
+  lock.
+- 4.9 payments: a payment Fishtape creates records `qbo_line` (its invoice); links written before are
+  backfilled and every line check falls back to `snapshot.invoiceRef`. Settlement counts each Fishtape
+  payment at its line amount (without its own excess). A payment's canonical amount is its line plus the
+  excess its own push left unapplied (`meta.ownExcessCents`, capped by `UnappliedAmt`), so QuickBooks-side
+  edits never write the line amount back; a Fishtape delete of such a payment voids it when nothing else
+  is on it. A QuickBooks void of the invoice under a pushed payment opens the `deleted` conflict. A line
+  removed from a multi-invoice payment, when the remaining line is another Fishtape payment's, deletes
+  the pulled payment instead of opening `payment_moved`; a resolved move goes through the merge.
+- 4.7, 4.9 deposits: the `deposit-<invoiceId>` payment follows the QuickBooks Deposit on every pull of the
+  invoice (changed, removed, added again; one deleted in Fishtape stays deleted). Deposit and settlement
+  payments are never sent to QuickBooks, whatever their fields say.
+- 4.9 Stripe: a fee Purchase and a payout's Transfer are booked only for card payments Fishtape itself
+  created in QuickBooks into the clearing account (`meta.stripeClearing`, `meta.depositTo`) and dated on or
+  after the cutover; a payout with a charge the bookkeeper entered herself goes to
+  `needs_review/payout_items`; a payout whose charge was skipped as pre-cutover (local dates both ways) is
+  skipped. Deleting a Stripe payment on either side removes its fee Purchase.
+- 4.10, 4.8: a supplier refund's tax override uses the Credit purchase's positive amounts.
+- 4.11, 5.12: dates of time entries (pay-period lock, `syncFrom`, books closed, setup's time queue) are the
+  clock-in day in the company zone.
+- 5.2: a risky writer (API key, assistant, field user) of a record held as `feature_missing` is kept on
+  the link (`meta.originActor`), so the later re-queue still goes to `needs_review/origin`.
+- 5.4: a pass out of time part way through a CDC page leaves the cursor; TimeActivity reads never stop
+  the pass (5030 marks `features.timeTracking` false; other errors are logged). The full reconcile pages
+  by update time and keeps a resume point (`qbo_connections.reconcile`), gives the push half of what is
+  left of a pass while the outbox has rows, and moves neither `last_pull_at` nor the webhook mark until it
+  finishes; Status has `catchingUp`.
+- 5.8: a failure before a record's link exists counts on its outbox row (`qbo_outbox.attempts`) and ends
+  in an `error` link. Continuation keys alternate (`:cont`, `:cont2`) for passes and apply chunks; a busy
+  apply or scan is queued again; the apply of a practice-mode go-live runs to the end on the active
+  connection (`setup.fromShadow`), and sync, CDC and check jobs wait for it. The dispatcher restarts a lost
+  apply chain, puts back QuickBooks jobs with no heartbeat for 3 minutes, backs off periodic jobs that
+  fail (`qbo_connections.backoff`, 5 minutes doubling to 6 hours; a budget-stopped CDC waits for the next
+  hour), and with `QBO_WRITES=off` queues no pass for waiting outbox rows. SIGTERM ends passes at their
+  next step; the worker's `stop_grace_period` is 5 minutes. The daily check gives records that ran out of
+  retries on a passing Intuit fault (`unavailable`, `stale`, `throttled`) a fresh set.
+- 5.12: the sweep reads up to 5,000 new records per collection and stops the cursor at the last one read
+  when a collection had more; the next pass sweeps on.
+- 6.3: the scan also reads the QuickBooks invoices and estimates dated back to the oldest unlinked open
+  Fishtape document, so one already in QuickBooks (paid or closed there) is matched, never created again.
+- 9: the alerts job is `hq_qbo_alerts` and runs in the general worker pool; new rule `qbo_pool_stalled`
+  (no dispatch for 5 minutes, or a QuickBooks job waiting over 15). `/api/readyz` leaves QuickBooks jobs
+  out of its queue lag; `/api/hq/health` reports `queue.qboLagSeconds`.
+- 8: the overview's "Waiting" count opens `#/quickbooks/activity?show=waiting` (`GET /api/v1/qbo/waiting`:
+  blocked links with their reason); Retry and Send now read the state that came back and keep the sheet
+  open with the reason when the record did not go; the look-up preview shows the flat answer's facts and
+  tax code names; the connect banner says "connected again" on a reconnect and goes when the state moves
+  on; the activity filter has plural names and an "Information" outcome; a bill's Mark paid is hidden
+  while QuickBooks owns its paid status (connected, paused, waiting to reconnect, or linked), and the
+  QuickBooks sentence shows only then.

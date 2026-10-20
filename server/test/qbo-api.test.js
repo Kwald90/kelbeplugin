@@ -174,7 +174,16 @@ describe('connect pages and webhook (7.2, 7.3)', { skip }, () => {
     assert.equal(page.statusCode, 200);
     assert.match(page.headers['content-security-policy'], /form-action 'self'/);
     assert.match(page.body, /Connect Route Electric/);
-    const post = await app.inject({ method: 'POST', url: '/api/v1/qbo/oauth/start', headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: `ticket=${ticket}` });
+    const pre = page.cookies.find((c) => c.name === 'ft_qbo_pre');
+    assert.ok(pre && pre.httpOnly && pre.sameSite === 'Strict' && pre.path === '/api/v1/qbo/oauth', 'the interstitial sets its strict pre-flow cookie');
+    // A forged POST (another site auto-submitting the ticket): no pre-flow cookie, or a cross-site fetch.
+    const forged = await app.inject({ method: 'POST', url: '/api/v1/qbo/oauth/start', headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: `ticket=${ticket}` });
+    assert.equal(forged.statusCode, 302);
+    assert.match(forged.headers.location, /result=state_invalid$/);
+    assert.ok(!forged.cookies.some((c) => c.name === 'ft_qbo_flow'));
+    const cross = await app.inject({ method: 'POST', url: '/api/v1/qbo/oauth/start', headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'cross-site' }, cookies: { ft_qbo_pre: pre.value }, payload: `ticket=${ticket}` });
+    assert.match(cross.headers.location, /result=state_invalid$/);
+    const post = await app.inject({ method: 'POST', url: '/api/v1/qbo/oauth/start', headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' }, cookies: { ft_qbo_pre: pre.value }, payload: `ticket=${ticket}` });
     assert.equal(post.statusCode, 302);
     const flow = post.cookies.find((c) => c.name === 'ft_qbo_flow');
     assert.ok(flow && flow.httpOnly && flow.path === '/api/v1/qbo/oauth');

@@ -11,7 +11,7 @@ import {
   makeRun, stampPush, txWrite, getLink, getLinkById, updateLink, loadRecord, system, reconcile, tripBrake, BrakeError, PassStop, ctxFor,
   linksByRemote, voidLocalInvoice, assertActive,
 } from './engine.js';
-import { processRecord, pushDelete } from './push.js';
+import { processRecord, pushDelete, removeLinked } from './push.js';
 import { remoteDeleted } from './pull.js';
 import { fishtapeToCanon, qboToCanon, canonEqual, str } from './map/canon.js';
 import { canonCollection, fieldsOf, MONEY_RECORD_KEYS, PUSH_ONLY_COLLECTIONS } from './map/merge.js';
@@ -88,10 +88,11 @@ export async function unlinkRecord(run, collection, id, who) {
  * linked elsewhere. The new link has no base (B = null): every differing field is a conflict and
  * nothing is written either way.
  */
-export async function relinkRecord(run, collection, id, qboId, who) {
+export async function relinkRecord(run, collection, id, qboId, who, { entity: wanted = null } = {}) {
   if (!ID.test(String(qboId || ''))) throw validationFailed('qboId must be a QuickBooks id.');
   const rec = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, collection, id));
   if (!rec || rec.deleted) throw notFound();
+  if (collection === 'employees') return linkEmployee(run, id, String(qboId), who, wanted);
   const entity = collection === 'bills' ? (rec.data.kind === 'receipt' ? 'Purchase' : 'Bill') : QBO_ENTITY[collection];
   if (!entity || collection === 'stripePayouts') throw validationFailed('This collection cannot be linked.');
   let obj;
@@ -120,6 +121,42 @@ export async function relinkRecord(run, collection, id, qboId, who) {
   });
   await reconcile(run, link, { remote: obj, record: rec, direction: 'push' });
   return run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLinkById(tx, link.id));
+}
+
+/**
+ * Link a Fishtape employee to a QuickBooks Employee (or a Vendor for a subcontractor, 4.5) after setup:
+ * the wizard's scan only runs once, and someone hired later has approved time waiting for this link.
+ * Employees are link-only (QuickBooks keeps them): the link is synced with no base and nothing is
+ * written. The time entries that waited for it (blocked/employee_not_linked) go to the outbox.
+ */
+async function linkEmployee(run, id, qboId, who, wanted) {
+  let obj = null;
+  let entity = null;
+  for (const e of wanted ? [wanted] : ['Employee', 'Vendor']) {
+    if (!['Employee', 'Vendor'].includes(e)) throw validationFailed('entity must be Employee or Vendor.');
+    try { obj = await run.client.read(e, qboId); entity = e; break; } catch (err) {
+      if (!(err instanceof QboError && err.kind === 'not_found')) throw err;
+    }
+  }
+  if (!obj) throw new ApiError(404, 'not_found', 'QuickBooks has no such employee.');
+  if (obj.Active === false) throw validationFailed('That QuickBooks employee is inactive.');
+  const { insertLink } = await import('./engine.js');
+  return txWrite(run, async (tx) => {
+    const taken = (await linksByRemote(tx, entity, qboId)).find((l) => l.role === 'main' && !(l.collection === 'employees' && l.record_id === id));
+    if (taken) throw new ApiError(409, 'qbo_already_linked', 'That QuickBooks record is linked to another Fishtape record.');
+    const cur = await getLink(tx, 'employees', id);
+    const fields = { qbo_entity: entity, qbo_id: String(obj.Id), qbo_line: '', sync_token: obj.SyncToken != null ? String(obj.SyncToken) : null, snapshot: {}, prev_values: {},
+      state: 'synced', owner: 'quickbooks', reason: null, meta: { displayName: obj.DisplayName || null, linkedAt: new Date().toISOString() } };
+    const l = cur ? await updateLink(tx, run, cur.id, fields) : await insertLink(tx, run, { collection: 'employees', record_id: id, role: 'main', ...fields });
+    const waiting = (await tx.query(
+      `SELECT l.record_id FROM qbo_links l JOIN time_entries r ON r.tenant_id = l.tenant_id AND r.id = l.record_id
+        WHERE l.tenant_id = $1 AND l.collection = 'timeEntries' AND l.role = 'main' AND l.state = 'blocked' AND l.reason = 'employee_not_linked'
+          AND r.data->>'employeeId' = $2 AND r.deleted_at IS NULL`, [tx.tenantId, id])).rows;
+    for (const w of waiting) await upsertOutbox(tx, { collection: 'timeEntries', recordId: w.record_id, op: 'upsert', actorType: 'system', rank: QBO_RANK.timeEntries, delayS: 0 });
+    await appendAudit(tx, run.tenantId, { actor: who.actor, action: 'qbo.relink', collection: 'employees', recordId: id, summary: `Linked to a QuickBooks ${entity === 'Vendor' ? 'supplier' : 'employee'}`, request: who.request });
+    await writeLog(tx, { direction: 'system', outcome: 'info', action: 'link', collection: 'employees', recordId: id, qboEntity: entity, message: `Linked to QuickBooks; ${waiting.length} waiting time entr${waiting.length === 1 ? 'y goes' : 'ies go'} now.` });
+    return l;
+  });
 }
 
 // ---- resolve (5.6, 7.7) ------------------------------------------------------------------------------
@@ -251,7 +288,12 @@ async function resolveReview(run, link, c, choice, who) {
       return;
     }
     const rec = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, link.collection, link.record_id));
-    if (!rec || rec.deleted) return;
+    if (!rec) return;
+    if (rec.deleted) {
+      // A held delete or void (a filed GST period, a paid pay period): approved, it goes now.
+      if (l.qbo_id) await pushDelete(run, null, rec, l, { force: true });
+      return;
+    }
     if (l.qbo_id) await reconcile(run, l, { record: rec, force: true, direction: 'push' });
     else await processRecord(run, link.collection, link.record_id, { force: true, link: l, actorType: 'user' });
     return;
@@ -277,7 +319,14 @@ async function resolveReview(run, link, c, choice, who) {
  * and its next send needs approval again (meta.originRejected).
  */
 async function dropHeldEdit(run, link, choice) {
-  const rec = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, link.collection, link.record_id));
+  let rec = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, link.collection, link.record_id));
+  const restored = Boolean(rec?.deleted);
+  if (restored) {
+    // A held delete is dropped: the record comes back in Fishtape, as QuickBooks still has it.
+    await txWrite(run, (tx) => system.restore(tx, run, link.collection, link.record_id));
+    rec = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, link.collection, link.record_id));
+    link = { ...link, fishtape_version: rec?.version ?? link.fishtape_version };
+  }
   const canonColl = canonCollection(link.collection, link.role);
   const pushOnly = PUSH_ONLY_COLLECTIONS.includes(canonColl);
   const finish = async (tx, fields) => {
@@ -286,8 +335,9 @@ async function dropHeldEdit(run, link, choice) {
     return updateLink(tx, run, link.id, fields);
   };
   if (!rec || rec.deleted || pushOnly) {
-    const meta = { ...(link.meta || {}), ...(pushOnly && rec && !rec.deleted ? { originRejected: true } : {}) };
-    await txWrite(run, (tx) => finish(tx, { state: 'synced', reason: null, meta }));
+    const meta = { ...(link.meta || {}), ...(pushOnly && rec && !rec.deleted && !restored ? { originRejected: true } : {}) };
+    delete meta.originActor;
+    await txWrite(run, (tx) => finish(tx, { state: 'synced', reason: null, meta, fishtape_version: link.fishtape_version }));
     return;
   }
   const obj = await run.client.read(link.qbo_entity, link.qbo_id);
@@ -298,6 +348,7 @@ async function dropHeldEdit(run, link, choice) {
   for (const f of fieldsOf(canonColl)) if (!canonEqual(canonColl, f, L[f] ?? null, R[f] ?? null)) B[f] = L[f] ?? null;
   const meta = { ...(link.meta || {}) };
   delete meta.held;
+  delete meta.originActor;
   const l = await txWrite(run, (tx) => finish(tx, { state: 'pending', reason: null, snapshot: B, prev_values: {}, owner: link.owner === 'quickbooks' ? 'both' : link.owner, meta }));
   await reconcile(run, l, { record: rec, remote: obj, force: true, direction: 'push' });
 }
@@ -366,6 +417,11 @@ async function resolveDeleted(run, link, c, choice) {
     }
     await updateLink(tx, run, link.id, { state: 'deleted_remote', reason: 'remote_deleted' });
   });
+  // A Stripe payment's fee Purchase goes with its payment, whichever side deleted it (4.9).
+  if (link.collection === 'payments' && link.role === 'main') {
+    const fee = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, 'payments', link.record_id, 'fee'));
+    if (fee?.qbo_id && !['deleted_local', 'deleted_remote', 'unlinked'].includes(fee.state)) await removeLinked(run, fee, 'Stripe fee removed with its payment (deleted in QuickBooks)');
+  }
 }
 
 const optionOf2 = (run, key) => run.ctx.mappings?.option?.[key];

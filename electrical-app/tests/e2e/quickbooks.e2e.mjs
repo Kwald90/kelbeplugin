@@ -814,6 +814,20 @@ try {
     return `bill ${billId}: link ${l ? `${l.state}${l.reason ? `/${l.reason}` : ''}` : 'none'}, badge "${badge}", no Mark paid`;
   });
 
+  await step('look-up and activity read cleanly: no stray "null", plural record names, the waiting list', async () => {
+    await own.goto('/#/quickbooks/lookup');
+    await own.waitFor('!!document.querySelector("main .qbo-lookup-form")', 'the look-up form');
+    const text = await own.evaluate('document.querySelector("main").innerText');
+    if (/(^|\s)null(\s|$)/.test(text)) throw new Error(`the look-up screen shows "null": ${J(text.slice(0, 300))}`);
+    await own.goto('/#/quickbooks/activity');
+    await own.waitFor('!!document.querySelector("main select[name=collection]")', 'the records filter');
+    const names = await own.evaluate('[...document.querySelectorAll("main select[name=collection] option")].map((o) => o.textContent)');
+    if (!names.includes('Time entries') || names.some((n) => /entrys|services$/.test(n) && n !== 'Products and services')) throw new Error(J(names));
+    await own.goto('/#/quickbooks/activity?show=waiting');
+    await own.waitFor('/Waiting to be sent/.test(document.querySelector("main")?.innerText || "") && !!document.querySelector("main table, main .empty")', 'the waiting list');
+    return `look-up without "null"; filter ${names.length - 1} record kinds; waiting list shown`;
+  });
+
   await step('foreman on a phone: no QuickBooks anywhere, and 403 from the API', async () => {
     await superDb.query("INSERT INTO time_entries (tenant_id, id, data, created_by, updated_by) VALUES ($1, 'te-fred-1', $2, 'system:e2e', 'system:e2e')",
       [tg, { employeeId: 'emp-fred', jobId: null, clockIn: new Date(Date.now() - 5 * 3600e3).toISOString(), clockOut: new Date(Date.now() - 3600e3).toISOString(), breakMins: 0, note: '', approved: true }]).catch(() => {});

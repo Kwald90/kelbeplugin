@@ -9,7 +9,7 @@ import { QboError } from './client.js';
 import { recordLabel, writeLog } from './log.js';
 import {
   txWrite, getLink, linksByRemote, insertLink, updateLink, loadRecord, system, reconcile, ctxFor, checkBrake, countWrite, shadowLog,
-  optionOf, moduleRefusal, timeUp, passStopFor, finishOutbox, localToday,
+  optionOf, moduleRefusal, timeUp, passStopFor, finishOutbox, localToday, paymentLineOf,
 } from './engine.js';
 import { qboToCanon, customerFromQbo, isVoidedInvoice, toCents, str } from './map/canon.js';
 import { canonToFishtape, settlementCents, settlementRecord, depositRecord, billStatusFromQbo, linkMetaFromQbo } from './map/to-fishtape.js';
@@ -26,6 +26,8 @@ const CDC_CAP = 1000;
 const ref = (r) => (r && typeof r === 'object' ? str(r.value) : str(r));
 const lastUpdated = (o) => o?.MetaData?.LastUpdatedTime || null;
 const tenantRead = (run, fn) => run.db.withTenant({ tenantId: run.tenantId }, fn);
+/** The pull's own time: the pass's, or less while a full reconcile leaves the push its share (5.4). */
+const pullTimeUp = (run) => timeUp(run) || (run.pullDeadline != null && Date.now() > run.pullDeadline);
 
 /**
  * One pull: CDC from the cursor (or a full reconcile), then inbox rows, then TimeActivity.
@@ -33,24 +35,39 @@ const tenantRead = (run, fn) => run.db.withTenant({ tenantId: run.tenantId }, fn
  */
 export async function runPull(run, { full = false } = {}) {
   const passStart = new Date();
-  const conn = await tenantRead(run, async (tx) => (await tx.query('SELECT cdc_cursor, time_cursor, connected_at, dirty_at FROM qbo_connections WHERE tenant_id = $1', [tx.tenantId])).rows[0]);
+  const conn = await tenantRead(run, async (tx) => (await tx.query('SELECT cdc_cursor, time_cursor, connected_at, dirty_at, reconcile FROM qbo_connections WHERE tenant_id = $1', [tx.tenantId])).rows[0]);
   if (!conn) return;
   const cursor = conn.cdc_cursor ? new Date(conn.cdc_cursor) : new Date(conn.connected_at || Date.now());
   let newCursor = null;
-  if (full || Date.now() - cursor.getTime() > FULL_AFTER_MS) {
-    const started = new Date();
-    // The cursor moves only when the whole reconcile ran; otherwise the next pass runs it again.
-    if (await fullReconcile(run, { since: new Date(cursor.getTime() - 2 * 60_000) })) newCursor = new Date(started.getTime() - 60_000);
+  // A full reconcile that has not reached its end leaves last_pull_at and the webhook mark alone:
+  // Status, HQ health and the backlog alert show that the company is still catching up.
+  let pulled = true;
+  if (conn.reconcile || full || Date.now() - cursor.getTime() > FULL_AFTER_MS) {
+    const state = conn.reconcile && conn.reconcile.since
+      ? { ...conn.reconcile }
+      : { since: new Date(cursor.getTime() - 2 * 60_000).toISOString(), startedAt: new Date().toISOString(), phase: 'changed', entity: null };
+    // The push keeps half of what is left of the pass while changes wait in the outbox (5.4, 5.8).
+    if (await outboxDue(run)) run.pullDeadline = Date.now() + Math.max(0, run.deadline - Date.now()) / 2;
+    try {
+      // The cursor moves only when the whole reconcile ran; otherwise the next pass carries on from its resume point.
+      if (await fullReconcile(run, state)) newCursor = new Date(Date.parse(state.startedAt) - 60_000);
+      else pulled = false;
+    } finally {
+      run.pullDeadline = null;
+    }
   } else {
     let since = new Date(cursor.getTime() - 2 * 60_000);
     let covered = true;
     // Settlement waits for the last page: an invoice and its payment can land on different pages (4.9).
     await withSettlesAfter(run, async () => {
       for (let page = 0; page < 20; page++) {
+        if (timeUp(run)) { covered = false; break; }
         const res = await run.client.cdc(CDC_ENTITIES, since);
         const objects = [];
         for (const [entity, list] of Object.entries(res.entities)) for (const o of list) objects.push({ entity, o });
-        await processObjects(run, objects);
+        // A pass out of time stops part way through a page: the cursor stays, and the next pass reads
+        // the window again (our own writes come back as echoes; the rest is applied once).
+        if (!(await processObjects(run, objects))) { covered = false; break; }
         if (res.count < CDC_CAP) { newCursor = new Date(Date.parse(res.time || new Date().toISOString()) - 60_000); break; }
         // More than the cap: carry on from the newest object seen (CDC has no end time; 5.4).
         const newest = objects.map((x) => Date.parse(lastUpdated(x.o) || 0)).filter(Number.isFinite).sort((a, b) => b - a)[0];
@@ -73,9 +90,15 @@ export async function runPull(run, { full = false } = {}) {
     return;
   }
   await txWrite(run, (tx) => tx.query(
-    `UPDATE qbo_connections SET cdc_cursor = COALESCE($2, cdc_cursor), last_pull_at = now(),
-        dirty_at = CASE WHEN dirty_at IS NOT NULL AND dirty_at <= $3 THEN NULL ELSE dirty_at END, updated_at = now()
-      WHERE tenant_id = $1`, [run.tenantId, newCursor, passStart]));
+    `UPDATE qbo_connections SET cdc_cursor = COALESCE($2, cdc_cursor), last_pull_at = CASE WHEN $4 THEN now() ELSE last_pull_at END,
+        dirty_at = CASE WHEN $4 AND dirty_at IS NOT NULL AND dirty_at <= $3 THEN NULL ELSE dirty_at END, updated_at = now()
+      WHERE tenant_id = $1`, [run.tenantId, newCursor, passStart, pulled]));
+}
+
+/** Outbox rows due now (a full reconcile then leaves the push its share of the pass). */
+async function outboxDue(run) {
+  if (run.shadow) return false;
+  return tenantRead(run, async (tx) => (await tx.query('SELECT 1 FROM qbo_outbox WHERE tenant_id = $1 AND not_before <= now() LIMIT 1', [tx.tenantId])).rows.length > 0);
 }
 
 /** One object's failure is logged and never stops the pull; pass-ending errors go up (5.8). */
@@ -118,18 +141,19 @@ async function settleInvoice(run, inv, o) {
   await settle(run, inv, o);
 }
 
-/** By entity rank, then QuickBooks update time (5.4 step 5). */
+/** By entity rank, then QuickBooks update time (5.4 step 5). False when the pass ran out of time part way. */
 async function processObjects(run, objects) {
   objects.sort((a, b) => (ENTITY_RANK[a.entity] || 9) - (ENTITY_RANK[b.entity] || 9) || Date.parse(lastUpdated(a.o) || 0) - Date.parse(lastUpdated(b.o) || 0));
-  await withSettlesAfter(run, async () => {
+  return withSettlesAfter(run, async () => {
     for (const { entity, o } of objects) {
-      if (timeUp(run)) return;
+      if (pullTimeUp(run)) return false;
       try {
         await processRemote(run, entity, o);
       } catch (e) {
         await pullError(run, entity, e);
       }
     }
+    return true;
   });
 }
 
@@ -446,9 +470,9 @@ async function pullPaymentLines(run, o, links) {
   for (const line of lines) {
     const invoiceId = run.ctx.refs.fishtapeIdFor('invoices', line.inv);
     if (!invoiceId) continue;
-    if (links.some((l) => l.collection === 'payments' && l.role === 'main' && l.qbo_line === line.inv)) continue;
+    if (links.some((l) => l.collection === 'payments' && l.role === 'main' && paymentLineOf(l) === line.inv)) continue;
     // A line moved here from another invoice is a change of the existing payment, not a new one.
-    if (links.some((l) => l.collection === 'payments' && l.role === 'main' && !lines.some((x) => x.inv === l.qbo_line))) continue;
+    if (links.some((l) => l.collection === 'payments' && l.role === 'main' && !lines.some((x) => x.inv === paymentLineOf(l)))) continue;
     if (syncFrom && o.TxnDate && o.TxnDate < syncFrom) {
       const inv = await tenantRead(run, (tx) => loadRecord(tx, 'invoices', invoiceId));
       if (!inv || !['sent', 'partial'].includes(inv.data.status)) continue;
@@ -459,7 +483,7 @@ async function pullPaymentLines(run, o, links) {
     const id = pulledId();
     if (run.shadow) { await shadowLog(run, { direction: 'pull', action: 'pull_create', collection: 'payments', recordId: id, qboEntity: 'Payment', message: 'Would create a Fishtape payment' }); continue; }
     await txWrite(run, async (tx) => {
-      if ((await linksByRemote(tx, 'Payment', o.Id)).some((l) => l.collection === 'payments' && l.role === 'main' && l.qbo_line === line.inv)) return;
+      if ((await linksByRemote(tx, 'Payment', o.Id)).some((l) => l.collection === 'payments' && l.role === 'main' && paymentLineOf(l) === line.inv)) return;
       checkBrake(run);
       const version = (await system.create(tx, run, 'payments', { ...body, invoiceId, id })).version;
       countWrite(run);
@@ -475,18 +499,44 @@ async function pullPaymentLines(run, o, links) {
   return null;
 }
 
-/** A pulled invoice's Deposit field as its own Fishtape payment (link role deposit, 4.7). */
+/**
+ * A pulled invoice's Deposit field as its own Fishtape payment (link role deposit, 4.7), kept in step
+ * with QuickBooks on every pull of the invoice: a changed Deposit changes the payment, a removed one
+ * removes it, a new one brings it back. A deposit payment deleted here stays deleted.
+ */
 async function pullDeposit(run, invLink, o) {
+  if (run.shadow) return;
   const rec = depositRecord(o, invLink.record_id);
-  if (!rec || run.shadow) return;
+  const cents = rec ? rec.amountCents : 0;
   const id = `deposit-${invLink.record_id}`.slice(0, 128);
   await txWrite(run, async (tx) => {
-    if (await getLink(tx, 'payments', id, 'deposit')) return;
+    const link = await getLink(tx, 'payments', id, 'deposit');
+    if (link && ['unlinked', 'deleted_local', 'conflict'].includes(link.state)) return;
     const existing = await loadRecord(tx, 'payments', id);
-    const version = existing ? existing.version : (await system.create(tx, run, 'payments', { ...rec, id })).version;
-    await insertLink(tx, run, { collection: 'payments', record_id: id, role: 'deposit', qbo_entity: 'Invoice', qbo_id: String(o.Id), qbo_line: 'deposit', sync_token: String(o.SyncToken), fishtape_version: version, state: 'synced', owner: 'quickbooks', snapshot: { amountCents: rec.amountCents } });
+    if (link && existing?.deleted) return; // deleted in Fishtape: a person's choice
+    let message = null;
+    let version = existing?.version ?? null;
+    if (cents > 0) {
+      if (!existing) { version = (await system.create(tx, run, 'payments', { ...rec, id })).version; message = 'Deposit in QuickBooks'; }
+      else if (existing.deleted) {
+        await system.restore(tx, run, 'payments', id);
+        version = (await system.patch(tx, run, 'payments', id, { amountCents: cents, date: rec.date })).version;
+        message = `Deposit in QuickBooks: $${(cents / 100).toFixed(2)}`;
+      } else if (existing.data.amountCents !== cents) {
+        version = (await system.patch(tx, run, 'payments', id, { amountCents: cents })).version;
+        message = `Deposit changed in QuickBooks: $${(cents / 100).toFixed(2)}`;
+      }
+      const fields = { qbo_id: String(o.Id), sync_token: String(o.SyncToken), fishtape_version: version, state: 'synced', snapshot: { amountCents: cents } };
+      if (!link) await insertLink(tx, run, { collection: 'payments', record_id: id, role: 'deposit', qbo_entity: 'Invoice', qbo_line: 'deposit', owner: 'quickbooks', ...fields });
+      else if (message || Number(link.snapshot?.amountCents) !== cents) await updateLink(tx, run, link.id, fields);
+    } else if (existing && !existing.deleted) {
+      await system.remove(tx, run, 'payments', id);
+      if (link) await tx.query('DELETE FROM qbo_links WHERE tenant_id = $1 AND id = $2', [tx.tenantId, link.id]);
+      message = 'Deposit removed in QuickBooks';
+    }
+    if (!message) return;
     await system.refreshInvoice(tx, run, invLink.record_id);
-    await writeLog(tx, { direction: 'pull', outcome: 'ok', action: 'pull_create', collection: 'payments', recordId: id, qboEntity: 'Invoice', message: 'Deposit in QuickBooks' });
+    await writeLog(tx, { direction: 'pull', outcome: 'ok', action: existing ? 'pull_update' : 'pull_create', collection: 'payments', recordId: id, qboEntity: 'Invoice', message });
   });
 }
 
@@ -497,11 +547,15 @@ async function pullDeposit(run, invLink, o) {
 export async function settle(run, invLink, o) {
   if (!invLink || invLink.role !== 'main' || run.shadow) return;
   await txWrite(run, async (tx) => {
+    // Every Fishtape payment on this invoice counts, pushed ones included (a link written before its
+    // line was recorded has the invoice in its snapshot), at its line amount: not the excess its push
+    // left as credit, which QuickBooks never applied to the invoice.
     const { rows } = await tx.query(
-      `SELECT state, snapshot FROM qbo_links WHERE tenant_id = $1 AND collection = 'payments' AND role = 'main' AND qbo_entity = 'Payment' AND qbo_line = $2 AND state NOT IN ('unlinked', 'deleted_local', 'deleted_remote')`,
+      `SELECT state, snapshot, meta FROM qbo_links WHERE tenant_id = $1 AND collection = 'payments' AND role = 'main' AND qbo_entity = 'Payment'
+          AND (qbo_line = $2 OR (qbo_line = '' AND snapshot->>'invoiceRef' = $2)) AND state NOT IN ('unlinked', 'deleted_local', 'deleted_remote')`,
       [tx.tenantId, String(o.Id)]);
     if (rows.some((r) => r.state === 'pending')) return;
-    const linked = rows.map((r) => Number(r.snapshot?.amountCents) || 0);
+    const linked = rows.map((r) => Math.max(0, (Number(r.snapshot?.amountCents) || 0) - Math.max(0, Math.round(Number(r.meta?.ownExcessCents) || 0))));
     const cents = isVoidedInvoice(o) ? 0 : settlementCents(o, linked);
     const id = `credit-${invLink.record_id}`.slice(0, 128);
     const link = await getLink(tx, 'invoices', id, 'settlement');
@@ -621,72 +675,144 @@ async function confirmMerge(run, r) {
   });
 }
 
-/** TimeActivity changed in QuickBooks (not in CDC), every 6 hours (5.4 step 3). */
+const TIME_MAX = 5000;
+
+/**
+ * TimeActivity changed in QuickBooks (not in CDC), every 6 hours (5.4 step 3). It never stops the
+ * pass: an edition without time tracking (5030) is noted and skipped, any other failure of the read
+ * is logged and tried again next time, and one object that cannot be applied is logged like a CDC one.
+ */
 async function pullTimeActivity(run, conn) {
   const last = conn.time_cursor ? new Date(conn.time_cursor) : null;
   if (last && Date.now() - last.getTime() < TIME_EVERY_MS) return;
   const since = last || new Date(Date.now() - TIME_EVERY_MS);
   const started = new Date();
-  const list = await run.client.query(`select * from TimeActivity where MetaData.LastUpdatedTime > '${since.toISOString()}'`, { all: true, max: 5000 });
+  const moveTo = async (at) => { if (!run.shadow) await txWrite(run, (tx) => tx.query('UPDATE qbo_connections SET time_cursor = $2 WHERE tenant_id = $1', [run.tenantId, at])); };
+  if (optionOf(run.ctx.mappings, 'syncTime', true) === false || run.ctx.features?.timeTracking === false) { await moveTo(started); return; }
+  let list;
+  try {
+    list = await run.client.query(`select * from TimeActivity where MetaData.LastUpdatedTime > '${since.toISOString()}' orderby MetaData.LastUpdatedTime`, { all: true, max: TIME_MAX + 1 });
+  } catch (e) {
+    if (e instanceof QboError && e.kind === 'feature') {
+      // Not in this edition (2.8): noted on the connection, so time entries wait as feature_missing.
+      if (!run.shadow) {
+        await txWrite(run, async (tx) => {
+          await tx.query(`UPDATE qbo_connections SET features = features || '{"timeTracking": false}'::jsonb, updated_at = now() WHERE tenant_id = $1`, [run.tenantId]);
+          await writeLog(tx, { direction: 'pull', outcome: 'warning', action: 'pull', qboEntity: 'TimeActivity', message: "Time tracking isn't available on this QuickBooks plan.", errorCode: 'feature' });
+        });
+      }
+      run.ctx.features = { ...run.ctx.features, timeTracking: false };
+      await moveTo(started);
+      return;
+    }
+    await pullError(run, 'TimeActivity', e); // pass stops go up; the rest is logged and the cursor stays
+    return;
+  }
+  const capped = list.length > TIME_MAX;
+  if (capped) list = list.slice(0, TIME_MAX);
   for (const o of list) {
     if (timeUp(run)) return;
-    const links = await tenantRead(run, (tx) => linksByRemote(tx, 'TimeActivity', o.Id));
-    if (links.length) await processRemote(run, 'TimeActivity', o);
+    try {
+      const links = await tenantRead(run, (tx) => linksByRemote(tx, 'TimeActivity', o.Id));
+      if (links.length) await processRemote(run, 'TimeActivity', o);
+    } catch (e) {
+      await pullError(run, 'TimeActivity', e);
+    }
   }
-  if (!run.shadow) await txWrite(run, (tx) => tx.query('UPDATE qbo_connections SET time_cursor = $2 WHERE tenant_id = $1', [run.tenantId, started]));
+  // More than the cap: the cursor moves only as far as the objects read (oldest first), so the rest come next.
+  const newest = capped ? Date.parse(lastUpdated(list[list.length - 1]) || '') : NaN;
+  await moveTo(capped && Number.isFinite(newest) ? new Date(newest - 1) : started);
 }
 
 // ---- full reconcile (5.4 step 1) ----------------------------------------------------------------------
 
+const PAGE = 1000;
+const BY_ID = 50;
+
 /**
- * A cursor older than 29 days (CDC reaches back 30): each entity is queried page by page for what
- * changed since the old cursor, created objects included, and handled as a CDC batch would be; then
- * every linked object not seen is read by id, and a missing one was deleted (5.4 step 1). Returns true
- * when it ran to the end.
+ * A cursor older than 29 days (CDC reaches back 30): each entity is read page by page for what
+ * changed since the old cursor, oldest change first, created objects included, and handled as a CDC
+ * batch would be; then every linked object is read by id, and a missing one was deleted (5.4 step 1).
+ *
+ * `state` is the resume point, kept on the connection (qbo_connections.reconcile) after every page,
+ * so a company too large for one pass carries on where the last pass stopped instead of starting
+ * over: { since, startedAt, phase: 'changed'|'byId', entity, after, offset, lastId }. Returns true
+ * when it ran to the end (the caller then moves the cursor; the resume point is cleared).
  */
-export async function fullReconcile(run, { since = null } = {}) {
-  return withSettlesAfter(run, () => fullReconcileRun(run, since));
+export async function fullReconcile(run, state) {
+  return withSettlesAfter(run, () => fullReconcileRun(run, state));
 }
 
-async function fullReconcileRun(run, since) {
-  const seen = new Set();
-  if (since) {
-    const entities = CDC_ENTITIES.filter((e) => !['Deposit', 'Transfer'].includes(e)).sort((a, b) => (ENTITY_RANK[a] || 9) - (ENTITY_RANK[b] || 9));
-    for (const entity of entities) {
-      if (timeUp(run)) return false;
-      let list;
-      try {
-        list = await run.client.query(`select * from ${entity} where MetaData.LastUpdatedTime >= '${since.toISOString()}'`, { all: true, max: 50_000 });
-      } catch (e) {
-        if (e instanceof QboError && e.kind === 'feature') continue; // not in this edition (5030)
-        throw passStopFor(e) || e;
+async function saveProgress(run, state) {
+  if (run.shadow) return;
+  await txWrite(run, (tx) => tx.query('UPDATE qbo_connections SET reconcile = $2, updated_at = now() WHERE tenant_id = $1', [run.tenantId, state ? JSON.stringify(state) : null]));
+}
+
+async function fullReconcileRun(run, state) {
+  const sinceMs = Date.parse(state.since);
+  const entities = CDC_ENTITIES.filter((e) => !['Deposit', 'Transfer'].includes(e)).sort((a, b) => (ENTITY_RANK[a] || 9) - (ENTITY_RANK[b] || 9));
+  if (state.phase !== 'byId') {
+    // Phase 1: what changed since the cursor, by update time with an offset among equal times, so a
+    // page that ends inside a run of equal times is neither skipped nor read again for good.
+    for (let i = Math.max(0, entities.indexOf(state.entity)); i < entities.length; i++) {
+      const entity = entities[i];
+      if (state.entity !== entity) Object.assign(state, { entity, after: state.since, offset: 0 });
+      for (;;) {
+        if (pullTimeUp(run)) return false;
+        let page;
+        try {
+          page = await run.client.query(
+            `select * from ${entity} where MetaData.LastUpdatedTime >= '${state.after}' orderby MetaData.LastUpdatedTime startposition ${state.offset + 1} maxresults ${PAGE}`);
+        } catch (e) {
+          if (e instanceof QboError && e.kind === 'feature') break; // not in this edition (5030)
+          throw passStopFor(e) || e;
+        }
+        if (!(await processObjects(run, page.map((o) => ({ entity, o }))))) return false;
+        if (page.length < PAGE) break;
+        const last = lastUpdated(page[page.length - 1]);
+        if (last === state.after) state.offset += page.length;
+        else Object.assign(state, { after: last, offset: page.filter((o) => lastUpdated(o) === last).length });
+        await saveProgress(run, state);
       }
-      for (const o of list) seen.add(`${entity}|${o.Id}`);
-      await processObjects(run, list.map((o) => ({ entity, o })));
     }
+    Object.assign(state, { phase: 'byId', entity: null, after: null, offset: 0, lastId: '0' });
+    await saveProgress(run, state);
   }
-  const links = await tenantRead(run, async (tx) => (await tx.query(
-    "SELECT * FROM qbo_links WHERE tenant_id = $1 AND realm_hash = $2 AND qbo_id IS NOT NULL AND state NOT IN ('unlinked', 'deleted_local', 'deleted_remote') AND role IN ('main', 'fee')",
-    [tx.tenantId, run.conn.realm_hash])).rows);
-  const byEntity = new Map();
-  for (const l of links) (byEntity.get(l.qbo_entity) || byEntity.set(l.qbo_entity, new Set()).get(l.qbo_entity)).add(String(l.qbo_id));
-  const order = [...byEntity.keys()].sort((a, b) => (ENTITY_RANK[a] || 9) - (ENTITY_RANK[b] || 9));
-  for (const entity of order) {
-    const ids = [...byEntity.get(entity)];
-    for (let i = 0; i < ids.length; i += 50) {
-      if (timeUp(run)) return false;
-      const chunk = ids.slice(i, i + 50).filter((id) => !seen.has(`${entity}|${id}`));
-      if (!chunk.length) continue;
-      const found = await run.client.query(`select * from ${entity} where Id in (${chunk.map((x) => `'${x}'`).join(', ')})`, { max: 1000 });
+  // Phase 2: every linked object by id, 50 at a time in id order. One changed since the cursor was
+  // handled in phase 1; one not found was deleted in QuickBooks.
+  const live = "qbo_id IS NOT NULL AND state NOT IN ('unlinked', 'deleted_local', 'deleted_remote') AND role IN ('main', 'fee')";
+  const order = (await tenantRead(run, async (tx) => (await tx.query(
+    `SELECT DISTINCT qbo_entity FROM qbo_links WHERE tenant_id = $1 AND realm_hash = $2 AND ${live}`, [tx.tenantId, run.conn.realm_hash])).rows))
+    .map((r) => r.qbo_entity).sort((a, b) => (ENTITY_RANK[a] || 9) - (ENTITY_RANK[b] || 9) || a.localeCompare(b));
+  for (let i = Math.max(0, order.indexOf(state.entity)); i < order.length; i++) {
+    const entity = order[i];
+    if (state.entity !== entity) Object.assign(state, { entity, lastId: '0' });
+    for (;;) {
+      if (pullTimeUp(run)) return false;
+      const ids = (await tenantRead(run, async (tx) => (await tx.query(
+        `SELECT DISTINCT qbo_id::numeric AS n FROM qbo_links WHERE tenant_id = $1 AND realm_hash = $2 AND qbo_entity = $3 AND ${live}
+            AND qbo_id::numeric > $4::numeric ORDER BY 1 LIMIT ${BY_ID}`,
+        [tx.tenantId, run.conn.realm_hash, entity, state.lastId || '0'])).rows)).map((r) => String(r.n));
+      if (!ids.length) break;
+      const found = await run.client.query(`select * from ${entity} where Id in (${ids.map((x) => `'${x}'`).join(', ')})`, { max: 1000 });
       const byId = new Map(found.map((o) => [String(o.Id), o]));
-      for (const id of chunk) {
-        const o = byId.get(id);
-        if (o) await processRemote(run, entity, o);
-        else for (const l of links.filter((x) => x.qbo_entity === entity && String(x.qbo_id) === id)) await remoteDeleted(run, l, {});
-      }
+      await withSettlesAfter(run, async () => {
+        for (const id of ids) {
+          const o = byId.get(id);
+          try {
+            if (o) { if (!(Date.parse(lastUpdated(o) || 0) >= sinceMs)) await processRemote(run, entity, o); }
+            else for (const l of await tenantRead(run, (tx) => linksByRemote(tx, entity, id))) if (['main', 'fee'].includes(l.role)) await remoteDeleted(run, l, {});
+          } catch (e) {
+            await pullError(run, entity, e);
+          }
+        }
+      });
+      state.lastId = ids[ids.length - 1];
+      await saveProgress(run, state);
     }
   }
-  return !timeUp(run);
+  await saveProgress(run, null);
+  return true;
 }
 
 export { setPaused };
