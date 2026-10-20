@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   COMPONENT_IDS, bucketNotices, bucketOf, buildPublicStatus, buildUptime, classifyEmail, classifyHttp, cleanText, componentStatuses,
   createStatusHandlers, defaultProbeUrls, mergeProbes, noticeEmail, noticeProblems, overallStatus, parseProbeList, probeHttp,
-  probeStripe, statusPublicUrl, statusSettings, worse,
+  probeStatus, probeStripe, statusPublicUrl, statusSettings, worse,
 } from '../src/services/status-page.js';
 
 const NOW = new Date('2026-10-19T12:00:00Z');
@@ -42,6 +42,22 @@ describe('probe classification', () => {
     const keepAlive = setTimeout(() => {}, 5000); // AbortSignal.timeout's timer does not hold the event loop open
     assert.deepEqual(await probeHttp('https://x.test/', { fetchImpl: hang, timeoutMs: 20 }), { code: 0, error: 'timeout' });
     clearTimeout(keepAlive);
+  });
+
+  test('a host name that does not resolve: unknown for HQ (not set up yet), an outage for the rest', async () => {
+    const nxdomain = async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND hq.example.test'), { code: 'ENOTFOUND' }) }); };
+    const r = await probeHttp('https://hq.example.test/api/healthz', { fetchImpl: nxdomain });
+    assert.deepEqual(r, { code: 0, error: 'unresolved' });
+    assert.equal(probeStatus('hq', r), 'unknown');
+    for (const id of ['app', 'api', 'signin']) assert.equal(probeStatus(id, r), 'outage', id);
+    // Refused or reset connections, timeouts and HTTP errors on hq. still count.
+    assert.equal(probeStatus('hq', { code: 0, error: 'unreachable' }), 'outage');
+    assert.equal(probeStatus('hq', { code: 0, error: 'timeout' }), 'outage');
+    assert.equal(probeStatus('hq', { code: 502 }), 'outage');
+    assert.equal(probeStatus('hq', { code: 200 }), 'operational');
+    // So, with the rest up, the public page is not an outage while hq. has no DNS.
+    const components = ['app', 'api', 'signin', 'email', 'payments'].map((id) => ({ id, status: 'operational' }));
+    assert.equal(overallStatus([...components, { id: 'hq', status: probeStatus('hq', r) }]), 'operational');
   });
 
   test('Stripe: not configured unknown, a working call operational, an error or hang outage', async () => {

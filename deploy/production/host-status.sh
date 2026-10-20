@@ -80,6 +80,13 @@ for p in $PROBES; do
   id="${p%%=*}"
   url="${p#*=}"
   [[ "$id" =~ ^[a-z]{1,20}$ && "$url" =~ ^https:// ]] || continue
+  # hq. may have no DNS yet before launch (update.sh skips its checks then too): no answer from
+  # a name that doesn't exist is "not set up", not an outage, so it is left out (unknown).
+  if [ "$id" = hq ]; then
+    host="${url#https://}"
+    host="${host%%[/:]*}"
+    getent ahosts "$host" >/dev/null 2>&1 || continue
+  fi
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || true)"
   [[ "$code" =~ ^[0-9]{3}$ ]] || code=000
   probes="$probes${probes:+,}\"$id\":$((10#$code))"

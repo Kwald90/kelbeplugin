@@ -3,6 +3,7 @@
 # It never edits the CloudPanel vhost itself; the one-time include lines are README.md step 5.
 # On a failed `nginx -t` the previous files are put back and nginx is not reloaded.
 #   sudo /var/www/tgelectrical/current/deploy/staging/install-nginx.sh
+#   sudo .../install-nginx.sh --check     exit 0 when the files are installed as in this checkout, 1 when not
 set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,6 +14,12 @@ BACKUP_DIR=/var/lib/fishtape-staging/nginx-backups/$STAMP
 
 [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
 command -v nginx >/dev/null || { echo "nginx not found" >&2; exit 1; }
+CHECK=0
+case "${1:-}" in
+  --check) CHECK=1 ;;
+  "") ;;
+  *) echo "unknown option: $1" >&2; exit 2 ;;
+esac
 
 declare -A FILES=(
   ["$HERE/nginx-http.conf"]="$SNIPPETS/fishtape-staging-http.conf"
@@ -21,6 +28,13 @@ declare -A FILES=(
   ["$HERE/nginx-api.conf.snippet"]="$SNIPPETS/fishtape-staging-site.conf"
   ["$HERE/logrotate-nginx"]=/etc/logrotate.d/fishtape-staging-nginx
 )
+
+# --check: is every file installed exactly as in this checkout? update.sh installs whenever not,
+# so a failed or skipped install is retried by the next deploy.
+if [ "$CHECK" -eq 1 ]; then
+  for src in "${!FILES[@]}"; do cmp -s "$src" "${FILES[$src]}" || exit 1; done
+  exit 0
+fi
 
 mkdir -p "$SNIPPETS" "$BACKUP_DIR"
 install -d -o root -g adm -m 0750 "$LOG_DIR"

@@ -89,7 +89,8 @@ sudo grep -E '^(PUBLIC_ORIGIN|CORS_ORIGINS|TRIAL_DAYS|HQ_NOTIFY_EMAIL)=' .env
 
 `CORS_ORIGINS` lists the app, the marketing site (its Enterprise form posts to `/api/v1/public/`)
 and the iOS app, plus HQ: the API's CSRF check compares the browser's `Origin` with this list, so
-without `https://hq.fishtapehq.com` HQ sign-in fails.
+without `https://hq.fishtapehq.com` HQ sign-in fails. The status page's origin (`STATUS_PUBLIC_URL`,
+`https://status.fishtapehq.com`) is allowed automatically for its email subscribe, confirm and unsubscribe posts.
 
 Kelvin, in your own terminal (these are secrets):
 
@@ -300,7 +301,7 @@ GitHub → Settings → Environments → `production`: required reviewer Kelvin,
 
 ```bash
 sudo /srv/fishtape/repo/deploy/production/update.sh --tag v0.1.1 --sha <commit>   # by hand; CI does the same after approval
-sudo /srv/fishtape/repo/deploy/production/install-nginx.sh                          # after nginx files change in a release
+sudo /srv/fishtape/repo/deploy/production/install-nginx.sh                          # update.sh does this when the installed files differ
 sudo /srv/fishtape/repo/deploy/production/issue-cert.sh                             # after adding a name to DNS
 cd /srv/fishtape/repo/deploy/production && sudo docker compose logs -f --tail=200 api
 sudo docker compose exec postgres psql -U postgres -d fishtape                     # admin; Postgres has no host port

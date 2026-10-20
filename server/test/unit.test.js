@@ -272,6 +272,16 @@ describe('crypto, config, logging, input rules', () => {
     assert.throws(() => readConfig({ APP_ENV: 'qa' }), /APP_ENV/);
   });
 
+  test('config: the status page origin (STATUS_PUBLIC_URL) may call the API, odd values add nothing', () => {
+    const base = { APP_ENV: 'local', PUBLIC_ORIGIN: 'https://app.fishtapehq.com', CORS_ORIGINS: 'https://fishtapehq.com' };
+    assert.ok(readConfig({ ...base, STATUS_PUBLIC_URL: 'https://status.fishtapehq.com/' }).corsOrigins.includes('https://status.fishtapehq.com'));
+    assert.ok(readConfig({ ...base, STATUS_PUBLIC_URL: 'https://status.fishtapehq.com/#x' }).corsOrigins.includes('https://status.fishtapehq.com'));
+    const plain = readConfig(base).corsOrigins;
+    for (const v of ['', 'http://evil.test/', 'javascript:alert(1)', 'not a url']) {
+      assert.deepEqual(readConfig({ ...base, STATUS_PUBLIC_URL: v }).corsOrigins, plain, v);
+    }
+  });
+
   test('secret query values are stripped from logged URLs', () => {
     assert.equal(redactUrl('/api/v1/auth/oidc/google/callback?code=abc&state=def&x=1'), '/api/v1/auth/oidc/google/callback?code=[REDACTED]&state=[REDACTED]&x=1');
   });
