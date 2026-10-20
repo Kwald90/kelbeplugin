@@ -445,6 +445,30 @@ try {
     await sleep(100);
     check('finger draws before a pen is seen', (await state()).n === b.n + 1);
   }
+
+  // 7b. finger-drawing mode: a two-finger tap whose first finger lands on other ink undoes the
+  // last erase (not the first finger's accidental one), and the text tool waits for the lift
+  {
+    await openCanvas();
+    const fingerLine = async (x) => { await cdpTouch('touchStart', [[x, 300]]); for (let i = 1; i <= 6; i++) await cdpTouch('touchMove', [[x, 300 + i * 20]]); await cdpTouch('touchEnd', []); await sleep(80); };
+    await fingerLine(300); await fingerLine(400);
+    const b = await state();
+    await ev(`kelbeCanvas.setTool('eraser'); kelbeCanvas.opts.eraser.mode = 'stroke'`);
+    await cdpTouch('touchStart', [[260, 360]]); for (let i = 1; i <= 6; i++) await cdpTouch('touchMove', [[260 + i * 14, 360]]); await cdpTouch('touchEnd', []); await sleep(80);
+    const e1 = await state();
+    await cdpTouch('touchStart', [[400, 360], [600, 600]]); await sleep(60); await cdpTouch('touchEnd', []); await sleep(150);
+    const u = await state();
+    check('two-finger tap after a finger erase brings that stroke back, first finger or not', b.n === 2 && e1.n === 1 && u.n === 2, `${b.n} -> ${e1.n} -> ${u.n}`);
+    check('and the redo stack holds the erase', (await ev(`kelbeCanvas.redoDepth()`)) === 1);
+    await ev(`kelbeCanvas.setTool('text')`);
+    await cdpTouch('touchStart', [[500, 200], [600, 600]]); await sleep(60); await cdpTouch('touchEnd', []); await sleep(150);
+    check('a two-finger tap with the text tool opens no label dialog', !(await ev(`!!document.querySelector('.dialog, .sheet')`)));
+    await cdpTouch('touchStart', [[500, 200]]); await sleep(60); await cdpTouch('touchEnd', []); await sleep(150);
+    check('one finger with the text tool opens it when it lifts', await ev(`!!document.querySelector('.dialog[aria-label="Add a label"]')`));
+    await ev(`document.querySelector('.dialog .sheet-head button').click()`); await sleep(100);
+    await resetOpts();
+    await ev(`kelbeCanvas.setTool('pen')`);
+  }
 } catch (err) {
   check('run', false, err.stack);
 } finally {

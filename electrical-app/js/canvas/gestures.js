@@ -96,6 +96,19 @@ export function createTapDetector(opts = {}) {
 }
 
 /**
+ * Taking back a multi-finger tap's first finger. In finger-drawing mode that finger acts with the
+ * tool as it lands (erases, places a symbol, moves), before the second one turns it into a tap.
+ * `mark` holds copies of the editor's undo and redo stacks from when the first finger went down.
+ * Returns null when nothing was checkpointed since, else { snap, undo, redo }: restore `snap` (the
+ * drawing before the finger's change) and put the stacks back, then run the gesture.
+ */
+export function tapRollback(mark, undo) {
+  if (!mark) return null;
+  const fresh = undo.filter((s) => !mark.undo.includes(s));
+  return fresh.length ? { snap: fresh[0], undo: mark.undo, redo: mark.redo } : null;
+}
+
+/**
  * Settings controls for the gestures: one row per gesture with a select of actions.
  * @param {{ h: Function }} ui
  * @param {(key: string, action: string) => any} save  stores the choice (session.savePref when signed in)
