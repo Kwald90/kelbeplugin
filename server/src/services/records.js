@@ -9,6 +9,9 @@ import { appendAudit, auditRowToRecord, describeRecord } from './audit.js';
 import { assertCollectionWritable, loadTenantPlan } from './entitlements.js';
 import { afterTaskWrite } from './workplan-events.js';
 import { assertCollectionModuleOn, loadModuleSettings } from './modules.js';
+import { QBO_COLLECTIONS, qboAfterDelete, qboAfterWrite } from '../qbo/hooks.js';
+import { readQboConfig } from '../qbo/env.js';
+import { MONEY_RECORD_KEYS } from '../qbo/map/merge.js';
 
 export const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const META_KEYS = ['id', 'version', 'changeSeq', 'deleted', 'tenantId'];
@@ -29,6 +32,18 @@ const canon = (v) => (Array.isArray(v) ? `[${v.map(canon).join(',')}]`
 async function afterWrite(tx, coll, id, before, after, who) {
   if (coll === 'workTasks') await afterTaskWrite(tx, { id, before, after, who });
 }
+
+/** The engine's own writes (QuickBooks sync, docs/integrations/quickbooks.md 5.7). */
+const isQboWriter = (who) => who?.actor?.type === 'system' && who?.actor?.id === 'qbo';
+
+/** The QBO hook's view of a writer: the audit actor plus the principal's kind, role and crew flag (5.2). */
+const hookWho = (p, who) => ({ ...who, kind: p?.kind ?? null, role: p?.role ?? null, crew: Boolean(p?.crew) });
+
+/** Record keys behind the money fields of a QuickBooks-synced collection (5.2, W2 MONEY_RECORD_KEYS). */
+function moneyKeysOf(coll) {
+  return new Set(Object.values(MONEY_RECORD_KEYS[coll] || {}).flat());
+}
+const STALE_SKIP_KEYS = new Set(['updatedAt', 'createdAt']);
 
 function assertCollection(coll) {
   if (!isCollection(coll)) throw notFound('Unknown collection.');
@@ -66,8 +81,21 @@ function rowTime(row) {
 /**
  * @param {{ validator: ReturnType<import('../schemas.js').createValidator> }} deps
  */
-export function createRecords({ validator }) {
+export function createRecords({ validator, config = null }) {
   const toRecord = (row) => ({ ...row.data, id: row.id, version: row.version });
+
+  // QuickBooks (docs/integrations/quickbooks.md 5.2): off unless the server's QBO_ENVIRONMENT and app
+  // credentials are set; then the hook runs no query at all.
+  const qboOn = config ? Boolean(config.qbo?.enabled) : null;
+  const qboEnabled = () => (qboOn ?? Boolean(readQboConfig(process.env).enabled));
+  const qboWrite = (tx, coll, id, before, after, p, who, opts = {}) =>
+    qboAfterWrite(tx, coll, id, before, after, hookWho(p, who), { ...opts, enabled: qboEnabled() });
+  const qboDelete = (tx, coll, id, before, p, who, opts = {}) =>
+    qboAfterDelete(tx, coll, id, before, hookWho(p, who), { ...opts, enabled: qboEnabled() });
+  async function hasQboConnection(tx) {
+    const { rows } = await tx.query('SELECT 1 FROM qbo_connections WHERE tenant_id = $1', [tx.tenantId]);
+    return rows.length > 0;
+  }
   const view = (p, coll, row) => redactForReader(p, coll, toRecord(row));
 
   /**
@@ -281,6 +309,7 @@ export function createRecords({ validator }) {
     const row = await insertRow(tx, def, id, data, who);
     await audit(tx, who, 'record.create', coll, id, data, { via: 'rest' });
     await afterWrite(tx, coll, id, null, data, who);
+    await qboWrite(tx, coll, id, null, data, p, who);
     return view(p, coll, row);
   }
 
@@ -301,9 +330,13 @@ export function createRecords({ validator }) {
     if (patch.updatedAt === undefined) delete merged.updatedAt;
     const data = restoreHiddenFields(p, coll, cur.data, prepare(coll, id, merged, cur.data, Date.now()));
     checkRules(p, coll, cur.data, data);
+    // A QuickBooks pull keeps the version it replaced, so a device editing that version can still
+    // tell which fields it changed (stale-write field merge, docs/integrations/quickbooks.md 5.2).
+    if (isQboWriter(who)) await keepHistory(tx, coll, id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, null);
     const row = await updateRow(tx, def, id, data, who);
     await audit(tx, who, 'record.update', coll, id, data, { via: 'rest', fields: Object.keys(patch).slice(0, 30) });
     await afterWrite(tx, coll, id, cur.data, data, who);
+    await qboWrite(tx, coll, id, cur.data, data, p, who);
     return view(p, coll, row);
   }
 
@@ -319,9 +352,33 @@ export function createRecords({ validator }) {
       throw new ApiError(409, 'version_conflict', `The record changed (version ${cur.version}).`, { version: cur.version });
     }
     checkRules(p, coll, cur.data, null);
+    if (isQboWriter(who)) await keepHistory(tx, coll, id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, null);
     const row = await softDeleteRow(tx, def, id, who);
     await audit(tx, who, 'record.delete', coll, id, cur.data, { via: 'rest' });
+    await qboDelete(tx, coll, id, cur.data, p, who);
     return { id, version: row.version, deleted: true };
+  }
+
+  /**
+   * Undo a soft delete (the QuickBooks sync puts back a record whose delete QuickBooks refused,
+   * docs/integrations/quickbooks.md 4.7). The stored body is unchanged; the version moves on.
+   */
+  async function restoreRecord(tx, p, coll, id, who) {
+    await loadMoneyAccess(tx, p);
+    assertCollection(coll);
+    if (!canWrite(p, coll)) throw forbidden(`You cannot change ${coll}.`);
+    await assertPlanAllows(tx, p, coll);
+    assertId(id);
+    const def = collectionDef(coll);
+    const cur = await lockRow(tx, def, id);
+    if (!cur || !visible(p, coll, cur)) throw notFound();
+    if (!cur.deleted_at) return view(p, coll, cur);
+    checkRules(p, coll, null, cur.data);
+    const row = await updateRow(tx, def, id, cur.data, who);
+    await audit(tx, who, 'record.restore', coll, id, cur.data, { via: 'rest' });
+    await afterWrite(tx, coll, id, null, cur.data, who);
+    await qboWrite(tx, coll, id, null, cur.data, p, who);
+    return view(p, coll, row);
   }
 
   // ---- sync ----------------------------------------------------------------
@@ -373,6 +430,7 @@ export function createRecords({ validator }) {
         const row = await insertRow(tx, def, m.id, data, who);
         await audit(tx, who, 'record.create', coll, m.id, data, meta);
         await afterWrite(tx, coll, m.id, null, data, who);
+        await qboWrite(tx, coll, m.id, null, data, p, who);
         return { mid: m.mid, status: 'ok', version: row.version, changeSeq: row.change_seq };
       }
       // Collections that merge (work tasks, drawings from an app that tracks deletions): field
@@ -388,10 +446,28 @@ export function createRecords({ validator }) {
         const row = await updateRow(tx, def, m.id, stored, who);
         await audit(tx, who, 'record.update', coll, m.id, stored, fresh ? meta : { ...meta, conflict: 'merged' });
         await afterWrite(tx, coll, m.id, cur.data, stored, who);
+        await qboWrite(tx, coll, m.id, cur.data, stored, p, who, { stale: !fresh });
         // The device's copy differs from what is stored now: answer as a conflict so it takes
         // the stored copy (with nothing lost: its own changes are in it).
         if (canon(stored) !== canon(data)) return { mid: m.mid, status: 'conflict', server: serverView(p, coll, row) };
         return { mid: m.mid, status: 'ok', version: row.version, changeSeq: row.change_seq };
+      }
+      // A stale write to a QuickBooks-synced record: the fields the device changed are stored over
+      // the server copy, and a money value a QuickBooks pull changed meanwhile is held for a
+      // conflict instead of being applied (docs/integrations/quickbooks.md 5.2, 5.10).
+      if (!fresh && !cur.deleted_at && QBO_COLLECTIONS.includes(coll) && qboEnabled() && await hasQboConnection(tx)) {
+        const q = await qboStaleMerge(tx, coll, m, cur, data, now);
+        if (q) {
+          const stored = prepare(coll, m.id, q.merged, cur.data, now);
+          checkRules(p, coll, cur.data, stored);
+          await keepHistory(tx, coll, m.id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, m.mid);
+          const row = await updateRow(tx, def, m.id, stored, who);
+          await audit(tx, who, 'record.update', coll, m.id, stored, { ...meta, conflict: 'merged', ...(q.heldKeys.length ? { held: q.heldKeys } : {}) });
+          await afterWrite(tx, coll, m.id, cur.data, stored, who);
+          await qboWrite(tx, coll, m.id, cur.data, stored, p, who, { stale: true, held: q.held });
+          if (canon(stored) !== canon(data)) return { mid: m.mid, status: 'conflict', server: serverView(p, coll, row) };
+          return { mid: m.mid, status: 'ok', version: row.version, changeSeq: row.change_seq };
+        }
       }
       checkRules(p, coll, cur.deleted_at ? null : cur.data, data);
       if (!fresh && clientTime(m.data.updatedAt, now) <= rowTime(cur)) {
@@ -403,6 +479,7 @@ export function createRecords({ validator }) {
       const row = await updateRow(tx, def, m.id, data, who);
       await audit(tx, who, cur.deleted_at ? 'record.restore' : 'record.update', coll, m.id, data, fresh ? meta : { ...meta, conflict: 'client-won' });
       await afterWrite(tx, coll, m.id, cur.deleted_at ? null : cur.data, data, who);
+      await qboWrite(tx, coll, m.id, cur.deleted_at ? null : cur.data, data, p, who, { stale: !fresh });
       return { mid: m.mid, status: 'ok', version: row.version, changeSeq: row.change_seq };
     }
 
@@ -418,7 +495,48 @@ export function createRecords({ validator }) {
     if (!fresh) await keepHistory(tx, coll, m.id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, m.mid);
     const row = await softDeleteRow(tx, def, m.id, who);
     await audit(tx, who, 'record.delete', coll, m.id, cur.data, fresh ? meta : { ...meta, conflict: 'client-won' });
+    await qboDelete(tx, coll, m.id, cur.data, p, who, { stale: !fresh });
     return { mid: m.mid, status: 'ok', version: row.version, changeSeq: row.change_seq };
+  }
+
+  /**
+   * The stale-write field merge for QuickBooks-synced records (docs/integrations/quickbooks.md 5.2).
+   * Changed fields: m.fields, else the keys where the device's copy differs from the record_history
+   * row at its baseVersion (null when neither is known: the caller falls back to LWW). A money key
+   * that a QuickBooks pull changed after baseVersion (qbo_links.meta.pulledKeys: the version each
+   * key was last written by system:qbo) is held, not applied. The rest goes over the server copy.
+   * @returns {Promise<{ merged: object, held: object, heldKeys: string[] } | null>}
+   */
+  async function qboStaleMerge(tx, coll, m, cur, data, now) {
+    let changed = null;
+    if (Array.isArray(m.fields) && m.fields.length) changed = m.fields.filter((f) => !META_KEYS.includes(f) && !STALE_SKIP_KEYS.has(f));
+    else if (m.baseVersion != null) {
+      const { rows } = await tx.query(
+        `SELECT data FROM record_history WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 AND version = $4 AND deleted = false AND data IS NOT NULL
+          ORDER BY id DESC LIMIT 1`, [tx.tenantId, coll, m.id, m.baseVersion]);
+      const base = rows[0]?.data;
+      if (base) {
+        const keys = new Set([...Object.keys(base), ...Object.keys(data)]);
+        changed = [...keys].filter((k) => !META_KEYS.includes(k) && !STALE_SKIP_KEYS.has(k) && canon(base[k]) !== canon(data[k]));
+      }
+    }
+    if (!changed) return null;
+    const link = (await tx.query(
+      "SELECT meta FROM qbo_links WHERE tenant_id = $1 AND collection = $2 AND record_id = $3 AND role = 'main'", [tx.tenantId, coll, m.id])).rows[0];
+    const pulled = link?.meta?.pulledKeys && typeof link.meta.pulledKeys === 'object' ? link.meta.pulledKeys : {};
+    const money = moneyKeysOf(coll);
+    const held = {};
+    const merged = { ...cur.data };
+    for (const k of changed) {
+      if (money.has(k) && Number(pulled[k] || 0) > Number(m.baseVersion ?? -1) && canon(cur.data[k]) !== canon(data[k])) {
+        held[k] = data[k] === undefined ? null : data[k];
+        continue;
+      }
+      if (k in data) merged[k] = data[k]; else delete merged[k];
+    }
+    const t = (iso) => Date.parse(iso) || 0;
+    merged.updatedAt = clientTime(data.updatedAt, now) >= t(cur.data.updatedAt) ? data.updatedAt : cur.data.updatedAt;
+    return { merged, held, heldKeys: Object.keys(held) };
   }
 
   /**
@@ -514,5 +632,5 @@ export function createRecords({ validator }) {
     return { changes, cursor: String(last ? last.change_seq : since), more };
   }
 
-  return { getRecord, listRecords, createRecord, patchRecord, deleteRecord, push, pull, prepare };
+  return { getRecord, listRecords, createRecord, patchRecord, deleteRecord, restoreRecord, push, pull, prepare };
 }
