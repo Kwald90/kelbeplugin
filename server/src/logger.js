@@ -16,9 +16,12 @@ export const REDACT_PATHS = [
 
 const SECRET_QUERY = /([?&](?:code|state|token|key|password|pin|id_token|access_token|hub\.verify_token|verify_token|secret|signature)=)[^&#]*/gi;
 
-/** Strip secret-looking query values from a URL before it is logged. */
+// The SendGrid Inbound Parse URL carries its secret as the last path segment.
+const SECRET_PATH = /(\/webhooks\/sendgrid\/inbound\/)[^/?#]+/gi;
+
+/** Strip secret-looking query values (and secret path segments) from a URL before it is logged. */
 export function redactUrl(url) {
-  return String(url || '').replace(SECRET_QUERY, '$1[REDACTED]');
+  return String(url || '').replace(SECRET_QUERY, '$1[REDACTED]').replace(SECRET_PATH, '$1[REDACTED]');
 }
 
 /**

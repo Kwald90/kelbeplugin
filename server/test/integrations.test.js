@@ -97,7 +97,7 @@ describe('connecting keys', { skip }, () => {
   test('the screen lists every provider, not connected, with webhook URLs and guides', async () => {
     const r = await call(app, { url: '/api/v1/integrations', token: A.token });
     assert.equal(r.status, 200);
-    assert.deepEqual(r.body.data.map((c) => c.provider), ['stripe', 'resend', 'twilio', 'facebook', 'anthropic']);
+    assert.deepEqual(r.body.data.map((c) => c.provider), ['stripe', 'resend', 'sendgrid', 'twilio', 'facebook', 'anthropic']);
     for (const c of r.body.data) { assert.equal(c.status, 'not_connected'); assert.equal(c.entitled, true); assert.equal(c.guide, `guides/${c.provider}.md`); }
     assert.equal(r.body.data[0].webhookUrl, `${ORIGIN}/api/v1/webhooks/stripe/${A.tenantId}`);
     assert.equal(r.headers['cache-control'], 'no-store');

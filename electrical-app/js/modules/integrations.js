@@ -1,4 +1,4 @@
-// Integrations (#/integrations): each company connects its own Stripe, Resend, Twilio,
+// Integrations (#/integrations): each company connects its own Stripe, Resend or SendGrid, Twilio,
 // Facebook Lead Ads and Anthropic accounts. Keys are typed once, sent to the server and
 // never shown again (cards show hints like …abcd). Every card has a connection test, a
 // setup guide (guides/<provider>.md, rendered by lib/markdown.js) and the "we set it up for
@@ -13,8 +13,8 @@ import { PLANS, monthlyCents } from '../plans.js';
 import { apiFetch } from '../session.js';
 
 const PLUG = '<path d="M9 2v5M15 2v5"/><path d="M6 7h12v4a6 6 0 01-12 0z"/><path d="M12 17v5"/>';
-const ICONS = { stripe: 'dollar', resend: 'mail', twilio: 'phone', facebook: 'funnel', anthropic: 'zap' };
-const GUIDE_LABEL = { stripe: 'Stripe', resend: 'Resend (email)', twilio: 'Twilio (texts)', facebook: 'Facebook Lead Ads', anthropic: 'Anthropic (Claude)' };
+const ICONS = { stripe: 'dollar', resend: 'mail', sendgrid: 'send', twilio: 'phone', facebook: 'funnel', anthropic: 'zap' };
+const GUIDE_LABEL = { stripe: 'Stripe', resend: 'Resend (email)', sendgrid: 'SendGrid (email)', twilio: 'Twilio (texts)', facebook: 'Facebook Lead Ads', anthropic: 'Anthropic (Claude)' };
 // VERIFY with Kelvin: where "Ask us to set this up" requests should go.
 export const SETUP_EMAIL = 'setup@fishtapehq.com';
 
@@ -107,7 +107,7 @@ function connectedLine(c) {
 
 function configFields(ctx, c) {
   const { h } = ctx.ui;
-  if (c.provider === 'resend') {
+  if (c.provider === 'resend' || c.provider === 'sendgrid') {
     return [ctx.ui.field({ label: 'Reply-to address', name: 'config.replyTo', type: 'email', value: c.config.replyTo || '', hint: 'Replies go here. Blank uses the company email in Settings.' })];
   }
   if (c.provider === 'facebook') {

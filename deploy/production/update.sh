@@ -63,8 +63,12 @@ done
 [[ "$ACTOR" =~ ^[A-Za-z0-9:._@/-]{1,80}$ ]] || { echo "--actor has unexpected characters" >&2; exit 2; }
 [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
 
-mkdir -p "$STATE_DIR/status" "$STATE_DIR/media" "$WWW_DIR/releases"
-chmod 755 "$STATE_DIR" "$STATE_DIR/status" "$STATE_DIR/media" "$WWW_DIR" "$WWW_DIR/releases"
+mkdir -p "$STATE_DIR/status" "$WWW_DIR/releases"
+# Hero videos and posters: uploaded by hq-api (uid 1000), served read-only by nginx.
+install -d -o 1000 -g 1000 -m 755 "$STATE_DIR/media"
+# HQ Mail files: only the containers' user (uid 1000) may read them.
+install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/mail"
+chmod 755 "$STATE_DIR" "$STATE_DIR/status" "$WWW_DIR" "$WWW_DIR/releases"
 exec 9>"$STATE_DIR/deploy.lock"
 flock -n 9 || { echo "another deploy is running" >&2; exit 1; }
 

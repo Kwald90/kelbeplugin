@@ -44,8 +44,12 @@ x-server: &server
     COMPLIANCE_CONTROLS_FILE: /app/compliance/controls.yaml
     # Public certificate chain copied by host-status.sh (never the key), for HQ health.
     TLS_CERT_FILE: /run/fishtape/status/tls-cert.pem
+    # HQ Mail attachments and original messages (docs/email/README.md). Written by the api
+    # (Inbound Parse), read by hq-api (downloads) and the worker (sending attachments).
+    MAIL_DIR: /var/lib/fishtape/mail
   volumes:
     - /var/lib/fishtape-staging/status:/run/fishtape/status:ro
+    - /var/lib/fishtape-staging/mail:/var/lib/fishtape/mail
   depends_on:
     postgres:
       condition: service_healthy

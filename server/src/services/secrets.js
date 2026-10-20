@@ -1,4 +1,4 @@
-// Per-company secrets: each company brings its own Stripe, Resend, Twilio, Anthropic and
+// Per-company secrets: each company brings its own Stripe, Resend or SendGrid, Twilio, Anthropic and
 // Facebook keys. Values live in tenant_secrets, envelope-encrypted with a fresh data key
 // each, and the tenant id and name are bound in as associated data, so a sealed value
 // can't be copied to another company or another name. Plaintext never leaves the
@@ -14,6 +14,8 @@ export const SECRETS = {
   'stripe.webhook_secret': { provider: 'stripe', label: 'Stripe webhook signing secret', guide: 'stripe' },
   'resend.api_key': { provider: 'resend', label: 'Resend API key', guide: 'resend' },
   'resend.from': { provider: 'resend', label: 'Resend sender address', guide: 'resend', plain: true },
+  'sendgrid.api_key': { provider: 'sendgrid', label: 'SendGrid API key', guide: 'sendgrid' },
+  'sendgrid.from': { provider: 'sendgrid', label: 'SendGrid sender address', guide: 'sendgrid', plain: true },
   'twilio.account_sid': { provider: 'twilio', label: 'Twilio account SID', guide: 'twilio', plain: true },
   'twilio.auth_token': { provider: 'twilio', label: 'Twilio auth token', guide: 'twilio' },
   'twilio.from': { provider: 'twilio', label: 'Twilio sending number', guide: 'twilio', plain: true },
