@@ -22,6 +22,8 @@ while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     POSTGRES_SUPERUSER_PASSWORD= | FISHTAPE_OWNER_PASSWORD= | FISHTAPE_APP_PASSWORD= | FISHTAPE_HQ_PASSWORD=)
       printf '%s%s\n' "$line" "$(openssl rand -hex 32)" ;;
+    SENDGRID_INBOUND_TOKEN=)
+      printf '%s%s\n' "$line" "$(openssl rand -hex 32)" ;;
     SECRETS_MASTER_KEY=)
       printf '%s%s\n' "$line" "$(openssl rand -base64 32)" ;;
     *)
