@@ -154,6 +154,8 @@ describe('public endpoints and URLs', { skip }, () => {
       'batchId',
       // location points (own rows only): a time entry id and an ISO time
       'timeEntryId', 'at',
+      // purchasing: GET /api/v1/bills?vendorId=&purchaseOrderId= (record ids)
+      'vendorId', 'purchaseOrderId',
       // HQ Mail: "Show images" for one message (0|1), not data.
       'images']);
     for (const [path, ops] of Object.entries(spec.paths)) {
