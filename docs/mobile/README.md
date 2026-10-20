@@ -261,8 +261,28 @@ sheet) and note the error on each device the crew uses.
 
 ## Signing and TestFlight
 
-Waiting on Kelvin for the **Team ID** and the App Store Connect **Issuer ID** (the API key itself is
-already on the Mac in `~/.appstoreconnect/private_keys/`; never copy it into the repo). Then:
+**Now one command on the Mac** (team `9C68LPL6JA`, app record "FishTapeHQ", bundle ID registered):
+
+```sh
+cd ~/dev/fishtape/repo && mobile/scripts/testflight.sh
+```
+
+It syncs against production (`https://app.fishtapehq.com`), archives with build number
+`YYYYMMDDHHMM` (UTC) and marketing version 1.0, signs and uploads with `mobile/ios/ExportOptions.plist`
+and the API key in `~/.appstoreconnect/api_key.json` (read inside the script, never printed), waits
+for processing (`mobile/scripts/asc.mjs wait-build`) and puts the build in the internal TestFlight
+group "TG Electrical" (`asc.mjs testflight`, created if missing). Logs go to `~/dev/fishtape/build/`.
+
+- The archive is unsigned on purpose: automatic signing at archive time wants a development profile,
+  which needs a registered device. The export signs for App Store distribution instead.
+- **Signing needs the login keychain unlocked.** Over SSH it is locked and codesign fails with
+  `errSecInternalComponent`. Run the script in Terminal on the Mac itself, or unlock first with
+  `security unlock-keychain ~/Library/Keychains/login.keychain-db` (asks for the Mac password). The
+  first time, macOS may ask to let `codesign` use the distribution key: choose **Always Allow**.
+- `ITSAppUsesNonExemptEncryption = NO` is in `Info.plist`, so uploads skip the export-compliance
+  question.
+
+The steps below are what the script does, for reference.
 
 1. **Team.** Set `DEVELOPMENT_TEAM` for the App target (Xcode, or `DEVELOPMENT_TEAM = <TEAM_ID>;` in
    both App build configurations of `project.pbxproj`). Leave `CODE_SIGN_STYLE = Automatic`.

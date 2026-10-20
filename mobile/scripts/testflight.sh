@@ -37,10 +37,13 @@ echo "== App Store Connect app record"
 node scripts/asc.mjs app
 
 echo "== Archive (log: $OUT/archive-$BUILD_NUMBER.log)"
+# Archived unsigned: automatic signing at archive time wants a development profile, which needs a
+# registered iPhone or iPad on the team. The export step below signs for App Store distribution
+# (no devices needed), with a certificate and profile Xcode manages through the API key.
 xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath "$DERIVED" -archivePath "$ARCHIVE" \
-  DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-  "${AUTH[@]}" archive > "$OUT/archive-$BUILD_NUMBER.log" 2>&1 \
+  DEVELOPMENT_TEAM="$TEAM" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO \
+  archive > "$OUT/archive-$BUILD_NUMBER.log" 2>&1 \
   || { grep -E "error:|BUILD|ARCHIVE" "$OUT/archive-$BUILD_NUMBER.log" | tail -20; exit 1; }
 grep -E "ARCHIVE SUCCEEDED" "$OUT/archive-$BUILD_NUMBER.log"
 
