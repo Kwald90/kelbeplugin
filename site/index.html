@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fishtape · Software for Canadian electrical contractors</title>
+  <meta name="description" content="Quotes, jobs, drawings, crew time and invoices in one app, built for Canadian electricians with CEC 2024 checks, AR wire runs and conduit bending. Start a 14-day free trial.">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="theme-color" content="#16171a">
+  <!-- Where the API lives. Empty = this origin. On a separate marketing domain, set the app origin
+       and add this site's origin to CORS_ORIGINS on the API. -->
+  <meta name="fishtape-api" content="">
+  <!-- Where "Sign in" goes. Empty = worked out by site/app-link.js (app.fishtapehq.com from the apex, else this host). -->
+  <meta name="fishtape-app" content="">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="preload" as="image" href="/site/img/hero/default-1.svg" fetchpriority="high">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/site/site.css">
+  <link rel="stylesheet" href="/site/hero.css">
+</head>
+<body class="landing-page">
+  <a class="site-skip" href="#main">Skip to content</a>
+  <header class="site-head">
+    <a class="site-brand" href="/site/index.html"><span class="site-mark" aria-hidden="true">⚡</span> <span data-brand>Fishtape</span></a>
+    <nav aria-label="Site">
+      <a class="hide-sm" href="#features">Features</a>
+      <a href="/site/pricing.html">Pricing</a>
+      <a data-app-link href="/">Sign in</a>
+      <a class="site-btn" href="/site/signup.html?plan=pro">Start free trial</a>
+    </nav>
+  </header>
+
+  <main id="main" class="landing">
+    <!-- The hero. Text below is the built-in default; landing.js swaps in the live promotion
+         from /api/v1/public/promotions/active (managed in HQ > Promotions) and starts the videos. -->
+    <section class="hero" id="hero" aria-label="Highlights" data-mode="posters">
+      <div class="hero-stage" aria-hidden="true">
+        <div class="hero-layer is-visible is-front"><img class="hero-poster" src="/site/img/hero/default-1.svg" alt="" width="1920" height="1080" fetchpriority="high" decoding="async"></div>
+      </div>
+      <div class="hero-scrim" aria-hidden="true"></div>
+      <div class="hero-inner">
+        <div class="hero-copy" id="hero-copy" aria-live="off">
+          <p class="hero-eyebrow">CEC 2024 built in</p>
+          <h1 class="hero-headline">Built for Canadian electricians</h1>
+          <p class="hero-sub">Quotes, jobs, drawings, crew time and invoices in one app, checked against the Canadian Electrical Code.</p>
+          <div class="hero-ctas">
+            <a class="site-btn hero-primary" href="/site/signup.html?plan=pro">Start your 14-day free trial</a>
+            <a class="site-btn hero-secondary" href="/site/pricing.html">See pricing</a>
+          </div>
+          <p class="hero-note">$1 deposit, credited to your first month.</p>
+        </div>
+      </div>
+      <div class="hero-controls" hidden></div>
+    </section>
+
+    <div class="landing-wrap">
+      <section class="site-section land-values" aria-labelledby="why-title">
+        <h2 id="why-title">One app from the first call to the final invoice</h2>
+        <ul class="land-value-grid">
+          <li class="land-value">
+            <h3>CEC 2024 built in</h3>
+            <p>Calculators and drawing checks follow CSA C22.1:24 with provincial amendments. NEC 2023 is there if a job needs it.</p>
+          </li>
+          <li class="land-value">
+            <h3>Tools for the field</h3>
+            <p>Wire runs measured with AR, conduit bends with marks, box layouts on the plan. They work offline and sync when you're back in range.</p>
+          </li>
+          <li class="land-value">
+            <h3>Estimate to invoice</h3>
+            <p>Take off from the drawing, price it, send the quote, turn it into a job and bill it with the right GST, HST or PST.</p>
+          </li>
+          <li class="land-value">
+            <h3>Crew and time</h3>
+            <p>Schedule the crew, clock in on a shared iPad with a PIN, and see hours by job before payroll.</p>
+          </li>
+          <li class="land-value">
+            <h3>AI that drafts, you approve</h3>
+            <p>The assistant writes estimates, invoices and follow-ups from your notes. Nothing goes out until you approve it.</p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="site-section" id="features" aria-labelledby="features-title">
+        <h2 id="features-title">See it at work</h2>
+        <div class="land-features">
+          <figure class="land-feature">
+            <img src="/site/img/shots/plan-canvas.svg" alt="A floor plan in Fishtape with receptacle boxes placed along the walls and a CEC spacing check marked" width="1200" height="750" loading="lazy" decoding="async">
+            <figcaption><strong>Plans and box placement.</strong> Draw a room and Fishtape places the receptacles, then flags CEC spacing and circuit issues on the drawing.</figcaption>
+          </figure>
+          <figure class="land-feature">
+            <img src="/site/img/shots/wire-runs.svg" alt="A wire run traced on a plan with segment lengths and a total in metres" width="1200" height="750" loading="lazy" decoding="async">
+            <figcaption><strong>Wire runs with AR.</strong> Measure along the wall with your phone, trace on the plan or type it in. Allowances included, pushed straight to the estimate.</figcaption>
+          </figure>
+          <figure class="land-feature">
+            <img src="/site/img/shots/bending.svg" alt="A conduit offset bend diagram with the marks to make on the pipe" width="1200" height="750" loading="lazy" decoding="async">
+            <figcaption><strong>Pipe bending.</strong> Offsets, saddles, kicks and 90s for EMT, rigid and PVC, with a diagram and every mark.</figcaption>
+          </figure>
+          <figure class="land-feature">
+            <img src="/site/img/shots/estimate.svg" alt="An estimate with line items, taxes for Ontario and a total in Canadian dollars" width="1200" height="750" loading="lazy" decoding="async">
+            <figcaption><strong>Estimates and invoices.</strong> Quotes from your price book and takeoff, provincial taxes worked out, paid online.</figcaption>
+          </figure>
+          <figure class="land-feature">
+            <img src="/site/img/shots/time-clock.svg" alt="The crew time clock on a shared iPad showing who is clocked in on which job" width="1200" height="750" loading="lazy" decoding="async">
+            <figcaption><strong>Crew time.</strong> A shared iPad in the van, PIN sign-in, hours by job and by person.</figcaption>
+          </figure>
+          <figure class="land-feature">
+            <img src="/site/img/shots/calculators.svg" alt="A CEC conductor sizing calculator with the rule references shown" width="1200" height="750" loading="lazy" decoding="async">
+            <figcaption><strong>CEC calculators.</strong> Conductor sizing, voltage drop, box fill and demand loads, with the rule numbers alongside.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="site-section" id="pricing" aria-labelledby="pricing-title">
+        <h2 id="pricing-title">Simple monthly plans</h2>
+        <p class="site-muted land-lede">Every plan starts with a 14-day free trial. A $1 deposit confirms your card and comes off your first month. Prices in Canadian dollars, before tax.</p>
+        <div class="land-plans" id="land-plans"></div>
+        <p class="land-more"><a href="/site/pricing.html">Compare every feature by plan</a></p>
+      </section>
+
+      <section class="site-section land-talk" aria-labelledby="talk-title">
+        <div>
+          <h2 id="talk-title">A bigger shop? Let's talk.</h2>
+          <p class="site-muted">Custom user counts, single sign-on, and setup done for you: we connect Stripe, email and SMS and bring your data across.</p>
+        </div>
+        <a class="site-btn ghost" href="/site/pricing.html#talk">Talk to us about Enterprise</a>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-foot">
+    <span>© <span id="year">2026</span> <span data-brand>Fishtape</span></span>
+    <nav class="site-foot-links" aria-label="Footer">
+      <a href="/site/pricing.html">Pricing</a>
+      <a href="/site/status.html">Service status</a>
+      <a href="/site/privacy.html">Privacy</a>
+      <a href="/site/terms.html">Terms</a>
+    </nav>
+  </footer>
+
+  <script type="module" src="/site/landing.js"></script>
+</body>
+</html>
