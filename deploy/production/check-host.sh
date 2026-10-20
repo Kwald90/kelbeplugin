@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Read-only audit of the production host against README.md "Host prerequisites".
+# Read-only audit of the production host's hardening (SSH, firewall, listeners, patching, backups, .env).
+# Written for a dedicated host: on the shared CloudPanel box, FAILs for listeners and firewall rules
+# that belong to CloudPanel or other sites are expected (README.md, "Risks of sharing the box").
 # Changes nothing. Prints PASS / WARN / FAIL per check; exits 1 if anything FAILs.
 #
 #   sudo ./check-host.sh                       human-readable

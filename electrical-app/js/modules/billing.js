@@ -5,6 +5,7 @@
 import { PLANS, PLAN_IDS, FEATURE_PLAN, EXTRA_USER_CENTS, monthlyCents, planRank } from '../plans.js';
 import { apiFetch } from '../session.js';
 import { openExternal } from '../lib/native.js';
+import { trialDaysLeft } from '../lib/trial.js';
 
 /** Plain names for plans.js feature keys (pricing page and this screen). */
 export const FEATURE_LABELS = {
@@ -81,10 +82,14 @@ export default {
           h('span', null, ` Update your card before ${ui.fmtDate(i.graceEndsAt)} to keep ${i.planName}. After that the account drops to Starter (your data stays).`),
           i.hasCustomer ? h('div', null, ui.button('Update payment method', { size: 'sm', variant: 'danger solid', onClick: portal })) : null)));
       } else if (i.onTrial && i.trialEndsAt) {
-        const left = ui.daysUntil(i.trialEndsAt);
+        // Same count as the app-wide trial banner (lib/trial.js); -1 once the trial has ended.
+        const left = new Date(i.trialEndsAt) > new Date() ? trialDaysLeft(i) : -1;
         body.append(h('div', { class: ['billing-banner', left <= 7 ? 'warning' : 'info'] }, ui.icon('clock', 20), h('div', null,
           h('strong', null, left >= 0 ? `Free trial: ${left} day${left === 1 ? '' : 's'} left` : 'Your trial has ended'),
-          h('span', null, left >= 0 ? ` You have ${PLANS.business.name} features until ${ui.fmtDate(i.trialEndsAt)}. Pick a plan to keep going.` : ' You are on Starter features. Pick a plan to unlock the rest.'))));
+          h('span', null, left < 0 ? ' You are on Starter features. Pick a plan to unlock the rest.'
+            // Self-serve sign-up: a trialing subscription that bills when the trial ends.
+            : i.hasSubscription ? ` You have ${i.planName} features. On ${ui.fmtDate(i.trialEndsAt)} your card is charged ${i.monthlyCents == null ? 'for your plan' : `${fmt(i.monthlyCents)} plus tax`}${i.deposit?.cents ? `, less your ${fmt(i.deposit.cents)} deposit` : ''}. Change plan or cancel before then.`
+              : ` You have ${i.planName} features until ${ui.fmtDate(i.trialEndsAt)}. Pick a plan to keep going.`))));
       }
 
       body.append(h('div', { class: 'grid' },
@@ -109,7 +114,7 @@ export default {
     function planCard(id) {
       const p = PLANS[id];
       const i = info;
-      const current = !i.onTrial && i.plan === id && i.status !== 'none';
+      const current = i.hasSubscription ? i.subscribedPlan === id : !i.onTrial && i.plan === id && i.status !== 'none';
       const contact = p.contactSales || p.priceCents == null;
       const lower = planRank(id) < planRank(i.subscribedPlan || i.plan);
       const added = featuresAddedBy(id).slice(0, 6);

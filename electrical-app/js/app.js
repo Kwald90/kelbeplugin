@@ -9,7 +9,8 @@ import { store, userDatabases, deleteDatabase } from './store.js';
 import { auth, ROLES } from './auth.js';
 import * as ui from './ui.js';
 import { MODULES, GROUPS } from './modules/index.js';
-import account, { renderGate, holdResetToken, upgradeCard, readOnlyBanner, openSyncSheet, syncLabel } from './modules/account.js';
+import account, { renderGate, holdResetToken, holdWelcomeToken, upgradeCard, readOnlyBanner, openSyncSheet, syncLabel } from './modules/account.js';
+import { trialBannerText } from './lib/trial.js';
 import { seedIfEmpty } from './seed.js';
 import { BRAND } from './brand.js';
 import { hasUnitsChoice, setUnits, getUnits } from './lib/units.js';
@@ -69,6 +70,26 @@ export function moduleUnlocked(id) {
   return hasFeature(ent.plan, id, overrides);
 }
 
+/**
+ * "12 days left in your trial" for the people who can pick a plan (Billing), on every screen
+ * but Billing itself and full-screen tools. Hidden for the session once closed, until the
+ * text changes the next day.
+ */
+function trialBanner(mod) {
+  if (mode !== 'synced' || mod.fullBleed || mod.id === 'billing' || !auth.can('settings')) return null;
+  const text = trialBannerText(session.me?.entitlements);
+  if (!text) return null;
+  try { if (sessionStorage.getItem('ft.trialBanner') === text) return null; } catch { /* storage blocked */ }
+  const bar = h('div', { class: 'trial-banner no-print', role: 'status' },
+    icon('clock', 16), h('span', { class: 'grow' }, text),
+    h('a', { href: '#/billing' }, 'Billing'),
+    h('button', {
+      type: 'button', class: 'trial-banner-x', 'aria-label': 'Hide for now',
+      onClick: () => { try { sessionStorage.setItem('ft.trialBanner', text); } catch { /* storage blocked */ } bar.remove(); },
+    }, icon('x', 14)));
+  return bar;
+}
+
 function hasRecords(id) {
   const colls = MODULE_COLLECTIONS[id];
   return colls ? colls.some((c) => store.count(c) > 0) : true;
@@ -79,7 +100,7 @@ function hasRecords(id) {
 function route() {
   if (!main) return;
   const { id, params, query } = parseHash();
-  if (['sign-in', 'reset-password', 'forgot-password'].includes(id)) { nav('dashboard'); return; }
+  if (['sign-in', 'reset-password', 'forgot-password', 'welcome'].includes(id)) { nav('dashboard'); return; }
   if (!landed) {
     landed = true;
     if (id === 'dashboard' && FIELD_ROLES.includes(auth.role()) && auth.can('today') && moduleUnlocked('today')) { nav('today'); return; }
@@ -107,6 +128,8 @@ function route() {
   try {
     cleanup = mod.render(main, { params, query, store, ui, auth, nav, route, app: shellApi });
     if (locked) main.prepend(readOnlyBanner(mod));
+    const trial = trialBanner(mod);
+    if (trial) main.prepend(trial);
   } catch (e) {
     console.error(e);
     main.append(ui.page({ title: mod.title }, ui.empty({ icon: 'alert', title: 'Something went wrong', text: e.message })));
@@ -436,6 +459,12 @@ async function boot() {
     if (query.token) holdResetToken(query.token);
     history.replaceState(null, '', `${location.pathname}${location.search}#/reset-password`);
     return showGate('reset');
+  }
+  // The sign-up welcome email's one-time link: same treatment as a reset token.
+  if (id === 'welcome') {
+    if (query.token) holdWelcomeToken(query.token);
+    history.replaceState(null, '', `${location.pathname}${location.search}#/welcome`);
+    return showGate('welcome');
   }
   if (session.isDemo()) return startDemo();
   const res = await session.load();

@@ -69,7 +69,8 @@ sudo docker compose exec -T postgres psql -U postgres -d fishtape -c "SELECT set
 ```bash
 sudo docker compose run --rm migrate
 sudo docker compose up -d api hq-api worker
-curl -fsS http://127.0.0.1:3410/api/readyz && curl -fsS http://127.0.0.1:3411/api/readyz
+curl -fsS http://127.0.0.1:3410/api/readyz && curl -fsS http://127.0.0.1:3411/api/readyz   # staging
+curl -fsS http://127.0.0.1:3420/api/readyz && curl -fsS http://127.0.0.1:3421/api/readyz   # production
 ```
 
    In HQ, verify the audit chain of a few tenants (`/api/hq/tenants/<id>/audit/verify`).

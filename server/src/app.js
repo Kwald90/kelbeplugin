@@ -24,6 +24,7 @@ import hqTenantRoutes from './routes/hq-tenants.js';
 import hqComplianceRoutes from './routes/hq-compliance.js';
 import hqBillingRoutes from './routes/hq-billing.js';
 import hqLeadRoutes from './routes/hq-leads.js';
+import publicSignupRoutes from './routes/public-signup.js';
 import authRoutes from './routes/v1/auth.js';
 import recordRoutes from './routes/v1/records.js';
 import syncRoutes from './routes/v1/sync.js';
@@ -194,6 +195,7 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(hqComplianceRoutes, deps);
   await app.register(hqBillingRoutes, deps);
   await app.register(hqLeadRoutes, deps);
+  await app.register(publicSignupRoutes, deps);
 
   app.get('/api/v1/openapi.json', { config: { auth: 'public' }, schema: { hide: true } }, async () => app.swagger());
 

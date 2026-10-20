@@ -5,10 +5,11 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 
 ## Needs Kelvin
 
-- **K** App Store Connect Issuer ID and Apple Team ID (bundle ID `com.fishtapehq.app`, signing, TestFlight). Steps: `docs/mobile/README.md`.
+- **K** App Store Connect: create the app record for bundle ID `com.fishtapehq.app` (registered 2026-10-19, team 9C68LPL6JA) in the web UI (Apple has no API for that), then TestFlight. Steps: `docs/mobile/README.md`.
 - **K** Production VPS at dotmoose: host, SSH access, OS, data-centre country, disk encryption.
 - **K** Domain: confirm the spelling registered (fishtapehq.com vs fishtapewq.com) and point DNS (`app.`, `hq.`, `status.`).
-- **K** Real tier prices (placeholders in `electrical-app/js/plans.js`), the failed-payment grace period (7 days now), the trial length (30 days now, `TRIAL_DAYS`) and the deleted-company grace (30 days now).
+- **K** Real tier prices (placeholders in `electrical-app/js/plans.js`), the failed-payment grace period (7 days now), the trial length (14 days now, `TRIAL_DAYS`) and the deleted-company grace (30 days now).
+- **K** Self-serve sign-up: is the $1 deposit refunded when someone cancels during the trial (today it stays as a credit on their Stripe customer)? Keep an abandoned sign-up's email for follow-up, or wipe it at expiry (today: wiped)? GST/HST on the deposit? Run `node scripts/stripe-setup.js` to create `fishtape_signup_deposit_cad`, and add the `checkout.session.expired`/`async_payment_*` events to the platform webhook.
 - **K** App Store guideline 3.1: selling Fishtape plans through Stripe inside the iOS app risks rejection. Recommended: in the app, Billing shows the plan and says "manage your plan at fishtapehq.com" with no buy buttons; purchases happen on the web. Options in `docs/mobile/README.md`.
 - **K** When a subscription is cancelled or unpaid past grace: free Starter (current behaviour) or suspend the company?
 - **K** Charge GST/HST on Fishtape subscriptions through Stripe Tax, or another way? Needs a GST/HST registration for Fishtape itself.
@@ -36,7 +37,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 
 - **legal** CASL: is "reply unsubscribe" enough in follow-up emails and SMS, or do we need a one-click unsubscribe link and consent records?
 - **legal** PST on Saskatchewan and Manitoba contracts (labour taxed) and BC mixed real-property/goods jobs: confirm defaults with an accountant.
-- **legal** Privacy policy and terms (PIPEDA, provincial laws), and the export-compliance answer for the App Store.
+- **legal** Privacy policy and terms (PIPEDA, provincial laws), and the export-compliance answer for the App Store. `site/terms.html` and `site/privacy.html` are DRAFT placeholders linked from the sign-up form; bump `TERMS_VERSION` in `server/src/services/signup.js` when they change.
 
 ## Code
 
@@ -55,7 +56,8 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **dev** BC jobs with mixed tax treatment need tax per line, not per document.
 - **dev** CEC Table 14 (other occupancies) not built: no reliable source found.
 - **dev** Client portal (homeowners/GCs view, sign and pay) once integrations are live.
-- **dev** Production nginx: serve `site/` (pricing, Enterprise form) on the marketing domain once it's confirmed, and the status page on `status.` (today it returns the status JSON).
+- **dev** Production nginx: serve `site/` (pricing, Enterprise form, sign-up, terms, privacy) on the marketing domain once it's confirmed, with `location = /signup { return 302 /site/signup.html$is_args$args; }` (or a rewrite), and set `SIGNUP_PAGE_URL`; and the status page on `status.` (today it returns the status JSON).
+- **dev** Sign-up: the new company's Settings start with the app defaults (province ON), not the province chosen at sign-up; seed `settings.company` (name, province) when the company is created. The welcome link is web-only (`session.js` does not ask for a bearer token on it in the iOS app).
 - **dev** Google/Microsoft sign-in in the iOS app (hidden there today): native OIDC through `ASWebAuthenticationSession` with PKCE, and a server endpoint that returns a bearer session instead of a cookie.
 - **dev** A Settings screen for company API keys (create, scope, revoke). Today it's `POST /api/v1/api-keys` only, and the MCP guide points there.
 

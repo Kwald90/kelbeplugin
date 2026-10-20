@@ -30,6 +30,7 @@ export const COLLECTIONS = [
   'employees', 'timeEntries', 'drawings', 'sops', 'permits', 'inspections',
   'certifications', 'checklists', 'panels', 'auditLog', 'settings',
   'wireRuns', 'bends', 'benderProfiles',
+  'flhas', 'toolboxTalks', 'incidents', 'correctiveActions', 'safetyInspections', 'siteOrientations', 'jobSafety',
   'workPlans', 'workTasks', 'taskTemplates', 'huddles',
 ];
 

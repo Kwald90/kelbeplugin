@@ -27,15 +27,23 @@ async function uniqueSlug(q, name) {
   return `${base}-${randomUUID().slice(0, 8)}`;
 }
 
-/** Free trial length for new companies: env TRIAL_DAYS, default 30. */
+/** Free trial length for new companies: env TRIAL_DAYS, default 14 (at most 730, Stripe's limit). */
 export function trialDays(env = process.env) {
   const n = Number.parseInt(env.TRIAL_DAYS ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? n : 30;
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 730) : 14;
 }
 
 export async function isSignupOpen(q) {
   const { rows } = await q.query("SELECT enabled FROM feature_flags WHERE key = 'signup_open' AND tenant_id IS NULL");
   return Boolean(rows[0]?.enabled);
+}
+
+/** Throws 400 validation_failed for a bad company name or province; returns the trimmed name. */
+function checkCompany(name, province) {
+  const tenantName = String(name || '').trim();
+  if (!tenantName || tenantName.length > 200) throw new ApiError(400, 'validation_failed', 'Company name is required (max 200 characters).');
+  if (province && !PROVINCES.includes(province)) throw new ApiError(400, 'validation_failed', 'Unknown province code.');
+  return tenantName;
 }
 
 /**
@@ -45,35 +53,46 @@ export async function isSignupOpen(q) {
  * @param {import('../db.js').Db} db
  */
 export async function createTenantWithOwner(db, { name, province = null, userId = null, owner = null, actor, request, platformRole = null }) {
-  const tenantName = String(name || '').trim();
-  if (!tenantName || tenantName.length > 200) throw new ApiError(400, 'validation_failed', 'Company name is required (max 200 characters).');
-  if (province && !PROVINCES.includes(province)) throw new ApiError(400, 'validation_failed', 'Unknown province code.');
+  checkCompany(name, province);
   const tenantId = randomUUID();
   const passwordHash = owner?.password ? await hashSecret(owner.password) : null;
+  return db.withTenant({ tenantId, userId },
+    (tx) => insertTenantWithOwner(tx, { name, province, userId, owner: owner && { ...owner, passwordHash }, actor, request, platformRole }),
+    { write: true });
+}
 
-  return db.withTenant({ tenantId, userId }, async (tx) => {
-    const slug = await uniqueSlug(tx, tenantName);
-    // Every new company starts on a trial that ends (plan 'trial' with no end date never would).
-    await tx.query('INSERT INTO tenants (id, slug, name, province, trial_ends_at) VALUES ($1, $2, $3, $4, now() + make_interval(days => $5))',
-      [tenantId, slug, tenantName, province, trialDays()]);
-    let uid = userId;
-    if (!uid) {
-      const email = normaliseEmail(owner.email);
-      const exists = await tx.query('SELECT 1 FROM users WHERE email = $1', [email]);
-      if (exists.rows.length) throw new ApiError(409, 'email_in_use', 'An account with this email already exists. Sign in instead.');
-      const { rows } = await tx.query(
-        `INSERT INTO users (email, display_name, password_hash, password_changed_at, platform_role)
-         VALUES ($1, $2, $3, CASE WHEN $3::text IS NULL THEN NULL ELSE now() END, $4) RETURNING id`,
-        [email, String(owner.displayName || email).slice(0, 200), passwordHash, platformRole]);
-      uid = rows[0].id;
-    }
-    await tx.query("INSERT INTO memberships (tenant_id, user_id, role, last_used_at) VALUES ($1, $2, 'owner', now())", [tenantId, uid]);
-    await appendAudit(tx, tenantId, {
-      actor: actor || { type: 'user', id: uid }, action: 'tenant.create', collection: 'tenants', recordId: tenantId,
-      summary: `Company ${tenantName} created`, request,
-    });
-    return { tenant: { id: tenantId, slug, name: tenantName, province }, userId: uid };
-  }, { write: true });
+/**
+ * The inside of createTenantWithOwner, for a caller that already holds a withTenant
+ * transaction (write: true) on the new company's id: self-serve sign-up does more in the
+ * same transaction. owner.passwordHash is an argon2id hash (auth/passwords.js), or null for
+ * an invite. trialEndsAt (a Date) overrides the TRIAL_DAYS default.
+ * @param {import('../db.js').TenantTx} tx
+ */
+export async function insertTenantWithOwner(tx, { name, province = null, userId = null, owner = null, actor, request, platformRole = null, trialEndsAt = null }) {
+  const tenantName = checkCompany(name, province);
+  const tenantId = tx.tenantId;
+  const slug = await uniqueSlug(tx, tenantName);
+  // Every new company starts on a trial that ends (plan 'trial' with no end date never would).
+  await tx.query(
+    'INSERT INTO tenants (id, slug, name, province, trial_ends_at) VALUES ($1, $2, $3, $4, COALESCE($6::timestamptz, now() + make_interval(days => $5)))',
+    [tenantId, slug, tenantName, province, trialDays(), trialEndsAt]);
+  let uid = userId;
+  if (!uid) {
+    const email = normaliseEmail(owner.email);
+    const exists = await tx.query('SELECT 1 FROM users WHERE email = $1', [email]);
+    if (exists.rows.length) throw new ApiError(409, 'email_in_use', 'An account with this email already exists. Sign in instead.');
+    const { rows } = await tx.query(
+      `INSERT INTO users (email, display_name, password_hash, password_changed_at, platform_role)
+       VALUES ($1, $2, $3, CASE WHEN $3::text IS NULL THEN NULL ELSE now() END, $4) RETURNING id`,
+      [email, String(owner.displayName || email).slice(0, 200), owner.passwordHash || null, platformRole]);
+    uid = rows[0].id;
+  }
+  await tx.query("INSERT INTO memberships (tenant_id, user_id, role, last_used_at) VALUES ($1, $2, 'owner', now())", [tenantId, uid]);
+  await appendAudit(tx, tenantId, {
+    actor: actor || { type: 'user', id: uid }, action: 'tenant.create', collection: 'tenants', recordId: tenantId,
+    summary: `Company ${tenantName} created`, request,
+  });
+  return { tenant: { id: tenantId, slug, name: tenantName, province }, userId: uid };
 }
 
 /** Active memberships of a user, newest use first. */

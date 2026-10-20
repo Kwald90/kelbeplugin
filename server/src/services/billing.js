@@ -147,7 +147,11 @@ export function createBilling({ config, db, settings = billingSettings(config) }
     const ent = tenantEntitlements(t);
     const plan = ent.plan;
     const included = PLANS[plan]?.includedUsers ?? null;
+    // Self-serve sign-up: the deposit paid at Checkout and credited to the first invoice.
+    const dep = (await db.query(
+      "SELECT deposit_paid_cents, credited_at FROM signups WHERE tenant_id = $1 AND status = 'completed' ORDER BY completed_at DESC LIMIT 1", [tenantId])).rows[0];
     return {
+      deposit: dep ? { cents: dep.deposit_paid_cents, credited: Boolean(dep.credited_at) } : null,
       plan,
       planName: PLANS[plan]?.name || plan,
       subscribedPlan: t.billing_plan,
@@ -316,11 +320,15 @@ export function createBilling({ config, db, settings = billingSettings(config) }
       } else if (status === 'canceled' || status === 'incomplete_expired') {
         plan = AFTER_TRIAL_PLAN; pastDue = null; grace = null; subId = null;
       }
+      // A trialing subscription (self-serve sign-up) carries the trial end: mirror it so the
+      // app's trial banner and HQ agree with Stripe.
+      const trialEnd = status === 'trialing' ? toDate(sub.trial_end) : null;
       await tx.query(
         `UPDATE tenants SET plan = $2, billing_status = $3, billing_plan = $4, stripe_subscription_id = $5, current_period_end = $6,
-                cancel_at_period_end = $7, billed_seats = $8, past_due_since = $9, grace_ends_at = $10, updated_at = now()
+                cancel_at_period_end = $7, billed_seats = $8, past_due_since = $9, grace_ends_at = $10,
+                trial_ends_at = COALESCE($11::timestamptz, trial_ends_at), updated_at = now()
           WHERE id = $1`,
-        [tenantId, plan, status, subId ? tier : null, subId, periodEnd, Boolean(sub.cancel_at_period_end), seats, pastDue, grace]);
+        [tenantId, plan, status, subId ? tier : null, subId, periodEnd, Boolean(sub.cancel_at_period_end), seats, pastDue, grace, trialEnd]);
       if (plan !== t.plan || status !== t.billing_status) {
         await appendAudit(tx, tenantId, {
           actor: STRIPE_ACTOR, action: 'billing.subscription', collection: 'tenants', recordId: tenantId,

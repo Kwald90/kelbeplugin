@@ -144,6 +144,8 @@ describe('public endpoints and URLs', { skip }, () => {
     const allowed = new Set(['limit', 'cursor', 'includeDeleted', 'version', 'since', 'link', 'collection', 'recordId', 'action',
       'clientId', 'jobId', 'status', 'stage', 'number', 'employeeId', 'leadId', 'sequenceId', 'relatedId', 'invoiceId', 'sku',
       'itemId', 'permitId', 'result', 'date', 'drawingId',
+      // safety: an incident kind code and employee / record ids
+      'kind', 'ownerId', 'sourceId',
       // work plans: GET /api/v1/workTasks?planId=, GET /api/v1/kpis?from=&to= (ids and YYYY-MM-DD only)
       'planId', 'from', 'to']);
     for (const [path, ops] of Object.entries(spec.paths)) {

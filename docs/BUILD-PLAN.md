@@ -246,7 +246,7 @@ its photos (any writer; a foreman may record a waiver). Work-task writes merge b
 progress by `progressAt`, seen/"Got it" kept once set) instead of whole-record last-writer-wins, so an offline
 completion survives a foreman's edit; the device gets the merged copy back as a sync conflict. KPIs
 (`electrical-app/js/lib/kpis.js`) are shared with `GET /api/v1/kpis`. Notifications: a marked hook in
-`server/src/services/workplan-events.js` until a server `notify()` exists.
+`server/src/services/workplan-events.js` until a server `notify()` exists. Tables: `server/migrations/0100_workplan.sql`, generated with `node scripts/gen-collections-sql.js --migration 0100` (the registry entries carry `migration: '0100'`; `--all` rewrites every generated file).
 
 ## Definition of done (every workstream)
 

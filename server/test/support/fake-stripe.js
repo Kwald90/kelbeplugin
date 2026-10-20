@@ -24,10 +24,22 @@ export function fakeStripe() {
       async create(params, opts = {}) {
         log('customers.create', params);
         if (opts.idempotencyKey && state.idempotency.has(opts.idempotencyKey)) return state.idempotency.get(opts.idempotencyKey);
-        const c = { id: `cus_test${next()}`, object: 'customer', ...params };
+        const c = { id: `cus_test${next()}`, object: 'customer', balance: 0, ...params };
         state.customers.set(c.id, c);
         if (opts.idempotencyKey) state.idempotency.set(opts.idempotencyKey, c);
         return c;
+      },
+      /** Negative amount = credit; applies to the customer's next invoice. */
+      async createBalanceTransaction(customerId, params, opts = {}) {
+        log('customers.createBalanceTransaction', { customer: customerId, ...params, idempotencyKey: opts.idempotencyKey });
+        if (state.failBalance) throw state.failBalance;
+        if (opts.idempotencyKey && state.idempotency.has(opts.idempotencyKey)) return state.idempotency.get(opts.idempotencyKey);
+        const c = state.customers.get(customerId);
+        if (!c) throw missing('customer');
+        const txn = { id: `cbtxn_test${next()}`, object: 'customer_balance_transaction', customer: customerId, type: 'adjustment', ...params };
+        c.balance = (c.balance || 0) + params.amount;
+        if (opts.idempotencyKey) state.idempotency.set(opts.idempotencyKey, txn);
+        return txn;
       },
     },
     products: {
@@ -52,11 +64,27 @@ export function fakeStripe() {
     },
     checkout: {
       sessions: {
-        async create(params) {
+        async create(params, opts = {}) {
           log('checkout.sessions.create', params);
-          const s = { id: `cs_test_${next()}`, object: 'checkout.session', url: `https://checkout.stripe.test/c/pay/cs_test_${n}`, ...params };
+          if (opts.idempotencyKey && state.idempotency.has(opts.idempotencyKey)) return state.idempotency.get(opts.idempotencyKey);
+          const s = { id: `cs_test_${next()}`, object: 'checkout.session', url: `https://checkout.stripe.test/c/pay/cs_test_${n}`, status: 'open', payment_status: 'unpaid', ...params };
           state.checkoutSessions.push(s);
+          if (opts.idempotencyKey) state.idempotency.set(opts.idempotencyKey, s);
           return s;
+        },
+        async retrieve(id) {
+          log('checkout.sessions.retrieve', id);
+          const s = state.checkoutSessions.find((x) => x.id === id);
+          if (!s) throw missing('checkout session');
+          return structuredClone(s);
+        },
+        async expire(id) {
+          log('checkout.sessions.expire', id);
+          const s = state.checkoutSessions.find((x) => x.id === id);
+          if (!s) throw missing('checkout session');
+          if (s.status !== 'open') throw Object.assign(new Error(`Only open sessions can be expired (this one is ${s.status})`), { statusCode: 400, code: 'checkout_session_not_open' });
+          s.status = 'expired';
+          return structuredClone(s);
         },
       },
     },
@@ -66,6 +94,13 @@ export function fakeStripe() {
       },
     },
     subscriptions: {
+      async cancel(id) {
+        log('subscriptions.cancel', id);
+        const sub = state.subscriptions.get(id);
+        if (!sub) throw missing('subscription');
+        sub.status = 'canceled';
+        return structuredClone(sub);
+      },
       async retrieve(id) { log('subscriptions.retrieve', id); if (!state.subscriptions.has(id)) throw missing('subscription'); return structuredClone(state.subscriptions.get(id)); },
       async update(id, params) {
         log('subscriptions.update', { id, ...params });
@@ -97,6 +132,36 @@ export function fakeStripe() {
         for (const sub of state.subscriptions.values()) sub.items.data = sub.items.data.filter((x) => x.id !== id);
         return { id, deleted: true };
       },
+    },
+
+    /**
+     * Test helper: the customer pays a subscription-mode Checkout Session the way Stripe
+     * would: a customer from customer_email, a subscription from the recurring line items
+     * (trialing when subscription_data.trial_period_days is set), the one-time items charged
+     * now. Returns the session object a checkout.session.completed event carries.
+     */
+    completeCheckout(sessionId) {
+      const s = state.checkoutSessions.find((x) => x.id === sessionId);
+      if (!s || s.status !== 'open') throw new Error(`session ${sessionId} is not open`);
+      const customer = { id: `cus_test${next()}`, object: 'customer', email: s.customer_email, balance: 0 };
+      state.customers.set(customer.id, customer);
+      const now = Math.floor(Date.now() / 1000);
+      const trialDays = s.subscription_data?.trial_period_days || 0;
+      const sub = {
+        id: `sub_test${next()}`, object: 'subscription', customer: customer.id, status: trialDays ? 'trialing' : 'active', cancel_at_period_end: false,
+        trial_start: trialDays ? now : null, trial_end: trialDays ? now + trialDays * 86400 : null,
+        current_period_end: now + (trialDays || 30) * 86400, metadata: { ...(s.subscription_data?.metadata || {}) }, items: { data: [] },
+      };
+      let oneTime = 0;
+      for (const li of s.line_items) {
+        const price = priceById(li.price);
+        if (!price) throw new Error(`no price ${li.price}`);
+        if (price.recurring) sub.items.data.push(item(sub, price, li.quantity));
+        else oneTime += price.unit_amount * li.quantity;
+      }
+      state.subscriptions.set(sub.id, sub);
+      Object.assign(s, { status: 'complete', payment_status: 'paid', customer: customer.id, subscription: sub.id, amount_total: oneTime, currency: 'cad' });
+      return structuredClone(s);
     },
 
     /** Test helper: a subscription as Stripe would hold it after Checkout. */

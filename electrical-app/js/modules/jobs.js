@@ -1,5 +1,6 @@
 // Jobs (S15): list by status, job detail with money, drawings, change orders, crew, compliance.
 import { docTotals, invoiceBalanceCents, invoicePaidCents, entryHours } from '../lib/money.js';
+import { emergencyCard } from '../lib/safety-emergency.js';
 
 const STATUSES = ['lead', 'scheduled', 'in-progress', 'on-hold', 'complete', 'invoiced'];
 const ACTIVE = new Set(['scheduled', 'in-progress', 'on-hold']);
@@ -183,6 +184,7 @@ function detailView(root, ctx, id) {
     (renderers[tab] || overview)(panel, job, m);
 
     host.append(ui.page({ title: `${job.number} · ${job.title}`, actions }, meta,
+      emergencyCard(ctx, job.id, { editHref: canEdit ? `#/safety/job/${job.id}` : null }) || (canEdit ? h('a', { class: 'sf-em-add', href: `#/safety/job/${job.id}` }, '+ Add emergency info for this site') : null),
       h('div', { class: 'ops-tabs-row' }, ui.tabs(tabsList, tab, (t) => { tab = t; draw(); })), panel));
   };
 
@@ -333,7 +335,7 @@ function detailView(root, ctx, id) {
 
   root.append(host);
   draw();
-  const offs = ['jobs', 'estimates', 'invoices', 'payments', 'timeEntries', 'schedule', 'drawings', 'permits', 'inspections', 'stockMoves'].map((c) => store.on(c, draw));
+  const offs = ['jobs', 'estimates', 'invoices', 'payments', 'timeEntries', 'schedule', 'drawings', 'permits', 'inspections', 'stockMoves', 'jobSafety'].map((c) => store.on(c, draw));
   return () => offs.forEach((f) => f());
 }
 

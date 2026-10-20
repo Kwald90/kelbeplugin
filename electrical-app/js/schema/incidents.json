@@ -1,0 +1,524 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/incidents.json",
+  "title": "Incident or near miss",
+  "description": "A safety incident or near miss, its investigation and regulator reporting. `medical` is stripped for non-managers. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "kind": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20,
+      "description": "Known values: near-miss, incident."
+    },
+    "category": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "description": "Known values: injury, shock, arc-flash, fall, struck-by, vehicle, fire, property, environmental, other."
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 10000
+    },
+    "occurredAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "jobId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "location": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 500
+    },
+    "province": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2
+    },
+    "reportedBy": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "reportedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "people": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "properties": {
+          "employeeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
+          },
+          "company": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          }
+        }
+      }
+    },
+    "witnesses": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "properties": {
+          "employeeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
+          },
+          "statement": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 5000
+          }
+        }
+      }
+    },
+    "immediateActions": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 5000
+    },
+    "photos": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "dataUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 700000,
+            "description": "JPEG data URL, downscaled on the device to ~400 KB. Moves to object storage later."
+          },
+          "caption": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "takenAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "width": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 10000
+          }
+        }
+      }
+    },
+    "status": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20,
+      "description": "Known values: reported, investigating, actions, closed."
+    },
+    "severity": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20,
+      "description": "Known values: low, medium, high, critical."
+    },
+    "flags": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "dangerousOccurrence": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "electricalContact": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "structuralFailure": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "fire": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "hospital": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "critical": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "fatality": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "description": "Facts that drive the \"reportable\" prompt (js/lib/safety-reporting.js)."
+    },
+    "investigation": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "startedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "whys": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "rootCause": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 5000
+        },
+        "factors": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 30,
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "findings": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 10000
+        },
+        "completedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        }
+      }
+    },
+    "reporting": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "regulatorNotifiedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "regulatorRef": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "wcbReportedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 5000
+        },
+        "decision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 20
+        }
+      }
+    },
+    "medical": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "injured": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "injuryType": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "bodyParts": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "maxLength": 60
+          }
+        },
+        "treatment": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 20,
+          "description": "Known values: none, first-aid, medical-aid, lost-time, hospital, fatality."
+        },
+        "daysAway": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "modifiedWork": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "returnedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "hospital": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300
+        },
+        "claimNumber": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 5000
+        }
+      },
+      "description": "Medical details: managers only (server/src/auth/access.js redactForReader)."
+    },
+    "closedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    }
+  },
+  "additionalProperties": true
+}

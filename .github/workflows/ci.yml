@@ -134,13 +134,21 @@ jobs:
             rm -f "deploy/$env/.env"
           done
 
-      - name: nginx -t (production config and staging vhost)
+      - name: nginx -t (production config, staging vhost and another site, as on the shared box)
         run: |
           t="$(mktemp -d)"
-          mkdir -p "$t/le/live/fishtape" "$t/le/live/tgelectrical.truecollarbuilt.com" "$t/snippets" "$t/sites" "$t/log-prod" "$t/log-staging"
+          mkdir -p "$t/le/live/fishtape" "$t/le/live/tgelectrical.truecollarbuilt.com" "$t/le/live/other" "$t/snippets" "$t/sites" "$t/log-prod" "$t/log-staging"
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=ci \
             -keyout "$t/le/live/fishtape/privkey.pem" -out "$t/le/live/fishtape/fullchain.pem" 2>/dev/null
           cp "$t"/le/live/fishtape/*.pem "$t/le/live/tgelectrical.truecollarbuilt.com/"
+          cp "$t"/le/live/fishtape/*.pem "$t/le/live/other/"
+          # Someone else's site on the same nginx, owning the defaults for :80 and :443. Production
+          # must load next to it: no default_server of its own, no clashing names.
+          printf '%s\n' \
+            'server { listen 80 default_server; listen [::]:80 default_server; server_name other-site.example; return 200; }' \
+            'server { listen 443 ssl default_server; listen [::]:443 ssl default_server; http2 on; server_name other-site.example;' \
+            '  ssl_certificate /etc/letsencrypt/live/other/fullchain.pem; ssl_certificate_key /etc/letsencrypt/live/other/privkey.pem; return 200; }' \
+            > "$t/sites/00-other-site.conf"
           cp deploy/production/nginx/security-headers.conf "$t/snippets/fishtape-headers.conf"
           cp deploy/production/nginx/proxy.conf "$t/snippets/fishtape-proxy.conf"
           cp deploy/production/nginx/deny.conf "$t/snippets/fishtape-deny.conf"
@@ -149,18 +157,25 @@ jobs:
           cp deploy/staging/security-headers.conf "$t/snippets/fishtape-staging-headers.conf"
           cp deploy/staging/nginx-proxy.conf "$t/snippets/fishtape-staging-proxy.conf"
           cp deploy/staging/nginx-api.conf.snippet "$t/snippets/fishtape-staging-site.conf"
-          cp deploy/production/nginx/fishtape.conf deploy/staging/vhost.example.conf "$t/sites/"
-          printf 'events {}\nhttp {\n  include /etc/nginx/mime.types;\n  include /etc/nginx/sites/*.conf;\n}\n' > "$t/nginx.conf"
+          cp deploy/staging/vhost.example.conf "$t/sites/tgelectrical.truecollarbuilt.com.conf"
+          cp deploy/production/nginx/fishtape.conf "$t/sites/zz-fishtape-production.conf"
+          printf 'events {}\nhttp {\n  include /etc/nginx/mime.types;\n  server_names_hash_bucket_size 64;\n  include /etc/nginx/sites/*.conf;\n}\n' > "$t/nginx.conf"
           chmod -R a+rwX "$t"
-          docker run --rm \
-            -v "$t/nginx.conf:/etc/nginx/nginx.conf:ro" -v "$t/snippets:/etc/nginx/snippets:ro" \
-            -v "$t/sites:/etc/nginx/sites:ro" -v "$t/le:/etc/letsencrypt:ro" \
-            -v "$t/log-prod:/var/log/fishtape-production" -v "$t/log-staging:/var/log/fishtape-staging" \
-            "$NGINX_IMAGE" nginx -t
-          # The first-run ACME config on its own.
-          rm "$t"/sites/*.conf
-          cp deploy/production/nginx/acme-bootstrap.conf "$t/sites/"
-          docker run --rm -v "$t/nginx.conf:/etc/nginx/nginx.conf:ro" -v "$t/sites:/etc/nginx/sites:ro" "$NGINX_IMAGE" nginx -t
+          nginx_t() {
+            docker run --rm \
+              -v "$t/nginx.conf:/etc/nginx/nginx.conf:ro" -v "$t/snippets:/etc/nginx/snippets:ro" \
+              -v "$t/sites:/etc/nginx/sites:ro" -v "$t/le:/etc/letsencrypt:ro" \
+              -v "$t/log-prod:/var/log/fishtape-production" -v "$t/log-staging:/var/log/fishtape-staging" \
+              "$NGINX_IMAGE" nginx -t 2>&1 | tee "$t/out.txt"
+            if ! grep -q 'test is successful' "$t/out.txt"; then echo "::error::nginx -t failed"; return 1; fi
+            if grep -q 'conflicting server name' "$t/out.txt"; then echo "::error::conflicting server names"; return 1; fi
+            if grep -E '\[warn\]' "$t/out.txt" | grep -q 'zz-fishtape'; then echo "::error::nginx warns about the production config"; return 1; fi
+          }
+          nginx_t
+          # The first-run ACME config, next to the same other sites.
+          rm "$t/sites/zz-fishtape-production.conf"
+          cp deploy/production/nginx/acme-bootstrap.conf "$t/sites/zz-fishtape-acme.conf"
+          nginx_t
 
   server:
     name: Server tests

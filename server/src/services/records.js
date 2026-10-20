@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { AUDIT_COLLECTION, TABLE_COLLECTIONS, collectionDef, isCollection } from '../collections.js';
 import { ApiError, badRequest, conflict, forbidden, notFound, tooLarge, validationFailed } from '../errors.js';
-import { canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, rowFilter, rowVisible, sanitizeForStorage } from '../auth/access.js';
+import { canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, restoreHiddenFields, rowFilter, rowVisible, sanitizeForStorage } from '../auth/access.js';
 import { appendAudit, auditRowToRecord, describeRecord } from './audit.js';
 import { assertCollectionWritable, loadTenantPlan } from './entitlements.js';
 import { afterTaskWrite } from './workplan-events.js';
@@ -249,7 +249,7 @@ export function createRecords({ validator }) {
     const id = body?.id ?? randomUUID();
     assertId(id);
     if (await lockRow(tx, def, id)) throw conflict('A record with this id already exists.');
-    const data = prepare(coll, id, body, null, Date.now());
+    const data = restoreHiddenFields(p, coll, null, prepare(coll, id, body, null, Date.now()));
     checkRules(p, coll, null, data);
     const row = await insertRow(tx, def, id, data, who);
     await audit(tx, who, 'record.create', coll, id, data, { via: 'rest' });
@@ -271,7 +271,7 @@ export function createRecords({ validator }) {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw validationFailed('The patch must be a JSON object.');
     const merged = { ...cur.data, ...patch };
     if (patch.updatedAt === undefined) delete merged.updatedAt;
-    const data = prepare(coll, id, merged, cur.data, Date.now());
+    const data = restoreHiddenFields(p, coll, cur.data, prepare(coll, id, merged, cur.data, Date.now()));
     checkRules(p, coll, cur.data, data);
     const row = await updateRow(tx, def, id, data, who);
     await audit(tx, who, 'record.update', coll, id, data, { via: 'rest', fields: Object.keys(patch).slice(0, 30) });
@@ -338,7 +338,7 @@ export function createRecords({ validator }) {
     const cur = await lockRow(tx, def, m.id);
 
     if (m.op === 'upsert') {
-      const data = prepare(coll, m.id, m.data, cur && !cur.deleted_at ? cur.data : null, now);
+      const data = restoreHiddenFields(p, coll, cur && !cur.deleted_at ? cur.data : null, prepare(coll, m.id, m.data, cur && !cur.deleted_at ? cur.data : null, now));
       if (!cur) {
         checkRules(p, coll, null, data);
         const row = await insertRow(tx, def, m.id, data, who);

@@ -22,6 +22,7 @@ import settings from './settings.js';
 import integrations from './integrations.js';
 import assistant from './assistant.js';
 import billing from './billing.js';
+import safety from './safety.js';
 import today from './today.js';
 import workplan from './workplan.js';
 
@@ -31,5 +32,5 @@ export const GROUPS = {
 
 export const MODULES = [
   dashboard, today, assistant, clients, leads, sequences, jobs, schedule, workplan, drawings, wireruns, estimates, invoices, inventory,
-  employees, time, sops, compliance, security, calcs, bending, panels, settings, integrations, billing,
+  employees, time, sops, safety, compliance, security, calcs, bending, panels, settings, integrations, billing,
 ];

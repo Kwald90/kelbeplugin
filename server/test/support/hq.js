@@ -11,12 +11,13 @@ export const NOTIFY_EMAIL = 'sales@fishtape.test';
 
 /**
  * @param {object} t test database
- * @param {{ env?: object, hq?: object, billing?: object, stripe?: object }} [o]
+ * @param {{ env?: object, hq?: object, billing?: object, signup?: object, stripe?: object }} [o]
  */
-export async function startHqApp(t, { env = {}, hq = {}, billing = {}, stripe = fakeStripe() } = {}) {
+export async function startHqApp(t, { env = {}, hq = {}, billing = {}, signup = {}, stripe = fakeStripe() } = {}) {
   const config = testConfig(env);
   config.hq = { notifyEmail: NOTIFY_EMAIL, tlsCheck: false, ...hq };
   config.billing = { stripe, webhookSecret: WEBHOOK_SECRET, graceDays: 7, ...billing };
+  config.signup = signup;
   const logs = logCapture();
   const app = await buildApp({ config, db: t.db, oidcProviders: {}, logStream: logs.stream });
   await app.ready();

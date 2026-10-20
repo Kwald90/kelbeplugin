@@ -23,12 +23,20 @@ export function tenantHas(t, feature, now = new Date()) {
   return hasFeature(effectivePlan(t, now), feature, t.plan_overrides || {});
 }
 
+/**
+ * On a free trial: either HQ's plan 'trial' (no card yet), or a self-serve sign-up whose
+ * Stripe subscription is still trialing (plan = the chosen tier; services/signup.js).
+ */
+export function onTrial(t) {
+  return t.plan === 'trial' || t.billing_status === 'trialing';
+}
+
 /** What /api/v1/me reports: the plan in force, trial state and every unlocked feature. */
 export function tenantEntitlements(t, now = new Date()) {
   const plan = effectivePlan(t, now);
   return {
     plan,
-    onTrial: t.plan === 'trial',
+    onTrial: onTrial(t),
     trialEndsAt: t.trial_ends_at ? new Date(t.trial_ends_at).toISOString() : null,
     graceEndsAt: t.grace_ends_at ? new Date(t.grace_ends_at).toISOString() : null,
     features: entitlements(plan, t.plan_overrides || {}),
@@ -42,7 +50,7 @@ export function includedUsers(t, now = new Date()) {
 
 /** @param {{ query: Function }} db */
 export async function loadTenantPlan(db, tenantId) {
-  const { rows } = await db.query('SELECT plan, plan_overrides, trial_ends_at, grace_ends_at FROM tenants WHERE id = $1', [tenantId]);
+  const { rows } = await db.query('SELECT plan, plan_overrides, trial_ends_at, grace_ends_at, billing_status FROM tenants WHERE id = $1', [tenantId]);
   return rows[0] || null;
 }
 
@@ -95,6 +103,13 @@ export const COLLECTION_FEATURES = {
   wireRuns: ['wireruns'],
   bends: ['bending', 'calcs'],
   benderProfiles: ['bending', 'calcs'],
+  flhas: ['safety'],
+  toolboxTalks: ['safety'],
+  incidents: ['safety'],
+  correctiveActions: ['safety'],
+  safetyInspections: ['safety'],
+  siteOrientations: ['safety'],
+  jobSafety: ['safety'],
   // Workers record progress on any plan ("My day" is Starter); planning needs Pro.
   workTasks: ['today', 'workplan'],
   workPlans: ['workplan'],

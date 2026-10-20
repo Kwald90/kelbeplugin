@@ -37,7 +37,7 @@ plansHost.replaceChildren(...PLAN_IDS.map((id, i) => {
       feats.map((f) => el('li', {}, FEATURE_LABELS[f]))),
     contact
       ? el('a', { class: 'site-btn ghost', href: '#talk' }, "Let's talk")
-      : el('a', { class: 'site-btn', href: '/' }, 'Start a free trial'));
+      : el('a', { class: 'site-btn', href: `/site/signup.html?plan=${id}` }, 'Start a free trial'));
 }));
 document.getElementById('extra-users').textContent = `More users than your plan includes? Each extra user is ${money(EXTRA_USER_CENTS)}/month. Taxes are added at checkout for your province.`;
 
