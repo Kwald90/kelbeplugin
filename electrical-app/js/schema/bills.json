@@ -192,6 +192,52 @@
                 "maximum": 199
               }
             }
+          },
+          "taxUse": {
+            "enum": [
+              "resale",
+              "own-use",
+              null
+            ],
+            "description": "Missing = from costType and the vendor (js/lib/rst.js)."
+          },
+          "costCodeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "equipmentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128,
+            "description": "Fuel, repairs or lease for a truck (no jobId)."
+          },
+          "resaleCreditWrittenOff": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "by": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 40,
+                "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+              }
+            }
           }
         }
       }
@@ -299,6 +345,59 @@
         "type": "string",
         "maxLength": 128
       }
+    },
+    "postedOn": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$",
+      "description": "Server: the day this record posts on (its own date, or the first open day after a closed period; docs/releases/r1-get-paid.md 2.6). Devices cannot set it."
+    },
+    "late": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Server: posted after the period it belongs to was closed."
+    },
+    "varianceAck": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        }
+      }
+    },
+    "reversesId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "A supplier credit reversing a bill."
     }
   },
   "additionalProperties": true

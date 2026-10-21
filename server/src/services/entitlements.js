@@ -124,6 +124,16 @@ export const COLLECTION_FEATURES = {
   vendors: ['purchasing'],
   bills: ['purchasing'],
   purchaseOrders: ['purchasing'],
+  // Release 1 (docs/releases/r1-get-paid.md 2.2, 2.11): cost codes, company rules, signatures and
+  // equipment are in every plan; payroll runs belong to the time clock; field tickets to their module.
+  costCodes: null,
+  rules: null,
+  payrollRuns: ['time'],
+  signatures: null,
+  fieldTickets: ['tickets'],
+  equipment: null,
+  equipmentUse: null,
+  stockCounts: ['inventory'],
 };
 
 /**

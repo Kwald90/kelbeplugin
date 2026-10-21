@@ -143,6 +143,37 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          "costCodeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "receivedQty": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 10000000
+          },
+          "receivedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "quoteRef": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 60,
+            "description": "A wholesaler's job quote."
           }
         }
       }

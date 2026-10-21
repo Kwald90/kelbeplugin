@@ -1,0 +1,359 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/signatures.json",
+  "title": "Signature",
+  "description": "A customer signature on an estimate, change order, field ticket or batch of tickets, with a snapshot of what they saw and its SHA-256 (js/lib/signing.js). Append-only: only status may change, to void. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "v": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Snapshot version."
+    },
+    "docType": {
+      "enum": [
+        "estimate",
+        "changeOrder",
+        "fieldTicket",
+        "ticketBatch",
+        null
+      ]
+    },
+    "docId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "The document signed (for a batch: the batch id)."
+    },
+    "docIds": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 30,
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "description": "ticketBatch: the tickets."
+    },
+    "jobId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "clientId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "changeOrderId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "signerName": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 120
+    },
+    "signerTitle": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 120
+    },
+    "signerEmail": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 254
+    },
+    "method": {
+      "enum": [
+        "on-device",
+        "email-reply",
+        null
+      ]
+    },
+    "dataUrl": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 82000,
+      "pattern": "^(data:image/jpeg;base64,.*)?$",
+      "description": "The pad image, a JPEG of at most 60 KB (on-device only)."
+    },
+    "evidence": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "dataUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 410000,
+          "pattern": "^(data:image/(jpeg|png);base64,.*)?$"
+        },
+        "receivedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 254
+        }
+      },
+      "description": "Email-reply acceptance: a photo or screenshot of the reply (at most 300 KB)."
+    },
+    "signedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$",
+      "description": "Device time of signing."
+    },
+    "loc": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "lat": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -90,
+          "maximum": 90
+        },
+        "lng": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -180,
+          "maximum": 180
+        },
+        "accuracyM": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        }
+      },
+      "description": "Where it was signed (with the visible notice)."
+    },
+    "locStatus": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20
+    },
+    "capturedBy": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "employeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "userId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        }
+      }
+    },
+    "device": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 120
+    },
+    "snapshot": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "What the customer saw (js/lib/signing.js snapshotOf); *Cents keys are stripped for readers without money."
+    },
+    "digest": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 of signedContent(snapshot)."
+    },
+    "status": {
+      "enum": [
+        "valid",
+        "unverified",
+        "void",
+        null
+      ],
+      "description": "Server: valid when the digest and the document match, else unverified."
+    },
+    "unverifiedReason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200
+    },
+    "voidedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "voidedBy": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "employeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "userId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        }
+      }
+    },
+    "voidReason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 500
+    }
+  },
+  "additionalProperties": true
+}

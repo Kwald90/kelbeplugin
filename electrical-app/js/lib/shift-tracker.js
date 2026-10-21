@@ -11,7 +11,7 @@
 //   What it saw while the app was closed is turned into work and travel parts (lib/geo.js
 //   buildTravelSegments) and offered as one "Update my time" suggestion.
 // Suggestions are never applied without a tap.
-import { openEntry, clockIn, attachFix, closeEntry, switchTo, recordPoint, applySegments } from './clock.js';
+import { openEntry, clockIn, attachFix, closeEntry, switchTo, recordPoint, applySegments, setEntryJob } from './clock.js';
 import { sitesOf, suggestJob, travelSuggestion, buildTravelSegments, fmtDistance } from './geo.js';
 import { getFix, fixProblem, isNative, startGeofence, stopGeofence, drainGeofenceEvents, pickRegions } from './location.js';
 import { locationSettings, locationState, expiredPoints } from './location-policy.js';
@@ -54,14 +54,18 @@ async function shiftFix(entry) {
 
 // ---- flows -------------------------------------------------------------------------------
 
-/** Clock in, then (with consent) take one fix, suggest the job and flag an off-site clock-in. */
-export async function clockInFlow(c, { jobId = null, kind = 'work', note = '' } = {}) {
+/**
+ * Clock in, then (with consent) take one fix, suggest the job and flag an off-site clock-in. The cost
+ * code (the job's phase) and the truck (the person's default) come with the clock-in without asking
+ * (lib/clock.js clockCoding); the time clock passes costCodeId only when the person picked one.
+ */
+export async function clockInFlow(c, { jobId = null, kind = 'work', note = '', costCodeId, equipmentId } = {}) {
   ctx = ctx || c;
   const { store, ui } = c;
   const emp = c.auth.current().id;
   if (!emp || openEntry(store, emp)) return null;
   const state = locationSettings(store.settings()).enabled ? await ensureConsent(c, emp) : 'off';
-  let entry = clockIn(store, { employeeId: emp, jobId, kind, note, locStatus: state === 'granted' ? 'pending' : state === 'later' ? 'declined' : state });
+  let entry = clockIn(store, { employeeId: emp, jobId, kind, note, costCodeId, equipmentId, locStatus: state === 'granted' ? 'pending' : state === 'later' ? 'declined' : state });
   if (!entry) return null;
   ui.toast(kind === 'travel' ? `Clocked in · travelling${jobId ? ` to ${job(jobId)?.number || 'the job'}` : ''}` : 'Clocked in', 'success');
   refresh();
@@ -72,11 +76,11 @@ export async function clockInFlow(c, { jobId = null, kind = 'work', note = '' } 
   if (kind !== 'travel') {
     const sug = suggestJob(fix, s);
     if (!entry.jobId && sug?.inside) {
-      entry = store.update('timeEntries', entry.id, { jobId: sug.jobId }, { silent: true });
+      entry = setEntryJob(store, entry.id, sug.jobId, { silent: true });
       ui.toast(`You're at ${jobLabel(sug.jobId)}: clocked in to it`, 'success', 3500);
     } else if (entry.jobId && sug?.inside && sug.jobId !== entry.jobId) {
       offer({ key: `switch:${entry.id}:${sug.jobId}`, text: `You're at ${jobLabel(sug.jobId)}, not ${job(entry.jobId)?.number || 'the job you picked'}.`, primary: 'Switch to this job',
-        run: () => { const cur = ctx.store.get('timeEntries', entry.id); ctx.store.update('timeEntries', cur.id, { jobId: sug.jobId }); attachFix(ctx.store, cur.id, fix, 'in', sites(), { source: 'arrive' }); } });
+        run: () => { const cur = ctx.store.get('timeEntries', entry.id); setEntryJob(ctx.store, cur.id, sug.jobId); attachFix(ctx.store, cur.id, fix, 'in', sites(), { source: 'arrive' }); } });
     }
   }
   entry = attachFix(store, entry.id, fix, 'in', kind === 'travel' ? [] : s);

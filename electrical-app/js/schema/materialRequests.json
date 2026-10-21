@@ -163,6 +163,31 @@
         "null"
       ],
       "maxLength": 128
+    },
+    "use": {
+      "enum": [
+        "job",
+        "own-use",
+        null
+      ]
+    },
+    "ownUseReason": {
+      "enum": [
+        "warranty",
+        "no-charge",
+        "shop",
+        "truck",
+        "tools",
+        "other",
+        null
+      ]
+    },
+    "costCodeId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
     }
   },
   "additionalProperties": true

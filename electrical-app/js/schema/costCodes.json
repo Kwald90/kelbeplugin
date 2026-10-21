@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/costCodes.json",
+  "title": "Cost code",
+  "description": "A job phase shared by estimate, invoice, bill and PO lines, time, moves, requests, tickets, equipment use and change orders (docs/office/cost-codes.md). Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "code": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20,
+      "description": "Short code, unique among active codes (e.g. 100)."
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 80
+    },
+    "group": {
+      "enum": [
+        "rough-in",
+        "service",
+        "trim",
+        "change-order",
+        "service-call",
+        "callback",
+        "temp-power",
+        "low-voltage",
+        "general",
+        "other",
+        null
+      ]
+    },
+    "billable": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Default true; false for callbacks and warranty."
+    },
+    "ownUse": {
+      "enum": [
+        "warranty",
+        "callback",
+        null
+      ],
+      "description": "Material on this code is own use (RST self-assessed)."
+    },
+    "active": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "order": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "note": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 500
+    }
+  },
+  "additionalProperties": true
+}

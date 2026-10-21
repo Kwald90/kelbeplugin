@@ -7,7 +7,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { COLLECTIONS, TABLE_COLLECTIONS, collectionDef } from '../src/collections.js';
 import { PERMS, ROLES, permsForRole } from '../src/auth/permissions.js';
-import { canRead, canWrite, checkWriteRules, mergeWrite, redactForReader, reviewMerge, rowFilter, rowVisible, sanitizeForStorage } from '../src/auth/access.js';
+import { canRead, canWrite, checkWriteRules, mergeChangeOrders, mergeWrite, redactForReader, restoreHiddenFields, reviewMerge, rowFilter, rowVisible, sanitizeForStorage } from '../src/auth/access.js';
 import { createValidator, schemaDir } from '../src/schemas.js';
 import { createSealer, normaliseRecoveryCode, recoveryCode } from '../src/lib/crypto.js';
 import { readConfig } from '../src/config.js';
@@ -253,6 +253,127 @@ describe('access rules', () => {
     assert.equal(redactForReader(p('electrician'), 'employees', { name: 'a', rateCents: 1 }).rateCents, undefined);
     assert.equal(redactForReader(p('office'), 'employees', { name: 'a', rateCents: 1 }).rateCents, 1);
     assert.equal(sanitizeForStorage('employees', { name: 'a', pin: '1234' }).pin, undefined);
+  });
+});
+
+describe('Release 1 access rules (docs/releases/r1-get-paid.md 2.5-2.10, 4.1, 4.8)', () => {
+  const p = (role, extra = {}) => ({ kind: 'session', role, perms: permsForRole(role), isManager: ['owner', 'admin', 'office', 'foreman'].includes(role), employeeId: 'e1', scopes: null, crew: false, actor: { type: 'user', id: 'u1' }, ...extra });
+  const sys = (id) => ({ kind: 'system', role: 'owner', perms: permsForRole('owner'), isManager: true, employeeId: null, actor: { type: 'system', id } });
+  const msg = (x) => (typeof x === 'object' && x ? x.message : x);
+
+  test('the eight collections: plans, reads and writes', () => {
+    assert.ok(canRead(p('electrician'), 'costCodes') && !canWrite(p('electrician'), 'costCodes'));
+    assert.ok(canRead(p('apprentice'), 'signatures') && canWrite(p('apprentice'), 'signatures'));
+    assert.ok(!canRead(p('electrician'), 'payrollRuns') && canRead(p('foreman'), 'payrollRuns'));
+    assert.ok(!canWrite(p('foreman'), 'payrollRuns'), 'payroll runs need the employees permission');
+    assert.ok(canWrite(p('electrician'), 'fieldTickets') && canWrite(p('electrician'), 'equipmentUse') && !canWrite(p('electrician'), 'equipment'));
+    assert.deepEqual(rowFilter(p('electrician'), 'fieldTickets'), { column: 'employee_id', value: 'e1' });
+    assert.equal(rowFilter(p('foreman'), 'fieldTickets'), null);
+  });
+
+  test('payroll runs only from the closing route; company rules typed and sourced', () => {
+    assert.ok(checkWriteRules(p('owner'), 'payrollRuns', null, { status: 'exported' }));
+    assert.ok(checkWriteRules({ kind: 'api_key', perms: new Set(), scopes: ['*:write'] }, 'payrollRuns', null, {}));
+    assert.equal(checkWriteRules(sys('closing'), 'payrollRuns', null, { status: 'exported' }), null);
+    assert.equal(checkWriteRules(p('office'), 'rules', null, { key: 'pp.MB.paymentDays', province: 'MB', value: 28, status: 'sourced', source: 'MHCA' }), null);
+    const bad = checkWriteRules(p('office'), 'rules', null, { key: 'pp.MB.paymentDays', value: 28, status: 'sourced' });
+    assert.equal(bad.status, 422);
+    assert.match(bad.message, /source/);
+  });
+
+  test('signatures: append-only; void by the office in a full session with a reason', () => {
+    const sig = { docType: 'fieldTicket', docId: 't1', status: 'valid', signerName: 'A' };
+    assert.equal(checkWriteRules(p('electrician'), 'signatures', null, sig), null);
+    assert.ok(checkWriteRules(p('electrician'), 'signatures', null, { ...sig, docType: 'estimate' }), 'crews do not sign estimates');
+    assert.ok(checkWriteRules(p('office'), 'signatures', sig, { ...sig, signerName: 'B' }));
+    assert.ok(checkWriteRules(p('office'), 'signatures', sig, null));
+    assert.ok(checkWriteRules(p('foreman'), 'signatures', sig, { ...sig, status: 'void', voidReason: 'wrong job' }));
+    assert.match(msg(checkWriteRules(p('office', { crew: true }), 'signatures', sig, { ...sig, status: 'void', voidReason: 'wrong job' })), /full sign-in/);
+    assert.equal(checkWriteRules(p('office'), 'signatures', sig, { ...sig, status: 'void', voidReason: 'wrong job' }), null);
+    assert.ok(checkWriteRules(p('office'), 'signatures', { ...sig, status: 'void' }, { ...sig, status: 'valid' }));
+    assert.equal(checkWriteRules(p('office'), 'signatures', sig, { ...sig }), null, 'an identical copy is no change');
+  });
+
+  test('field tickets: crews draft and sign; the office prices, bills and voids; signed content is frozen', () => {
+    const t = { employeeId: 'e1', title: 'Move pots', status: 'draft' };
+    const el = p('electrician');
+    assert.equal(checkWriteRules(el, 'fieldTickets', null, t), null);
+    assert.ok(checkWriteRules(el, 'fieldTickets', t, { ...t, status: 'signed' }), 'a signed ticket needs its signature');
+    const signed = { ...t, status: 'signed', signatureId: 's1' };
+    assert.equal(checkWriteRules(el, 'fieldTickets', t, signed), null);
+    assert.match(msg(checkWriteRules(el, 'fieldTickets', signed, { ...signed, title: 'x' })), /cannot change/);
+    assert.match(msg(checkWriteRules(p('office'), 'fieldTickets', signed, { ...signed, title: 'x' })), /cannot change/);
+    assert.ok(checkWriteRules(el, 'fieldTickets', signed, { ...signed, status: 'priced' }));
+    assert.equal(checkWriteRules(p('office'), 'fieldTickets', signed, { ...signed, status: 'priced', changeOrderId: 'co1' }), null);
+    assert.match(msg(checkWriteRules(p('office', { crew: true }), 'fieldTickets', signed, { ...signed, status: 'void' })), /full sign-in/);
+    assert.ok(checkWriteRules(p('office'), 'fieldTickets', signed, null));
+    assert.equal(checkWriteRules(el, 'fieldTickets', t, null), null, 'a draft can be deleted');
+  });
+
+  test('a job set invoiced needs its checklist; a Manitoba invoice needs its exemption evidence', () => {
+    const job = { title: 'J', status: 'complete' };
+    assert.equal(checkWriteRules(p('office'), 'jobs', job, { ...job, status: 'invoiced' }).code, 'closeout_required');
+    assert.equal(checkWriteRules(p('office'), 'jobs', job, { ...job, status: 'invoiced', closeout: { checkedAt: 'x', open: [] } }), null);
+    assert.equal(checkWriteRules(p('office'), 'jobs', job, { ...job, status: 'invoiced', closeout: { checkedAt: 'x', open: ['co_unbilled'], override: { reason: 'too short' } } }).code, 'closeout_required');
+    const inv = { status: 'draft', taxProvince: 'MB', taxTreatment: 'gst-only', taxes: [{ id: 'RST', pct: 7, applies: { material: false, labour: false, other: false } }], lines: [{ kind: 'labour', qty: 1, unitCents: 1 }] };
+    assert.equal(checkWriteRules(p('office'), 'invoices', inv, { ...inv, status: 'sent' }).code, 'exemption_required');
+    assert.equal(checkWriteRules(p('office'), 'invoices', inv, { ...inv, status: 'void' }), null);
+    assert.equal(checkWriteRules(sys('qbo'), 'invoices', null, { ...inv, status: 'sent' }), null, 'the QuickBooks pull goes to review instead (9.7)');
+    assert.equal(checkWriteRules(p('office'), 'invoices', inv, { ...inv, status: 'sent', taxExemptBasis: 'resale', taxExemptNumber: '1234567' }), null);
+  });
+
+  test('server-written fields keep their stored values for devices', () => {
+    const s = { closing: { booksThrough: '2026-09-30' }, company: {} };
+    assert.deepEqual(restoreHiddenFields(p('owner'), 'settings', s, { ...s, closing: { booksThrough: '2000-01-01' } }).closing, s.closing);
+    assert.deepEqual(restoreHiddenFields(sys('closing'), 'settings', s, { ...s, closing: { booksThrough: '2026-10-31' } }).closing, { booksThrough: '2026-10-31' });
+    const pay = { amountCents: 1, postedOn: '2026-10-01', late: true };
+    assert.equal(restoreHiddenFields(p('office'), 'payments', pay, { ...pay, postedOn: '2026-09-01', late: false }).postedOn, '2026-10-01');
+    assert.equal('postedOn' in restoreHiddenFields(p('office'), 'payments', null, { ...pay }), false, 'stamped by the guards on create');
+    assert.equal(restoreHiddenFields(p('electrician'), 'fieldTickets', { number: 'T-1001' }, { number: 'T-9' }).number, 'T-1001');
+    const client = { name: 'GC', credit: { hold: { on: true }, termsDays: 30 } };
+    assert.deepEqual(restoreHiddenFields(p('office'), 'clients', client, { ...client, credit: { termsDays: 45 } }).credit, { termsDays: 45, hold: { on: true } });
+    assert.deepEqual(restoreHiddenFields(sys('receivables'), 'clients', client, { ...client, credit: { termsDays: 30, hold: { on: false } } }).credit.hold, { on: false });
+    assert.equal(restoreHiddenFields(p('owner'), 'items', { avgCostCents: 5, costCents: 4 }, { avgCostCents: 9, costCents: 4 }).avgCostCents, 5);
+    assert.equal(restoreHiddenFields(sys('receiving'), 'items', { avgCostCents: 5 }, { avgCostCents: 9 }).avgCostCents, 9);
+  });
+
+  test('money: signature snapshots, wages and burden stay with the office', () => {
+    const sig = { docType: 'changeOrder', snapshot: { v: 1, amountCents: 45000, lines: [{ description: 'x', qty: 1 }], nested: { totalCents: 3 } } };
+    const seen = redactForReader(p('electrician'), 'signatures', sig);
+    assert.deepEqual(seen.snapshot, { v: 1, lines: [{ description: 'x', qty: 1 }], nested: {} });
+    assert.equal(redactForReader(p('office'), 'signatures', sig).snapshot.amountCents, 45000);
+    const emp = { name: 'a', rateCents: 1, rateHistory: [{ from: 'x', rateCents: 2 }], burden: { vacationPct: 4 } };
+    const fore = redactForReader(p('foreman', { seesMoney: true }), 'employees', emp);
+    assert.equal(fore.rateHistory, undefined);
+    assert.equal(fore.burden, undefined);
+    assert.equal(redactForReader(p('office'), 'employees', emp).burden.vacationPct, 4);
+    const job = redactForReader(p('electrician'), 'jobs', { contract: { role: 'prime', valueCents: 5 }, costing: { estCostOverrideCents: 1 }, changeOrders: [{ id: 'c', amountCents: 1, estCostCents: 2, title: 't' }] });
+    assert.deepEqual(job.contract, { role: 'prime' });
+    assert.equal(job.costing, undefined);
+    assert.deepEqual(job.changeOrders, [{ id: 'c', title: 't' }]);
+  });
+
+  test('change orders merge by id; a signed one is never dropped', () => {
+    const a = { id: 'a', title: 'A', updatedAt: '2026-10-20T10:00:00Z' };
+    const b = { id: 'b', title: 'B', signatureId: 's' };
+    assert.deepEqual(mergeChangeOrders([a, b], [a], {}).map((c) => c.id), ['a', 'b'], 'signed b is kept');
+    assert.deepEqual(mergeChangeOrders([a, { id: 'c' }], [a], {}).map((c) => c.id), ['a'], 'a fresh write may drop an unsigned one');
+    assert.deepEqual(mergeChangeOrders([a, { id: 'c' }], [a], { stale: true }).map((c) => c.id), ['a', 'c'], 'a stale write keeps what it did not know');
+    const newer = { ...a, title: 'A2', updatedAt: '2026-10-20T12:00:00Z' };
+    assert.equal(mergeChangeOrders([newer], [a], { stale: true })[0].title, 'A2');
+    const job = { title: 'J', updatedAt: '2026-10-20T12:00:00Z', changeOrders: [{ id: 'co4' }] };
+    const merged = mergeWrite(p('office'), 'jobs', job, { title: 'old', updatedAt: '2026-10-20T09:00:00Z', changeOrders: [{ id: 'co3', signatureId: 's3' }] }, { stale: true });
+    assert.equal(merged.title, 'J');
+    assert.deepEqual(merged.changeOrders.map((c) => c.id), ['co3', 'co4']);
+    assert.equal(mergeWrite(p('office'), 'jobs', job, { ...job, title: 'x' }, { stale: false }), null);
+  });
+
+  test('the office edits the Release 1 settings on its own screens, nothing else', () => {
+    const s = { taxPct: 5, costing: { annualHours: 2000 }, collections: { holdAfterDays: 60 } };
+    assert.equal(checkWriteRules(p('office'), 'settings', s, { ...s, collections: { holdAfterDays: 90 } }), null);
+    assert.equal(checkWriteRules(p('office'), 'settings', s, { ...s, costing: { annualHours: 1800 } }), null);
+    assert.ok(checkWriteRules(p('office'), 'settings', s, { ...s, taxPct: 7 }));
+    assert.ok(checkWriteRules(p('foreman'), 'settings', s, { ...s, costing: { annualHours: 1 } }));
   });
 });
 

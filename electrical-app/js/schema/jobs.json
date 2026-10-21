@@ -64,7 +64,7 @@
         "null"
       ],
       "maxLength": 40,
-      "description": "Known values: lead, scheduled, in-progress, on-hold, complete, invoiced."
+      "description": "Known values: lead, scheduled, in-progress, on-hold, complete, invoiced, cancelled."
     },
     "startDate": {
       "type": [
@@ -226,6 +226,62 @@
             "items": {
               "type": "object"
             }
+          },
+          "signatureId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "signedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "signedName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "approvedOn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+          },
+          "estCostCents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": -100000000000,
+            "maximum": 100000000000,
+            "description": "Office only. Money in integer cents (CAD)."
+          },
+          "ticketIds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "costCodeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
           }
         }
       }
@@ -296,6 +352,473 @@
           "maxLength": 128
         }
       }
+    },
+    "kind": {
+      "enum": [
+        "standard",
+        "service",
+        "warranty",
+        "callback",
+        null
+      ]
+    },
+    "billable": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Default true; false for warranty and callback."
+    },
+    "currentCostCodeId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "The phase the office set; clock-ins use it without asking."
+    },
+    "taxExempt": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "basis": {
+          "enum": [
+            "resale",
+            "subtrade",
+            "pass-on",
+            "federal",
+            "first-nations",
+            "farm",
+            null
+          ]
+        },
+        "number": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "endCustomer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "details": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            },
+            "registryNo": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 40
+            },
+            "band": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            },
+            "reserve": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            },
+            "farmCertNo": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 60
+            },
+            "department": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            },
+            "endCustomer": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 200
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 500
+            }
+          }
+        },
+        "confirmedBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "confirmedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "province": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2
+        }
+      },
+      "description": "PST/RST exemption for this contract (docs/releases/r1-get-paid.md 2.9)."
+    },
+    "contract": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "prime",
+            "sub",
+            null
+          ]
+        },
+        "signedOn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "primeSignedOn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "ownerName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "gcClientId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "contractNo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 60
+        },
+        "valueCents": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -100000000000,
+          "maximum": 100000000000,
+          "description": "Contract value (office only). Money in integer cents (CAD)."
+        },
+        "holdbackPct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "paymentTermsDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 365
+        },
+        "billingCutoffDay": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 31
+        },
+        "authorizedSigners": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 120
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 120
+              }
+            }
+          }
+        },
+        "substantialPerformanceOn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "substantialPerformanceCertOn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "holdbackReleaseOn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "completedOn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "lastSuppliedOn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "properInvoiceRequired": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "closeout": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "checkedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "checkedBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "open": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 50,
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "override": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "by": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 128
+            },
+            "at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 40,
+              "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1000
+            }
+          }
+        }
+      },
+      "description": "The final-billing checklist (setting a job invoiced needs it)."
+    },
+    "costing": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "estCostOverrideCents": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -100000000000,
+          "maximum": 100000000000,
+          "description": "Money in integer cents (CAD)."
+        },
+        "pctCompleteOverride": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "budget": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 40,
+              "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+            },
+            "estimateId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 128
+            },
+            "labourHours": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 10000000
+            },
+            "labourCostCents": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -100000000000,
+              "maximum": 100000000000,
+              "description": "Money in integer cents (CAD)."
+            },
+            "materialCents": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -100000000000,
+              "maximum": 100000000000,
+              "description": "Money in integer cents (CAD)."
+            },
+            "subCents": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -100000000000,
+              "maximum": 100000000000,
+              "description": "Money in integer cents (CAD)."
+            },
+            "equipmentCents": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -100000000000,
+              "maximum": 100000000000,
+              "description": "Money in integer cents (CAD)."
+            },
+            "otherCents": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -100000000000,
+              "maximum": 100000000000,
+              "description": "Money in integer cents (CAD)."
+            },
+            "byCostCode": {
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          }
+        }
+      },
+      "description": "Office only: estimated cost, percent complete and the frozen estimate budget."
     }
   },
   "additionalProperties": true

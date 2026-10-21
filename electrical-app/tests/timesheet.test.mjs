@@ -115,7 +115,7 @@ describe('payroll CSV', () => {
 
   test('generic: one row per person, day, job and type with regular/overtime split', () => {
     const { rows, warnings } = S.payrollRows('generic', sheets, ctx);
-    assert.deepEqual(rows[0], ['employee_id', 'employee_name', 'period_start', 'period_end', 'work_date', 'job_code', 'job_name', 'customer', 'type', 'regular_hours', 'overtime_hours', 'double_time_hours', 'total_hours', 'break_minutes', 'approved']);
+    assert.deepEqual(rows[0], ['employee_id', 'employee_name', 'period_start', 'period_end', 'work_date', 'job_code', 'job_name', 'customer', 'type', 'regular_hours', 'overtime_hours', 'double_time_hours', 'total_hours', 'break_minutes', 'approved', 'late']);
     assert.deepEqual(rows.slice(1, 5).map((r) => [r[1], r[4], r[5], r[8], r[9], r[10], r[14]]), [
       ['Jackson Pike', '2026-10-19', 'J-1001', 'work', 8, 2, 'yes'],
       ['Jackson Pike', '2026-10-19', 'J-1002', 'travel', 0, 0.5, 'yes'], // the 10.5th hour of the day is overtime
@@ -142,8 +142,8 @@ describe('payroll CSV', () => {
     const { text, count } = S.payrollCsv('qbo', sheets, ctx);
     const back = parseCSV(text);
     assert.equal(count, 5);
-    assert.deepEqual(back[0], ['Employee', 'Employee ID', 'Date', 'Customer', 'Job', 'Type', 'Regular hours', 'Overtime hours', 'Double time hours']);
-    assert.deepEqual(back[2], ['Jackson Pike', '1042', '2026-10-19', 'Miller, J. "Jo"', 'J-1002 Panel upgrade', 'Travel', '0', '0.5', '0']);
+    assert.deepEqual(back[0], ['Employee', 'Employee ID', 'Date', 'Customer', 'Job', 'Type', 'Regular hours', 'Overtime hours', 'Double time hours', 'Late']);
+    assert.deepEqual(back[2], ['Jackson Pike', '1042', '2026-10-19', 'Miller, J. "Jo"', 'J-1002 Panel upgrade', 'Travel', '0', '0.5', '0', '']);
     assert.match(text, /"Miller, J\. ""Jo"""/);
     assert.ok(text.endsWith('\r\n'));
   });
@@ -162,5 +162,45 @@ describe('payroll CSV', () => {
     assert.deepEqual(r.rows[3], template[3], 'other people stay blank (Wagepoint leaves their hours as they are)');
     assert.ok(r.warnings.some((w) => /Manny Ortiz on J-1001: 4 h are not in the template/.test(w)));
     assert.match(S.fillWagepointTemplate([['Name']], sheets, ctx).warnings[0], /no "Employee ID" column/);
+  });
+});
+
+describe('corrections and late hours (docs/releases/r1-get-paid.md 2.6, 8.2)', () => {
+  const corr = (workDay, adjustMinutes, o = {}) => ({ id: `c${++n}`, employeeId: 'emp', jobId: 'j1', kind: 'correction', correctsId: 'x', workDay, adjustMinutes, approved: true, ...o });
+
+  test('a correction counts on its work day: +1 h on an 8-hour Monday is daily overtime in MB', () => {
+    const base = days([8, 8, 8, 8, 8]);
+    assert.deepEqual(ot(base, 'MB'), [40, 0, 0]);
+    assert.deepEqual(ot([...base, corr(WEEK, 60)], 'MB'), [40, 1, 0]);
+    assert.deepEqual(ot([...base, corr(WEEK, 60)], 'ON'), [41, 0, 0], 'no daily overtime in Ontario');
+    const s = sheet([...base, corr(WEEK, 60)], 'MB');
+    assert.equal(S.hrs(s.days[0].total), 9);
+    assert.equal(s.counts.open, 0, 'a correction is never an open shift');
+  });
+
+  test('a negative correction takes hours off the top: overtime first', () => {
+    const tenMon = days([10, 8, 8, 8, 8]);
+    assert.deepEqual(ot(tenMon, 'MB'), [40, 2, 0]);
+    assert.deepEqual(ot([...tenMon, corr(WEEK, -60)], 'MB'), [40, 1, 0]);
+    assert.deepEqual(ot([...days([8, 8, 8, 8, 8]), corr(WEEK, -60)], 'MB'), [39, 0, 0]);
+    assert.equal(S.entryMinutes(corr(WEEK, -90)), -90);
+    assert.equal(S.entryDay(corr('2026-10-21', 30)), '2026-10-21');
+    assert.equal(S.isCorrection({ kind: 'work' }), false);
+  });
+
+  test('late entries and corrections go in the payroll file as prior-period rows marked late', () => {
+    const employees = new Map([['emp', { id: 'emp', name: 'Jackson Pike', payrollId: '1042' }]]);
+    const jobs = new Map([['j1', { id: 'j1', number: 'J-1001', title: 'Clinic' }]]);
+    const week = [e(0, 7, 15, { approved: true })];
+    const sheets = [S.weekSheet(week, { employeeId: 'emp', weekStart: WEEK, province: 'MB', dayOf })];
+    const lateEntry = { id: 'old1', employeeId: 'emp', jobId: 'j1', clockIn: '2026-10-09T13:00:00.000Z', clockOut: '2026-10-09T17:00:00.000Z', breakMins: 0, approved: true };
+    const ctx = { employees, jobs, clients: new Map(), periodStart: WEEK, periodEnd: S.addDays(WEEK, 6), lateEntries: [lateEntry, corr('2026-10-08', 60)] };
+    const { rows, warnings } = S.payrollRows('generic', sheets, ctx);
+    assert.equal(rows.length, 4);
+    const late = rows.filter((r) => r[15] === 'yes');
+    assert.deepEqual(late.map((r) => [r[4], r[9]]).sort(), [['2026-10-08', 1], ['2026-10-09', 4]]);
+    assert.ok(warnings.some((w) => /2 late entries/.test(w)));
+    const wp = S.payrollRows('wagepoint', sheets, ctx).rows;
+    assert.deepEqual(wp[1], ['1042', 'Jackson Pike', 'J-1001', 'Clinic', 13, 0, 0], 'Wagepoint has no dates: late hours join the job row');
   });
 });

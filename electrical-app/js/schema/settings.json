@@ -228,8 +228,350 @@
           ],
           "maxLength": 20,
           "description": "Key of OT_RULES in js/lib/timesheet.js (a province, or a variant such as MB-ICI)."
+        },
+        "vacationPayMode": {
+          "enum": [
+            "each-cheque",
+            "accrue",
+            null
+          ]
+        },
+        "holidayPayMode": {
+          "enum": [
+            "each-cheque",
+            "accrue",
+            null
+          ]
         }
       }
+    },
+    "costCodes": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "requireOnTime": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "description": "Books → Cost codes."
+    },
+    "tickets": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "captureLocation": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "agreementText": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "billFrom": {
+          "enum": [
+            "time",
+            "tickets",
+            null
+          ]
+        },
+        "draftStaleDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 365
+        },
+        "noticeOnRefusal": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "description": "Field tickets → Settings."
+    },
+    "deposits": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "defaultModel": {
+          "enum": [
+            "prepayment",
+            "security",
+            null
+          ]
+        },
+        "defaultPct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "collections": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "reminders": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 20
+              },
+              "dayOffset": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": -365,
+                "maximum": 365
+              },
+              "channel": {
+                "enum": [
+                  "email",
+                  "sms",
+                  null
+                ]
+              },
+              "subject": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 200
+              },
+              "body": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 2000
+              },
+              "active": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "interest": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "enabled": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "annualPct": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 60
+            },
+            "graceDays": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 365
+            }
+          }
+        },
+        "holdAfterDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 3650
+        },
+        "holdOverLimit": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "termsText": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "cutoffNoticeDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 31
+        }
+      }
+    },
+    "closeout": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "remindAfterDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 365
+        }
+      }
+    },
+    "promptPayment": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "costing": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "annualHours": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 8760
+        },
+        "overheadAnnualCents": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100000000000,
+          "description": "Money in integer cents (CAD)."
+        },
+        "targetMarginPct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "statutoryPctFallback": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "nonProductivePctDefault": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "priceVariancePct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "description": "Job costing → Rates (office only)."
+    },
+    "closing": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "booksThrough": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "payrollThrough": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "lockedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "lockedBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        }
+      },
+      "description": "Server: a mirror of the period locks (docs/office/period-lock.md). Devices cannot change it."
     }
   },
   "additionalProperties": true

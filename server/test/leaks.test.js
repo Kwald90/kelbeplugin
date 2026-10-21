@@ -167,7 +167,10 @@ describe('public endpoints and URLs', { skip }, () => {
       // QuickBooks: record ids (comma list), log outcomes and match choices are codes; searches are POST bodies (7.8)
       'ids', 'outcome', 'choice',
       // HQ Mail: "Show images" for one message (0|1), not data.
-      'images']);
+      'images',
+      // Release 1: list filters on cost codes, company rules, signatures, equipment use and counts (codes and
+      // record ids), and the closing and rules routes (YYYY-MM-DD dates and a province code).
+      'code', 'key', 'docId', 'docType', 'equipmentId', 'locationId', 'through', 'province', 'on']);
     for (const [path, ops] of Object.entries(spec.paths)) {
       for (const op of Object.values(ops)) {
         for (const p of op.parameters || []) {
@@ -175,6 +178,74 @@ describe('public endpoints and URLs', { skip }, () => {
         }
       }
     }
+  });
+});
+
+// ---- Release 1: field roles never see money (docs/releases/r1-get-paid.md 2.5) -----------------
+
+describe('Release 1: no money reaches an electrician or a foreman', { skip }, () => {
+  const MONEY = [987654, 876543, 765432, 654321, 543210, 432109, 321098, 210987, 109876, 98765];
+  const mut = (o) => ({ mid: `m-${Math.random().toString(36).slice(2)}`, baseVersion: null, ...o });
+  let sparky, boss;
+
+  before(async () => {
+    if (skip) return;
+    for (const [id, name, role] of [['emp-spark', 'Sparky', 'electrician'], ['emp-boss', 'Boss Foreman', 'foreman']]) {
+      assert.equal((await call(app, { method: 'POST', url: '/api/v1/employees', token: A.token, body: { id, name, role, rateCents: 4800, billRateCents: 9500, rateHistory: [{ from: '2026-01-01', rateCents: MONEY[0] }], burden: { vacationPct: 4, benefitsCentsPerHour: MONEY[1] } } })).status, 201);
+    }
+    const { addMember } = await import('./support/app.js');
+    sparky = await addMember(t, app, A.tenantId, { role: 'electrician', employeeId: 'emp-spark' });
+    boss = await addMember(t, app, A.tenantId, { role: 'foreman', employeeId: 'emp-boss' });
+    const { snapshotOf, signedContent } = await import('../../electrical-app/js/lib/signing.js');
+    const { createHash } = await import('node:crypto');
+    const co = { id: 'co-m', title: 'Extra', amountCents: MONEY[2], estCostCents: MONEY[3], lines: [{ description: 'x', qty: 1, unitCents: MONEY[2] }], status: 'approved' };
+    const coSnap = snapshotOf('changeOrder', co, { jobId: 'job-m' });
+    const est = { id: 'est-m', number: 'E-1', lines: [{ description: 'Panel', qty: 1, unitCents: MONEY[4], kind: 'material' }], taxes: [] };
+    const estSnap = snapshotOf('estimate', est);
+    const digest = (s) => createHash('sha256').update(signedContent(s)).digest('hex');
+    const pad = 'data:image/jpeg;base64,AAAA';
+    const r = await call(app, { method: 'POST', url: '/api/v1/sync/push', token: A.token, body: { mutations: [
+      mut({ collection: 'clients', id: 'cl-m', op: 'upsert', data: { name: 'GC Ltd', credit: { limitCents: MONEY[5], termsDays: 30, hold: { on: false } } } }),
+      mut({ collection: 'jobs', id: 'job-m', op: 'upsert', data: { title: 'Money job', crewIds: ['emp-spark', 'emp-boss'], contract: { role: 'prime', valueCents: MONEY[6], holdbackPct: 10 }, costing: { estCostOverrideCents: MONEY[7] }, changeOrders: [co] } }),
+      mut({ collection: 'settings', id: 'settings', op: 'upsert', data: { company: { name: 'Leakproof Electric Ltd', province: 'MB' }, costing: { overheadAnnualCents: MONEY[8] } } }),
+      mut({ collection: 'equipment', id: 'eq-m', op: 'upsert', data: { name: 'Truck', kind: 'truck', rateCents: MONEY[9], billRateCents: MONEY[9] + 1, rateHistory: [{ from: '2026-01-01', rateCents: MONEY[9] + 2 }] } }),
+      mut({ collection: 'items', id: 'it-m', op: 'upsert', data: { name: 'Wire', costCents: 111, priceCents: 222 } }),
+      mut({ collection: 'stockMoves', id: 'mv-m', op: 'upsert', data: { itemId: 'it-m', fromLocationId: 'loc', qty: 1, jobId: 'job-m', date: '2026-10-20' } }),
+      mut({ collection: 'signatures', id: 'sig-co-m', op: 'upsert', data: { docType: 'changeOrder', docId: 'co-m', changeOrderId: 'co-m', jobId: 'job-m', method: 'on-device', dataUrl: pad, snapshot: coSnap, digest: digest(coSnap) } }),
+      mut({ collection: 'signatures', id: 'sig-est-m', op: 'upsert', data: { docType: 'estimate', docId: 'est-m', method: 'on-device', dataUrl: pad, snapshot: estSnap, digest: digest(estSnap) } }),
+    ] } });
+    for (const x of r.body.results) assert.equal(x.status, 'ok', JSON.stringify(x));
+    await t.superPool.query("UPDATE items SET data = data || '{\"avgCostCents\": 333}' WHERE tenant_id = $1 AND id = 'it-m'", [A.tenantId]);
+    // The hold is written only by the receivables job (system:receivables): the office's write kept none.
+    const c = await t.superPool.query("SELECT data->'credit' AS credit FROM clients WHERE tenant_id = $1 AND id = 'cl-m'", [A.tenantId]);
+    assert.equal(c.rows[0].credit.hold, undefined);
+    await t.superPool.query(`UPDATE clients SET data = jsonb_set(data, '{credit,hold}', '{"on": true, "reason": "past_due", "overdueDays": 75}') WHERE tenant_id = $1 AND id = 'cl-m'`, [A.tenantId]);
+  });
+
+  test('records, lists and the sync pull carry none of the new money fields', async () => {
+    for (const who of [sparky, boss]) {
+      const reads = [
+        await call(app, { url: '/api/v1/clients/cl-m', token: who.token }),
+        await call(app, { url: '/api/v1/jobs/job-m', token: who.token }),
+        await call(app, { url: '/api/v1/settings/settings', token: who.token }),
+        await call(app, { url: '/api/v1/equipment/eq-m', token: who.token }),
+        await call(app, { url: '/api/v1/employees?limit=500', token: who.token }),
+        await call(app, { url: '/api/v1/stockMoves/mv-m', token: who.token }),
+        await call(app, { url: '/api/v1/items/it-m', token: who.token }),
+        await call(app, { url: '/api/v1/signatures?limit=500', token: who.token }),
+        await call(app, { url: '/api/v1/sync/pull?since=0&limit=1000', token: who.token }),
+      ];
+      for (const r of reads) assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 200));
+      const text = reads.map((r) => JSON.stringify(r.body)).join('\n');
+      for (const m of [...MONEY, MONEY[9] + 1, MONEY[9] + 2, 333]) assert.ok(!text.includes(String(m)), `${m} reached a field role`);
+      for (const k of ['limitCents', 'valueCents', 'estCostCents', 'estCostOverrideCents', 'overheadAnnualCents', 'rateHistory', 'benefitsCentsPerHour', 'unitCostCents', 'avgCostCents', 'totalCents', 'taxCents']) {
+        assert.ok(!text.includes(`"${k}"`), `${k} reached a field role`);
+      }
+      // The dispatch flag is not money: it stays.
+      assert.ok(reads[0].body.credit && 'hold' in reads[0].body.credit);
+    }
+    const office = await call(app, { url: '/api/v1/signatures/sig-co-m', token: A.token });
+    assert.equal(office.body.snapshot.amountCents, MONEY[2], 'the office sees what was signed');
   });
 });
 

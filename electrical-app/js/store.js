@@ -36,6 +36,7 @@ export const COLLECTIONS = [
   'materialRequests',
   'locationPoints', 'locationConsents',
   'vendors', 'bills', 'purchaseOrders',
+  'costCodes', 'rules', 'payrollRuns', 'signatures', 'fieldTickets', 'equipment', 'equipmentUse', 'stockCounts',
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -51,8 +52,10 @@ export const DEFAULT_SETTINGS = {
   markupPct: 20,
   units: 'metric', // company default; each user can switch (js/lib/units.js)
   currency: 'CAD',
-  // po: purchase orders (js/lib/purchasing.js), PO-5001 on.
-  nextNumbers: { job: 1001, estimate: 2001, invoice: 3001, po: 5001 },
+  // po: purchase orders (js/lib/purchasing.js), PO-5001 on. credit: credit notes, CR-1001 on.
+  // ticket: only the starting value of the server's ticket counter (field tickets get T-1001 on the
+  // server, so two offline phones never collide; docs/releases/r1-get-paid.md 2.10).
+  nextNumbers: { job: 1001, estimate: 2001, invoice: 3001, po: 5001, ticket: 1001, credit: 1001 },
   // Which modules the company uses (js/lib/modules.js). A new company starts with the
   // recommended set; a settings record without `modules` (from before switches) has them all.
   modules: { ...DEFAULT_MODULES },
@@ -60,6 +63,38 @@ export const DEFAULT_SETTINGS = {
   billing: { defaultMode: 'fixed', travelRateCents: null },
   // Material requests go to the office once a day (js/lib/materials.js).
   materialRequests: { sendAt: '15:00', emailTo: '' },
+  // Release 1 (docs/releases/r1-get-paid.md 2.4). Each is edited on the screen of the stream that
+  // uses it: costCodes and payroll on Books, tickets on Field tickets, deposits, collections,
+  // closeout and promptPayment on Invoices → Collections, costing on Job costing → Rates.
+  // settings.closing is never here: the server writes it (a mirror of the period locks).
+  costCodes: { requireOnTime: false },
+  tickets: {
+    captureLocation: true,
+    agreementText: 'I confirm the work listed above was requested and done.',
+    billFrom: 'time',
+    draftStaleDays: 3,
+    noticeOnRefusal: true,
+  },
+  deposits: { defaultModel: 'prepayment', defaultPct: null },
+  collections: {
+    reminders: [],
+    interest: { enabled: false, annualPct: null, graceDays: 0 },
+    holdAfterDays: 60,
+    holdOverLimit: true,
+    termsText: '',
+    cutoffNoticeDays: 3,
+  },
+  closeout: { remindAfterDays: 14 },
+  promptPayment: { enabled: true },
+  costing: {
+    annualHours: 2000,
+    overheadAnnualCents: null,
+    targetMarginPct: null,
+    statutoryPctFallback: null,
+    nonProductivePctDefault: 10,
+    priceVariancePct: 2,
+  },
+  payroll: { vacationPayMode: 'each-cheque', holidayPayMode: 'each-cheque' },
 };
 
 /**
@@ -389,7 +424,7 @@ export const store = {
 
   /** Reserve the next document number: nextNumber('job') -> 'J-1001', nextNumber('po') -> 'PO-5001'. */
   nextNumber(kind) {
-    const prefix = { job: 'J', estimate: 'E', invoice: 'INV', po: 'PO' }[kind] || kind.toUpperCase();
+    const prefix = { job: 'J', estimate: 'E', invoice: 'INV', po: 'PO', credit: 'CR', ticket: 'T' }[kind] || kind.toUpperCase();
     const s = this.settings();
     // A settings record from before a kind existed (po) starts at its default, not 1.
     const n = s.nextNumbers?.[kind] ?? DEFAULT_SETTINGS.nextNumbers[kind] ?? 1;

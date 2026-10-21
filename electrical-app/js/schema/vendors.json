@@ -103,6 +103,13 @@
         "null"
       ],
       "maxLength": 2000
+    },
+    "meSubtrade": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "An electrical or mechanical subcontractor whose work is resold (resale for RST)."
     }
   },
   "additionalProperties": true

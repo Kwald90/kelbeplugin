@@ -90,16 +90,13 @@
       ]
     },
     "kind": {
-      "type": [
-        "string",
-        "null"
-      ],
       "enum": [
         "work",
         "travel",
+        "correction",
         null
       ],
-      "description": "'work' (default when missing) or 'travel'. Travel is attributed to jobId, the job travelled to."
+      "description": "'work' (default when missing), 'travel', or 'correction' (an office adjustment of a locked entry: adjustMinutes on workDay)."
     },
     "travelFromJobId": {
       "type": [
@@ -523,6 +520,61 @@
         "null"
       ],
       "description": "Older travel flag (before 2026-10-20). Use kind: 'travel'; billing still reads this when kind is missing (lib/tm.js isTravel)."
+    },
+    "costCodeId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "equipmentId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "The truck driven."
+    },
+    "postedOn": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$",
+      "description": "Server: the day this record posts on (its own date, or the first open day after a closed period; docs/releases/r1-get-paid.md 2.6). Devices cannot set it."
+    },
+    "late": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Server: posted after the period it belongs to was closed."
+    },
+    "correctsId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "Correction: the entry it corrects."
+    },
+    "workDay": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$",
+      "description": "Correction: the day overtime counts it on."
+    },
+    "adjustMinutes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": -100000,
+      "maximum": 100000,
+      "description": "Correction: minutes added (negative for fewer hours), never 0."
     }
   },
   "additionalProperties": true

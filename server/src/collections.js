@@ -14,6 +14,7 @@ export const COLLECTIONS = [
   'materialRequests',
   'locationPoints', 'locationConsents',
   'vendors', 'bills', 'purchaseOrders',
+  'costCodes', 'rules', 'payrollRuns', 'signatures', 'fieldTickets', 'equipment', 'equipmentUse', 'stockCounts',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -144,6 +145,31 @@ const DEFS = {
     table: 'purchase_orders', gen: [g('vendor_id', 'vendorId'), JOB, STATUS, NUMBER],
     read: ['invoices'], write: ['invoices'], portal: null, maxBytes: 64 * KB, migration: '0151',
   },
+  // Release 1 (migration 0161, docs/releases/r1-get-paid.md 2.2). Cost codes and company rule
+  // overrides are office data everyone reads; payroll runs are written only by the closing route
+  // (system:closing); signatures are append-only (auth/access.js, services/write-guards.js); crews
+  // see and write only their own field tickets and equipment use; stock counts follow the van-owner
+  // rule (services/write-guards.js). No money on tickets, equipment use or counts; equipment rates
+  // are stripped for readers without money (MONEY_FIELDS).
+  costCodes: { table: 'cost_codes', gen: [g('code', 'code')], read: ['jobs', 'time', 'today', 'estimates', 'invoices', 'inventory', 'dashboard'], write: ['estimates'], portal: null, maxBytes: 8 * KB, migration: '0161' },
+  rules: { table: 'rules', gen: [g('rule_key', 'key')], read: ['invoices', 'jobs', 'time', 'estimates', 'employees'], write: ['invoices'], portal: null, maxBytes: 16 * KB, migration: '0161' },
+  payrollRuns: { table: 'payroll_runs', gen: [g('period_to', 'to'), STATUS], read: ['employees', 'time-approve'], write: ['employees'], managerWrite: true, portal: null, maxBytes: 512 * KB, migration: '0161' },
+  signatures: {
+    table: 'signatures', gen: [JOB, g('doc_id', 'docId'), g('doc_type', 'docType'), STATUS], read: ['jobs', 'today', 'estimates', 'invoices'], write: ['jobs', 'today', 'estimates'],
+    portal: null, maxBytes: 400 * KB, migration: '0161',
+  },
+  fieldTickets: {
+    table: 'field_tickets', gen: [JOB, EMPLOYEE, STATUS, NUMBER, DAY], read: ['jobs', 'today', 'invoices', 'estimates'], write: ['jobs', 'today'],
+    ownRows: true, portal: null, maxBytes: 1536 * KB, migration: '0161',
+  },
+  equipment: { table: 'equipment', gen: [], read: ['jobs', 'time', 'today', 'inventory'], write: ['inventory'], managerWrite: true, portal: null, maxBytes: 16 * KB, migration: '0161' },
+  equipmentUse: {
+    table: 'equipment_use', gen: [JOB, EMPLOYEE, g('equipment_id', 'equipmentId'), DAY], read: ['jobs', 'inventory', 'today'], write: ['jobs', 'today', 'inventory'],
+    ownRows: true, portal: null, maxBytes: 8 * KB, migration: '0161',
+  },
+  // A van's owner counts it on their phone (no inventory permission): 'today' lets them in, the van-owner
+  // rule (services/write-guards.js) limits them to their own van's draft and counted sheets.
+  stockCounts: { table: 'stock_counts', gen: [g('location_id', 'locationId'), STATUS, DAY], read: ['inventory', 'today'], write: ['inventory', 'today'], portal: null, maxBytes: 512 * KB, migration: '0161' },
 };
 
 /** @type {Map<string, CollectionDef>} */

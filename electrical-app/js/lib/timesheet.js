@@ -3,7 +3,8 @@
 // Payroll Canada, generic). Pure (no DOM): the time clock, the dashboard and the tests use it.
 //
 // A time entry: { id, employeeId, jobId, kind: 'work'|'travel' (missing = work), clockIn, clockOut,
-// breakMins, approved, approvedAt, approvedBy, flag? }. Hours are net of breaks. A shift belongs
+// breakMins, approved, approvedAt, approvedBy, flag? }, or a correction { kind: 'correction',
+// correctsId, workDay, adjustMinutes } counted on its work day. Hours are net of breaks. A shift belongs
 // to the day it started (local time), the usual payroll convention; one that runs past midnight
 // is not split.
 //
@@ -102,12 +103,26 @@ export function ruleText(rule) {
   return `${when} at ${r.rate}x ${r.basis === 'minimum' ? 'the minimum wage' : 'the regular wage'}${dbl} (${r.name})`;
 }
 
-/** 'travel' or 'work' (lib/tm.js isTravel: kind, or the older travel flag). */
+/** 'travel' or 'work' (lib/tm.js isTravel: kind, or the older travel flag). Corrections count as work. */
 export const kindOf = (e) => (isTravel(e) ? 'travel' : 'work');
 const MIN = 60_000;
 
-/** Net minutes of an entry (breaks taken off), an open one counted up to `now`. */
+/**
+ * A correction entry (docs/releases/r1-get-paid.md 2.6): the office's adjustment of a locked entry,
+ * { kind: 'correction', correctsId, workDay, adjustMinutes (± minutes, never 0) }. Overtime counts it
+ * on workDay; payroll takes it in the next run.
+ */
+export const isCorrection = (e) => e?.kind === 'correction';
+
+/** The day an entry belongs to: its clock-in day, or a correction's workDay. */
+export const entryDay = (e, dayOf = localDay) => (isCorrection(e) ? (e.workDay || null) : e?.clockIn ? dayOf(e.clockIn) : null);
+
+/** Sort key: clock-in time; a correction sits at the end of its work day. */
+const entryTime = (e) => (isCorrection(e) ? Date.parse(`${e.workDay}T23:59:59`) || 0 : Date.parse(e.clockIn) || 0);
+
+/** Net minutes of an entry (breaks taken off), an open one counted up to `now`; a correction's adjustment. */
 export function entryMinutes(e, now = Date.now()) {
+  if (isCorrection(e)) return Math.round(Number(e.adjustMinutes) || 0);
   if (!e?.clockIn) return 0;
   const start = Date.parse(e.clockIn);
   const end = e.clockOut ? Date.parse(e.clockOut) : (typeof now === 'number' ? now : Date.parse(now));
@@ -138,34 +153,47 @@ export function weekOf(day, weekStartsOn = 1) {
  */
 export function allocateOvertime(entries, rule, { dayOf = localDay, now } = {}) {
   const r = rule || OT_RULES.ON;
-  const list = [...entries].filter((e) => e.clockIn).sort((a, b) => a.clockIn.localeCompare(b.clockIn));
+  const list = [...entries].filter((e) => e.clockIn || (isCorrection(e) && e.workDay)).sort((a, b) => entryTime(a) - entryTime(b));
   const mins = new Map(list.map((e) => [e.id, entryMinutes(e, now)]));
+  // A negative correction takes hours off the top: double time first, then overtime, then regular.
+  const takeBack = (sums, n) => {
+    const a = { reg: 0, ot: 0, dt: 0 };
+    let left = n;
+    for (const k of ['dt', 'ot', 'reg']) { const x = Math.min(left, sums[k]); a[k] -= x; sums[k] -= x; left -= x; }
+    if (left > 0) { a.reg -= left; sums.reg -= left; }
+    return a;
+  };
 
   const daily = () => {
     const out = new Map();
     const perDay = new Map();
     for (const e of list) {
-      const day = dayOf(e.clockIn);
-      let used = perDay.get(day) || 0;
+      const day = entryDay(e, dayOf);
+      const sums = perDay.get(day) || { reg: 0, ot: 0, dt: 0 };
       let left = mins.get(e.id);
+      if (left < 0) { out.set(e.id, takeBack(sums, -left)); perDay.set(day, sums); continue; }
+      let used = sums.reg + sums.ot + sums.dt;
       const a = { reg: 0, ot: 0, dt: 0 };
-      const take = (cap, key) => { const n = cap == null ? left : Math.max(0, Math.min(left, cap - used)); a[key] += n; used += n; left -= n; };
+      const take = (cap, key) => { const n = cap == null ? left : Math.max(0, Math.min(left, cap - used)); a[key] += n; sums[key] += n; used += n; left -= n; };
       if (r.daily) take(r.daily * 60, 'reg'); else take(null, 'reg');
       if (left > 0) take(r.double ? r.double * 60 : null, 'ot');
       if (left > 0) take(null, 'dt');
-      perDay.set(day, used);
+      perDay.set(day, sums);
       out.set(e.id, a);
     }
     return out;
   };
   const weekly = (base) => {
     const out = new Map();
-    let reg = 0;
+    const sums = { reg: 0, ot: 0, dt: 0 };
     for (const e of list) {
-      const a = base ? { ...base.get(e.id) } : { reg: mins.get(e.id), ot: 0, dt: 0 };
-      const room = Math.max(0, r.weekly * 60 - reg);
+      const m = mins.get(e.id);
+      if (!base && m < 0) { out.set(e.id, takeBack(sums, -m)); continue; }
+      const a = base ? { ...base.get(e.id) } : { reg: m, ot: 0, dt: 0 };
+      if (a.reg < 0) { sums.reg += a.reg; sums.ot += a.ot; sums.dt += a.dt; out.set(e.id, a); continue; }
+      const room = Math.max(0, r.weekly * 60 - sums.reg);
       const over = Math.max(0, a.reg - room);
-      a.reg -= over; a.ot += over; reg += a.reg;
+      a.reg -= over; a.ot += over; sums.reg += a.reg; sums.ot += a.ot; sums.dt += a.dt;
       out.set(e.id, a);
     }
     return out;
@@ -190,15 +218,15 @@ export function weekSheet(entries, { employeeId, weekStart, province, now = Date
   const rule = otRule(province);
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const end = days[6];
-  const mine = (entries || []).filter((e) => e.employeeId === employeeId && e.clockIn && dayOf(e.clockIn) >= weekStart && dayOf(e.clockIn) <= end)
-    .sort((a, b) => a.clockIn.localeCompare(b.clockIn));
+  const mine = (entries || []).filter((e) => { const d = e.employeeId === employeeId && entryDay(e, dayOf); return d && d >= weekStart && d <= end; })
+    .sort((a, b) => entryTime(a) - entryTime(b));
   const split = allocateOvertime(mine, rule, { dayOf, now });
   const byDay = new Map(days.map((d) => [d, { date: d, work: 0, travel: 0, total: 0, reg: 0, ot: 0, dt: 0, breakMin: 0, longestRun: 0, jobs: {} }]));
   const byJob = new Map();
   const totals = { work: 0, travel: 0, total: 0, reg: 0, ot: 0, dt: 0, breakMin: 0 };
   let open = 0, approved = 0, pending = 0, flagged = 0;
   for (const e of mine) {
-    const day = byDay.get(dayOf(e.clockIn));
+    const day = byDay.get(entryDay(e, dayOf));
     const m = entryMinutes(e, now);
     const k = kindOf(e);
     const a = split.get(e.id) || { reg: m, ot: 0, dt: 0 };
@@ -213,7 +241,7 @@ export function weekSheet(entries, { employeeId, weekStart, province, now = Date
     j.days[day.date] = j.days[day.date] || { work: 0, travel: 0 };
     j.days[day.date][k] += m;
     totals[k] += m; totals.total += m; totals.reg += a.reg; totals.ot += a.ot; totals.dt += a.dt; totals.breakMin += Number(e.breakMins) || 0;
-    if (!e.clockOut) open++; else if (e.approved) approved++; else pending++;
+    if (!e.clockOut && !isCorrection(e)) open++; else if (e.approved) approved++; else pending++;
     if (e.flag && !e.flag.reviewedAt) flagged++;
   }
   // Break reminder: a day with more than `afterH` hours on the clock and less break than the rule.
@@ -234,7 +262,7 @@ export const fmtH = (min) => hrs(min).toFixed(2);
 
 /** The approval patch for every closed, unapproved entry of a sheet: [{ id, patch }]. */
 export function approvePatches(sheet, { by, at = new Date().toISOString() } = {}) {
-  return sheet.entries.filter((e) => e.clockOut && !e.approved).map((e) => ({ id: e.id, patch: { approved: true, approvedAt: at, approvedBy: by || null } }));
+  return sheet.entries.filter((e) => (e.clockOut || isCorrection(e)) && !e.approved).map((e) => ({ id: e.id, patch: { approved: true, approvedAt: at, approvedBy: by || null } }));
 }
 
 // ---- payroll exports --------------------------------------------------------------------
@@ -259,17 +287,28 @@ export const PAYROLL_FORMATS = {
 
 const get = (m, id) => (id == null ? null : (m instanceof Map ? m.get(id) : m?.[id]) || null);
 
-/** Closed entries of every sheet, each with its regular/overtime split and context. */
+/**
+ * Closed entries of every sheet, each with its regular/overtime split and context, then the late
+ * entries (ctx.lateEntries: hours from earlier periods that missed their run, and corrections of
+ * entries already exported) as prior-period rows flagged late. Late rows are regular time: their own
+ * week's overtime was settled in the earlier run (VERIFY a late week that crosses the overtime line).
+ */
 function lines(sheets, ctx) {
   const out = [];
+  const add = (p, e, a, late) => {
+    const j = get(ctx.jobs, e.jobId);
+    out.push({ p, e, a, j, c: j?.clientId ? get(ctx.clients, j.clientId) : null, day: entryDay(e), kind: kindOf(e), late });
+  };
   for (const s of sheets) {
     const p = get(ctx.employees, s.employeeId) || { id: s.employeeId, name: 'Unknown' };
     for (const e of s.entries) {
-      if (!e.clockOut) continue;
-      const a = s.split.get(e.id) || { reg: entryMinutes(e), ot: 0, dt: 0 };
-      const j = get(ctx.jobs, e.jobId);
-      out.push({ p, e, a, j, c: j?.clientId ? get(ctx.clients, j.clientId) : null, day: localDay(e.clockIn), kind: kindOf(e) });
+      if (!e.clockOut && !isCorrection(e)) continue;
+      add(p, e, s.split.get(e.id) || { reg: entryMinutes(e), ot: 0, dt: 0 }, false);
     }
+  }
+  for (const e of ctx.lateEntries || []) {
+    if (!e || (!e.clockOut && !isCorrection(e))) continue;
+    add(get(ctx.employees, e.employeeId) || { id: e.employeeId, name: 'Unknown' }, e, { reg: entryMinutes(e), ot: 0, dt: 0 }, true);
   }
   return out;
 }
@@ -299,7 +338,7 @@ function warningsFor(format, sheets, ctx) {
 const jobCode = (j) => j?.number || '';
 const jobName = (j) => (j ? j.title || '' : 'No job (shop / admin)');
 // Person, then day, then the order the day happened in.
-const byPersonDay = (a, b) => a.p.name.localeCompare(b.p.name) || a.day.localeCompare(b.day) || a.e.clockIn.localeCompare(b.e.clockIn);
+const byPersonDay = (a, b) => a.p.name.localeCompare(b.p.name) || String(a.day).localeCompare(String(b.day)) || entryTime(a.e) - entryTime(b.e);
 
 /**
  * Rows (arrays, header first) for a payroll file.
@@ -311,6 +350,8 @@ const byPersonDay = (a, b) => a.p.name.localeCompare(b.p.name) || a.day.localeCo
 export function payrollRows(format, sheets, ctx) {
   const warnings = warningsFor(format, sheets, ctx);
   const all = lines(sheets, ctx);
+  const lateCount = all.filter((x) => x.late).length;
+  if (lateCount) warnings.push(`${lateCount} late entr${lateCount === 1 ? 'y' : 'ies'} from earlier periods (or corrections) ${lateCount === 1 ? 'is' : 'are'} included as regular time${format === 'wagepoint' ? '' : ', marked late'}.`);
   if (format === 'wagepoint') {
     const rows = [['Employee ID', 'Employee Name', 'Job ID', 'Job Name', 'Regular Hours', 'Overtime Hours', 'Double Time Hours']];
     for (const g of group(all, (x) => `${x.p.id}|${x.e.jobId || ''}`).sort((a, b) => a.p.name.localeCompare(b.p.name) || jobCode(a.j).localeCompare(jobCode(b.j)))) {
@@ -318,18 +359,18 @@ export function payrollRows(format, sheets, ctx) {
     }
     return { rows, warnings };
   }
-  const daily = group(all, (x) => `${x.p.id}|${x.day}|${x.e.jobId || ''}|${x.kind}`).sort(byPersonDay);
+  const daily = group(all, (x) => `${x.p.id}|${x.day}|${x.e.jobId || ''}|${x.kind}|${x.late ? 'late' : ''}`).sort(byPersonDay);
   if (format === 'qbo') {
-    const rows = [['Employee', 'Employee ID', 'Date', 'Customer', 'Job', 'Type', 'Regular hours', 'Overtime hours', 'Double time hours']];
+    const rows = [['Employee', 'Employee ID', 'Date', 'Customer', 'Job', 'Type', 'Regular hours', 'Overtime hours', 'Double time hours', 'Late']];
     for (const g of daily) {
-      rows.push([g.p.name, g.p.payrollId || '', g.day, g.c?.name || '', g.j ? `${jobCode(g.j)} ${g.j.title || ''}`.trim() : '', g.kind === 'travel' ? 'Travel' : 'Work', hrs(g.reg), hrs(g.ot), hrs(g.dt)]);
+      rows.push([g.p.name, g.p.payrollId || '', g.day, g.c?.name || '', g.j ? `${jobCode(g.j)} ${g.j.title || ''}`.trim() : '', g.kind === 'travel' ? 'Travel' : 'Work', hrs(g.reg), hrs(g.ot), hrs(g.dt), g.late ? 'Late' : '']);
     }
     return { rows, warnings };
   }
-  const rows = [['employee_id', 'employee_name', 'period_start', 'period_end', 'work_date', 'job_code', 'job_name', 'customer', 'type', 'regular_hours', 'overtime_hours', 'double_time_hours', 'total_hours', 'break_minutes', 'approved']];
+  const rows = [['employee_id', 'employee_name', 'period_start', 'period_end', 'work_date', 'job_code', 'job_name', 'customer', 'type', 'regular_hours', 'overtime_hours', 'double_time_hours', 'total_hours', 'break_minutes', 'approved', 'late']];
   for (const g of daily) {
     rows.push([g.p.payrollId || '', g.p.name, ctx.periodStart, ctx.periodEnd, g.day, jobCode(g.j), jobName(g.j), g.c?.name || '', g.kind,
-      hrs(g.reg), hrs(g.ot), hrs(g.dt), hrs(g.min), g.brk, g.approved ? 'yes' : 'no']);
+      hrs(g.reg), hrs(g.ot), hrs(g.dt), hrs(g.min), g.brk, g.approved ? 'yes' : 'no', g.late ? 'yes' : 'no']);
   }
   return { rows, warnings };
 }

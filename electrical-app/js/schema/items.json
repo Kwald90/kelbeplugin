@@ -105,6 +105,15 @@
       ],
       "maxLength": 60,
       "description": "Canvas symbol id for drawing takeoff."
+    },
+    "avgCostCents": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 100000000000,
+      "description": "Server: moving average cost (office only). Money in integer cents (CAD)."
     }
   },
   "additionalProperties": true

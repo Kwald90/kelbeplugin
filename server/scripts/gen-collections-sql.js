@@ -150,7 +150,7 @@ GRANT SELECT ON record_history, sync_mutations TO fishtape_hq;
 }
 
 /** Later migrations that create collection tables: version -> file name. */
-export const LATER = { '0100': '0100_workplan.sql', '0110': '0110_safety.sql', '0130': '0130_material_requests.sql', '0141': '0141_location.sql', '0151': '0151_purchasing.sql' };
+export const LATER = { '0100': '0100_workplan.sql', '0110': '0110_safety.sql', '0130': '0130_material_requests.sql', '0141': '0141_location.sql', '0151': '0151_purchasing.sql', '0161': '0161_r1_collections.sql' };
 export const laterFile = (version) => fileURLToPath(new URL(`../migrations/${LATER[version]}`, import.meta.url));
 
 /** The tables of the collections whose registry entry says `migration: version`, made exactly like 0003's. */

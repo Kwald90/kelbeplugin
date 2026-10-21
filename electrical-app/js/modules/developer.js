@@ -21,6 +21,12 @@ const LABEL = {
   employees: 'Employees', timeEntries: 'Time entries', drawings: 'Drawings', sops: 'SOPs', permits: 'Permits', inspections: 'Inspections',
   certifications: 'Certifications', checklists: 'Checklists', panels: 'Panels', auditLog: 'Audit log', settings: 'Settings',
   wireRuns: 'Wire runs', bends: 'Bends', benderProfiles: 'Bender profiles', materialRequests: 'Material requests',
+  flhas: 'Hazard assessments', toolboxTalks: 'Toolbox talks', incidents: 'Incidents', correctiveActions: 'Corrective actions',
+  safetyInspections: 'Safety inspections', siteOrientations: 'Site orientations', jobSafety: 'Job safety', workPlans: 'Work plans',
+  workTasks: 'Work tasks', taskTemplates: 'Task templates', huddles: 'Morning meetings', locationPoints: 'Location points',
+  locationConsents: 'Location consents', vendors: 'Suppliers', bills: 'Bills and receipts', purchaseOrders: 'Purchase orders',
+  costCodes: 'Cost codes', rules: 'Company rules', payrollRuns: 'Payroll runs', signatures: 'Signatures', fieldTickets: 'Field tickets',
+  equipment: 'Trucks and equipment', equipmentUse: 'Equipment use', stockCounts: 'Stock counts',
 };
 
 /** Human summary of a scope list: "Read everything", "Jobs (read), Estimates (write)". */
