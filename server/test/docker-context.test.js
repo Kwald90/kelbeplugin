@@ -4,7 +4,7 @@
 // image crashes at start with ERR_MODULE_NOT_FOUND while every test here passes (v0.6.0 rollback).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync, statSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -14,17 +14,22 @@ const rel = (root, f) => relative(root, f).split(sep).join('/');
 
 function importClosure(root = ROOT) {
   const seen = new Set();
+  const files = new Set();
   const visit = (file) => {
     if (seen.has(file)) return;
-    assert.ok(existsSync(file), `missing relative dependency: ${rel(root, file)}`);
     seen.add(file);
-    if (statSync(file).isDirectory()) {
-      for (const f of readdirSync(file, { recursive: true })) {
-        if (/\.(m?js|json)$/.test(String(f))) visit(join(file, String(f)));
+    let src;
+    try {
+      src = readFileSync(file, 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') assert.fail(`missing relative dependency: ${rel(root, file)}`);
+      if (error.code !== 'EISDIR') throw error;
+      for (const child of readdirSync(file, { recursive: true })) {
+        if (/\.(m?js|json)$/.test(String(child))) visit(join(file, String(child)));
       }
       return;
     }
-    const src = readFileSync(file, 'utf8');
+    files.add(file);
     for (const m of src.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)) {
       const target = resolve(dirname(file), m[1]);
       if (/\.(m?js|json)$/.test(target)) visit(target);
@@ -39,7 +44,7 @@ function importClosure(root = ROOT) {
   for (const f of readdirSync(join(root, 'server/src'), { recursive: true })) {
     if (String(f).endsWith('.js')) visit(join(root, 'server/src', String(f)));
   }
-  return [...seen].filter((f) => !statSync(f).isDirectory()).map((f) => rel(root, f)).filter((f) => f.startsWith('electrical-app/')).sort();
+  return [...files].map((f) => rel(root, f)).filter((f) => f.startsWith('electrical-app/')).sort();
 }
 
 function allowList(root = ROOT) {
