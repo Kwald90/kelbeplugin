@@ -13,6 +13,7 @@ import { notify } from '../services/notify.js';
 import { enqueue } from '../services/queue.js';
 import { qboEnabled } from '../qbo/alerts.js';
 import { PAYOUT_RE, payoutStatus } from './stripe.js';
+import { invoiceClientId, queueClientRecheck } from '../services/receivables.js';
 
 /** Company time zone by province, for the payment's date (YYYY-MM-DD). */
 const ZONES = {
@@ -157,6 +158,8 @@ export async function recordStripePayment(tx, records, p, who, session, eventId)
     stripe: { checkoutSessionId: String(session.id || '').slice(0, 200), paymentIntentId, eventId: String(eventId || '').slice(0, 200), livemode: Boolean(session.livemode) },
   }, who);
   await refreshInvoiceStatus(tx, records, p, who, invoiceId);
+  // The client's past-due hold may lift now (docs/releases/r1-get-paid.md 10.1).
+  await queueClientRecheck(tx, await invoiceClientId(tx, invoiceId));
   await notify(tx, { perm: 'invoices', kind: 'payment', title: `Card payment of $${(amountCents / 100).toFixed(2)} received online`, link: `#/invoices/${invoiceId}`, ref: `payment:${paymentId}` });
   // The fee (stripe.feeCents and friends) is filled in by the worker, for the books. Payments made
   // before QuickBooks was connected are picked up by the hourly catch-up (jobs.js).

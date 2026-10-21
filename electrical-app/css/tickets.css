@@ -1,0 +1,22 @@
+/* Field tickets (modules/tickets.js, docs/field/tickets.md). Tokens only. Loaded by the module. */
+.tk-jobpick { width: auto; min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-input); border-radius: var(--r-sm); background: var(--surface); color: inherit; font: inherit; }
+.tk-stale { border-color: var(--warning); }
+.tk-stale p { margin: var(--s1) 0 var(--s2); }
+.tk-rows { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s2); }
+.tk-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 96px auto; gap: var(--s2); align-items: center; }
+.tk-row .input { min-height: 40px; padding: 6px 10px; border: 1px solid var(--border-input); border-radius: var(--r-sm); background: var(--surface); width: 100%; }
+.tk-row .input.num { text-align: right; }
+.tk-photos { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.tk-photo { position: relative; margin: 0; }
+.tk-photo img, .tk-thumb { width: 96px; height: 96px; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--border); }
+.tk-photo-x { position: absolute; top: 2px; right: 2px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: var(--scrim); color: var(--on-accent); font-size: var(--fs-lg); line-height: 1; cursor: pointer; }
+.tk-agree p { margin: 0; }
+.tk-signed { display: flex; flex-direction: column; gap: var(--s1); font-size: var(--fs-sm); }
+.tk-signed img { width: 200px; max-width: 100%; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); }
+.tk-refused { color: var(--danger); font-size: var(--fs-sm); }
+.tk-hint { font-size: var(--fs-xs); margin: 0; }
+.tk-summary .title { font-weight: 650; }
+@media (max-width: 640px) {
+  .tk-row { grid-template-columns: 1fr 1fr auto; }
+  .tk-row .input:first-child { grid-column: 1 / -1; }
+}

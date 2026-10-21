@@ -6,6 +6,12 @@ import { entryMinutes, kindOf, fmtH } from '../lib/timesheet.js';
 import { locationSettings } from '../lib/location-policy.js';
 import { BILLING_MODES, billingLabel, jobBillingMode, defaultBillingMode, jobRates, unbilledTm, buildTmInvoice, jobCosting } from '../lib/tm.js';
 import { moduleOn } from '../lib/modules.js';
+import { exemptionEditor, printNode } from '../lib/doc-view.js';
+import { newDocTax } from '../lib/tax.js';
+import { closeoutChecklist, closeoutRecord, closeoutBlocks, OVERRIDE_MIN, releaseDue } from '../lib/closeout.js';
+import { holdbackLedger, depositsAvailable } from '../lib/receivables.js';
+import { ticketToChangeOrder, ticketLabel, ticketReconciliation, billableTickets, batchCandidates, ticketSummary } from '../lib/tickets.js';
+import { buildSignature, signatureSheet, emailAcceptanceSheet, queueSignatureFirst } from '../lib/esign.js';
 
 /** Can this person see money (prices, costs, margins)? Office and owners; crew never. */
 const seesMoney = (auth) => auth.seesMoney?.() ?? (auth.can('invoices') || auth.can('estimates'));
@@ -15,11 +21,78 @@ export function tmSources(store) {
   return {
     timeEntries: store.list('timeEntries'), stockMoves: store.list('stockMoves'), materialRequests: store.list('materialRequests'),
     items: store.list('items'), employees: store.list('employees'), invoices: store.list('invoices'), estimates: store.list('estimates'),
+    fieldTickets: store.list('fieldTickets'),
   };
+}
+
+/** Everything the final-billing checklist reads (lib/closeout.js). */
+export function closeoutSources(store, ui) {
+  return {
+    ...tmSources(store), payments: store.list('payments'), purchaseOrders: store.list('purchaseOrders'), bills: store.list('bills'),
+    permits: store.list('permits'), inspections: store.list('inspections'), settings: store.settings(), dayOf: ui.localDay,
+  };
+}
+
+/**
+ * Change a job's status. `complete` shows the final-billing checklist as warnings and saves it; `invoiced`
+ * blocks on its block items until they are cleared or the office records why (at least 10 characters).
+ * The server refuses `invoiced` without a checked closeout (r1-get-paid.md 4.8).
+ */
+export async function setJobStatus(ctx, job, status) {
+  const { store, ui, auth } = ctx;
+  const { h } = ui;
+  const by = auth.who().name;
+  if (status === 'complete' && job.status !== 'complete') {
+    const list = closeoutChecklist(job, closeoutSources(store, ui), { at: 'complete', asOf: ui.today() });
+    store.update('jobs', job.id, { status, closeout: closeoutRecord(list, { by, stage: 'complete' }), contract: { ...(job.contract || {}), completedOn: job.contract?.completedOn || ui.today() } });
+    if (list.length) checklistSheet(ctx, job, list, { title: `${job.number} is complete: still open`, info: 'Clear these before the job is marked invoiced.' });
+    else ui.toast('Status updated', 'success');
+    return true;
+  }
+  if (status === 'invoiced' && job.status !== 'invoiced') {
+    const list = closeoutChecklist(job, closeoutSources(store, ui), { at: 'invoiced', asOf: ui.today() });
+    const blocks = closeoutBlocks(list);
+    if (!blocks.length) {
+      store.update('jobs', job.id, { status, closeout: closeoutRecord(list, { by }) });
+      ui.toast(list.length ? `${job.number} invoiced. ${list.length} warning${list.length === 1 ? '' : 's'} noted.` : `${job.number} invoiced`, 'success');
+      return true;
+    }
+    return new Promise((resolve) => {
+      let done = false;
+      const reason = h('textarea', { class: 'input', rows: 2, name: 'overrideReason', placeholder: 'Why the job can be called invoiced anyway' });
+      const sheet = checklistSheet(ctx, job, list, {
+        title: `${job.number} can't be marked invoiced yet`, info: 'Clear the items marked "must clear", or record why the job is invoiced anyway.',
+        extra: h('label', { class: 'field' }, h('span', null, `Reason (at least ${OVERRIDE_MIN} characters)`), reason),
+        actions: [ui.button('Mark invoiced anyway', { variant: 'danger solid', onClick: () => {
+          if (reason.value.trim().length < OVERRIDE_MIN) { ui.toast(`Say why (at least ${OVERRIDE_MIN} characters)`, 'error'); return; }
+          store.update('jobs', job.id, { status, closeout: closeoutRecord(list, { by, override: { by, reason: reason.value } }) });
+          done = true; resolve(true); sheet.close(); ui.toast(`${job.number} invoiced with the reason recorded`, 'success');
+        } })],
+        onClose: () => { if (!done) resolve(false); },
+      });
+    });
+  }
+  store.update('jobs', job.id, { status });
+  ui.toast('Status updated', 'success');
+  return true;
+}
+
+function checklistSheet(ctx, job, list, { title, info, extra = null, actions = [], onClose } = {}) {
+  const { ui } = ctx;
+  const { h } = ui;
+  const sheet = ui.openSheet({
+    title, onClose,
+    body: h('div', { class: 'stack', dataset: { closeout: job.id } }, h('p', { class: 'muted' }, info),
+      h('div', { class: 'list' }, list.map((i) => h('a', { class: 'list-row click', href: i.link, onClick: () => sheet.close() },
+        ui.badge(i.severity === 'block' ? 'must clear' : 'check', i.severity === 'block' ? 'danger' : 'warning'),
+        h('span', { class: 'grow' }, i.label), h('strong', { class: 'num' }, String(i.count))))), extra),
+    actions: [h('span', { class: 'grow' }), ui.button('Close', { variant: 'ghost', onClick: () => sheet.close() }), ...actions],
+  });
+  return sheet;
 }
 import { lastEdited } from './drawings.js';
 
-const STATUSES = ['lead', 'scheduled', 'in-progress', 'on-hold', 'complete', 'invoiced'];
+const STATUSES = ['lead', 'scheduled', 'in-progress', 'on-hold', 'complete', 'invoiced', 'cancelled'];
 const ACTIVE = new Set(['scheduled', 'in-progress', 'on-hold']);
 const JOB_COLORS = ['#f5b301', '#1f5fb8', '#1d7044', '#7a3fb0', '#b42318', '#0f7b8a', '#c25e00', '#5f5a51'];
 
@@ -84,8 +157,12 @@ function jobForm(ctx, job, onSaved) {
       const rateRaw = form.querySelector('[name=labourRateCents]').value.trim();
       const data = { ...v, clientId: v.clientId || null, crewIds: [...crew], billingMode: mode, labourRateCents: rateRaw === '' ? null : v.labourRateCents };
       let saved;
+      // Complete and invoiced go through the final-billing checklist (4.8).
+      const gated = job && data.status !== job.status && ['complete', 'invoiced'].includes(data.status) ? data.status : null;
+      if (gated) data.status = job.status;
       if (job) saved = store.update('jobs', job.id, data);
       else saved = store.add('jobs', { ...data, number: store.nextNumber('job'), estimateId: null, changeOrders: [] });
+      if (gated) setJobStatus(ctx, store.get('jobs', job.id), gated);
       ui.toast(job ? 'Job saved' : `Job ${saved.number} created`, 'success');
       onSaved?.(saved);
     },
@@ -200,8 +277,9 @@ function detailView(root, ctx, id) {
     const client = store.get('clients', job.clientId);
     const m = moneyFor(store, job);
     const statusSel = h('select', { class: 'input ops-status-select', 'aria-label': 'Job status', disabled: !canEdit,
-      onChange: (e) => { store.update('jobs', job.id, { status: e.target.value }); ui.toast('Status updated', 'success'); } },
+      onChange: async (e) => { const ok = await setJobStatus(ctx, store.get('jobs', job.id), e.target.value); if (!ok) draw(); } },
     STATUSES.map((s) => h('option', { value: s, selected: s === job.status }, s.replace(/-/g, ' '))));
+    const hold = client?.credit?.hold?.on ? h('span', { class: 'ops-meta-item' }, ui.badge('Past due: hold work', 'danger')) : null;
 
     const actions = [
       ui.button('', { icon: 'chevron-left', title: 'All jobs', href: '#/jobs' }),
@@ -218,7 +296,7 @@ function detailView(root, ctx, id) {
       h('span', { class: 'ops-meta-item' }, ui.icon('users', 16), client ? h('a', { href: '#/clients/' + client.id }, client.name) : h('span', { class: 'muted' }, 'No client')),
       job.address ? h('span', { class: 'ops-meta-item' }, ui.icon('map-pin', 16), h('a', { href: 'https://maps.apple.com/?q=' + encodeURIComponent(job.address), target: '_blank', rel: 'noopener' }, job.address)) : null,
       h('span', { class: 'ops-meta-item' }, ui.icon('calendar', 16), `${ui.fmtDate(job.startDate)} – ${ui.fmtDate(job.endDate)}`),
-      h('span', { class: 'ops-meta-item' }, statusSel),
+      h('span', { class: 'ops-meta-item' }, statusSel), hold,
       h('span', { class: 'ops-meta-item' }, ui.badge(billingLabel(jobBillingMode(job)), jobBillingMode(job) === 'tm' ? 'accent' : 'neutral')),
       h('span', { class: 'ops-meta-item' }, avatars(ui, store, job.crewIds, 6)));
 
@@ -230,6 +308,7 @@ function detailView(root, ctx, id) {
       on('drawings') ? { id: 'drawings', label: 'Drawings' } : null,
       (on('estimates') || on('invoices')) && money$ ? { id: 'money', label: moneyLabel } : null,
       { id: 'changes', label: `Change orders${job.changeOrders?.length ? ' ' + job.changeOrders.length : ''}` },
+      on('tickets') ? { id: 'tickets', label: `Tickets${store.count('fieldTickets', (t) => t.jobId === job.id && t.status !== 'void') ? ' ' + store.count('fieldTickets', (t) => t.jobId === job.id && t.status !== 'void') : ''}` } : null,
       on('schedule') ? { id: 'schedule', label: 'Schedule' } : null,
       on('time') ? { id: 'time', label: 'Time' } : null,
       on('materials') ? { id: 'materials', label: `Material${nReq ? ' ' + nReq : ''}` } : null,
@@ -238,7 +317,7 @@ function detailView(root, ctx, id) {
     ].filter(Boolean);
     if (!tabsList.some((t) => t.id === tab)) tab = 'overview';
     const panel = h('div', { class: 'ops-tabpanel' });
-    const renderers = { overview, drawings, money, changes, schedule, time, materials, compliance, panels };
+    const renderers = { overview, drawings, money, changes, tickets, schedule, time, materials, compliance, panels };
     (renderers[tab] || overview)(panel, job, m);
 
     host.append(ui.page({ title: `${job.number} · ${job.title}`, actions }, meta,
@@ -268,10 +347,90 @@ function detailView(root, ctx, id) {
         money$ ? ui.stat({ label: 'Materials used', value: ui.fmtMoney(m.materialCents, { whole: true }), hint: 'at cost, from stock moves' }) : null,
         money$ ? ui.stat({ label: 'Margin', value: ui.fmtMoney(m.marginCents, { whole: true }), hint: pct == null ? 'no revenue yet' : `${pct}% of ${m.invoicedCents ? 'invoiced' : 'estimate'}`, tone: m.marginCents < 0 ? 'danger' : 'success' }) : null),
       canEdit ? (tm ? tmCard(job) : estimateVsActual(job)) : null,
+      canEdit ? contractCard(job) : null,
       h('h2', { class: 'section' }, 'Scope'),
       h('div', { class: 'card flat ops-scope' }, job.description ? job.description : h('span', { class: 'muted' }, 'No description yet.')),
       ...site(),
     );
+  }
+
+  // ---- the contract and payment card (7.1, 3.2): prime or sub, dates, signers, holdback, exemption ----
+  function suggestLastSupplied(job) {
+    const days = [
+      ...store.list('timeEntries', (t) => t.jobId === job.id && t.clockIn).map((t) => ui.localDay(t.clockIn)),
+      ...store.list('stockMoves', (m) => m.jobId === job.id && m.date).map((m) => m.date),
+      ...store.list('fieldTickets', (t) => t.jobId === job.id && t.date && t.status !== 'void').map((t) => t.date),
+    ].filter(Boolean).sort();
+    return days.at(-1) || null;
+  }
+  function contractCard(job) {
+    const c = job.contract || {};
+    const client = store.get('clients', job.clientId);
+    const gc = c.gcClientId ? store.get('clients', c.gcClientId) : null;
+    const missing = c.role === 'prime' && !c.signedOn ? 'Add the day the contract was signed: prompt payment dates need it.'
+      : c.role === 'sub' && !c.primeSignedOn ? 'Add the day the prime contract (owner and general contractor) was signed: prompt payment needs it ("unknown" means no alarms).' : null;
+    const row = (label, value) => (value || value === 0 ? h('div', { class: 'ops-kv' }, h('span', { class: 'muted' }, label), h('span', null, value)) : null);
+    const fresh = JSON.parse(JSON.stringify(store.get('jobs', job.id) || job));
+    const editable = canEdit && showMoney;
+    const edit = () => {
+      const clients = store.list('clients').sort((a, b) => a.name.localeCompare(b.name));
+      const suggested = suggestLastSupplied(job);
+      ui.formSheet({
+        title: `Contract and payment · ${job.number}`, wide: true,
+        fields: [
+          { label: 'Our role', name: 'role', type: 'select', value: c.role || '', options: [{ value: '', label: 'Not set' }, { value: 'prime', label: 'Prime contract with the owner' }, { value: 'sub', label: 'Subcontract to a general contractor' }] },
+          { label: 'Job kind', name: 'kind', type: 'select', value: job.kind || 'standard', options: [{ value: 'standard', label: 'Standard' }, { value: 'service', label: 'Service call' }, { value: 'warranty', label: 'Warranty' }, { value: 'callback', label: 'Callback' }] },
+          { label: 'Our contract signed on', name: 'signedOn', type: 'date', value: c.signedOn || '' },
+          { label: 'Prime contract signed on (subs)', name: 'primeSignedOn', type: 'date', value: c.primeSignedOn || '', hint: 'Blank: unknown (no prompt payment alarms)' },
+          { label: 'Owner', name: 'ownerName', value: c.ownerName || '' },
+          { label: 'General contractor', name: 'gcClientId', type: 'select', value: c.gcClientId || '', options: ui.recordOptions(clients) },
+          { label: 'Contract number', name: 'contractNo', value: c.contractNo || '' },
+          { label: 'Contract value', name: 'valueCents', type: 'money', value: c.valueCents ?? null },
+          { label: 'Holdback %', name: 'holdbackPct', type: 'number', step: '0.5', min: '0', max: '100', value: c.holdbackPct ?? '' },
+          { label: 'Payment terms (days)', name: 'paymentTermsDays', type: 'number', step: '1', min: '0', value: c.paymentTermsDays ?? '' },
+          { label: 'GC billing cutoff (day of month)', name: 'billingCutoffDay', type: 'number', step: '1', min: '1', max: '31', value: c.billingCutoffDay ?? '' },
+          { label: 'Substantial performance on', name: 'substantialPerformanceOn', type: 'date', value: c.substantialPerformanceOn || '' },
+          { label: 'Certificate of substantial performance on', name: 'substantialPerformanceCertOn', type: 'date', value: c.substantialPerformanceCertOn || '' },
+          { label: 'Holdback release on', name: 'holdbackReleaseOn', type: 'date', value: c.holdbackReleaseOn || '', hint: 'Typed by the office while the release rule is unconfirmed' },
+          { label: 'Last supplied on', name: 'lastSuppliedOn', type: 'date', value: c.lastSuppliedOn || suggested || '', hint: suggested ? `Suggested from the last time, material or ticket: ${suggested}` : 'For the lawyer and a later lien countdown' },
+          { label: 'Proper invoices required (prompt payment)', name: 'properInvoiceRequired', type: 'checkbox', value: Boolean(c.properInvoiceRequired) },
+          { label: 'Billable', name: 'billable', type: 'checkbox', value: job.billable !== false },
+          { label: 'People who may sign for the customer (one per line: Name, Title)', name: 'signers', type: 'textarea', span: true, rows: 3, value: (c.authorizedSigners || []).map((s) => [s.name, s.title].filter(Boolean).join(', ')).join('\n') },
+        ],
+        onSubmit(v, sheetForm) {
+          const num = (x) => (x === '' || x == null ? null : Number(x));
+          const day = (x) => x || null;
+          const signers = String(v.signers || '').split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 10).map((l) => { const [name, ...t] = l.split(','); return { name: name.trim().slice(0, 120), title: t.join(',').trim().slice(0, 120) || null }; });
+          const cutoff = num(v.billingCutoffDay);
+          if (cutoff != null && !(cutoff >= 1 && cutoff <= 31)) { ui.toast('The cutoff day is 1 to 31', 'error'); return false; }
+          const raw = (n) => sheetForm.querySelector(`[name=${n}]`)?.value.trim() ?? '';
+          const contract = {
+            ...c, role: v.role || null, signedOn: day(v.signedOn), primeSignedOn: day(v.primeSignedOn), ownerName: v.ownerName || null, gcClientId: v.gcClientId || null,
+            contractNo: v.contractNo || null, valueCents: raw('valueCents') === '' ? null : v.valueCents, holdbackPct: num(v.holdbackPct), paymentTermsDays: num(v.paymentTermsDays),
+            billingCutoffDay: cutoff, substantialPerformanceOn: day(v.substantialPerformanceOn), substantialPerformanceCertOn: day(v.substantialPerformanceCertOn),
+            holdbackReleaseOn: day(v.holdbackReleaseOn), lastSuppliedOn: day(v.lastSuppliedOn), properInvoiceRequired: Boolean(v.properInvoiceRequired), authorizedSigners: signers,
+          };
+          const kind = ['standard', 'service', 'warranty', 'callback'].includes(v.kind) ? v.kind : 'standard';
+          store.update('jobs', job.id, { contract, kind, billable: ['warranty', 'callback'].includes(kind) ? false : Boolean(v.billable) }, { summary: `${job.number}: contract` });
+          ui.toast('Contract saved', 'success');
+        },
+      });
+    };
+    return h('section', { class: 'card ops-contract', dataset: { contractCard: job.id } },
+      h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Contract and payment'), editable ? ui.button('Edit', { size: 'sm', icon: 'edit', onClick: edit }) : null),
+      h('div', { class: 'ops-kvs' },
+        row('Role', c.role === 'prime' ? 'Prime contract' : c.role === 'sub' ? `Subcontract${gc ? ` to ${gc.name}` : ''}` : 'Not set'),
+        row('Signed', c.role === 'sub' ? [c.signedOn && `ours ${c.signedOn}`, `prime ${c.primeSignedOn || 'unknown'}`].filter(Boolean).join(' · ') : c.signedOn),
+        row('Contract', [c.contractNo, c.valueCents != null && showMoney ? ui.fmtMoney(c.valueCents, { whole: true }) : null].filter(Boolean).join(' · ')),
+        row('Holdback', c.holdbackPct != null ? `${c.holdbackPct}%${c.holdbackReleaseOn ? `, release ${ui.fmtDate(c.holdbackReleaseOn)}` : ''}` : null),
+        row('Terms', c.paymentTermsDays != null ? `${c.paymentTermsDays} days${c.billingCutoffDay ? `, GC cutoff the ${c.billingCutoffDay}` : ''}` : c.billingCutoffDay ? `GC cutoff the ${c.billingCutoffDay}` : null),
+        row('Signers', (c.authorizedSigners || []).map((s) => s.name).join(', ')),
+        row('Substantial performance', c.substantialPerformanceOn),
+        row('Last supplied', c.lastSuppliedOn || (suggestLastSupplied(job) ? `${suggestLastSupplied(job)} (suggested)` : null)),
+        row('Kind', job.kind && job.kind !== 'standard' ? job.kind : null)),
+      missing ? h('p', { class: 'money-warn' }, ui.icon('info', 14), ' ', missing) : null,
+      h('h4', null, 'Tax exemption'),
+      exemptionEditor({ doc: fresh, job: fresh, client, onChange: (taxExempt) => store.update('jobs', job.id, { taxExempt }, { summary: `${job.number}: tax exemption` }), readOnly: !editable, store }));
   }
 
   // ---- time & material: what is not billed yet, and the invoice builder ----
@@ -292,6 +451,9 @@ function detailView(root, ctx, id) {
       canBill ? h('div', { class: 'row' }, ui.button('Build invoice from time & material', { variant: 'primary', icon: 'receipt', onClick: () => buildInvoiceSheet(job) })) : null);
   }
 
+  /** Taxes for a new document on this job: exemption-aware (tax.js newDocTax with the job and client). */
+  function newDocTaxFor(job, client) { return newDocTax(store.settings(), ui.today(), { job, client }); }
+
   function buildInvoiceSheet(job) {
     const settings = store.settings();
     // Start at the earliest record not billed yet: billedRefs already keeps billed ones out, so a
@@ -299,6 +461,24 @@ function detailView(root, ctx, id) {
     let from = unbilledTm({ job, settings, ...tmSources(store), dayOf: ui.localDay }).firstDay || '';
     let to = ui.today();
     const preview = h('div', { class: 'stack' });
+    // Signed and refused tickets on the job are billed with the time; where billed hours exceed signed
+    // hours on a day, the office gives a reason before the invoice is saved (4.1).
+    const reasons = new Map();
+    const tmTickets = () => billableTickets(store.list('fieldTickets'), job.id, { from, to });
+    const reconcile = (draft, u) => (Array.isArray(draft?.invoice?.ticketReconciliation)
+      ? draft.invoice.ticketReconciliation.map((r) => ({ ...r, flagged: r.flagged ?? (r.billedMinutes > r.signedMinutes) }))
+      : ticketReconciliation({ tickets: tmTickets(), labour: u.labour, from, to }));
+    const reconNode = (rows) => (rows.length ? h('div', { class: 'card flat ops-recon', dataset: { recon: String(rows.filter((r) => r.flagged).length) } },
+      h('strong', null, 'Signed tickets against billed hours'),
+      ui.table({
+        columns: [
+          { key: 'day', label: 'Day', render: (r) => ui.fmtDate(r.day, { weekday: 'short', month: 'short', day: 'numeric' }) },
+          { key: 'b', label: 'Billed', align: 'right', render: (r) => `${(r.billedMinutes / 60).toFixed(2)} h` },
+          { key: 's', label: 'Signed', align: 'right', render: (r) => `${(r.signedMinutes / 60).toFixed(2)} h` },
+          { key: 'why', label: 'Reason', render: (r) => (r.flagged ? h('input', { class: 'input', name: `reason-${r.day}`, value: reasons.get(r.day) || '', placeholder: 'Why more hours than signed', onInput: (e) => reasons.set(r.day, e.target.value) }) : ui.badge('matches', 'success')) },
+        ],
+        rows,
+      })) : null);
     const drawPreview = () => {
       ui.clear(preview);
       const u = unbilledTm({ job, settings, ...tmSources(store), from, to, dayOf: ui.localDay });
@@ -320,7 +500,7 @@ function detailView(root, ctx, id) {
         ],
         rows: draft.invoice.lines,
       }), h('div', { class: 'row' }, h('span', { class: 'grow muted' }, `Taxes from ${settings.company?.province || 'your province'} are added on the invoice.${u.missingCost ? ` ${u.missingCost} material line${u.missingCost === 1 ? ' has' : 's have'} no cost yet: set the price on the invoice.` : ''}`),
-        h('strong', { class: 'num' }, `${ui.fmtMoney(u.totalCents)} before tax`)), ...[outsideNote].filter(Boolean));
+        h('strong', { class: 'num' }, `${ui.fmtMoney(u.totalCents)} before tax`)), ...[outsideNote, reconNode(reconcile(draft, u))].filter(Boolean));
     };
     const range = h('div', { class: 'form-grid' },
       ui.field({ label: 'From', name: 'from', type: 'date', value: from }),
@@ -333,7 +513,20 @@ function detailView(root, ctx, id) {
       actions: [h('span', { class: 'grow' }), ui.button('Cancel', { variant: 'ghost', onClick: () => sheet.close() }), ui.button('Create invoice', { variant: 'primary', icon: 'receipt', onClick: () => {
         let draft;
         try { draft = buildTmInvoice({ job, settings: store.settings(), issueDate: ui.today(), dueDate: ui.today(14), from, to, fmtDay: (d) => ui.fmtDate(d, { month: 'short', day: 'numeric' }), ...tmSources(store), dayOf: ui.localDay }); } catch (e) { ui.toast(e.message, 'error', 4000); return; }
-        const inv = store.add('invoices', { ...draft.invoice, number: store.nextNumber('invoice') });
+        const rows = reconcile(draft, draft.unbilled);
+        const unexplained = rows.filter((r) => r.flagged && !String(reasons.get(r.day) || '').trim());
+        if (unexplained.length) { ui.toast(`Give a reason for ${unexplained.length} day${unexplained.length === 1 ? '' : 's'} with more hours billed than signed`, 'error', 5000); return; }
+        const ticketIds = draft.invoice.ticketIds || tmTickets().map((t) => t.id);
+        const client = job.clientId ? store.get('clients', job.clientId) : null;
+        const inv = store.add('invoices', {
+          ...draft.invoice, ...newDocTaxFor(job, client), number: store.nextNumber('invoice'),
+          ...(ticketIds.length ? { ticketIds } : {}),
+          ...(rows.length ? { ticketReconciliation: rows.map((r) => ({ day: r.day, billedMinutes: r.billedMinutes, signedMinutes: r.signedMinutes, ...(r.flagged ? { reason: String(reasons.get(r.day)).trim().slice(0, 500) } : {}) })) } : {}),
+        });
+        for (const tid of ticketIds) {
+          const t = store.get('fieldTickets', tid);
+          if (t && ['signed', 'refused', 'priced'].includes(t.status)) store.update('fieldTickets', tid, { status: 'billed', invoiceId: inv.id }, { summary: `${t.number || 'Ticket'} billed on ${inv.number}` });
+        }
         sheet.close();
         ui.toast(`${inv.number} created from ${draft.unbilled.labour.length} time entr${draft.unbilled.labour.length === 1 ? 'y' : 'ies'} and ${draft.unbilled.materials.length} material line${draft.unbilled.materials.length === 1 ? '' : 's'}`, 'success', 4000);
         nav('#/invoices/' + inv.id);
@@ -393,7 +586,9 @@ function detailView(root, ctx, id) {
     el.append(h('div', { class: 'row ops-sub-actions' },
       on('estimates') ? ui.button('New estimate', { variant: tm ? 'secondary' : 'primary', icon: 'file-text', href: `#/estimates/new?jobId=${job.id}${job.clientId ? '&clientId=' + job.clientId : ''}` }) : null,
       on('invoices') && tm && auth.can('invoices') ? ui.button('Build invoice from time & material', { variant: 'primary', icon: 'receipt', onClick: () => buildInvoiceSheet(job) }) : null,
-      on('invoices') ? ui.button('New invoice', { icon: 'receipt', href: `#/invoices/new?jobId=${job.id}` }) : null));
+      on('invoices') ? ui.button('New invoice', { icon: 'receipt', href: `#/invoices/new?jobId=${job.id}` }) : null,
+      on('invoices') && auth.can('invoices') ? ui.button('New deposit invoice', { icon: 'dollar', href: `#/invoices/new?kind=deposit&jobId=${job.id}` }) : null));
+    if (on('invoices') && auth.can('invoices')) holdbackAndDeposits(el, job);
     if (!on('estimates')) return moneyInvoices(el, m);
     el.append(h('h2', { class: 'section' }, 'Estimates'));
     el.append(ui.table({
@@ -406,6 +601,39 @@ function detailView(root, ctx, id) {
       empty: h('p', { class: 'muted' }, 'No estimates yet.'),
     }));
     if (on('invoices')) moneyInvoices(el, m);
+  }
+
+  // ---- holdback and deposits on the job (4.3, 7.3) ----
+  function holdbackAndDeposits(el, job) {
+    const invoices = store.list('invoices');
+    const led = holdbackLedger(invoices, { jobId: job.id });
+    const deps = depositsAvailable(invoices, store.list('payments'), { jobId: job.id }).filter((d) => d.jobId === job.id);
+    const unapplied = deps.reduce((s, d) => s + d.availableCents, 0);
+    if (!led.retainedCents && !led.retainedByCustomerCents && !deps.length) return;
+    const due = releaseDue(job, ui.today());
+    const letter = () => {
+      const rows = led.byInvoice.filter((b) => b.retainedByCustomerCents > 0);
+      const co = store.settings().company || {};
+      const client = store.get('clients', job.contract?.gcClientId || job.clientId);
+      printNode(h('div', { class: 'doc-sheet' },
+        h('div', { class: 'doc-top' }, h('div', { class: 'doc-brand' }, co.name || ''), h('div', { class: 'doc-title' }, h('div', { class: 'doc-kind' }, 'Request for holdback release'), h('div', { class: 'doc-small' }, ui.today()))),
+        h('p', null, `To ${client?.name || ''}: on ${job.number} ${job.title || ''}${job.contract?.contractNo ? ` (contract ${job.contract.contractNo})` : ''}, you retained the following holdback from our invoices. Please release it.`),
+        h('table', { class: 'doc-lines' }, h('thead', null, h('tr', null, h('th', null, 'Invoice'), h('th', null, 'Date'), h('th', { class: 'right' }, 'Retained'))),
+          h('tbody', null, rows.map((b) => h('tr', null, h('td', null, b.number), h('td', null, b.issueDate || ''), h('td', { class: 'right' }, ui.fmtMoney(b.retainedByCustomerCents)))))),
+        h('p', { class: 'doc-strong' }, `Total retained: ${ui.fmtMoney(led.retainedByCustomerCents)}`)));
+    };
+    el.append(h('div', { class: 'card ops-holdback', dataset: { holdbackLedger: job.id } },
+      h('h3', null, 'Holdback and deposits'),
+      h('div', { class: 'ops-kvs' },
+        led.retainedCents ? h('div', { class: 'ops-kv' }, h('span', { class: 'muted' }, 'Held back on our invoices'), h('span', { class: 'num' }, ui.fmtMoney(led.retainedCents))) : null,
+        led.releasedCents ? h('div', { class: 'ops-kv' }, h('span', { class: 'muted' }, 'Released'), h('span', { class: 'num' }, ui.fmtMoney(led.releasedCents))) : null,
+        led.outstandingCents ? h('div', { class: 'ops-kv' }, h('span', { class: 'muted' }, 'Still to release'), h('strong', { class: 'num' }, ui.fmtMoney(led.outstandingCents))) : null,
+        led.retainedByCustomerCents ? h('div', { class: 'ops-kv' }, h('span', { class: 'muted' }, 'Kept by the customer on its own'), h('span', { class: 'num' }, ui.fmtMoney(led.retainedByCustomerCents))) : null,
+        deps.length ? h('div', { class: 'ops-kv' }, h('span', { class: 'muted' }, 'Deposits paid, not applied'), h('span', { class: 'num' }, ui.fmtMoney(unapplied))) : null),
+      h('div', { class: 'row ops-sub-actions' },
+        led.outstandingCents > 0 ? (due ? ui.button('Invoice holdback release', { variant: 'primary', href: `#/invoices/new?kind=release&jobId=${job.id}` })
+          : h('span', { class: 'muted' }, job.contract?.holdbackReleaseOn ? `Release invoice from ${ui.fmtDate(job.contract.holdbackReleaseOn)}.` : 'Set the holdback release date on the contract card.')) : null,
+        led.retainedByCustomerCents ? ui.button('Request holdback release', { onClick: letter }) : null)));
   }
 
   function moneyInvoices(el, m) {
@@ -422,23 +650,63 @@ function detailView(root, ctx, id) {
     }));
   }
 
+  // ---- change orders: priced and signed by the office (money roles), merged by id on the server (4.2) ----
   function changes(el, job) {
     const cos = job.changeOrders || [];
-    const save = (list) => store.update('jobs', job.id, { changeOrders: list });
-    const edit = (co) => ui.formSheet({
-      title: co ? 'Edit change order' : 'New change order',
-      fields: [
-        { label: 'Description', name: 'title', value: co?.title, required: true, span: true },
-        { label: 'Amount', name: 'amountCents', type: 'money', value: co?.amountCents ?? 0, required: true },
-        { label: 'Date', name: 'date', type: 'date', value: co?.date || ui.today() },
-        { label: 'Status', name: 'status', type: 'select', value: co?.status || 'pending', options: ['pending', 'approved', 'rejected'] },
-      ],
-      danger: co ? { label: 'Delete', onClick: () => save(cos.filter((c) => c.id !== co.id)) } : null,
-      onSubmit(v) {
-        if (co) save(cos.map((c) => (c.id === co.id ? { ...c, ...v } : c)));
-        else save([...cos, { id: 'co-' + Date.now().toString(36), ...v }]);
+    const fresh = () => store.get('jobs', job.id)?.changeOrders || [];
+    const save = (list, summary) => store.update('jobs', job.id, { changeOrders: list }, summary ? { summary } : {});
+    const patchCo = (id, patch, summary) => save(fresh().map((c) => (c.id === id ? { ...c, ...patch } : c)), summary);
+    const signed = (co) => Boolean(co?.signatureId);
+    const edit = (co) => {
+      if (signed(co)) { ui.toast('This change order was signed. Void it and add a new one to change it.', 'info', 5000); return; }
+      ui.formSheet({
+        title: co ? 'Edit change order' : 'New change order',
+        fields: [
+          { label: 'Description', name: 'title', value: co?.title, required: true, span: true },
+          { label: 'Amount', name: 'amountCents', type: 'money', value: co?.amountCents ?? 0, required: true },
+          { label: 'Date', name: 'date', type: 'date', value: co?.date || ui.today() },
+          { label: 'Status', name: 'status', type: 'select', value: co?.status || 'pending', options: ['pending', 'approved', 'rejected'] },
+        ],
+        danger: co ? { label: 'Delete', onClick: () => save(fresh().filter((c) => c.id !== co.id)) } : null,
+        onSubmit(v) {
+          const approvedOn = v.status === 'approved' ? (co?.approvedOn || ui.today()) : null;
+          if (co) patchCo(co.id, { ...v, approvedOn });
+          else save([...fresh(), { id: 'co-' + Date.now().toString(36), ...v, approvedOn }]);
+        },
+      });
+    };
+    const settings = store.settings();
+    const signHere = (co) => signatureSheet(ui, {
+      title: `Sign change order: ${co.title || ''}`, job,
+      summary: h('div', { class: 'stack' }, h('div', { class: 'title' }, co.title || 'Change order'),
+        (co.lines || []).length ? h('ul', { class: 'es-lines' }, co.lines.map((l) => h('li', null, `${l.qty ?? ''} ${l.description || ''}`.trim()))) : null,
+        h('div', { class: 'es-total' }, `Price: ${ui.fmtMoney(co.amountCents || 0)}`)),
+      agreementText: 'I approve this change to the contract at the price shown.',
+      captureLocation: settings.tickets?.captureLocation !== false,
+      onSigned: async (s) => {
+        const sig = await buildSignature({ docType: 'changeOrder', doc: co, extra: { jobId: job.id }, jobId: job.id, clientId: job.clientId || null, ...s,
+          capturedBy: { employeeId: auth.current().id || null, name: auth.who().name, userId: ctx.app?.session?.me?.user?.id || null }, device: navigator.userAgent.slice(0, 120) });
+        // The signature first, the change order second, in the same tick: the queue pushes them in that order.
+        store.add('signatures', sig);
+        patchCo(co.id, { status: 'approved', approvedOn: ui.today(), signatureId: sig.id, signedAt: sig.signedAt, signedName: sig.signerName }, `${job.number}: change order signed`);
+        queueSignatureFirst(store, sig.id, [{ coll: 'jobs', id: job.id }]);
+        ui.toast(`Signed by ${sig.signerName}`, 'success');
       },
     });
+    const byEmail = async (co) => {
+      const r = await emailAcceptanceSheet(ui, { title: `Accepted by email: ${co.title || 'change order'}` });
+      if (!r) return;
+      const sig = await buildSignature({ docType: 'changeOrder', doc: co, extra: { jobId: job.id }, jobId: job.id, clientId: job.clientId || null, method: 'email-reply',
+        signerName: r.signerName, signerEmail: r.signerEmail, evidence: r.evidence, capturedBy: { employeeId: auth.current().id || null, name: auth.who().name } });
+      store.add('signatures', sig);
+      patchCo(co.id, { status: 'approved', approvedOn: ui.today(), signatureId: sig.id, signedAt: sig.signedAt, signedName: sig.signerName }, `${job.number}: change order accepted by email`);
+      queueSignatureFirst(store, sig.id, [{ coll: 'jobs', id: job.id }]);
+    };
+    const voidCo = async (co) => {
+      const reason = await ui.promptDialog('Why is this signed change order void?', { title: 'Void change order', okLabel: 'Void' });
+      if (!reason || reason.trim().length < 3) return;
+      patchCo(co.id, { status: 'void', note: `Void: ${reason.trim()}`.slice(0, 500) }, `${job.number}: change order void`);
+    };
     const approved = cos.filter((c) => c.status === 'approved').reduce((s, c) => s + (Number(c.amountCents) || 0), 0);
     const pending = cos.filter((c) => c.status === 'pending').reduce((s, c) => s + (Number(c.amountCents) || 0), 0);
     el.append(h('div', { class: 'row ops-sub-actions' },
@@ -446,19 +714,68 @@ function detailView(root, ctx, id) {
       h('span', { class: 'grow' }),
       showMoney ? [h('span', { class: 'muted' }, 'Approved '), h('strong', { class: 'num' }, ui.fmtMoney(approved)),
         h('span', { class: 'muted' }, ' · Pending '), h('strong', { class: 'num' }, ui.fmtMoney(pending))] : null));
+    const office = canEdit && showMoney;
     el.append(ui.table({
       columns: [
-        { key: 'date', label: 'Date', render: (c) => ui.fmtDate(c.date) },
+        { key: 'date', label: 'Date', render: (c) => ui.fmtDate(c.approvedOn || c.date) },
         { key: 'title', label: 'Change', render: (c) => h('div', null, h('div', null, c.title || '—'),
-          c.source === 'drawing' ? h('div', { class: 'muted ops-small' }, ui.badge('From drawings', 'accent'), ' ', c.note || '', c.createdBy ? ` · raised by ${c.createdBy.name}` : '') : null) },
+          c.source === 'drawing' ? h('div', { class: 'muted ops-small' }, ui.badge('From drawings', 'accent'), ' ', c.note || '', c.createdBy ? ` · raised by ${c.createdBy.name}` : '') : null,
+          c.source === 'ticket' ? h('div', { class: 'muted ops-small' }, ui.badge('From a field ticket', 'accent'), c.note ? ` ${c.note}` : '') : null,
+          c.signedName ? h('div', { class: 'muted ops-small', dataset: { signedBy: c.signedName } }, `Signed by ${c.signedName} ${ui.fmtDateTime(c.signedAt)}`) : null) },
         showMoney ? { key: 'amount', label: 'Amount', align: 'right', render: (c) => ui.fmtMoney(c.amountCents) } : null,
         { key: 'status', label: 'Status', render: (c) => ui.statusBadge(c.status) },
-        { key: 'act', label: '', render: (c) => (canEdit && showMoney && c.status === 'pending' ? h('span', { class: 'row', onClick: (e) => e.stopPropagation() },
-          ui.button('Approve', { size: 'sm', icon: 'check', onClick: () => save(cos.map((x) => (x.id === c.id ? { ...x, status: 'approved' } : x))) }),
-          ui.button('Reject', { size: 'sm', variant: 'ghost danger', onClick: () => save(cos.map((x) => (x.id === c.id ? { ...x, status: 'rejected' } : x))) })) : '') },
+        { key: 'act', label: '', render: (c) => (office ? h('span', { class: 'row', onClick: (e) => e.stopPropagation() },
+          c.status === 'pending' ? [
+            ui.button('Sign', { size: 'sm', icon: 'pen', onClick: () => signHere(c) }),
+            ui.button('Accepted by email', { size: 'sm', variant: 'ghost', onClick: () => byEmail(c) }),
+            ui.button('Approve', { size: 'sm', icon: 'check', onClick: () => patchCo(c.id, { status: 'approved', approvedOn: ui.today() }) }),
+            ui.button('Reject', { size: 'sm', variant: 'ghost danger', onClick: () => patchCo(c.id, { status: 'rejected' }) })] : null,
+          signed(c) && c.status !== 'void' ? ui.button('Void', { size: 'sm', variant: 'ghost danger', onClick: () => voidCo(c) }) : null) : '') },
       ].filter(Boolean),
-      rows: cos, onRowClick: canEdit && showMoney ? edit : null,
-      empty: ui.empty({ icon: 'edit', title: 'No change orders', text: 'Record scope changes and get them approved before the work.' }),
+      rows: cos, onRowClick: office ? edit : null,
+      empty: ui.empty({ icon: 'edit', title: 'No change orders', text: 'Record scope changes and get them signed before the work.' }),
+    }));
+  }
+
+  // ---- field tickets on the job (4.1) ----
+  function tickets(el, job) {
+    const list = store.list('fieldTickets', (t) => t.jobId === job.id).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const office = auth.can('invoices') && showMoney;
+    const tm = jobBillingMode(job) === 'tm';
+    const drafts = batchCandidates(list, job.id);
+    const priceAsCo = (t) => {
+      let co;
+      try { co = ticketToChangeOrder(t, { job, items: store.list('items'), equipment: store.list('equipment'), employees: store.list('employees'), settings: store.settings(), today: ui.today(), id: `co-${Date.now().toString(36)}` }); } catch (e) { ui.toast(e.message, 'error', 5000); return; }
+      ui.formSheet({
+        title: `Price ${ticketLabel(t)} as a change order`, wide: true, submitLabel: 'Save change order',
+        fields: [
+          { label: 'Description', name: 'title', value: co.title, required: true, span: true },
+          { label: 'Amount', name: 'amountCents', type: 'money', value: co.amountCents, required: true, hint: co.lines.map((l) => `${l.qty} × ${l.description} at ${ui.fmtMoney(l.unitCents)}`).join(' · ') },
+          { label: 'Note', name: 'note', value: co.note || '', span: true },
+        ],
+        onSubmit(v) {
+          const cur = store.get('jobs', job.id);
+          store.update('jobs', job.id, { changeOrders: [...(cur.changeOrders || []), { ...co, ...v, note: v.note || null }] }, { summary: `${job.number}: ${ticketLabel(t)} priced` });
+          store.update('fieldTickets', t.id, { status: 'priced', changeOrderId: co.id, office: { pricedAt: new Date().toISOString(), pricedBy: auth.who().name, note: null } }, { summary: `${ticketLabel(t)} priced` });
+          ui.toast(`${ticketLabel(t)} priced as a change order. Get it signed on the Change orders tab.`, 'success', 5000);
+        },
+      });
+    };
+    el.append(h('div', { class: 'row ops-sub-actions' },
+      ui.button('New ticket', { variant: 'primary', icon: 'plus', href: `#/tickets/new?jobId=${job.id}` }),
+      drafts.length > 1 && (auth.isManager() || office) ? ui.button(`Sign several tickets (${drafts.length})`, { icon: 'pen', href: `#/tickets/batch?jobId=${job.id}` }) : null,
+      ui.button('All tickets', { variant: 'ghost', icon: 'list', href: '#/tickets' })));
+    el.append(ui.table({
+      columns: [
+        { key: 'n', label: 'Ticket', render: (t) => h('span', { class: 'mono' }, ticketLabel(t)) },
+        { key: 'd', label: 'Day', render: (t) => ui.fmtDate(t.date) },
+        { key: 'w', label: 'Work', render: (t) => ticketSummary(t) },
+        { key: 's', label: 'Status', render: (t) => ui.statusBadge(t.status) },
+        { key: 'a', label: '', render: (t) => h('span', { class: 'row', onClick: (e) => e.stopPropagation() },
+          office && !tm && job.kind !== 'service' && ['signed', 'refused'].includes(t.status) ? ui.button('Price as change order', { size: 'sm', onClick: () => priceAsCo(t) }) : null) },
+      ],
+      rows: list, onRowClick: (t) => nav(`#/tickets/${t.id}`),
+      empty: ui.empty({ icon: 'pen', title: 'No field tickets', text: tm ? 'T&M tickets signed on site are billed with the time on this job.' : 'Extra work signed on site is priced into a change order.' }),
     }));
   }
 
@@ -523,7 +840,7 @@ function detailView(root, ctx, id) {
 
   root.append(host);
   draw();
-  const offs = ['jobs', 'estimates', 'invoices', 'payments', 'timeEntries', 'schedule', 'drawings', 'permits', 'inspections', 'stockMoves', 'jobSafety', 'materialRequests'].map((c) => store.on(c, draw));
+  const offs = ['jobs', 'estimates', 'invoices', 'payments', 'timeEntries', 'schedule', 'drawings', 'permits', 'inspections', 'stockMoves', 'jobSafety', 'materialRequests', 'fieldTickets', 'clients'].map((c) => store.on(c, draw));
   return () => offs.forEach((f) => f());
 }
 

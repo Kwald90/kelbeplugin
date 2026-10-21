@@ -7,6 +7,23 @@ import { moduleOn, switchOn } from '../lib/modules.js';
 import { unbilledAcrossJobs } from '../lib/tm.js';
 import { tmSources } from './jobs.js';
 import { dashboardActions, dashboardRouteAllowed } from '../lib/dashboard-actions.js';
+import { readyToBill } from '../lib/receivables.js';
+
+/**
+ * Bills whose prices are above the PO or price book and not acknowledged (r1-get-paid.md 6.3, R1-E's
+ * costing.js priceVariances). Null until that library is there.
+ */
+function varianceCount(costing, store) {
+  if (typeof costing?.priceVariances !== 'function') return null;
+  const purchaseOrders = store.list('purchaseOrders');
+  const items = store.list('items');
+  const tolerancePct = store.settings().costing?.priceVariancePct ?? 2;
+  let n = 0;
+  for (const bill of store.list('bills', (b) => ['open', 'paid'].includes(b.status) && !b.varianceAck)) {
+    try { if ((costing.priceVariances(bill, { purchaseOrders, items, tolerancePct }) || []).length) n++; } catch { /* skip that bill */ }
+  }
+  return n;
+}
 
 export default {
   id: 'dashboard',
@@ -19,6 +36,10 @@ export default {
     const { h } = ui;
     let timer;
     const expanded = new Set();
+    let costing = null;
+    // Money roles only: the ready-to-bill and price-variance cards (4.7).
+    const billing = () => auth.can('invoices') && (auth.seesMoney?.() ?? true) && moduleOn(store.settings(), 'invoices');
+    if (billing() && store.count('bills') > 0) import('../lib/costing.js').then((m) => { costing = m; if (root.isConnected) draw(); }).catch(() => {});
 
     // Due sequence steps are queued whenever the office opens the app (not when follow-ups are off).
     if (auth.can('sequences') && moduleOn(store.settings(), 'sequences')) import('./sequences.js').then((m) => m.processSequences?.(store)).catch(() => {});
@@ -53,6 +74,8 @@ export default {
       const onClock = allowed('#/time') ? store.list('timeEntries', (e) => !e.clockOut && (auth.isManager() || e.employeeId === me.id)) : [];
       const myOpen = onClock.find((e) => e.employeeId === me.id);
       const unbilled = moneyVisible && allowed('#/invoices') && allowed('#/jobs') ? unbilledAcrossJobs(jobs.filter((j) => !['lead'].includes(j.status)), { settings, ...tmSources(store), dayOf: ui.localDay }) : null;
+      const ready = billing() ? readyToBill({ jobs, invoices: store.list('invoices'), payments: store.list('payments'), ...tmSources(store), settings, dayOf: ui.localDay }, { asOf: day }) : null;
+      const variances = billing() ? varianceCount(costing, store) : null;
 
       const stats = h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' } },
         moneyVisible && allowed('#/leads') ? ui.stat({ label: 'Open pipeline', value: money(pipeline, { whole: true }), hint: `${openLeads.length} open leads` }) : null,
@@ -60,6 +83,10 @@ export default {
         moneyVisible && allowed('#/invoices') ? ui.stat({ label: 'Owed to you', value: money(outstanding, { whole: true }), hint: overdue.length ? `${overdue.length} overdue` : 'nothing overdue', tone: overdue.length ? 'danger' : null }) : null,
         unbilled ? h('a', { href: '#/jobs', class: 'dash-stat-link', style: { color: 'inherit', textDecoration: 'none' }, dataset: { unbilledTm: String(unbilled.cents) } },
           ui.stat({ label: 'Unbilled T&M', value: money(unbilled.cents, { whole: true }), hint: unbilled.count ? `${unbilled.count} time & material job${unbilled.count === 1 ? '' : 's'} · ${unbilled.hours} h` : 'all billed', tone: unbilled.cents ? 'accent' : null })) : null,
+        ready ? h('a', { href: '#/invoices/ready', class: 'dash-stat-link', dataset: { readyToBill: String(ready.length) } },
+          ui.stat({ label: 'Ready to bill', value: String(ready.length), hint: ready.length ? `oldest ${ready[0].ageDays} day${ready[0].ageDays === 1 ? '' : 's'}` : 'nothing waiting', tone: ready.length ? 'accent' : null })) : null,
+        variances != null ? h('a', { href: '#/purchasing', class: 'dash-stat-link', dataset: { variances: String(variances) } },
+          ui.stat({ label: 'Price variances', value: String(variances), hint: variances ? 'bills above the PO or price book' : 'none to check', tone: variances ? 'warning' : null })) : null,
         allowed('#/time') ? ui.stat({ label: 'On the clock', value: String(onClock.length), hint: onClock.map((e) => empById.get(e.employeeId)?.name.split(' ')[0]).filter(Boolean).join(', ') || 'nobody yet', tone: onClock.length ? 'success' : null }) : null,
       );
 
