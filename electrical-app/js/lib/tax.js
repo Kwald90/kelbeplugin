@@ -7,6 +7,7 @@
 // depends on whether the work becomes part of real property, on the province,
 // and sometimes on the customer. The treatments below are presets to start
 // from, not tax advice. Check with your accountant.
+import { exemptionFor } from './exemption.js';
 
 export const PROVINCES = [
   { code: 'AB', name: 'Alberta' },
@@ -122,7 +123,14 @@ export const TREATMENTS = {
   },
   'gst-only': {
     label: 'PST/RST exempt, GST charged',
-    hint: 'For a customer who quotes their PST/RST licence or exemption number (for example a contractor buying for resale): GST on everything, no PST/RST. Keep the number on file.',
+    hint: 'For a customer who quotes their PST/RST licence or exemption number for this work: GST on everything, no PST/RST. Record the number on the document.',
+    // Per province (docs/code/tax.md, gap analysis section A): a general contractor on an ordinary
+    // building job is not exempt in Manitoba or Saskatchewan.
+    hints: {
+      MB: 'Manitoba: only when the customer is another electrical or mechanical contractor subcontracting this work to you, a reseller, or a general contractor passing on an exempt customer’s exemption (federal government RST number, Status Indian or band on reserve, farm-use certificate). A general contractor on an ordinary building job pays RST (Bulletins 031, 005). The exemption is for this contract only: record it on the job and their 7-digit RST number on the invoice (Bulletin 004). Travel time and permits are part of the taxable price.',
+      SK: 'Saskatchewan: only when the customer gives a PST vendor’s licence or exemption for this work (a licensed contractor buying for resale, or an exempt customer). A general contractor on an ordinary building job pays PST (Bulletin PST-12). Record their number on the invoice.',
+      BC: 'British Columbia: only for a customer who gives a PST number for goods they will resell. Record the number on the invoice.',
+    },
     applies: { PST: NONE, RST: NONE },
     note: 'PST/RST exempt: the customer’s licence or exemption number is on file.',
   },
@@ -131,8 +139,8 @@ export const TREATMENTS = {
     hint: 'No GST/HST and no provincial tax: a zero-rated, exempt or out-of-scope supply, or a customer with Indian Act relief. Pick why on the document and keep the proof on file.',
     hints: {
       BC: 'No GST and no PST: a zero-rated, exempt or out-of-scope supply, or a customer with Indian Act relief. Pick why on the document and keep the proof on file. A customer with a PST number still pays GST: use “PST/RST exempt, GST charged”.',
-      SK: 'No GST and no PST: a zero-rated, exempt or out-of-scope supply, or a customer with Indian Act relief. Pick why on the document and keep the proof on file. A customer with a PST number still pays GST: use “PST/RST exempt, GST charged”.',
-      MB: 'No GST and no RST: a zero-rated, exempt or out-of-scope supply, or a customer with Indian Act relief. Pick why on the document and keep the proof on file. A customer with an RST number still pays GST: use “PST/RST exempt, GST charged”.',
+      SK: 'No GST and no PST: a zero-rated, exempt or out-of-scope supply, or a Status Indian or band buying for use on reserve (Indian Act s.87). Pick why on the document and keep the proof on file. A customer with a PST number or another exemption still pays GST: use “PST/RST exempt, GST charged”.',
+      MB: 'No GST and no RST: a zero-rated, exempt or out-of-scope supply, or a Status Indian or band buying for use on reserve (Indian Act s.87). Pick why on the document and keep the proof on file. A customer with an RST number, the federal government, a farm certificate or a general contractor passing on an exemption still pays GST: use “PST/RST exempt, GST charged”.',
     },
     applies: null,
   },
@@ -203,18 +211,112 @@ export function taxSetup(settings = {}) {
 /**
  * Tax fields for a new estimate or invoice:
  * { taxProvince, taxTreatment, taxes, taxPct } (taxPct = combined, for older readers).
+ *
+ * With a job whose taxExempt applies (lib/exemption.js exemptionFor, contract r1-get-paid.md 3.1),
+ * the default treatment is 'gst-only' ('none' with taxNoneReason 'relief' for First Nations on
+ * reserve) and the result carries the exemption snapshot (taxExemptNumber, taxExemptBasis,
+ * taxExemptDetails). A client's evidence alone never changes the default: the office ticks
+ * "This work is exempt" on the document. Callers without a job or client are unchanged.
  */
-export function newDocTax(settings, date = new Date()) {
+export function newDocTax(settings, date = new Date(), { client = null, job = null } = {}) {
   const s = taxSetup(settings);
-  const taxes = s.mode === 'custom'
-    ? s.custom.map((c, i) => ({ id: c.id || `T${i + 1}`, label: c.label || `Tax ${i + 1}`, pct: Number(c.pct) || 0, applies: { ...ALL, ...(c.applies || {}) }, note: '' }))
-    : taxComponents({ province: s.province, treatment: s.treatment, date });
+  if (s.mode === 'custom') {
+    const taxes = s.custom.map((c, i) => ({ id: c.id || `T${i + 1}`, label: c.label || `Tax ${i + 1}`, pct: Number(c.pct) || 0, applies: { ...ALL, ...(c.applies || {}) }, note: '' }));
+    return { taxProvince: null, taxTreatment: 'custom', taxes, taxPct: combinedRate(taxes) };
+  }
+  const ex = (job || client) ? exemptionFor({ job, client, province: s.province }) : {};
+  let treatment = s.treatment;
+  let extra = {};
+  if (ex.taxExemptBasis && treatmentsFor(s.province).includes('gst-only')) {
+    const onReserve = ex.taxExemptBasis === 'first-nations' && Boolean(String(ex.taxExemptDetails?.reserve || '').trim());
+    treatment = onReserve ? 'none' : 'gst-only';
+    extra = {
+      taxExemptNumber: ex.taxExemptNumber ?? null,
+      taxExemptBasis: ex.taxExemptBasis,
+      taxExemptDetails: { ...(ex.taxExemptDetails || {}) },
+      ...(job?.taxExempt ? { exemptionConfirmed: exemptionConfirmedFromJob(job) } : {}),
+      ...(onReserve ? { taxNoneReason: 'relief' } : {}),
+    };
+  }
+  const taxes = taxComponents({ province: s.province, treatment, date });
+  return { taxProvince: s.province, taxTreatment: treatment, taxes, taxPct: combinedRate(taxes), ...extra };
+}
+
+/**
+ * Line presets that switch some taxes off on one line (`taxOff`, only on labour and other lines).
+ * The out-of-pocket disbursement (Bulletin 031 section 3: hotel and meals billed at cost) carries
+ * GST but no PST/RST and, while the rule holdback.excludePassThrough holds, sits outside the
+ * holdback base. Offered in Manitoba while tax.MB.passThroughAllowed holds (a VERIFY policy).
+ * Travel time and permits are part of the taxable price: they are never pass-through.
+ */
+export const TAX_OFF_PRESETS = [
+  {
+    id: 'pass-through',
+    label: 'Out-of-pocket disbursement at cost (hotel, meals; not travel time or permits)',
+    kind: 'other',
+    passThrough: true,
+    taxOff: ['PST', 'RST'],
+    warning: 'Travel time and permits are taxable. Use a normal line for them.',
+    printSuffix: '(at cost, no RST)',
+  },
+];
+
+// ---- who said a job's work is exempt (r1-get-paid.md 2.9; jobs.taxExempt.confirmedBy is a name) ----
+
+/** A confirmer as stored: the name string (≤ 128). Older copies kept { id, name }. */
+export function confirmedByName(v) {
+  const name = typeof v === 'string' ? v : (v && typeof v === 'object' ? v.name : null);
+  const t = String(name ?? '').trim();
+  return t ? t.slice(0, 128) : null;
+}
+
+/**
+ * jobs.taxExempt when the office ticks "This job's work is exempt": the client's evidence on file
+ * prefills it; confirmedBy is the person's name (a string, as the jobs schema says) and province
+ * the company's province (exemptionFor skips an exemption recorded for another province).
+ */
+export function jobTaxExemptFrom({ client = null, by = null, province = null, at = new Date().toISOString() } = {}) {
+  const d = client?.taxExemptDetails || {};
   return {
-    taxProvince: s.mode === 'custom' ? null : s.province,
-    taxTreatment: s.mode === 'custom' ? 'custom' : s.treatment,
-    taxes,
-    taxPct: combinedRate(taxes),
+    basis: client?.taxExemptBasis || null,
+    number: client?.taxExemptNumber || null,
+    endCustomer: d.endCustomer || null,
+    details: { name: d.name || null, registryNo: d.registryNo || null, band: d.band || null, reserve: d.reserve || null, farmCertNo: d.farmCertNo || null, department: d.department || null },
+    confirmedBy: confirmedByName(by),
+    confirmedAt: at,
+    province: province || null,
   };
+}
+
+/** A document's exemptionConfirmed taken from its job: { by (name), at, from: 'job' }. */
+export function exemptionConfirmedFromJob(job, now = new Date().toISOString()) {
+  return { by: confirmedByName(job?.taxExempt?.confirmedBy), at: job?.taxExempt?.confirmedAt || now, from: 'job' };
+}
+
+/** The provincial sales tax's short name in a province: 'RST' (MB), 'PST' (BC, SK), 'QST', or null. */
+export function provincialTaxId(province) {
+  if (province === 'MB') return 'RST';
+  if (province === 'BC' || province === 'SK') return 'PST';
+  if (province === 'QC') return 'QST';
+  return null;
+}
+
+/**
+ * A warning (never a refusal) when an exemption number does not look like the province's format.
+ * Formats are VERIFY (docs/code/tax.md, Registration numbers): Manitoba RST numbers have 7 digits
+ * (Bulletin 004; often written 123456-7), Saskatchewan vendor's licences 7 digits, BC PST numbers
+ * PST-1234-5678.
+ */
+export function exemptNumberProblem({ province, basis, number } = {}) {
+  const v = String(number ?? '').trim();
+  if (!v) return null;
+  if (basis === 'first-nations' || basis === 'farm') return null; // their evidence is not a tax number
+  const digits = v.replace(/\D/g, '');
+  if (province === 'MB' && !/^[\d\s-]+$/.test(v)) return 'A Manitoba RST number is 7 digits. Check it against the customer’s certificate.';
+  if (province === 'MB' && digits.length !== 7) return `A Manitoba RST number is 7 digits; this has ${digits.length}. Check it against the customer’s certificate.`;
+  if (province === 'SK' && digits.length !== 7) return `A Saskatchewan PST vendor’s licence is 7 digits; this has ${digits.length}. Check it.`;
+  if (province === 'BC' && !/^(PST-?)?\d{4}-?\d{4}$/i.test(v)) return 'A BC PST number looks like PST-1234-5678. Check it.';
+  return null;
 }
 
 function combinedRate(taxes) {

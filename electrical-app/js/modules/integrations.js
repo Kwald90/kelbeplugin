@@ -7,10 +7,14 @@
 // Also exported for other screens: invoiceOnlineTools (Pay online / Email on an invoice),
 // payLinkBlock (the pay link on the printed invoice) and emailDocAction (Email in the
 // invoice/estimate preview). They render nothing when the server or the feature is not there.
+// Emailing a document and "Pay online" run the send check first (lib/doc-view.js confirmSend:
+// a Manitoba invoice without RST and without the customer's exemption is not sent; the server
+// refuses it too with 422 exemption_required).
 import * as UI from '../ui.js';
 import { renderMarkdown } from '../lib/markdown.js';
 import { PLANS, monthlyCents } from '../plans.js';
 import { apiFetch } from '../session.js';
+import { confirmSend } from '../lib/doc-view.js';
 
 const PLUG = '<path d="M9 2v5M15 2v5"/><path d="M6 7h12v4a6 6 0 01-12 0z"/><path d="M12 17v5"/>';
 const ICONS = { stripe: 'dollar', resend: 'mail', sendgrid: 'send', twilio: 'phone', facebook: 'funnel', anthropic: 'zap' };
@@ -359,6 +363,8 @@ export function invoiceOnlineTools(ctx, inv, balanceCents) {
 async function payOnline(ctx, invoiceId) {
   const { ui, store } = ctx;
   const { h } = ui;
+  const inv = store.get('invoices', invoiceId);
+  if (inv && !(await confirmSend(inv, { collection: 'invoices' }))) return;
   let r;
   try {
     r = await api('/integrations/stripe/pay-link', { method: 'POST', body: { invoiceId } });
@@ -378,9 +384,10 @@ async function payOnline(ctx, invoiceId) {
   });
 }
 
-function emailDocument(collection, doc, store) {
+async function emailDocument(collection, doc, store) {
   const client = doc.clientId ? store.get('clients', doc.clientId) : null;
   const what = collection === 'invoices' ? 'invoice' : 'estimate';
+  if (!(await confirmSend(doc, { collection, what }))) return;
   UI.formSheet({
     title: `Email ${what} ${doc.number || ''}`.trim(),
     submitLabel: 'Send',

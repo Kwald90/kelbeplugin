@@ -1,5 +1,11 @@
 // Clients (S12): list, detail with related records, add/edit/delete.
+// Release 1 (docs/releases/r1-get-paid.md 3.2, 4.6): the tax-exemption evidence card (evidence
+// only: the exemption is marked on each job it applies to), the credit card (application, limit,
+// terms, statement email, reminders, hold override) and a printable blank credit application.
 import { invoiceShown, docTotals } from '../lib/money.js';
+import { EXEMPT_BASES } from '../lib/exemption.js';
+import { PROVINCES, provincialTaxId, exemptNumberProblem } from '../lib/tax.js';
+import { printNode } from '../lib/doc-view.js';
 import { openLeadSheet } from './leads.js';
 import { moduleOn } from '../lib/modules.js';
 import { BILLING_MODES } from '../lib/tm.js';
@@ -139,6 +145,10 @@ function detailView(root, ctx, id) {
       (c.tags || []).length ? h('div', { class: 'row' }, c.tags.map((t) => ui.badge(t))) : null,
       c.notes ? h('p', { class: 'crm-notes' }, c.notes) : null);
 
+    const side = h('div', { class: 'stack crm-side' }, contact,
+      exemptionCard(ctx, c),
+      creditCard(ctx, c, { money: !auth || (typeof auth.seesMoney === 'function' ? auth.seesMoney() : auth.can('invoices')) }));
+
     const stats = h('div', { class: 'grid crm-stats' },
       ui.stat({ label: 'Open jobs', value: String(jobs.filter((j) => !CLOSED_JOB.has(j.status)).length) }),
       on('invoices') && money ? ui.stat({ label: 'Owed', value: ui.fmtMoney(owed), tone: owed > 0 ? 'danger' : null }) : null,
@@ -222,10 +232,215 @@ function detailView(root, ctx, id) {
         lookupAction(ctx, { entity: 'customers', clientId: id }),
         ui.button('New job', { variant: 'primary', icon: 'plus', href: `#/jobs?new=1&clientId=${id}` }),
       ].filter(Boolean),
-    }, h('div', { class: 'crm-detail' }, contact, h('div', { class: 'stack' }, stats, tabsEl, tabBody))));
+    }, h('div', { class: 'crm-detail' }, side, h('div', { class: 'stack' }, stats, tabsEl, tabBody))));
   };
   draw();
   return store.on('*', (e) => { if (['clients', 'jobs', 'estimates', 'invoices', 'payments', 'leads', 'drawings'].includes(e.coll)) draw(); });
+}
+
+// ---- tax exemption evidence (r1-get-paid.md 2.9, 3.2) ------------------------------------
+
+const BASIS_LABEL = Object.fromEntries(EXEMPT_BASES.map((b) => [b.id, b.label]));
+const DETAIL_LABEL = { name: 'Name', registryNo: 'Status registry no.', band: 'Band', reserve: 'Reserve', farmCertNo: 'Farm certificate no.', department: 'Federal department', endCustomer: 'End customer', note: 'Note' };
+const filled = (v) => v != null && String(v).trim() !== '';
+
+/** The evidence on file for a client, as [label, value] rows. */
+export function exemptionRows(c) {
+  const d = c.taxExemptDetails || {};
+  const tax = provincialTaxId(c.taxExemptProvince) || 'RST/PST';
+  return [
+    c.taxExemptBasis ? ['Basis', BASIS_LABEL[c.taxExemptBasis] || c.taxExemptBasis] : null,
+    filled(c.taxExemptNumber) ? [`${tax} number`, c.taxExemptNumber] : null,
+    c.taxExemptProvince ? ['Province', PROVINCES.find((x) => x.code === c.taxExemptProvince)?.name || c.taxExemptProvince] : null,
+    ...Object.keys(DETAIL_LABEL).filter((k) => filled(d[k])).map((k) => [DETAIL_LABEL[k], d[k]]),
+  ].filter(Boolean);
+}
+
+function exemptionCard(ctx, c) {
+  const { ui, auth } = ctx;
+  const { h } = ui;
+  const canEdit = !auth || auth.can('clients');
+  const rows = exemptionRows(c);
+  const warn = exemptNumberProblem({ province: c.taxExemptProvince, basis: c.taxExemptBasis, number: c.taxExemptNumber });
+  return h('section', { class: 'card crm-side-card crm-tax', dataset: { exemptionCard: '1' } },
+    h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Tax exemption'),
+      canEdit ? ui.button(rows.length ? 'Edit' : 'Add', { size: 'sm', variant: 'ghost', icon: rows.length ? 'edit' : 'plus', title: 'Tax exemption evidence', onClick: () => openExemptionSheet(ctx, c) }) : null),
+    rows.length
+      ? h('dl', { class: 'crm-dl' }, rows.map(([k, v]) => [h('dt', null, k), h('dd', null, v)]))
+      : h('p', { class: 'muted crm-sub' }, 'No exemption evidence on file.'),
+    c.taxExemptCheckedAt ? h('div', { class: 'muted crm-sub' }, `Evidence checked ${ui.fmtDate(c.taxExemptCheckedAt)}`) : null,
+    warn ? h('div', { class: 'crm-warn crm-sub' }, ui.icon('info', 14), h('span', null, warn)) : null,
+    h('p', { class: 'muted crm-sub crm-tax-note' }, 'This is evidence on file. Mark the exemption on each job it applies to.'));
+}
+
+function openExemptionSheet({ store, ui }, c) {
+  const d = c.taxExemptDetails || {};
+  const province = c.taxExemptProvince || store.settings().company?.province || '';
+  ui.formSheet({
+    title: `Tax exemption · ${c.name}`,
+    submitLabel: 'Save',
+    fields: [
+      { label: 'Why the customer may be exempt', name: 'taxExemptBasis', type: 'select', value: c.taxExemptBasis || '', span: true,
+        options: [{ value: '', label: 'No exemption on file' }, ...EXEMPT_BASES.map((b) => ({ value: b.id, label: b.label }))] },
+      { label: 'RST or PST number', name: 'taxExemptNumber', value: c.taxExemptNumber || '', hint: 'Manitoba: 7 digits (Bulletin 004). The format is only checked as a warning.' },
+      { label: 'Province', name: 'taxExemptProvince', type: 'select', value: ['MB', 'SK', 'BC'].includes(province) ? province : '',
+        options: [{ value: '', label: '—' }, ...PROVINCES.filter((p) => ['MB', 'SK', 'BC'].includes(p.code)).map((p) => ({ value: p.code, label: p.name }))] },
+      { label: 'Name (person or band)', name: 'd.name', value: d.name || '', hint: 'First Nations' },
+      { label: 'Status registry number', name: 'd.registryNo', value: d.registryNo || '', hint: 'First Nations' },
+      { label: 'Band', name: 'd.band', value: d.band || '', hint: 'First Nations' },
+      { label: 'Reserve', name: 'd.reserve', value: d.reserve || '', hint: 'First Nations' },
+      { label: 'Farm-use certificate number', name: 'd.farmCertNo', value: d.farmCertNo || '' },
+      { label: 'Federal department', name: 'd.department', value: d.department || '' },
+      { label: 'Evidence checked on', name: 'taxExemptCheckedAt', type: 'date', value: c.taxExemptCheckedAt || ui.today(), hint: 'When you last saw their certificate or licence' },
+      { label: 'Note', name: 'd.note', type: 'textarea', rows: 2, value: d.note || '', span: true },
+    ],
+    extra: ui.h('p', { class: 'muted crm-sub' }, 'Evidence only. An exemption applies per contract: mark it on each job (Job → Contract and payment) before invoicing without RST.'),
+    onSubmit(v) {
+      const details = {};
+      for (const k of ['name', 'registryNo', 'band', 'reserve', 'farmCertNo', 'department', 'note']) { const x = String(v[`d.${k}`] || '').trim(); if (x) details[k] = x; }
+      const basis = v.taxExemptBasis || null;
+      const number = String(v.taxExemptNumber || '').trim() || null;
+      const patch = basis || number || Object.keys(details).length
+        ? { taxExemptBasis: basis, taxExemptNumber: number, taxExemptProvince: v.taxExemptProvince || null, taxExemptDetails: details, taxExemptCheckedAt: v.taxExemptCheckedAt || null }
+        : { taxExemptBasis: null, taxExemptNumber: null, taxExemptProvince: null, taxExemptDetails: null, taxExemptCheckedAt: null };
+      store.update('clients', c.id, patch, { summary: 'Tax exemption evidence' });
+      const warn = exemptNumberProblem({ province: patch.taxExemptProvince, basis, number });
+      ui.toast(warn ? `Saved. ${warn}` : 'Exemption evidence saved', warn ? 'info' : 'success', warn ? 6000 : 2600);
+    },
+  });
+}
+
+// ---- credit (r1-get-paid.md 4.6) ------------------------------------------------------
+
+const APPLICATION_STATUS = [
+  { value: 'none', label: 'No application' }, { value: 'sent', label: 'Application sent' }, { value: 'received', label: 'Application received' },
+  { value: 'approved', label: 'Approved' }, { value: 'declined', label: 'Declined' },
+];
+const HOLD_MODES = [
+  { value: 'auto', label: 'Automatic (past due or over the limit)' }, { value: 'hold', label: 'Hold work (forced)' }, { value: 'release', label: 'Don’t hold (forced)' },
+];
+const HOLD_REASON = { past_due: 'Past due: hold work', over_limit: 'Over the credit limit: hold work' };
+
+function creditCard(ctx, c, { money }) {
+  const { ui, auth } = ctx;
+  const { h } = ui;
+  const cr = c.credit || {};
+  const canEdit = !auth || auth.can('invoices');
+  const hold = cr.hold?.on ? h('div', { class: 'crm-hold', dataset: { creditHold: '1' } }, ui.icon('alert', 16),
+    h('span', null, HOLD_REASON[cr.hold.reason] || 'Hold work', cr.hold.since ? ` since ${ui.fmtDate(cr.hold.since)}` : '')) : null;
+  const ov = cr.holdOverride?.mode && cr.holdOverride.mode !== 'auto' ? h('div', { class: 'muted crm-sub' },
+    `${cr.holdOverride.mode === 'hold' ? 'Held' : 'Not held'} by ${cr.holdOverride.by || 'the office'}${cr.holdOverride.until ? ` until ${ui.fmtDate(cr.holdOverride.until)}` : ''}${cr.holdOverride.reason ? `: ${cr.holdOverride.reason}` : ''}`) : null;
+  const status = APPLICATION_STATUS.find((x) => x.value === (cr.applicationStatus || 'none'))?.label;
+  const rows = [
+    ['Application', [status, cr.applicationSentAt ? `sent ${ui.fmtDate(cr.applicationSentAt)}` : null, cr.applicationReceivedAt ? `received ${ui.fmtDate(cr.applicationReceivedAt)}` : null].filter(Boolean).join(', ')],
+    cr.approvedAt || cr.approvedBy ? ['Approved', [cr.approvedBy, cr.approvedAt ? ui.fmtDate(cr.approvedAt) : null].filter(Boolean).join(', ')] : null,
+    money ? ['Credit limit', Number.isInteger(cr.limitCents) ? ui.fmtMoney(cr.limitCents, { whole: true }) : 'No limit'] : null,
+    ['Terms', cr.termsDays ? `Net ${cr.termsDays} days` : 'From the invoice'],
+    cr.statementEmail ? ['Statements to', cr.statementEmail] : null,
+    cr.remindersPaused ? ['Reminders', 'Paused'] : null,
+  ].filter(Boolean);
+  return h('section', { class: 'card crm-side-card crm-credit', dataset: { creditCard: '1' } },
+    h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Credit'),
+      canEdit ? ui.button('Edit', { size: 'sm', variant: 'ghost', icon: 'edit', title: 'Credit details', onClick: () => openCreditSheet(ctx, c, { money }) }) : null),
+    hold, ov,
+    h('dl', { class: 'crm-dl' }, rows.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])),
+    cr.note ? h('p', { class: 'crm-notes crm-sub' }, cr.note) : null,
+    h('div', { class: 'row' }, ui.button('Print credit application', { size: 'sm', icon: 'printer', onClick: () => printNode(creditApplicationNode(ctx, c)) })));
+}
+
+/** The credit limit typed: null for a blank field (no limit), else whole cents, never negative. */
+export function creditLimitFrom(raw, cents) {
+  if (raw == null || String(raw).trim() === '') return null;
+  const n = Math.round(Number(cents));
+  return Number.isFinite(n) ? Math.max(0, n) : null;
+}
+
+function openCreditSheet({ store, ui, auth }, c, { money }) {
+  const cr = c.credit || {};
+  const ho = cr.holdOverride || {};
+  ui.formSheet({
+    title: `Credit · ${c.name}`,
+    submitLabel: 'Save',
+    fields: [
+      { label: 'Credit application', name: 'applicationStatus', type: 'select', value: cr.applicationStatus || 'none', options: APPLICATION_STATUS },
+      { label: 'Sent on', name: 'applicationSentAt', type: 'date', value: cr.applicationSentAt || '' },
+      { label: 'Received on', name: 'applicationReceivedAt', type: 'date', value: cr.applicationReceivedAt || '' },
+      { label: 'Approved on', name: 'approvedAt', type: 'date', value: cr.approvedAt || '' },
+      { label: 'Approved by', name: 'approvedBy', value: cr.approvedBy || '' },
+      money ? { label: 'Credit limit', name: 'limitCents', type: 'money', value: Number.isInteger(cr.limitCents) ? cr.limitCents : null, hint: 'Blank for no limit' } : null,
+      { label: 'Payment terms (days)', name: 'termsDays', type: 'number', min: '0', step: '1', value: cr.termsDays ?? '', hint: 'Blank: the terms on each invoice' },
+      { label: 'Statements and reminders to', name: 'statementEmail', type: 'email', value: cr.statementEmail || '', hint: 'Accounts payable. Blank uses the client’s email.' },
+      { label: 'Pause payment reminders', name: 'remindersPaused', type: 'checkbox', value: Boolean(cr.remindersPaused) },
+      { label: 'Hold work for this client', name: 'holdMode', type: 'select', value: ho.mode || 'auto', options: HOLD_MODES },
+      { label: 'Until', name: 'holdUntil', type: 'date', value: ho.until || '', hint: 'Blank: until changed' },
+      { label: 'Why', name: 'holdReason', value: ho.reason || '', span: true },
+      { label: 'Note', name: 'note', type: 'textarea', rows: 2, value: cr.note || '', span: true },
+    ].filter(Boolean),
+    onSubmit(v, form) {
+      const mode = v.holdMode || 'auto';
+      const reason = String(v.holdReason || '').trim();
+      if (mode !== 'auto' && reason.length < 3) { ui.toast('Say why the hold is forced', 'error'); return false; }
+      const termsDays = v.termsDays == null || v.termsDays === '' ? null : Math.max(0, Math.round(Number(v.termsDays)));
+      const overrideChanged = mode !== (ho.mode || 'auto') || (v.holdUntil || '') !== (ho.until || '') || reason !== (ho.reason || '');
+      const credit = {
+        ...cr,
+        applicationStatus: v.applicationStatus || 'none',
+        applicationSentAt: v.applicationSentAt || null,
+        applicationReceivedAt: v.applicationReceivedAt || null,
+        approvedAt: v.approvedAt || null,
+        approvedBy: String(v.approvedBy || '').trim() || null,
+        termsDays,
+        statementEmail: String(v.statementEmail || '').trim() || null,
+        remindersPaused: Boolean(v.remindersPaused),
+        holdOverride: overrideChanged
+          ? { mode, until: v.holdUntil || null, reason: reason || null, by: auth?.who?.().name || null, at: new Date().toISOString() }
+          : (cr.holdOverride || { mode: 'auto' }),
+        note: String(v.note || '').trim() || null,
+      };
+      // Blank is "no limit"; $0 is a real limit (cash only: any balance is over it).
+      if (money) credit.limitCents = creditLimitFrom(form?.querySelector?.('[name="limitCents"]')?.value, v.limitCents);
+      store.update('clients', c.id, { credit }, { summary: 'Credit details' });
+      ui.toast('Credit details saved', 'success');
+    },
+  });
+}
+
+/** A blank credit application to print and hand to a general contractor or customer. */
+export function creditApplicationNode({ store, ui }, client = null) {
+  const { h } = ui;
+  const s = store.settings();
+  const co = s.company || {};
+  const terms = client?.credit?.termsDays ? `Net ${client.credit.termsDays} days from the invoice date` : 'as stated on each invoice';
+  const blank = (label, wide = false) => h('div', { class: ['crm-app-field', wide ? 'wide' : null] }, h('div', { class: 'doc-label' }, label), h('div', { class: 'crm-app-line' }));
+  const section = (title, ...kids) => h('section', { class: 'crm-app-section' }, h('h4', null, title), h('div', { class: 'crm-app-grid' }, kids));
+  return h('article', { class: 'doc-sheet crm-app', dataset: { creditApplication: '1' } },
+    h('header', { class: 'doc-top' },
+      h('div', null,
+        h('div', { class: 'doc-brand' }, co.name || 'Company'),
+        h('div', { class: 'doc-small' }, [co.address, co.phone, co.email].filter(Boolean).join(' · ')),
+        co.gstHstNo ? h('div', { class: 'doc-small' }, `GST/HST No. ${co.gstHstNo}`) : null),
+      h('div', { class: 'doc-title' }, h('div', { class: 'doc-kind' }, 'Credit application'),
+        client ? h('div', { class: 'doc-small' }, `For ${client.name}`) : null)),
+    section('Business',
+      blank('Legal name', true), blank('Operating name (if different)', true),
+      blank('Business address', true), blank('Mailing address (if different)', true),
+      blank('Phone'), blank('Email for invoices and statements'),
+      blank('Type of business (corporation, partnership, sole proprietor)'), blank('Years in business'),
+      blank('GST/HST number'), blank('RST/PST number (attach your certificate if our work is exempt)')),
+    section('Accounts payable contact',
+      blank('Name'), blank('Title'), blank('Phone'), blank('Email')),
+    section('Bank reference',
+      blank('Bank and branch'), blank('Contact and phone'), blank('Account in the name of', true)),
+    section('Trade references',
+      blank('1. Company'), blank('Contact and phone'), blank('2. Company'), blank('Contact and phone'), blank('3. Company'), blank('Contact and phone')),
+    section('Terms',
+      h('p', { class: 'doc-small wide' }, `Payment terms: ${terms}.`),
+      s.collections?.termsText ? h('p', { class: 'doc-small wide' }, s.collections.termsText) : null,
+      blank('Credit limit requested')),
+    section('Authorized signature',
+      h('p', { class: 'doc-small wide' }, `I confirm the information above is true, and I authorize ${co.name || 'the company'} to contact the bank and trade references listed to assess this application. The information is used only to assess and manage credit.`),
+      blank('Signature'), blank('Date'), blank('Name'), blank('Title')),
+    h('footer', { class: 'doc-foot doc-small' }, `Please return it to ${co.name || 'us'}${co.email ? ` at ${co.email}` : ''}.`));
 }
 
 export default {
