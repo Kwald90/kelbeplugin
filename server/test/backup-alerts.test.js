@@ -100,6 +100,13 @@ describe('hq_backup_alerts', { skip }, () => {
     assert.deepEqual((await outbox()).map((m) => m.template.split(':')[1]).sort(), ['drill_overdue', 'no_offsite_drill', 'offsite_missing']);
   });
 
+  test('staging without an offsite copy: no drill emails (nobody drills there)', async () => {
+    backupStatus({ status: 'degraded', offsite: 'skipped', offsiteTarget: null, lastOffsiteOkAt: null });
+    drills([{ ts: hoursAgo(100 * 24), environment: 'staging', host: 'srv1', ok: true }]);
+    const r = await runBackupAlerts({ db: t.db, config: config({ appEnv: 'staging' }), notifyEmail: NOTIFY, now: NOW });
+    assert.deepEqual(r, { problems: [], emailed: 0 });
+  });
+
   test('stale offsite and a stale backup; a failed drill does not count as a pass', async () => {
     backupStatus({ finishedAt: hoursAgo(30), lastOffsiteOkAt: hoursAgo(30) });
     drills([offsiteDrill(100), offsiteDrill(1, { ok: false, failures: 'pg_restore failed' })]);

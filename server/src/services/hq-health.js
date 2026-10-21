@@ -218,8 +218,8 @@ export function backupProblems(h) {
   }
   const r = h.restoreTest;
   if (r?.configured && !r.error) {
-    if (r.stale) out.push({ code: 'drill_overdue', text: r.lastPassAt ? 'restore drill overdue' : 'restore drill overdue (none recorded yet)' });
     // Offsite is required in production; elsewhere a drill is expected once an offsite copy exists.
+    if (r.stale && (production || b?.offsite?.configured)) out.push({ code: 'drill_overdue', text: r.lastPassAt ? 'restore drill overdue' : 'restore drill overdue (none recorded yet)' });
     if (!r.lastOffsitePassAt && (production || b?.offsite?.configured)) out.push({ code: 'no_offsite_drill', text: 'no offsite restore drill yet' });
   } else if (r?.configured && r.error && production) {
     out.push({ code: 'drill_unreadable', text: 'restore test log unreadable' });
