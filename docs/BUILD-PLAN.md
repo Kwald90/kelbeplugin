@@ -165,6 +165,19 @@ Settings additions (workstream B): `company.province`, `codeBook ('CEC-2024'|'NE
 
 ## Workstreams and file ownership
 
+### Customer experience sprint (2026-10-20)
+
+Kelvin requested the [UX programme](ux/README.md) and parallel implementation.
+Current UI ownership and acceptance criteria live in [Sprint 01](ux/SPRINT-01.md).
+For this sprint, the navigation workstream owns the shell and navigation styles;
+Today owns the dashboard; Estimates owns its editor; the lead owns integration
+and documentation. The earlier Phase 0 shared-file freeze below describes that
+historical phase, not this UI sprint. Each agent uses an isolated worktree.
+Existing domain, API, tax, tenancy, accounting and sync contracts remain in force.
+The router may pass an additive `readOnly` flag for locked-module viewing; the
+estimate editor must respect it. New customer approval/portal contracts are
+planned in [Customer journey](ux/CUSTOMER-JOURNEY.md), not implemented by this slice.
+
 Phase 0 runs in parallel, each workstream in its own git worktree. Touch only the files you own.
 Shared files (`js/app.js`, `js/ui.js`, `js/icons.js`, `js/auth.js`, `index.html`, `sw.js`,
 `modules/index.js`) are frozen in Phase 0 except where noted. Need a helper? Put it in your own lib file.

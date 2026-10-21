@@ -1,6 +1,8 @@
 // Offline cache: app shell is cached on install, everything else on first use.
-const CACHE = 'fishtape-v3';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './css/tokens.css', './css/app.css', './css/canvas.css', './icons/icon.svg', './js/app.js'];
+const CACHE = 'fishtape-v4-ux1';
+const SHELL = ['./', './index.html', './manifest.webmanifest', './css/tokens.css', './css/app.css', './css/canvas.css',
+  './css/dashboard.css', './css/estimate-experience.css', './icons/icon.svg', './js/app.js',
+  './js/lib/navigation.js', './js/lib/dashboard-actions.js'];
 
 // put() one by one rather than addAll(): addAll fails the whole install ("Entry already
 // exists") when the previous worker is writing the same file to this cache at that moment.

@@ -225,10 +225,10 @@ const openStack = [];
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && openStack.length) openStack[openStack.length - 1](); });
 
 /**
- * openSheet({ title, body, actions, wide, onClose }) -> { el, close, body }
+ * openSheet({ title, body, actions, wide, onClose, initialFocus }) -> { el, close, body }
  * `body` may be a node or a function (close) => node. `actions` are nodes for the footer.
  */
-export function openSheet({ title, body, actions = [], wide, onClose, dialog }) {
+export function openSheet({ title, body, actions = [], wide, onClose, dialog, initialFocus }) {
   const prevFocus = document.activeElement;
   const scrim = h('div', { class: 'scrim', onClick: () => close() });
   const bodyEl = h('div', { class: 'sheet-body' });
@@ -248,7 +248,10 @@ export function openSheet({ title, body, actions = [], wide, onClose, dialog }) 
   append(bodyEl, [typeof body === 'function' ? body(close) : body]);
   document.body.append(scrim, panel);
   openStack.push(close);
-  setTimeout(() => (panel.querySelector('input,select,textarea,button:not([title=Close])') || panel).focus?.(), 30);
+  setTimeout(() => {
+    if (closed) return;
+    ((initialFocus && panel.querySelector(initialFocus)) || panel.querySelector('input,select,textarea,button:not([title=Close])') || panel).focus?.();
+  }, 30);
   return { el: panel, body: bodyEl, close };
 }
 

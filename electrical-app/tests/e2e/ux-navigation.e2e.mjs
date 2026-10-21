@@ -70,11 +70,14 @@ try {
   await shot('desktop-compact');
   await click('.rail-collapse');
   await page('Emulation.setDeviceMetricsOverride', { width: 1100, height: 900, deviceScaleFactor: 1, mobile: false });
-  await evaluate("kelbe.nav('estimates/new')");
+  await evaluate("kelbe.nav('estimates/' + kelbe.store.list('estimates').find(e => e.lines?.length).id)");
   await wait("!!document.querySelector('.doc-layout')");
   assert.ok(await evaluate("document.querySelector('.main').scrollWidth <= document.querySelector('.main').clientWidth"), '1100px document fits beside labelled sidebar');
   assert.equal(await evaluate("getComputedStyle(document.querySelector('.doc-side')).position"), 'static');
   await shot('desktop-medium-estimate');
+  await page('Emulation.setDeviceMetricsOverride', { width: 1366, height: 900, deviceScaleFactor: 1, mobile: false });
+  assert.ok(await evaluate("document.querySelector('.main').scrollWidth <= document.querySelector('.main').clientWidth"), 'populated desktop estimate fits');
+  await shot('desktop-estimate');
   await evaluate("kelbe.nav('dashboard')");
   await wait("location.hash === '#/dashboard'");
   await page('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -82,7 +85,7 @@ try {
   assert.deepEqual(await evaluate("[...document.querySelectorAll('.mobile-primary [data-mod]')].map(a=>a.dataset.mod)"), ['dashboard', 'clients', 'jobs', 'invoices']);
   assert.ok(await evaluate("[...document.querySelectorAll('.mobile-primary .rail-btn')].every(a=>a.getBoundingClientRect().height>=44 && a.getBoundingClientRect().width>=44)"));
   await shot('phone-owner');
-  await evaluate("kelbe.nav('estimates/' + kelbe.store.list('estimates')[0].id)");
+  await evaluate("kelbe.nav('estimates/' + kelbe.store.list('estimates').find(e => e.lines?.length).id)");
   await wait("!!document.querySelector('.doc-layout')");
   assert.ok(await evaluate("document.querySelector('.main').scrollWidth <= document.querySelector('.main').clientWidth"), 'phone estimate has no horizontal overflow');
   await shot('phone-estimate');
@@ -90,6 +93,7 @@ try {
   await wait("location.hash === '#/dashboard'");
   await click('.nav-more');
   await wait("!!document.querySelector('.more-navigation')");
+  await wait("document.activeElement === document.querySelector('.more-navigation a[href]')");
   assert.equal(await evaluate("document.querySelectorAll('.more-navigation [data-mod]').length"), await evaluate("kelbe.MODULES.filter(m=>!m.hidden&&kelbe.auth.can(m.perm)&&kelbe.moduleEnabled(m.id)).length"));
   await shot('phone-more');
   await click('.more-navigation [data-mod=calcs]');

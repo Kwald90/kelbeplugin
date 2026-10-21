@@ -5,6 +5,7 @@ what) and the [backlog](BACKLOG.md) (what's open, and what needs Kelvin).
 
 | folder | what's in it | start with |
 | --- | --- | --- |
+| [ux/](ux/) | Customer experience design, roadmap, customer journey and active sprint | [UX programme](ux/README.md) |
 | [architecture/](architecture/) | how the system fits together | [13 layers](architecture/13-layers.md) |
 | [code/](code/) | Canadian Electrical Code research, provincial adoption, sales tax | [code README](code/README.md) |
 | [field/](field/) | how the field tools work and the rules behind them | [wire runs](field/wire-runs.md) |
