@@ -4,6 +4,9 @@
 // store write, so it works offline and syncs later. Managers also get the crew's day and a
 // quick "Add task" for anyone. The rules live in js/lib/workplan.js (shared with the API).
 import * as W from '../lib/workplan.js';
+import { openEntry } from '../lib/clock.js';
+import { fieldSyncStatus, personalShiftStatus, fieldSiteDetails } from '../lib/field-status.js';
+import { openSyncSheet } from './account.js';
 
 // Clipboard with a check (24px grid, stroke): the rail icon for My day.
 export const ICON_TODAY = '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>';
@@ -24,17 +27,51 @@ export default {
     const manager = auth.isManager();
     let view = ctx.query.view === 'crew' && manager ? 'crew' : 'mine';
     const open = new Set(); // expanded cards
-    const host = h('div');
-    const syncLine = h('div', { class: 'wp-syncline muted', role: 'status' });
+    const host = h('div', { class: 'field-day' });
+    const syncLine = h('div', { class: 'field-sync' });
+    const available = (id) => auth.can(id) && (!ctx.on || ctx.on(id));
+    const canTime = available('time');
 
-    const jobs = () => new Map(store.list('jobs').map((j) => [j.id, j]));
+    const jobs = () => new Map((available('jobs') ? store.list('jobs') : []).map((j) => [j.id, j]));
     // My tasks that matter today: anything open, plus finished ones from this week (photos are
     // heavy, so older finished work stays out of memory).
     const myTasks = () => { const since = W.addDays(ui.today(), -7); return store.list('workTasks', (t) => t.employeeId === empId && (t.status !== 'done' || (t.date || '') >= since)); };
 
     function paintSync(s) {
-      const n = s?.waiting || 0;
-      ui.clear(syncLine).append(n ? `${n} update${n === 1 ? '' : 's'} saved on this device; ${s.state === 'offline' ? "they'll sync when you're back online" : 'syncing'}.` : '');
+      const state = fieldSyncStatus(s, { demo: !auth.synced });
+      syncLine.className = `field-sync is-${state.tone}`;
+      ui.clear(syncLine).append(h('div', { class: 'grow', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+        h('strong', null, state.title), h('div', { class: 'field-status-detail' }, state.detail),
+        s?.lastSyncAt ? h('div', { class: 'field-status-detail' }, `Last sync ${ui.fmtDateTime(s.lastSyncAt)}`) : null));
+      if (ctx.app) syncLine.append(ui.button('Sync details', { size: 'sm', icon: 'activity', onClick: () => openSyncSheet(ctx.app) }));
+    }
+
+    function shiftCard() {
+      if (!canTime) return h('p', { class: 'field-clock-note' }, 'Task progress does not create payroll time entries.');
+      const shift = personalShiftStatus(openEntry(store, empId), empId);
+      const job = shift.jobId && available('jobs') ? store.get('jobs', shift.jobId) : null;
+      return h('section', { class: ['field-shift', `is-${shift.tone}`], 'aria-label': 'Your time clock' },
+        ui.icon('clock', 24), h('div', { class: 'grow' },
+          h('h2', null, shift.title),
+          shift.clockIn ? h('div', { class: 'field-status-detail' }, `Since ${ui.fmtTime(shift.since)}${job ? ` at ${job.title || job.number}` : ''}`) : null,
+          h('p', null, shift.detail)),
+        ui.button('Open time clock', { href: '#/time', icon: 'chevron-right' }));
+    }
+
+    function siteCard(job, expanded) {
+      const canClients = available('clients');
+      const client = canClients && job?.clientId ? store.get('clients', job.clientId) : null;
+      const site = fieldSiteDetails(job, client, { canSeeJobs: available('jobs'), canSeeClients: canClients });
+      if (!site) return null;
+      return h('div', { class: 'field-site' },
+        h('strong', null, site.title),
+        site.address ? h('div', { class: 'field-status-detail' }, ui.icon('map-pin', 14), site.address) : null,
+        h('div', { class: 'row' },
+          ui.button('Job details', { size: 'sm', href: `#/jobs/${encodeURIComponent(site.jobId)}` }),
+          site.directions ? h('a', { class: 'btn sm', href: site.directions, target: '_blank', rel: 'noopener noreferrer' }, ui.icon('map-pin', 16), 'Directions') : null),
+        expanded && site.contactName ? h('div', { class: 'field-site-contact' },
+          h('span', null, `Customer contact: ${site.contactName}`),
+          site.phoneHref ? h('a', { class: 'btn sm', href: site.phoneHref }, ui.icon('phone', 16), site.phone) : null) : null);
     }
 
     // ---------- actions ----------
@@ -42,11 +79,11 @@ export default {
     const by = () => empId || me.id || null;
     const save = (t, patch, summary) => store.update('workTasks', t.id, patch, summary ? { summary } : undefined);
     const fresh = (t) => store.get('workTasks', t.id) || t;
-    const markSeen = (t) => { if (!t.seenAt) save(t, { seenAt: now() }); };
+    const markSeen = (t) => { if (!ctx.readOnly && !t.seenAt) save(t, { seenAt: now() }); };
 
     function start(t) {
       save(t, W.startTask(fresh(t), { now: now(), by: by() }), `started ${t.title}`);
-      ui.toast('Started', 'success');
+      ui.toast('Task started. Time clock unchanged.', 'success', 3500);
     }
 
     async function finish(t0) {
@@ -70,7 +107,7 @@ export default {
         title: `Finish: ${t.title}`,
         submitLabel: 'Mark done',
         fields: [
-          { label: 'Hours spent', name: 'actualHours', type: 'number', step: '0.25', min: '0', max: '24', value: hours, hint: t.estHours ? `Planned ${t.estHours} h` : null },
+          { label: 'Hours spent', name: 'actualHours', type: 'number', step: '0.25', min: '0', max: '24', value: hours, hint: `${t.estHours ? `Planned ${t.estHours} h. ` : ''}Task hours do not create a payroll time entry.` },
           t.qty != null ? { label: `Quantity done${t.unit ? ` (${t.unit})` : ''}`, name: 'qtyDone', type: 'number', step: 'any', min: '0', value: t.qtyDone ?? t.qty, hint: `Planned ${t.qty}` } : null,
           { label: 'Note (optional)', name: 'note', type: 'textarea', rows: 2, value: t.note || '', span: true },
         ].filter(Boolean),
@@ -90,7 +127,7 @@ export default {
         submitLabel: 'Save progress',
         fields: [
           t.qty != null ? { label: `Quantity done so far${t.unit ? ` (${t.unit})` : ''}`, name: 'qtyDone', type: 'number', step: 'any', min: '0', value: t.qtyDone ?? '', hint: `Of ${t.qty}` } : null,
-          { label: 'Hours so far', name: 'actualHours', type: 'number', step: '0.25', min: '0', max: '24', value: t.actualHours ?? '' },
+          { label: 'Hours so far', name: 'actualHours', type: 'number', step: '0.25', min: '0', max: '24', value: t.actualHours ?? '', hint: 'Task hours do not create a payroll time entry.' },
           { label: 'Note', name: 'note', type: 'textarea', rows: 3, value: t.note || '', span: true },
         ].filter(Boolean),
         extra: h('div', { class: 'row' }, ui.button('Add a photo', { icon: ICON_CAMERA, onClick: () => addPhoto(t) })),
@@ -101,7 +138,7 @@ export default {
           if (v.actualHours != null) patch.actualHours = Math.max(0, v.actualHours);
           if (cur.status === 'todo') Object.assign(patch, W.startTask(cur, { now: now(), by: by() }));
           save(t, patch, `progress on ${t.title}`);
-          ui.toast('Progress saved', 'success');
+          ui.toast('Task progress updated', 'success');
         },
       });
     }
@@ -112,7 +149,7 @@ export default {
       if (!shots.length) return;
       const cur = fresh(t);
       save(t, { photos: [...(cur.photos || []), ...shots].slice(0, W.MAX_PHOTOS), progressAt: now(), progressBy: by(), seenAt: cur.seenAt || now() }, `photo for ${t.title}`);
-      ui.toast('Photo saved with the task', 'success');
+      ui.toast('Photo added to the task', 'success');
     }
 
     function blockSheet(t) {
@@ -132,7 +169,7 @@ export default {
         actions: [ui.button('Cancel', { variant: 'ghost', onClick: () => s.close() }), ui.button('Mark blocked', { variant: 'danger solid', icon: ICON_BLOCK, onClick: () => {
           save(t, W.blockTask(fresh(t), reason, { now: now(), by: by(), note: note.value }), `blocked: ${reason}`);
           s.close();
-          ui.toast('Marked blocked. Your foreman will see it.', 'info', 3500);
+          ui.toast('Marked blocked. Your foreman sees it after sync.', 'info', 3500);
         } })],
       });
     }
@@ -156,6 +193,7 @@ export default {
 
     // ---------- cards ----------
     function card(t, { readOnly = false, jobById, all = [] } = {}) {
+      readOnly = readOnly || Boolean(ctx.readOnly);
       const job = jobById.get(t.jobId);
       const need = W.photosNeeded(t);
       const have = (t.photos || []).length;
@@ -165,7 +203,7 @@ export default {
       const pct = t.qty > 0 && t.qtyDone != null ? Math.min(100, Math.round((100 * t.qtyDone) / t.qty)) : null;
       const big = (label, opts) => ui.button(label, { size: 'lg', ...opts });
       const actions = readOnly ? null : h('div', { class: 'wp-actions' },
-        t.status === 'todo' ? [big('Start', { variant: 'primary', icon: 'play', onClick: () => start(t) }), big('Done', { icon: need > have ? ICON_CAMERA : 'check', onClick: () => finish(t) })] : null,
+        t.status === 'todo' ? [big('Start task', { variant: 'primary', icon: 'play', onClick: () => start(t) }), big('Done', { icon: need > have ? ICON_CAMERA : 'check', onClick: () => finish(t) })] : null,
         t.status === 'in-progress' ? [big('Done', { variant: 'primary', icon: need > have ? ICON_CAMERA : 'check', onClick: () => finish(t) }), big('Progress', { icon: 'edit', onClick: () => progressSheet(t) })] : null,
         t.status === 'blocked' ? big('Resume', { variant: 'primary', icon: 'play', onClick: () => resume(t) }) : null,
         t.status === 'done' ? big('Not done', { variant: 'ghost', icon: 'undo', onClick: () => undo(t) }) : null,
@@ -183,9 +221,10 @@ export default {
           pct != null && t.status !== 'done' ? h('div', { class: 'wp-bar', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-label': 'Quantity done' }, h('span', { style: { width: `${pct}%` } })) : null,
           openBlock ? h('div', { class: 'wp-blocked-why' }, ui.icon(ICON_BLOCK, 14), ` ${openBlock.reason}${openBlock.note ? `: ${openBlock.note}` : ''}`) : null,
           waiting.length ? h('div', { class: 'wp-waiting muted' }, `Waiting on: ${waiting.map((x) => x.title).join(', ')}`) : null),
+        siteCard(job, isOpen),
+        !readOnly && t.status === 'todo' ? h('p', { class: 'field-task-note' }, 'Start task updates progress only; it does not clock you in.') : null,
         isOpen ? h('div', { class: 'wp-card-more' },
           t.description ? h('p', { class: 'wp-desc' }, t.description) : null,
-          job ? h('div', { class: 'muted' }, `${job.number} · ${job.title}${job.address ? ` · ${job.address}` : ''}`) : null,
           linkButton(ui, t),
           t.note ? h('p', { class: 'wp-note' }, h('strong', null, 'Note: '), t.note) : null,
           (t.photos || []).length ? photoStrip(ui, t.photos) : null,
@@ -225,18 +264,18 @@ export default {
       const unacked = todays.filter((t) => !t.ackAt && t.status !== 'done');
       const nextLabel = next === W.addDays(day, 1) ? 'Tomorrow' : next ? ui.fmtDate(next, { weekday: 'long', month: 'short', day: 'numeric' }) : 'Tomorrow';
       return [
-        ticketsBlock(day, jobById),
         todays.length ? h('div', { class: 'wp-dayhead' },
           h('div', { class: 'wp-dayhead-count' }, h('strong', { class: 'num' }, `${done}/${todays.length}`), h('span', { class: 'muted' }, ' done')),
           h('div', { class: 'wp-dayhead-bar', role: 'progressbar', 'aria-valuenow': done, 'aria-valuemin': 0, 'aria-valuemax': todays.length, 'aria-label': 'Tasks done today' }, h('span', { style: { width: `${todays.length ? (100 * done) / todays.length : 0}%` } })),
           h('span', { class: 'muted' }, `${Math.round(hours * 100) / 100} h planned`)) : null,
-        unacked.length ? h('div', { class: 'wp-ack card' },
+        unacked.length && !ctx.readOnly ? h('div', { class: 'wp-ack card' },
           h('div', { class: 'grow' }, h('strong', null, "Today's list is ready"), h('div', { class: 'muted' }, `${unacked.length} task${unacked.length === 1 ? '' : 's'}. Tap "Got it" once you've read them.`)),
           ui.button('Got it', { variant: 'primary', size: 'lg', icon: 'check', onClick: () => gotIt(unacked) })) : null,
         carried.length ? [h('h2', { class: 'section' }, 'Still open from earlier'), h('div', { class: 'wp-cards' }, carried.map((t) => card(t, { jobById, all })))] : null,
         todays.length
           ? h('div', { class: 'wp-cards' }, todays.map((t) => card(t, { jobById, all })))
           : ui.empty({ icon: ICON_TODAY, title: 'Nothing on your list today', text: empId ? 'Your foreman publishes the day\'s tasks the evening before or at the morning meeting. They show up here when your device syncs.' : 'Your account is not linked to an employee record yet, so it has no tasks. Ask an owner or admin to link it.' }),
+        ticketsBlock(day, jobById),
         h('h2', { class: 'section' }, nextLabel),
         nextTasks.length
           ? h('div', { class: 'wp-cards wp-preview' }, nextTasks.map((t) => card(t, { readOnly: true, jobById, all })))
@@ -253,7 +292,7 @@ export default {
       return [
         h('div', { class: 'row', style: { marginBottom: 'var(--s3)' } },
           h('span', { class: 'muted grow' }, `Everyone's published tasks for ${ui.fmtDate(day, { weekday: 'long', month: 'short', day: 'numeric' })}.`),
-          ui.button('Add a task', { variant: 'primary', icon: 'plus', onClick: () => quickTaskSheet(ctx, { day, tomorrow }) })),
+          !ctx.readOnly ? ui.button('Add a task', { variant: 'primary', icon: 'plus', onClick: () => quickTaskSheet(ctx, { day, tomorrow }) }) : null),
         h('div', { class: 'wp-crew' }, people.map((p) => {
           const mineToday = W.sortTasks(tasks.filter((t) => t.employeeId === p.id));
           const done = mineToday.filter((t) => t.status === 'done').length;
@@ -262,7 +301,7 @@ export default {
             h('div', { class: 'row' },
               h('span', { class: 'avatar', style: { background: p.color || '#5f5a51' } }, ui.initials(p.name)),
               h('div', { class: 'grow' }, h('div', { style: { fontWeight: 650 } }, p.name), h('div', { class: 'muted wp-small' }, mineToday.length ? `${done}/${mineToday.length} done${blocked ? ` · ${blocked} blocked` : ''}${mineToday.some((t) => t.ackAt) ? ' · got it' : ''}` : 'No tasks today')),
-              ui.button('', { icon: 'plus', size: 'sm', title: `Add a task for ${p.name}`, onClick: () => quickTaskSheet(ctx, { day, tomorrow, employeeId: p.id }) })),
+              !ctx.readOnly ? ui.button('', { icon: 'plus', size: 'sm', title: `Add a task for ${p.name}`, onClick: () => quickTaskSheet(ctx, { day, tomorrow, employeeId: p.id }) }) : null),
             mineToday.length ? h('ul', { class: 'wp-mini' }, mineToday.map((t) => h('li', { class: `is-${t.status}` },
               h('span', { class: 'wp-dot', 'aria-hidden': 'true' }), h('span', { class: 'grow' }, t.title), jobById.get(t.jobId) ? h('span', { class: 'muted wp-small' }, jobById.get(t.jobId).number) : null,
               t.status === 'blocked' ? ui.badge('blocked', 'danger') : null))) : null);
@@ -281,6 +320,7 @@ export default {
       },
       manager ? h('div', { style: { marginBottom: 'var(--s4)' } }, ui.tabs([{ id: 'mine', label: 'My tasks' }, { id: 'crew', label: 'Crew today' }], view, (id) => { view = id; draw(); })) : null,
       syncLine,
+      view === 'mine' ? shiftCard() : null,
       view === 'crew' ? crew() : mine()));
     };
 
@@ -310,6 +350,8 @@ export default {
       store.on('jobs', later),
       store.on('employees', later),
       store.on('fieldTickets', later),
+      store.on('timeEntries', later),
+      ...(available('clients') ? [store.on('clients', later)] : []),
       ctx.app?.onSyncStatus?.(paintSync) || (() => {}),
     ];
     return () => { clearTimeout(pending); clearTimeout(arrivedTimer); offs.forEach((f) => f()); };
