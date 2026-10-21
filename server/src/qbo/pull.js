@@ -9,7 +9,7 @@ import { QboError } from './client.js';
 import { recordLabel, writeLog } from './log.js';
 import {
   txWrite, getLink, linksByRemote, insertLink, updateLink, loadRecord, system, reconcile, ctxFor, checkBrake, countWrite, shadowLog,
-  optionOf, moduleRefusal, timeUp, passStopFor, finishOutbox, localToday, paymentLineOf,
+  optionOf, moduleRefusal, timeUp, passStopFor, finishOutbox, localToday, paymentLineOf, lockedReview, reviewPulledInvoice,
 } from './engine.js';
 import { qboToCanon, customerFromQbo, isVoidedInvoice, toCents, str } from './map/canon.js';
 import { canonToFishtape, settlementCents, settlementRecord, depositRecord, billStatusFromQbo, linkMetaFromQbo } from './map/to-fishtape.js';
@@ -17,9 +17,37 @@ import { qboQuote } from './map/names.js';
 import { openConflict, openReview } from './conflicts.js';
 import { setPaused } from './connection.js';
 
-/** Every CDC call asks for all of these from the one cursor (5.4). */
-export const CDC_ENTITIES = ['Customer', 'Vendor', 'Item', 'Estimate', 'Invoice', 'Payment', 'Bill', 'Purchase', 'PurchaseOrder', 'Deposit', 'Transfer'];
-const ENTITY_RANK = { Customer: 1, Vendor: 1, Item: 1, Employee: 1, Estimate: 2, Invoice: 3, PurchaseOrder: 3, Payment: 4, Bill: 4, Purchase: 4, Deposit: 4, TimeActivity: 5, Transfer: 6 };
+/** Every CDC call asks for all of these from the one cursor (5.4; CreditMemo for credit notes, r1-get-paid.md 9.2). */
+export const CDC_ENTITIES = ['Customer', 'Vendor', 'Item', 'Estimate', 'Invoice', 'CreditMemo', 'Payment', 'Bill', 'Purchase', 'PurchaseOrder', 'Deposit', 'Transfer'];
+const ENTITY_RANK = { Customer: 1, Vendor: 1, Item: 1, Employee: 1, Estimate: 2, Invoice: 3, CreditMemo: 3, PurchaseOrder: 3, Payment: 4, Bill: 4, Purchase: 4, VendorCredit: 4, Deposit: 4, TimeActivity: 5, Transfer: 6 };
+
+/**
+ * The CDC entities of a pass. VendorCredit (a supplier credit Fishtape pushed, 9.2) is read once the
+ * company has one linked: QuickBooks-entered supplier credits are not pulled into Fishtape in R1.
+ */
+export function cdcEntities(run) {
+  const vendorCredits = [...(run?.index?.byRecord?.values?.() || [])].some((l) => l.qbo_entity === 'VendorCredit' && l.qbo_id);
+  return vendorCredits ? [...CDC_ENTITIES, 'VendorCredit'] : CDC_ENTITIES;
+}
+
+/**
+ * R1-D's receivables_client recheck (r1-get-paid.md 10.1), queued after a payment the QuickBooks pull
+ * created: services/receivables.js queueClientRecheck(tx, clientId). Loaded once; a no-op while that
+ * module is not there.
+ */
+let recheckLoad = null;
+async function queueClientRecheck(tx, clientId) {
+  if (!clientId) return;
+  recheckLoad ||= import('../services/receivables.js').then((m) => (typeof m.queueClientRecheck === 'function' ? m.queueClientRecheck : null)).catch(() => null);
+  const fn = await recheckLoad;
+  if (fn) await fn(tx, clientId);
+}
+
+/** The client of an invoice (for the recheck). */
+async function clientOfInvoice(tx, invoiceId) {
+  const r = await tx.query("SELECT data->>'clientId' AS c FROM invoices WHERE tenant_id = $1 AND id = $2", [tx.tenantId, invoiceId]);
+  return r.rows[0]?.c || null;
+}
 const FULL_AFTER_MS = 29 * 86_400_000;
 const TIME_EVERY_MS = 6 * 3_600_000;
 const CDC_CAP = 1000;
@@ -62,7 +90,7 @@ export async function runPull(run, { full = false } = {}) {
     await withSettlesAfter(run, async () => {
       for (let page = 0; page < 20; page++) {
         if (timeUp(run)) { covered = false; break; }
-        const res = await run.client.cdc(CDC_ENTITIES, since);
+        const res = await run.client.cdc(cdcEntities(run), since);
         const objects = [];
         for (const [entity, list] of Object.entries(res.entities)) for (const o of list) objects.push({ entity, o });
         // A pass out of time stops part way through a page: the cursor stays, and the next pass reads
@@ -136,6 +164,7 @@ async function withSettlesAfter(run, fn) {
 
 /** Settle a pulled invoice now, or at the end of the batch it came in (withSettlesAfter). */
 async function settleInvoice(run, inv, o) {
+  if (inv?.meta?.pendingCreate) return; // not in Fishtape yet: held in review (period_locked, 9.6)
   if (run.settleLater) { run.settleLater.set(inv.id, { inv, o }); return; }
   await pullDeposit(run, inv, o);
   await settle(run, inv, o);
@@ -166,7 +195,9 @@ export async function processRemote(run, entity, o) {
     for (const l of links) await remoteDeleted(run, l, {});
     return;
   }
-  const mains = links.filter((l) => l.role === 'main' || l.role === 'fee');
+  // A credit-note application (role apply, 9.2) is a push-only record: a QuickBooks edit is logged and
+  // overwritten by Fishtape's next change; a void or delete is a delete there.
+  const mains = links.filter((l) => l.role === 'main' || l.role === 'fee' || l.role === 'apply');
   if (!mains.length && !links.length) return pullCreate(run, entity, o);
   // A voided payment is a delete for every Fishtape payment on it (4.9).
   if (entity === 'Payment' && toCents(o.TotalAmt) === 0 && (o.Line || []).every((l) => !toCents(l.Amount)) && /^Voided/i.test(String(o.PrivateNote || ''))) {
@@ -183,7 +214,7 @@ export async function processRemote(run, entity, o) {
     const inv = mains.find((l) => l.collection === 'invoices');
     if (inv) await settleInvoice(run, inv, o);
   }
-  if (entity === 'Payment') await pullPaymentLines(run, o, links);
+  if (entity === 'Payment') { await pullPaymentLines(run, o, links); await pullCreditApplication(run, o, links); }
   if (entity === 'Bill') {
     const b = mains.find((l) => l.collection === 'bills');
     if (b) await billStatus(run, b, o);
@@ -264,15 +295,15 @@ export const pulledId = () => randomUUID();
  * Create a Fishtape record and its link from a QuickBooks object (pull, the wizard, an import).
  * Returns { collection, id, state } or null when the object does not come into Fishtape.
  */
-export async function createFromRemote(run, collection, entity, o, { owner = 'both', reviewReason = null, force = false, extra = {} } = {}) {
+export async function createFromRemote(run, collection, entity, o, { owner = 'both', reviewReason = null, force = false, extra = {}, id: givenId = null, replaceLink = null } = {}) {
   const existing = await tenantRead(run, (tx) => linksByRemote(tx, entity, o.Id));
-  const mine = existing.find((l) => l.collection === collection && l.role === 'main');
+  const mine = existing.find((l) => l.collection === collection && l.role === 'main' && l.id !== replaceLink);
   if (mine) return { collection, id: mine.record_id, state: mine.state };
   const ctx = ctxFor(run, null, collection);
   const R = qboToCanon(entity, o, { ...ctx, collection });
   const report = {};
   const body = { ...canonToFishtape(collection, R, ctx, { existing: null, report }), ...extra };
-  const id = pulledId();
+  const id = givenId || pulledId();
   if (collection === 'clients' && o.CompanyName == null) body.type = body.type || 'residential';
   if (collection === 'invoices' && isVoidedInvoice(o)) body.status = 'void';
   if (collection === 'bills') { body.status = billStatusFromQbo(o, 'open') || 'open'; if (body.kind === 'receipt') body.status = 'paid'; }
@@ -289,7 +320,7 @@ export async function createFromRemote(run, collection, entity, o, { owner = 'bo
     return { collection, id, state: 'shadow' };
   }
   const created = await txWrite(run, async (tx) => {
-    const again = (await linksByRemote(tx, entity, o.Id)).find((l) => l.collection === collection && l.role === 'main');
+    const again = (await linksByRemote(tx, entity, o.Id)).find((l) => l.collection === collection && l.role === 'main' && l.id !== replaceLink);
     if (again) return { link: again, version: again.fishtape_version, existed: true };
     checkBrake(run);
     let version;
@@ -299,6 +330,18 @@ export async function createFromRemote(run, collection, entity, o, { owner = 'bo
       else if (rec?.deleted) version = (await system.restore(tx, run, collection, id)).version;
       else version = (await system.create(tx, run, collection, { ...body, id })).version;
     } catch (e) {
+      // A sent invoice dated in a period closed in Fishtape, after QuickBooks' own close date, is
+      // refused (r1-get-paid.md 9.6): its link waits in review with the record not yet created.
+      const locked = lockedReview(e);
+      if (locked) {
+        const meta = { pendingCreate: { entity, collection }, lockedAt: new Date().toISOString(), ...(locked.through ? { lockedThrough: locked.through } : {}), ...(o.CustomerRef ? { customerRef: ref(o.CustomerRef) } : {}) };
+        const l = replaceLink
+          ? await updateLink(tx, run, replaceLink, { state: 'needs_review', reason: locked.reason, meta, sync_token: String(o.SyncToken), qbo_updated_at: lastUpdated(o) })
+          : await insertLink(tx, run, { collection, record_id: id, role: 'main', qbo_entity: entity, qbo_id: String(o.Id), sync_token: String(o.SyncToken), qbo_updated_at: lastUpdated(o), state: 'needs_review', owner: 'quickbooks', snapshot: null, meta, reason: locked.reason });
+        await openReview(tx, run, l, { reason: locked.reason, label, message: `Created in QuickBooks in a period closed in Fishtape${locked.through ? ` (through ${locked.through})` : ''}.` });
+        await writeLog(tx, { direction: 'pull', outcome: 'warning', action: 'review', collection, recordId: id, qboEntity: entity, label, message: locked.message, errorCode: locked.reason });
+        return { link: l, version: null, held: true };
+      }
       const why = moduleRefusal(e);
       if (!why) throw e;
       await writeLog(tx, { direction: 'pull', outcome: 'skipped', action: 'pull_create', collection, recordId: id, qboEntity: entity, label, message: why === 'plan' ? 'Not in your plan.' : 'That module is turned off.', errorCode: 'module_off' });
@@ -306,10 +349,11 @@ export async function createFromRemote(run, collection, entity, o, { owner = 'bo
     }
     countWrite(run);
     const meta = { ...linkMetaFromQbo(entity, o, ctx), ...(o.CustomerRef ? { customerRef: ref(o.CustomerRef) } : {}) };
-    const link = await insertLink(tx, run, {
+    const fields = {
       collection, record_id: id, role: 'main', qbo_entity: entity, qbo_id: String(o.Id), sync_token: String(o.SyncToken), qbo_updated_at: lastUpdated(o),
       fishtape_version: version, state, owner, snapshot: { ...R }, meta, reason,
-    });
+    };
+    const link = replaceLink ? await updateLink(tx, run, replaceLink, fields) : await insertLink(tx, run, fields);
     if (state === 'needs_review') {
       const text = { tax_inclusive: 'Tax-inclusive in QuickBooks; Fishtape shows its total without the tax split.', tax_shape: 'QuickBooks uses tax codes Fishtape cannot show exactly on this document.' }[reason] || 'Check this record against QuickBooks.';
       await openReview(tx, run, link, { reason, label, message: text });
@@ -322,6 +366,12 @@ export async function createFromRemote(run, collection, entity, o, { owner = 'bo
   });
   if (!created) return null;
   if (created.existed) return { collection, id: created.link.record_id, state: created.link.state, link: created.link };
+  if (created.held) return { collection, id, state: 'needs_review', link: created.link, held: true };
+  // A pulled invoice without the exemption it needs, or with an invalid holdback or taxOff (9.7).
+  if (collection === 'invoices' && state === 'synced') {
+    const problem = await reviewPulledInvoice(run, created.link.id, id, label);
+    if (problem) return { collection, id, state: 'needs_review', link: created.link };
+  }
   return { collection, id, state, link: created.link };
 }
 
@@ -430,9 +480,15 @@ async function pullCreate(run, entity, o) {
       return made;
     }
     case 'Payment':
-      return pullPaymentLines(run, o, []);
+      await pullPaymentLines(run, o, []);
+      return pullCreditApplication(run, o, []);
+    // A credit memo comes into Fishtape only when a payment applies it to one linked invoice
+    // (pullCreditApplication, r1-get-paid.md 9.2); otherwise it stays in the invoice's settlement.
+    case 'CreditMemo':
+      return null;
     case 'Bill':
-    case 'Purchase': {
+    case 'Purchase':
+    case 'VendorCredit': {
       if (opt('pullJobCosts', true) === false) return null;
       if (!inScope(run, o.TxnDate, false)) return null;
       const lines = o.Line || [];
@@ -492,11 +548,66 @@ async function pullPaymentLines(run, o, links) {
         qbo_updated_at: lastUpdated(o), fishtape_version: version, state: 'synced', snapshot: R, meta: linkMetaFromQbo('Payment', o, ctx),
       });
       await system.refreshInvoice(tx, run, invoiceId);
+      // The client's credit hold is worked out again (r1-get-paid.md 10.1, R1-D receivables_client).
+      await queueClientRecheck(tx, await clientOfInvoice(tx, invoiceId));
       run.stats.pulled++;
       await writeLog(tx, { direction: 'pull', outcome: 'ok', action: 'pull_create', collection: 'payments', recordId: id, qboEntity: 'Payment', label: recordLabel('payments', body), message: 'Created from QuickBooks' });
     });
   }
   return null;
+}
+
+/**
+ * A $0 QuickBooks payment that applies one credit memo to one linked invoice (r1-get-paid.md 9.2):
+ * the memo becomes a Fishtape credit note (when it is not one already) and the application a Fishtape
+ * payment { method: 'credit-note', creditNoteId, invoiceId } with link role apply, owner quickbooks.
+ * The invoice's settlement then leaves the memo out (settle), so it is never counted twice. Any
+ * other shape stays in the settlement payment (4.9). Our own applications (a link already) are skipped.
+ */
+export async function pullCreditApplication(run, o, links) {
+  if (toCents(o.TotalAmt) !== 0 || links.some((l) => l.role === 'apply' || (l.collection === 'payments' && l.role === 'main'))) return null;
+  const typed = (o.Line || []).map((l) => ({ amount: toCents(l.Amount), t: (l.LinkedTxn || [])[0] || {} })).filter((x) => x.amount);
+  const invs = typed.filter((x) => x.t.TxnType === 'Invoice');
+  const memos = typed.filter((x) => x.t.TxnType === 'CreditMemo');
+  if (invs.length !== 1 || memos.length !== 1 || typed.length !== 2) return null;
+  const invQbo = str(invs[0].t.TxnId);
+  const invoiceId = run.ctx.refs.fishtapeIdFor('invoices', invQbo);
+  if (!invoiceId) return null;
+  const invRec = await tenantRead(run, (tx) => loadRecord(tx, 'invoices', invoiceId));
+  if (!invRec || invRec.deleted) return null;
+  const memoQbo = str(memos[0].t.TxnId);
+  let noteId = run.ctx.refs.fishtapeIdFor('invoices', memoQbo);
+  if (!noteId) {
+    let memo = null;
+    try { memo = await run.client.read('CreditMemo', memoQbo); } catch (e) { if (!(e instanceof QboError && e.kind === 'not_found')) throw e; }
+    if (!memo) return null;
+    const made = await createFromRemote(run, 'invoices', 'CreditMemo', memo, {
+      extra: { kind: 'credit', creditsInvoiceId: invoiceId, clientId: invRec.data.clientId ?? null, ...(invRec.data.jobId ? { jobId: invRec.data.jobId } : {}) },
+    });
+    if (!made || made.held || made.state === 'shadow') return null;
+    noteId = made.id;
+  }
+  const amountCents = invs[0].amount;
+  const ctx = ctxFor(run, { role: 'apply', qbo_line: invQbo, meta: {} }, 'payments');
+  const R = qboToCanon('Payment', o, { ...ctx, collection: 'payments' });
+  const id = pulledId();
+  if (run.shadow) { await shadowLog(run, { direction: 'pull', action: 'pull_create', collection: 'payments', recordId: id, qboEntity: 'Payment', message: 'Would record a credit note applied in QuickBooks' }); return null; }
+  return txWrite(run, async (tx) => {
+    if ((await linksByRemote(tx, 'Payment', o.Id)).some((l) => l.role === 'apply')) return null;
+    checkBrake(run);
+    const body = { invoiceId, creditNoteId: noteId, amountCents, date: str(o.TxnDate) || localToday(run), method: 'credit-note', source: 'quickbooks', reference: 'Credit memo applied in QuickBooks', clientId: invRec.data.clientId ?? null };
+    const version = (await system.create(tx, run, 'payments', { ...body, id })).version;
+    countWrite(run);
+    await insertLink(tx, run, {
+      collection: 'payments', record_id: id, role: 'apply', qbo_entity: 'Payment', qbo_id: String(o.Id), qbo_line: invQbo, sync_token: String(o.SyncToken),
+      qbo_updated_at: lastUpdated(o), fishtape_version: version, state: 'synced', owner: 'quickbooks', snapshot: R, meta: linkMetaFromQbo('Payment', o, ctx),
+    });
+    await system.refreshInvoice(tx, run, invoiceId);
+    await queueClientRecheck(tx, invRec.data.clientId);
+    run.stats.pulled++;
+    await writeLog(tx, { direction: 'pull', outcome: 'ok', action: 'pull_create', collection: 'payments', recordId: id, qboEntity: 'Payment', label: recordLabel('payments', body), message: 'Credit memo applied in QuickBooks' });
+    return { id, noteId };
+  });
 }
 
 /**
@@ -556,7 +667,13 @@ export async function settle(run, invLink, o) {
       [tx.tenantId, String(o.Id)]);
     if (rows.some((r) => r.state === 'pending')) return;
     const linked = rows.map((r) => Math.max(0, (Number(r.snapshot?.amountCents) || 0) - Math.max(0, Math.round(Number(r.meta?.ownExcessCents) || 0))));
-    const cents = isVoidedInvoice(o) ? 0 : settlementCents(o, linked);
+    // Credit memos applied to this invoice that Fishtape holds as credit-note applications (role
+    // apply, r1-get-paid.md 9.2): their amount is already a Fishtape payment, so it is not settled again.
+    const applied = (await tx.query(
+      `SELECT snapshot FROM qbo_links WHERE tenant_id = $1 AND collection = 'payments' AND role = 'apply' AND qbo_line = $2
+          AND state NOT IN ('unlinked', 'deleted_local', 'deleted_remote') AND qbo_id IS NOT NULL`, [tx.tenantId, String(o.Id)])).rows
+      .map((r) => Math.max(0, Number(r.snapshot?.amountCents) || 0));
+    const cents = isVoidedInvoice(o) ? 0 : settlementCents(o, linked, applied);
     const id = `credit-${invLink.record_id}`.slice(0, 128);
     const link = await getLink(tx, 'invoices', id, 'settlement');
     const rec = await loadRecord(tx, 'payments', id);
@@ -750,7 +867,7 @@ async function saveProgress(run, state) {
 
 async function fullReconcileRun(run, state) {
   const sinceMs = Date.parse(state.since);
-  const entities = CDC_ENTITIES.filter((e) => !['Deposit', 'Transfer'].includes(e)).sort((a, b) => (ENTITY_RANK[a] || 9) - (ENTITY_RANK[b] || 9));
+  const entities = cdcEntities(run).filter((e) => !['Deposit', 'Transfer'].includes(e)).sort((a, b) => (ENTITY_RANK[a] || 9) - (ENTITY_RANK[b] || 9));
   if (state.phase !== 'byId') {
     // Phase 1: what changed since the cursor, by update time with an offset among equal times, so a
     // page that ends inside a run of equal times is neither skipped nor read again for good.

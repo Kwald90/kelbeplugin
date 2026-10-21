@@ -23,7 +23,7 @@ const TWO_WAY = Object.keys(FIELD_RULES).filter((c) => !PUSH_ONLY_COLLECTIONS.in
 const form = (collection, v, field, x) => Object.fromEntries(fieldsOf(collection).map((f) => [f, f === field ? x : v]));
 
 test('field rules: every collection classified, money fields map to record keys', () => {
-  assert.deepEqual(Object.keys(FIELD_RULES).sort(), ['bills', 'clients', 'estimates', 'invoices', 'items', 'jobs', 'paymentFee', 'payments', 'payoutFee', 'purchaseOrders', 'stripePayouts', 'timeEntries', 'vendors']);
+  assert.deepEqual(Object.keys(FIELD_RULES).sort(), ['bills', 'clients', 'creditApply', 'estimates', 'invoices', 'items', 'jobs', 'paymentFee', 'payments', 'payoutFee', 'purchaseOrders', 'stripePayouts', 'timeEntries', 'vendors']);
   for (const [c, r] of Object.entries(FIELD_RULES)) {
     const all = [...r.money, ...r.auto, ...r.pushOnly];
     assert.equal(new Set(all).size, all.length, `${c} lists a field twice`);
@@ -34,6 +34,7 @@ test('field rules: every collection classified, money fields map to record keys'
   assert.equal(canonCollection('payments', 'fee'), 'paymentFee');
   assert.equal(canonCollection('stripePayouts', 'fee'), 'payoutFee');
   assert.equal(canonCollection('invoices', 'settlement'), 'invoices');
+  assert.equal(canonCollection('payments', 'apply'), 'creditApply'); // a credit note applied (r1-get-paid.md 9.2)
   assert.equal(fieldLabel('amountCents'), 'Amount');
 });
 

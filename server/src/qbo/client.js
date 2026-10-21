@@ -171,7 +171,7 @@ const lastThrottle = new Map();
 
 const ENTITIES = new Set(['Account', 'Attachable', 'Bill', 'BillPayment', 'Class', 'CompanyInfo', 'CreditMemo', 'Customer', 'Department',
   'Deposit', 'Employee', 'Estimate', 'Invoice', 'Item', 'JournalEntry', 'Payment', 'PaymentMethod', 'Preferences', 'Purchase',
-  'PurchaseOrder', 'TaxAgency', 'TaxCode', 'TaxRate', 'Term', 'TimeActivity', 'Transfer', 'Vendor']);
+  'PurchaseOrder', 'TaxAgency', 'TaxCode', 'TaxRate', 'Term', 'TimeActivity', 'Transfer', 'Vendor', 'VendorCredit']);
 const ID = /^\d{1,20}$/;
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,50}$/;
 const MIME = /^[a-z]+\/[a-z0-9.+-]+$/i;

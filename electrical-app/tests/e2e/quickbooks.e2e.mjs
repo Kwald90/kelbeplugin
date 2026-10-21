@@ -17,6 +17,10 @@
 //     arrives by signed webhook and shows on the invoice; a change pulled while the invoice is open
 //     is not written back by the next keystroke; the practice switch is an owner's.
 //   foreman on a phone: no QuickBooks in the rail, "No access", no badges, 403 from /api/v1/qbo/status.
+//   Release 1 (r1-get-paid.md 12.2): a holdback invoice and its release, a deposit, a credit note and an
+//     RST recoverable bill go through the fake QuickBooks; a credit memo applied to one invoice comes back
+//     as a credit note and its application; a QuickBooks edit of an invoice in a closed month goes to
+//     review and the owner keeps it as a noted difference (with the note) on the conflict screen.
 //   layout: the overview, the wizard's Review step, mappings, a conflict, an invoice with its badge and
 //     a purchasing bill at 390 px and 1280 px, with no sideways scroll (screenshots in the scratch dir).
 //
@@ -771,10 +775,12 @@ try {
     return 'taxNoneReason relief saved on the server';
   });
 
-  await step('a credit applied in QuickBooks comes back as a read-only settlement payment', async () => {
+  await step('a credit applied in QuickBooks (a journal entry) comes back as a read-only settlement payment', async () => {
     const l = await link('invoices', invId);
-    const memo = fake.create(REALM, 'CreditMemo', { CustomerRef: { value: fake.get(REALM, 'Invoice', l.qbo_id).CustomerRef.value }, Line: [{ DetailType: 'SalesItemLineDetail', Amount: 12, SalesItemLineDetail: { ItemRef: { value: S.items.labour.Id }, Qty: 1, UnitPrice: 12 } }], GlobalTaxCalculation: 'NotApplicable' });
-    fake.create(REALM, 'Payment', { CustomerRef: memo.CustomerRef, TotalAmt: 0, Line: [{ Amount: 12, LinkedTxn: [{ TxnId: l.qbo_id, TxnType: 'Invoice' }] }, { Amount: 12, LinkedTxn: [{ TxnId: memo.Id, TxnType: 'CreditMemo' }] }] });
+    // A journal entry applied to the invoice is settled (4.9). A credit memo applied to one invoice is a
+    // Fishtape credit note since Release 1 (the Release 1 step below), so this uses a journal entry.
+    const customer = fake.get(REALM, 'Invoice', l.qbo_id).CustomerRef;
+    fake.create(REALM, 'Payment', { CustomerRef: customer, TotalAmt: 0, Line: [{ Amount: 12, LinkedTxn: [{ TxnId: l.qbo_id, TxnType: 'Invoice' }] }, { Amount: 12, LinkedTxn: [{ TxnId: '999999', TxnType: 'JournalEntry' }] }] });
     await webhook();
     await drain('the settlement pull');
     const pay = (await row('SELECT data FROM payments WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL', [tg, `credit-${invId}`]))[0];
@@ -845,6 +851,101 @@ try {
     await noSideScroll(fred, '#/time/week');
     await fred.shot('q12-foreman');
     return 'no rail button, No access, no badges, no QuickBooks calls from the app, 403 from /api/v1/qbo/status';
+  });
+
+  // ---- Release 1 (docs/releases/r1-get-paid.md 9, 12.2; docs/integrations/quickbooks.md 17) ----
+  const M = await import(pathToFileURL(join(APPDIR, 'js/lib/money.js')).href);
+  const dayBefore = (n) => new Date(Date.now() - n * 86_400_000).toLocaleDateString('en-CA', { timeZone: 'America/Winnipeg' });
+  const r1Doc = (o) => ({ clientId: clinic.id, status: 'sent', issueDate: dayBefore(0), dueDate: dayBefore(0), taxProvince: 'MB', taxTreatment: 'pst-all', taxes: MB_TAXES, taxPct: 12, notes: '', ...o });
+  const cents = (d) => Math.round(Number(d) * 100);
+
+  await step('Release 1: holdback invoice and release, deposit, credit note and RST recoverable bill through QuickBooks', async () => {
+    const realm = (await row('SELECT realm_hash FROM qbo_connections WHERE tenant_id = $1', [tg]))[0].realm_hash;
+    const item = (Name) => fake.create(REALM, 'Item', { Name, Type: 'Service', Active: true, IncomeAccountRef: { value: S.accounts.income.Id } }).Id;
+    const ids = { holdback: item('Holdback'), deposit: item('Customer deposits'), interest: item('Overdue interest') };
+    const rstAcct = fake.create(REALM, 'Account', { Name: 'RST recoverable', AccountType: 'Other Current Asset', AccountSubType: 'OtherCurrentAssets', Active: true, CurrentBalance: 0 }).Id;
+    for (const [kind, key, value] of [...Object.entries(ids).map(([k, v]) => ['item', k, v]), ['account', 'rstRecoverable', rstAcct]]) {
+      await superDb.query(`INSERT INTO qbo_mappings (tenant_id, realm_hash, kind, key, value) VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (tenant_id, kind, key) DO UPDATE SET value = EXCLUDED.value`, [tg, realm, kind, key, J(String(value))]);
+    }
+    const work = [{ description: 'Rough-in, phase 2', qty: 1, unitCents: 200000, kind: 'labour', labourHours: 0 }];
+    await asSetup((tx, p, who) => records.createRecord(tx, p, 'invoices', r1Doc({ id: 'r1-hb', number: 'INV-4101', kind: 'progress', lines: work, holdback: { pct: 10, deferTaxIds: ['GST', 'RST'], excludePassThrough: true } }), who));
+    await asSetup((tx, p, who) => records.createRecord(tx, p, 'invoices', r1Doc({ id: 'r1-rel', number: 'INV-4102', kind: 'holdback-release', holdbackInvoiceIds: ['r1-hb'], lines: [M.holdbackReleaseLine(20000, { taxes: MB_TAXES, deferTaxIds: ['GST', 'RST'] })] }), who));
+    await asSetup((tx, p, who) => records.createRecord(tx, p, 'invoices', r1Doc({ id: 'r1-dep', number: 'INV-4103', ...M.depositInvoiceFields('prepayment'), lines: [M.depositInvoiceLine({ cents: 100000, ref: 'J-1042' })] }), who));
+    const hbInv = (await row('SELECT data FROM invoices WHERE tenant_id = $1 AND id = $2', [tg, 'r1-hb']))[0].data;
+    await asSetup((tx, p, who) => records.createRecord(tx, p, 'invoices', { ...M.creditNoteFrom({ ...hbInv, id: 'r1-hb' }, { reason: 'price', today: dayBefore(0), number: 'CR-1001' }), id: 'r1-cn', status: 'sent' }, who));
+    await asSetup((tx, p, who) => records.createRecord(tx, p, 'vendors', { id: 'r1-v', name: 'Guillevin Winnipeg', active: true }, who));
+    await asSetup((tx, p, who) => records.createRecord(tx, p, 'bills', {
+      id: 'r1-bill', kind: 'bill', vendorId: 'r1-v', number: 'GV-77', date: dayBefore(0), dueDate: dayBefore(0), status: 'open', taxProvince: 'MB',
+      lines: [{ description: 'Panelboard 225 A', qty: 1, unitCents: 150000, amountCents: 150000, costType: 'material' }],
+      taxes: [{ id: 'GST', label: 'GST', cents: 7500 }, { id: 'RST', label: 'RST', cents: 10500 }], totalCents: 168000,
+    }, who));
+    await drain('the Release 1 documents');
+    const qOf = async (coll, id, entity) => { const l = await link(coll, id); if (l?.state !== 'synced') throw new Error(`${id}: ${J({ state: l?.state, reason: l?.reason, err: l?.last_error })}`); return fake.get(REALM, entity || l.qbo_entity, l.qbo_id); };
+    const hb = await qOf('invoices', 'r1-hb');
+    const hbLine = hb.Line.find((x) => x.SalesItemLineDetail?.ItemRef?.value === String(ids.holdback));
+    if (!hbLine || hbLine.Amount !== -200) throw new Error(`holdback line ${J(hbLine)}`);
+    if (cents(hb.TotalAmt) !== M.docTotals(hbInv).totalCents) throw new Error(`holdback total ${hb.TotalAmt} vs ${M.docTotals(hbInv).totalCents}`);
+    const rel = await qOf('invoices', 'r1-rel');
+    if (rel.Line[0].SalesItemLineDetail.ItemRef.value !== String(ids.holdback) || rel.Line[0].Amount !== 200) throw new Error(`release ${J(rel.Line)}`);
+    const dep = await qOf('invoices', 'r1-dep');
+    if (dep.Line[0].SalesItemLineDetail.ItemRef.value !== String(ids.deposit)) throw new Error(`deposit ${J(dep.Line)}`);
+    const cn = await qOf('invoices', 'r1-cn');
+    if ((await link('invoices', 'r1-cn')).qbo_entity !== 'CreditMemo' || !cn.Line.some((x) => x.SalesItemLineDetail?.ItemRef?.value === String(ids.holdback) && x.Amount < 0)) throw new Error(`credit memo ${J(cn.Line)}`);
+    const bill = await qOf('bills', 'r1-bill');
+    const toRst = bill.Line.find((x) => x.AccountBasedExpenseLineDetail?.AccountRef?.value === String(rstAcct));
+    if (cents(toRst?.Amount) !== 10500 || cents(bill.Line[0].Amount) !== 150000) throw new Error(`bill lines ${J(bill.Line.map((x) => [x.AccountBasedExpenseLineDetail?.AccountRef?.value, x.Amount]))}`);
+    return `holdback -$200.00 on "Holdback", release +$200.00, deposit on "Customer deposits", CR-1001 a CreditMemo with its holdback, RST $105.00 to RST recoverable`;
+  });
+
+  await step('Release 1: a credit memo applied to one invoice in QuickBooks becomes a credit note and its application', async () => {
+    const l = await link('invoices', 'r1-rel');
+    const memo = fake.create(REALM, 'CreditMemo', { CustomerRef: fake.get(REALM, 'Invoice', l.qbo_id).CustomerRef, DocNumber: 'CM-77', Line: [{ DetailType: 'SalesItemLineDetail', Amount: 50, SalesItemLineDetail: { ItemRef: { value: S.items.labour.Id }, Qty: 1, UnitPrice: 50, TaxCodeRef: { value: S.taxCodes.gstPst.Id } } }] });
+    fake.create(REALM, 'Payment', { CustomerRef: memo.CustomerRef, TotalAmt: 0, Line: [{ Amount: 56, LinkedTxn: [{ TxnId: l.qbo_id, TxnType: 'Invoice' }] }, { Amount: 56, LinkedTxn: [{ TxnId: memo.Id, TxnType: 'CreditMemo' }] }] });
+    await webhook();
+    await drain('the credit memo pull');
+    const note = (await row("SELECT id, data FROM invoices WHERE tenant_id = $1 AND data->>'kind' = 'credit' AND data->>'creditsInvoiceId' = 'r1-rel' AND deleted_at IS NULL", [tg]))[0];
+    const app = (await row("SELECT data FROM payments WHERE tenant_id = $1 AND data->>'invoiceId' = 'r1-rel' AND data->>'method' = 'credit-note' AND deleted_at IS NULL", [tg]))[0];
+    const settled = (await row('SELECT data FROM payments WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL', [tg, 'credit-r1-rel']))[0];
+    if (!note || app?.data?.creditNoteId !== note.id || app.data.amountCents !== 5600 || settled) throw new Error(J({ note: note?.data?.number, app: app?.data, settled: settled?.data }));
+    return `credit note ${note.data.number} and its $56.00 application; no settlement payment`;
+  });
+
+  await step('Release 1: a QuickBooks edit of an invoice in a closed month goes to review and is kept as a noted difference', async () => {
+    // After the GST period filed in the wizard (2026-09-30), in a month then closed on Books.
+    const old = dayBefore(30) > '2026-10-01' ? dayBefore(30) : '2026-10-01';
+    await asSetup((tx, p, who) => records.createRecord(tx, p, 'invoices', r1Doc({ id: 'r1-sep', number: 'INV-4201', issueDate: old, dueDate: old, lines: [{ description: 'Lighting retrofit', qty: 1, unitCents: 80000, kind: 'labour', labourHours: 0 }] }), who));
+    await drain('the September invoice');
+    const l = await link('invoices', 'r1-sep');
+    if (l?.state !== 'synced') throw new Error(`r1-sep ${J(l)}`);
+    await superDb.query("INSERT INTO period_locks (tenant_id, kind, through, actor) VALUES ($1, 'books', $2, 'e2e')", [tg, old]);
+    const q = fake.get(REALM, 'Invoice', l.qbo_id);
+    fake.edit(REALM, 'Invoice', l.qbo_id, { Line: q.Line.map((x) => (x.SalesItemLineDetail ? { ...x, Amount: 750, SalesItemLineDetail: { ...x.SalesItemLineDetail, Qty: 1, UnitPrice: 750 } } : x)) });
+    await webhook();
+    await drain('the pull into the closed month');
+    const held = await link('invoices', 'r1-sep');
+    if (held.state !== 'needs_review' || held.reason !== 'period_locked') throw new Error(`after the pull ${J({ state: held.state, reason: held.reason })}`);
+    const kept = (await row('SELECT data FROM invoices WHERE tenant_id = $1 AND id = $2', [tg, 'r1-sep']))[0].data;
+    if (kept.lines[0].unitCents !== 80000) throw new Error('Fishtape changed a locked invoice');
+    const c = (await row("SELECT id FROM qbo_conflicts WHERE tenant_id = $1 AND record_id = 'r1-sep' AND status = 'open'", [tg]))[0];
+    await own.goto(`/#/quickbooks/conflicts/${c.id}`);
+    await own.waitFor('[...document.querySelectorAll("main button")].some((b) => b.textContent.trim() === "Keep the difference noted")', 'the Release 1 choices');
+    const labels = await own.evaluate('[...document.querySelectorAll("main .qbo-actions button")].map((b) => b.textContent.trim())');
+    if (J(labels) !== J(['Reopen the period and accept QuickBooks', 'Keep the difference noted'])) throw new Error(`buttons ${J(labels)}`);
+    await own.fill('main textarea[aria-label="Note"]', 'Bookkeeper corrected the price after the close.');
+    await own.shot('q14-locked-review');
+    const before = own.qboCalls.length;
+    await own.click('Keep the difference noted', 'main');
+    await own.waitFor('location.hash === "#/quickbooks/conflicts"', 'back on the list');
+    const sent = own.qboCalls.slice(before).find((x) => /\/resolve$/.test(x.path));
+    if (J(sent?.body) !== J({ choice: 'note', note: 'Bookkeeper corrected the price after the close.' })) throw new Error(`resolve body ${J(sent?.body)}`);
+    await drain('after the note');
+    const after = await link('invoices', 'r1-sep');
+    if (after.state !== 'synced' || after.meta?.noted?.note !== 'Bookkeeper corrected the price after the close.') throw new Error(`after ${J({ state: after.state, noted: after.meta?.noted })}`);
+    const still = (await row('SELECT data FROM invoices WHERE tenant_id = $1 AND id = $2', [tg, 'r1-sep']))[0].data;
+    if (still.lines[0].unitCents !== 80000 || cents(fake.get(REALM, 'Invoice', l.qbo_id).Line[0].Amount) !== 75000) throw new Error('a side was overwritten after the note');
+    await superDb.query("INSERT INTO period_locks (tenant_id, kind, through, actor) VALUES ($1, 'books', NULL, 'e2e')", [tg]);
+    return 'needs_review/period_locked; two choices; noted with the note; neither side overwritten';
   });
 
   await step('phone layout: the QuickBooks screens fit 390 px', async () => {

@@ -19,11 +19,18 @@
 //     that is not a linked job keeps the sub-customer as its client (customerFromQbo).
 //   link: the qbo_links row (snake_case or camelCase): { role, qbo_line, meta }
 //   optional: rates ({ codes, rates, agencies } from qbo_reference, for bill taxes), related ({ job } for
-//   time entry descriptions).
-import { lineCents, docTotals, entryHours, KINDS } from '../../../../electrical-app/js/lib/money.js';
+//   time entry descriptions), taxUse(line, { vendor }) (rst.js billLineTaxUse, r1-get-paid.md 9.3) and
+//   refs.vendor(vendorId) -> { meSubtrade } for a bill line's resale or own use.
+//
+// Release 1 (r1-get-paid.md 9): per-line tax codes (a line's taxOff), the holdback as a negative line
+// on item.holdback, deposit and interest lines on item.deposit and item.interest, credit notes as a
+// CreditMemo (canonical amounts keep Fishtape's sign: a credit note's lines are negative on both
+// sides), supplier credits as a VendorCredit, and RST on resale bill lines as one line on
+// account.rstRecoverable.
+import { lineCents, docTotals, entryHours, invoiceKind, KINDS } from '../../../../electrical-app/js/lib/money.js';
 import { ratesOn, fmtPct } from '../../../../electrical-app/js/lib/tax.js';
 import { qboName, stripNameSuffix, jobDisplayName, addressFromQbo, addressToQbo, addressKey } from './names.js';
-import { lineTaxKey, purchaseTaxKey, spreadPurchaseTax, taxIdForRate, taxInclusiveToNet, RECOVERABLE } from './tax.js';
+import { lineTaxKey, holdbackTaxKey, purchaseTaxKey, spreadPurchaseTax, taxIdForRate, taxInclusiveToNet, fallbackBillLineTaxUse, RECOVERABLE } from './tax.js';
 
 /** QBO CustomerMemo is cut to this length on push; both sides are compared cut (VERIFY, 11.4). */
 export const CUSTOMER_MEMO_MAX = 1000;
@@ -113,7 +120,15 @@ function keyFor(mapKind, id, order = []) {
   return null;
 }
 
-const GENERIC_KIND = { material: 'material', labour: 'labour', other: 'other', markup: 'material', travel: 'labour', deposit: 'other' };
+const GENERIC_KIND = { material: 'material', labour: 'labour', other: 'other', markup: 'material', travel: 'labour', deposit: 'other', holdback: 'other', interest: 'other' };
+/** The generic item of each special line type (r1-get-paid.md 9.2). */
+export const LINE_TYPE_ITEM = { deposit: 'deposit', holdback: 'holdback', interest: 'interest' };
+/** The text of the holdback line and of the RST recoverable bill line (QuickBooks shows them). */
+export const holdbackLineText = (doc) => {
+  const pct = Number(doc?.holdback?.pct);
+  return pct ? `Holdback retained (${fmtPct(pct)}%)` : 'Holdback retained';
+};
+export const RST_RECOVERABLE_TEXT = 'RST on resale materials, recoverable from the supplier';
 
 /** The generic item for a line kind (4.4): deposit for negative lines, then the kind, then material. */
 export function genericItem(ctx, kind, { negative = false } = {}) {
@@ -129,7 +144,7 @@ export function genericItem(ctx, kind, { negative = false } = {}) {
  */
 export function kindOfItem(ctx, itemRef) {
   if (!itemRef) return 'other';
-  const g = keyFor(maps(ctx, 'item'), itemRef, ['material', 'labour', 'other', 'markup', 'travel', 'deposit']);
+  const g = keyFor(maps(ctx, 'item'), itemRef, ['material', 'labour', 'other', 'markup', 'travel', 'deposit', 'holdback', 'interest']);
   if (g) return GENERIC_KIND[g];
   const k = refs(ctx).itemKind?.(itemRef);
   if (KINDS.includes(k)) return k;
@@ -230,6 +245,13 @@ export function fishtapeToCanon(collection, record, ctx = {}) {
       return docToCanon(collection, r, ctx, meta);
     case 'payments':
       if (role === 'fee') return paymentFeeCanon(r);
+      if (role === 'apply') {
+        // A credit note applied to an invoice (9.2): a $0 QuickBooks payment linking the two.
+        return {
+          invoiceRef: qboIdFor(ctx, 'invoices', r.invoiceId), memoRef: qboIdFor(ctx, 'invoices', r.creditNoteId),
+          amountCents: Math.round(Number(r.amountCents) || 0), date: day(r.date),
+        };
+      }
       return {
         invoiceRef: qboIdFor(ctx, 'invoices', r.invoiceId), amountCents: Math.round(Number(r.amountCents) || 0),
         date: day(r.date), method: methodValue(ctx, r.source === 'stripe' ? 'card' : r.method),
@@ -287,10 +309,13 @@ function payoutFeeCanon(r) {
   };
 }
 
-const EST_STATUS = { draft: 'pending', sent: 'pending', accepted: 'accepted', declined: 'rejected' };
+// A superseded estimate (a revision replaced it, r1-get-paid.md 9.5) compares as accepted, as QuickBooks'
+// Closed does; extra.superseded makes the push send TxnStatus Closed.
+const EST_STATUS = { draft: 'pending', sent: 'pending', accepted: 'accepted', declined: 'rejected', superseded: 'accepted' };
 
 function docToCanon(collection, r, ctx, meta) {
   const inv = collection === 'invoices';
+  const credit = inv && invoiceKind(r) === 'credit';
   const { clientRef, jobRef } = customerRefForJob(ctx, r.jobId, r.clientId);
   const totals = docTotals(r);
   const out = {
@@ -300,16 +325,23 @@ function docToCanon(collection, r, ctx, meta) {
     status: inv ? (r.status === 'void' ? 'void' : 'open') : (EST_STATUS[r.status] || 'pending'),
     notes: cut(r.notes, CUSTOMER_MEMO_MAX), title: cut(r.title, NOTES_MAX),
   };
-  if (inv) { out.dueDate = day(r.dueDate); out.estimateRef = qboIdFor(ctx, 'estimates', r.estimateId); }
+  // A CreditMemo has no due date and no estimate (9.2): both sides compare as empty.
+  if (inv) { out.dueDate = credit ? null : day(r.dueDate); out.estimateRef = credit ? null : qboIdFor(ctx, 'estimates', r.estimateId); }
   else out.validUntil = day(r.validUntil);
-  // The whole number, so a push can refuse one QBO would cut (error/number_too_long, 4.7).
-  out.extra = { numberFull: str(r.number), totalCents: totals.totalCents, taxes: totals.taxes.map((t) => ({ id: t.id, pct: t.pct, cents: t.cents, baseCents: t.baseCents })) };
+  // The whole number, so a push can refuse one QBO would cut (error/number_too_long, 4.7). The kind
+  // picks the QuickBooks entity (a credit note is a CreditMemo); the credit reason its memo.
+  out.extra = {
+    numberFull: str(r.number), totalCents: totals.totalCents, taxes: totals.taxes.map((t) => ({ id: t.id, pct: t.pct, cents: t.cents, baseCents: t.baseCents })),
+    ...(inv ? { kind: invoiceKind(r) } : {}), ...(credit && r.creditReason ? { creditReason: str(r.creditReason) } : {}),
+    ...(!inv && r.status === 'superseded' ? { superseded: true } : {}),
+  };
   return out;
 }
 
 function docLines(r, ctx, meta, totals = docTotals(r)) {
   const codes = maps(ctx, 'taxCode');
-  const code = (kind) => str(codes[lineTaxKey(r, kind)]);
+  const items = maps(ctx, 'item');
+  const code = (key) => str(codes[key]);
   const ids = lineIdsOf(meta);
   const lossy = lossySet(meta);
   const out = (r.lines || []).map((l, i) => {
@@ -318,18 +350,30 @@ function docLines(r, ctx, meta, totals = docTotals(r)) {
     const qty = Number(l.qty) || 0, unitCents = Math.round(Number(l.unitCents) || 0);
     const descOnly = !l.itemId && qty === 0 && unitCents === 0;
     const isLossy = lossy.has(i);
+    // Deposit, holdback release and interest lines go on their own generic items (9.2); a deposit
+    // line waits for item.deposit to be mapped (its old fallback, the `other` item, is income).
+    const special = LINE_TYPE_ITEM[l.lineType];
+    const itemRef = descOnly ? null : (l.itemId ? qboIdFor(ctx, 'items', l.itemId) : special ? str(items[special]) : genericItem(ctx, kind, { negative: amountCents < 0 }));
     const line = {
-      itemRef: descOnly ? null : (l.itemId ? qboIdFor(ctx, 'items', l.itemId) : genericItem(ctx, kind, { negative: amountCents < 0 })),
-      kind, description: cut(isLossy ? stripLossySuffix(l.description) : l.description, LINE_DESC_MAX), amountCents,
-      taxCodeId: descOnly ? null : code(kind), qty, unitCents, lineId: str(ids[String(i)]),
+      itemRef, kind, description: cut(isLossy ? stripLossySuffix(l.description) : l.description, LINE_DESC_MAX), amountCents,
+      taxCodeId: descOnly ? null : code(lineTaxKey(r, l)), qty, unitCents, lineId: str(ids[String(i)]),
     };
+    if (special) line.lineType = l.lineType;
     if (isLossy) line.lossy = true;
     return line;
   });
   if (totals.markupCents) {
     out.push({
       itemRef: genericItem(ctx, 'markup'), kind: 'material', description: `Materials markup (${fmtPct(r.markupPct)}%)`,
-      amountCents: totals.markupCents, taxCodeId: code('material'), qty: 1, unitCents: totals.markupCents, lineId: str(ids.markup), markup: true,
+      amountCents: totals.markupCents, taxCodeId: code(lineTaxKey(r, 'material')), qty: 1, unitCents: totals.markupCents, lineId: str(ids.markup), markup: true,
+    });
+  }
+  // The holdback (9.2): a negative line on item.holdback with the code of the taxes deferred to the
+  // release. Holdback the customer kept on its own (retainedByCustomerCents) is Fishtape-only.
+  if (totals.holdbackCents) {
+    out.push({
+      itemRef: str(items.holdback), kind: 'other', description: holdbackLineText(r), amountCents: -totals.holdbackCents,
+      taxCodeId: code(holdbackTaxKey(r, totals)), qty: 1, unitCents: -totals.holdbackCents, lineId: str(ids.holdback), holdback: true,
     });
   }
   return out;
@@ -345,18 +389,23 @@ function billToCanon(r, ctx, meta) {
   const ids = lineIdsOf(meta);
   const raw = (r.lines || []).map((l) => ({ ...l, amountCents: Number.isInteger(l.amountCents) ? l.amountCents : lineCents(l) }));
   const printed = (r.taxes || []).map((t) => ({ id: String(t.id || '').toUpperCase(), cents: Math.round(Number(t.cents) || 0) }));
-  const spread = spreadPurchaseTax(raw, printed, RECOVERABLE);
+  // Resale or own use per line (r1-get-paid.md 3.5, 9.3): rst.js billLineTaxUse through ctx.taxUse.
+  const vendor = r.vendorId ? refs(ctx).vendor?.(r.vendorId) || null : null;
+  const useOf = typeof ctx?.taxUse === 'function' ? ctx.taxUse : fallbackBillLineTaxUse;
+  const spread = spreadPurchaseTax(raw, printed, RECOVERABLE, { taxUse: (l) => useOf(l, { vendor }) });
   const pctOf = (id) => ratesOn(province, date || undefined).find((p) => p.id === id)?.pct ?? (id === 'GST' ? 5 : null);
   const number = str(r.number);
+  // A bill whose lines add up below zero is a supplier credit: a QuickBooks VendorCredit, no due date (9.2).
+  const vendorCredit = !receipt && raw.reduce((s, l) => s + l.amountCents, 0) < 0;
   return {
     kind: receipt ? 'receipt' : 'bill',
     vendorRef: qboIdFor(ctx, 'vendors', r.vendorId),
     number: cut(number, DOC_NUMBER_MAX),
     date,
-    dueDate: receipt ? null : day(r.dueDate),
+    dueDate: receipt || vendorCredit ? null : day(r.dueDate),
     notes: cut(r.notes, NOTES_MAX),
     paidWith: receipt ? { ref: str(maps(ctx, 'paidFrom')[r.paidWith]), key: str(r.paidWith) } : null,
-    lines: spread.lines.map((l, i) => {
+    lines: [...spread.lines.map((l, i) => {
       const linked = l.itemId ? qboIdFor(ctx, 'items', l.itemId) : null;
       const inventory = linked && refs(ctx).itemType?.(linked) === 'Inventory';
       const itemRef = linked && !inventory ? linked : null;
@@ -371,8 +420,14 @@ function billToCanon(r, ctx, meta) {
         ...(po && po.poRef ? { poLine: po } : {}),
       };
     }),
+    // RST on resale lines (9.3): one line on account.rstRecoverable for its cents, never job cost.
+    ...(spread.resaleCents ? [{
+      itemRef: null, accountRef: str(accounts.rstRecoverable), description: RST_RECOVERABLE_TEXT, amountCents: spread.resaleCents,
+      taxCodeId: str(maps(ctx, 'purchaseTaxCode').NONE), customerRef: null, qty: 1, unitCents: spread.resaleCents,
+      lineId: str(ids[String(spread.lines.length)]), costType: 'other', rstRecoverable: true,
+    }] : [])],
     taxes: spread.taxes.filter((t) => t.cents).map((t) => ({ id: t.id, pct: pctOf(t.id), cents: t.cents })).sort((a, b) => a.id.localeCompare(b.id)),
-    extra: { numberFull: number, taxKey: key, province },
+    extra: { numberFull: number, taxKey: key, province, resaleRstCents: spread.resaleCents || 0, ...(vendorCredit ? { vendorCredit: true } : {}) },
   };
 }
 
@@ -445,14 +500,18 @@ export function qboToCanon(entity, object, ctx = {}) {
       };
     case 'Estimate':
     case 'Invoice':
+    case 'CreditMemo':
       if (coll === 'payments' && role === 'deposit') {
         return { invoiceRef: str(o.Id), amountCents: toCents(o.Deposit), date: day(o.TxnDate), method: methodValue(ctx, 'transfer'), reference: 'Deposit in QuickBooks' };
       }
       return docFromQbo(entity, o, ctx, meta);
     case 'Payment':
+      if (role === 'apply') return applyFromQbo(o, qboLine);
       return paymentFromQbo(o, ctx, qboLine);
     case 'Bill':
       return billFromQbo('bill', o, ctx);
+    case 'VendorCredit':
+      return billFromQbo('bill', o, ctx, { sign: -1 });
     case 'Purchase':
       if (role === 'fee' && coll === 'stripePayouts') {
         return {
@@ -512,25 +571,45 @@ export function isVoidedInvoice(o) {
   return lines.every((l) => toCents(l.Amount) === 0) && /^Voided/i.test(String(o.PrivateNote || ''));
 }
 
+/** The memo a bad-debt credit note carries in QuickBooks (9.2; VERIFY with the accountant). */
+export const BAD_DEBT_MEMO = 'Bad debt write-off';
+
 function docFromQbo(entity, o, ctx, meta) {
-  const inv = entity === 'Invoice';
+  const credit = entity === 'CreditMemo';
+  const inv = entity === 'Invoice' || credit;
   const { clientRef, jobRef } = customerFromQbo(ctx, ref(o.CustomerRef));
   const out = {
     number: cut(o.DocNumber, DOC_NUMBER_MAX), clientRef, jobRef,
-    date: day(o.TxnDate), lines: salesLinesFromQbo(o, ctx, meta),
+    date: day(o.TxnDate), lines: salesLinesFromQbo(o, ctx, meta, { credit }),
     status: inv ? (isVoidedInvoice(o) ? 'void' : 'open') : (QBO_EST_STATUS[o.TxnStatus] || 'pending'),
-    notes: cut(o.CustomerMemo?.value, CUSTOMER_MEMO_MAX), title: stripMarker(o.PrivateNote),
+    notes: cut(o.CustomerMemo?.value, CUSTOMER_MEMO_MAX),
+    // The bad-debt memo Fishtape adds (9.2) is not part of the title.
+    title: credit ? str(String(stripMarker(o.PrivateNote) || '').replace(new RegExp(`(?:\\s*·\\s*)?${BAD_DEBT_MEMO}$`), '')) : stripMarker(o.PrivateNote),
   };
   if (inv) {
-    out.dueDate = day(o.DueDate);
-    out.estimateRef = str((o.LinkedTxn || []).find((t) => t.TxnType === 'Estimate')?.TxnId);
+    out.dueDate = credit ? null : day(o.DueDate);
+    out.estimateRef = credit ? null : str((o.LinkedTxn || []).find((t) => t.TxnType === 'Estimate')?.TxnId);
   } else out.validUntil = day(o.ExpirationDate);
+  // A CreditMemo's amounts are positive in QuickBooks and negative in Fishtape (9.2).
+  const sign = credit ? -1 : 1;
   out.extra = {
-    totalCents: toCents(o.TotalAmt), balanceCents: o.Balance == null ? null : toCents(o.Balance), globalTax: str(o.GlobalTaxCalculation),
+    totalCents: sign * toCents(o.TotalAmt), balanceCents: o.Balance == null ? (credit && o.RemainingCredit != null ? -toCents(o.RemainingCredit) : null) : sign * toCents(o.Balance), globalTax: str(o.GlobalTaxCalculation),
     taxInclusive: o.GlobalTaxCalculation === 'TaxInclusive', txnStatus: str(o.TxnStatus),
-    taxLines: taxLinesOf(o.TxnTaxDetail), totalTaxCents: toCents(o.TxnTaxDetail?.TotalTax ?? 0),
+    taxLines: taxLinesOf(o.TxnTaxDetail), totalTaxCents: sign * toCents(o.TxnTaxDetail?.TotalTax ?? 0),
+    ...(credit ? { kind: 'credit', badDebt: new RegExp(`${BAD_DEBT_MEMO}$`).test(String(o.PrivateNote || '')) } : {}),
   };
   return out;
+}
+
+/**
+ * A credit-note application (link role apply, 9.2): the QuickBooks payment of $0 that applies a
+ * CreditMemo to an invoice. Its canonical form is the invoice line it owns and the amount applied.
+ */
+function applyFromQbo(o, qboLine) {
+  const lines = (o?.Line || []).map((l) => ({ amount: toCents(l.Amount), t: (l.LinkedTxn || [])[0] || {} }));
+  const inv = lines.find((x) => x.t.TxnType === 'Invoice' && (!qboLine || String(x.t.TxnId) === String(qboLine)));
+  const memo = lines.find((x) => x.t.TxnType === 'CreditMemo');
+  return { invoiceRef: inv ? str(inv.t.TxnId) : null, memoRef: memo ? str(memo.t.TxnId) : null, amountCents: inv ? inv.amount : 0, date: day(o?.TxnDate) };
 }
 
 /** TxnTaxDetail.TaxLine as [{ rateId, pct, cents, netCents }]. */
@@ -554,18 +633,29 @@ export function flatSalesLines(o) {
 
 const MARKUP_RE = /^Materials markup/i;
 
-function salesLinesFromQbo(o, ctx, meta) {
+/**
+ * A sales object's lines in Fishtape's terms. A CreditMemo (credit) has its amounts negated, so a
+ * credit note compares with its Fishtape lines (negative on both sides). Lines on item.deposit,
+ * item.holdback and item.interest carry their lineType (9.2); a line on item.holdback against the
+ * document's sign (negative on an invoice, positive on a credit memo once negated) is the
+ * document's holdback, listed last like Fishtape's own holdback line. A positive holdback line on
+ * an invoice is a release.
+ */
+function salesLinesFromQbo(o, ctx, meta, { credit = false } = {}) {
   const inclusive = o.GlobalTaxCalculation === 'TaxInclusive';
   const lossyListed = lossySet(meta);
   const markupItem = genericItem(ctx, 'markup');
-  const plain = [], markups = [];
+  const items = maps(ctx, 'item');
+  const sign = credit ? -1 : 1;
+  const typeOf = (itemRef) => (itemRef ? Object.keys(LINE_TYPE_ITEM).find((t) => str(items[LINE_TYPE_ITEM[t]]) === itemRef) || null : null);
+  const plain = [], markups = [], holdbacks = [];
   for (const l of flatSalesLines(o)) {
     if (l.DetailType === 'DescriptionOnly') {
       plain.push({ itemRef: null, kind: 'other', description: cut(l.Description, LINE_DESC_MAX), amountCents: 0, taxCodeId: null, qty: 0, unitCents: 0, lineId: str(l.Id) });
       continue;
     }
     if (l.DetailType === 'DiscountLineDetail') {
-      const amount = -Math.abs(toCents(l.Amount));
+      const amount = -sign * Math.abs(toCents(l.Amount));
       plain.push({
         itemRef: genericItem(ctx, 'other', { negative: true }), kind: 'other', description: cut(l.Description, LINE_DESC_MAX) || 'Discount', amountCents: amount,
         taxCodeId: ref(l.DiscountLineDetail?.TaxCodeRef), qty: 1, unitCents: amount, lineId: str(l.Id), discount: true,
@@ -575,13 +665,18 @@ function salesLinesFromQbo(o, ctx, meta) {
     if (l.DetailType !== 'SalesItemLineDetail') continue;
     const d = l.SalesItemLineDetail || {};
     const itemRef = ref(d.ItemRef);
-    const amountCents = toCents(inclusive && d.TaxInclusiveAmt != null ? d.TaxInclusiveAmt : l.Amount);
+    const amountCents = sign * toCents(inclusive && d.TaxInclusiveAmt != null ? d.TaxInclusiveAmt : l.Amount);
     const qty = d.Qty == null ? 1 : Number(d.Qty) || 0;
-    const unitCents = d.UnitPrice == null ? amountCents : toCents(d.UnitPrice);
+    const unitCents = d.UnitPrice == null ? amountCents : sign * toCents(d.UnitPrice);
     const exact = Math.round(qty * unitCents) === amountCents || (d.Qty == null && d.UnitPrice == null);
     const description = str(l.Description);
     if (markupItem && itemRef === markupItem && MARKUP_RE.test(description || '')) {
       markups.push({ itemRef, kind: 'material', description, amountCents, taxCodeId: ref(d.TaxCodeRef), qty: 1, unitCents: amountCents, lineId: str(l.Id), markup: true });
+      continue;
+    }
+    const lineType = typeOf(itemRef);
+    if (lineType === 'holdback' && amountCents * sign < 0) {
+      holdbacks.push({ itemRef, kind: 'other', description, amountCents, taxCodeId: ref(d.TaxCodeRef), qty: 1, unitCents: amountCents, lineId: str(l.Id), holdback: true });
       continue;
     }
     const index = plain.length;
@@ -589,11 +684,12 @@ function salesLinesFromQbo(o, ctx, meta) {
       itemRef, kind: kindOfItem(ctx, itemRef), description: cut(lossyListed.has(index) ? stripLossySuffix(description) : description, LINE_DESC_MAX),
       amountCents, taxCodeId: ref(d.TaxCodeRef), qty: exact ? qty : 1, unitCents: exact ? unitCents : amountCents, lineId: str(l.Id),
     };
+    if (lineType) line.lineType = lineType;
     if (!exact) line.lossy = { qty: d.Qty, unitPrice: d.UnitPrice };
     else if (lossyListed.has(index)) line.lossy = true;
     plain.push(line);
   }
-  return [...plain, ...markups];
+  return [...plain, ...markups, ...holdbacks];
 }
 
 /**
@@ -628,8 +724,9 @@ function paymentFromQbo(o, ctx, qboLine) {
  * tax lines are spread into the line amounts exactly as on the Fishtape side, so a pulled bill
  * compares equal to what Fishtape stores; a Purchase with Credit: true becomes negative amounts.
  */
-function billFromQbo(kind, o, ctx) {
-  const sign = o.Credit === true ? -1 : 1;
+function billFromQbo(kind, o, ctx, { sign: forced = null } = {}) {
+  // A refund Purchase (Credit: true) and a VendorCredit (a supplier credit, 9.2) are negative in Fishtape.
+  const sign = forced ?? (o.Credit === true ? -1 : 1);
   const expense = (o.Line || []).filter((l) => l.DetailType === 'AccountBasedExpenseLineDetail' || l.DetailType === 'ItemBasedExpenseLineDetail');
   const net = o.GlobalTaxCalculation === 'TaxInclusive' ? taxInclusiveToNet(o, { ...(ctx.rates || {}), province: ctx?.company?.province }).lines.map((l) => l.netCents) : null;
   const province = ctx?.company?.province || null;

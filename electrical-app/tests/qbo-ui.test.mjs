@@ -802,3 +802,79 @@ describe('review fixes: the API wrapper', () => {
     assert.throws(() => qboApi.pushRecord('employees', 'e-1'), /Not a QuickBooks collection/);
   });
 });
+
+// ---- Release 1 (docs/releases/r1-get-paid.md 9; docs/integrations/quickbooks.md 17) -------------------
+
+describe('Release 1: mappings, reviews and the CSV export', () => {
+  test('new mapping rows: holdback, interest, RST recoverable; deposits required before deposit invoices; feature notes', () => {
+    const items = Q.ITEM_KEYS.map((k) => k.key);
+    for (const k of ['deposit', 'holdback', 'interest']) assert.ok(items.includes(k), k);
+    assert.match(Q.ITEM_KEYS.find((k) => k.key === 'deposit').label, /before deposit invoices/);
+    const rst = Q.ACCOUNT_KEYS.find((k) => k.key === 'rstRecoverable');
+    assert.ok(rst && rst.types.includes('Other Current Asset'));
+    assert.ok(Q.FEATURE_NOTES.some((n) => /credit memos/.test(n)) && Q.FEATURE_NOTES.some((n) => /vendor credits/.test(n)));
+  });
+
+  test('review reasons and their choices: locked changes are accepted after reopening or noted, never pushed over QuickBooks', () => {
+    for (const r of ['period_locked', 'document_signed', 'exemption_missing', 'holdback_invalid', 'tax_off_invalid', 'credit_apply', 'on_account', 'refund', 'reversal']) {
+      assert.ok(Q.REVIEW_REASON[r], r);
+      assert.ok(Q.reviewChoices(r)?.choices.length, r);
+    }
+    const locked = Q.reviewChoices('period_locked').choices;
+    assert.deepEqual(locked.map((c) => c.choice), ['quickbooks', 'note']);
+    assert.ok(!locked.some((c) => c.choice === 'fishtape'), "Fishtape's copy is never pushed over QuickBooks");
+    assert.equal(locked.find((c) => c.choice === 'note').note, true);
+    assert.deepEqual(Q.reviewChoices('on_account').choices.map((c) => c.choice), ['quickbooks'], 'never sent: only "recorded in QuickBooks"');
+    assert.deepEqual(Q.reviewChoices('credit_apply').choices.map((c) => c.choice), ['fishtape', 'quickbooks']);
+    assert.equal(Q.reviewChoices('exemption_missing').choices[0].choice, 'fishtape');
+    assert.equal(Q.reviewChoices('origin'), null, 'older reviews keep their own buttons');
+    assert.match(Q.reasonText({ state: 'needs_review', reason: 'exemption_missing' }), /RST number on the job/);
+  });
+
+  test('resolveConflict sends the note of a noted difference; other choices go through qboApi.resolve', async () => {
+    const posts = [], resolves = [];
+    const deps = { api: { resolve: async (id, body) => { resolves.push([id, body]); return { ok: 1 }; } }, post: async (method, url, body) => { posts.push([method, url, body]); return { ok: 2 }; } };
+    assert.deepEqual(await Q.resolveConflict('c/1', { choice: 'note', note: 'Agreed with the bookkeeper' }, deps), { ok: 2 });
+    assert.deepEqual(posts, [['POST', '/api/v1/qbo/conflicts/c%2F1/resolve', { choice: 'note', note: 'Agreed with the bookkeeper' }]]);
+    await Q.resolveConflict('c-2', { choice: 'quickbooks' }, deps);
+    await Q.resolveConflict('c-3', { choice: 'note' }, deps);
+    assert.deepEqual(resolves.map((r) => r[0]), ['c-2', 'c-3']);
+  });
+
+  test('the module renders the Release 1 choices and sends a note with a noted difference', () => {
+    const src = read('../js/modules/quickbooks.js');
+    assert.match(src, /Q\.reviewChoices\(c\.reason\)/);
+    assert.match(src, /choice: x\.choice, \.\.\.\(x\.note && text \? \{ note: text\.slice\(0, 500\) \}/);
+    assert.match(src, /Q\.FEATURE_NOTES/);
+  });
+
+  test('CSV export: each line gets the code of its own taxes; holdback and credit notes are reported; applications are not payments', async () => {
+    const X = await import('../js/lib/qbo-export.js');
+    const mb = {
+      number: 'INV-9', clientId: 'c-1', issueDate: '2026-10-15', dueDate: '2026-11-14', status: 'sent', taxProvince: 'MB', taxTreatment: 'pst-all', taxes: taxComponents({ province: 'MB', treatment: 'pst-all' }),
+      lines: [{ description: 'Labour', qty: 2, unitCents: 9500, kind: 'labour' }, { description: 'Hotel', qty: 1, unitCents: 15000, kind: 'other', passThrough: true, taxOff: ['RST'] }],
+    };
+    assert.deepEqual(X.lineTaxIds(mb, mb.lines[1]), ['GST']);
+    assert.deepEqual(X.lineTaxIds(mb, 'other'), ['GST', 'RST'], 'a kind name: a plain line of that kind');
+    assert.equal(X.taxCodeFor(mb, mb.lines[0]), 'GST/PST MB');
+    assert.equal(X.taxCodeFor(mb, mb.lines[1]), 'GST');
+    assert.deepEqual(X.taxKeysUsed([mb]).map((k) => k.key).sort(), ['GST', 'GST+RST|MB']);
+    const names = new Map([['c-1', 'Hotel Client']]);
+    const r = X.invoiceRows({ invoices: [mb], names });
+    assert.deepEqual(r.rows.slice(1).map((row) => row[11]), ['GST/PST MB', 'GST']);
+    const withHoldback = { ...mb, number: 'INV-10', lines: [mb.lines[0]], holdback: { pct: 10, deferTaxIds: ['GST', 'RST'] } };
+    assert.deepEqual(X.holdbackTaxIds(withHoldback), ['GST', 'RST']);
+    assert.ok(X.taxKeysUsed([withHoldback]).some((k) => k.key === 'GST+RST|MB'));
+    const credit = { ...mb, number: 'CR-1001', kind: 'credit', lines: [{ ...mb.lines[0], unitCents: -9500 }] };
+    const r2 = X.invoiceRows({ invoices: [withHoldback, credit], names });
+    assert.deepEqual(r2.problems.map((p) => p.number), ['INV-10', 'CR-1001']);
+    assert.match(r2.problems[0].message, /holdback/);
+    assert.match(r2.problems[1].message, /credit memo/);
+    const p = X.paymentRows({
+      payments: [{ invoiceId: 'i-1', amountCents: 5000, date: '2026-10-16', method: 'credit-note', creditNoteId: 'cn-1' }, { invoiceId: 'i-1', amountCents: 1000, date: '2026-10-17', method: 'cheque' }],
+      invoicesById: new Map([['i-1', { id: 'i-1', number: 'INV-1', clientId: 'c-1' }]]), names,
+    });
+    assert.equal(p.count, 1, 'a credit-note application is not money received');
+    assert.match(p.problems[0].message, /Credit note applied/);
+  });
+});

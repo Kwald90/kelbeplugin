@@ -120,3 +120,6 @@ button.qbo-badge:focus-visible { outline: 2px solid var(--accent); outline-offse
   .qbo-amounts { grid-template-columns: 1fr; }
 }
 .row-inline { display: inline-flex; flex-wrap: wrap; gap: var(--s1); align-items: center; }
+/* Release 1 notes on the mappings screen (credit memos, vendor credits, payments not sent). */
+.qbo-notes { margin: var(--s2) 0 0; padding-left: var(--s4); font-size: var(--fs-sm); }
+.qbo-notes li + li { margin-top: var(--s1); }

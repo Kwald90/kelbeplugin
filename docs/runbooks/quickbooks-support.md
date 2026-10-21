@@ -132,9 +132,26 @@ amounts and a link to the record. Common causes:
   the pay link already charges the QuickBooks total);
 - a Stripe refund, dispute or fee Fishtape does not book (the payout is in review; the bookkeeper
   enters it in QuickBooks and resolves the review);
-- an edit in QuickBooks to a closed period.
+- an edit in QuickBooks to a closed period (see below).
 
 The office fixes it on whichever side is wrong; the next pass syncs it.
+
+## Release 1 reviews (contract 17)
+
+The company's QuickBooks **Conflicts** list holds these; support explains them, the office decides.
+
+| reason | what happened | what the office does |
+| --- | --- | --- |
+| `period_locked` | QuickBooks changed (or created) a record in a month closed on Fishtape's Books page. Fishtape kept its copy; the refused write is on Books → refused writes. | An owner reopens the month on Books, then **Reopen the period and accept QuickBooks**; or **Keep the difference noted** with a note. Fishtape's copy is never pushed over QuickBooks (`qbo_locked`). |
+| `document_signed` | QuickBooks changed an estimate the customer signed in Fishtape. | Make a revision in Fishtape, or note the difference. |
+| `exemption_missing` | A Manitoba invoice from QuickBooks charges no RST and the job has no exemption evidence. | Add the customer's number on the job, then **Check again** (422 `exemption_required` lists what is still missing). |
+| `holdback_invalid`, `tax_off_invalid` | A QuickBooks invoice's holdback or a line's tax cannot stand in Fishtape. | Fix it in QuickBooks (or Fishtape), then **Check again**. |
+| `credit_apply` | A credit note applied to an invoice: sent as a $0 payment only after approval (sandbox VERIFY). | **Approve and send**. Once Intuit's sandbox confirms the shape, HQ may ask the company to set the option `creditApplyConfirmed`. |
+| `on_account`, `refund`, `reversal` | Money on account, a refund or a returned payment: never sent in R1. | Enter it in QuickBooks, then **I've recorded it in QuickBooks** (approving is refused, `qbo_not_sent`). |
+
+`blocked/mapping_missing` with "Pick the QuickBooks product for Holdback / Deposits / Interest" or "RST
+recoverable" means the mapping row is empty: the office picks it on the mappings screen and the waiting
+records go again. A deposit invoice never uses the `other` item as a fallback.
 
 ## A token that will not revoke
 

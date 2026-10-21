@@ -10,19 +10,33 @@
 // PrivateNote keeps what QBO has beyond Fishtape's own text (privateNote).
 import {
   str, cut, toCents, toDollars, linkInfo, localDay, lossySuffix, flatSalesLines, qboToCanon, canonEqual, stripMarker,
-  T5018_FIELD, CUSTOMER_MEMO_MAX, NOTES_MAX, DOC_NUMBER_MAX, LINE_DESC_MAX,
+  T5018_FIELD, CUSTOMER_MEMO_MAX, NOTES_MAX, DOC_NUMBER_MAX, LINE_DESC_MAX, BAD_DEBT_MEMO,
 } from './canon.js';
 import { addressToQbo, qboName, stripNameSuffix } from './names.js';
+import { lineCents } from '../../../../electrical-app/js/lib/money.js';
 
 export { markerFor, normMethod } from './canon.js';
 
-/** The QBO entity of each collection (bills depend on kind; fee links are Purchases). */
+/** The QBO entity of each collection (bills depend on kind and sign, invoices on kind; fee links are Purchases). */
 export const QBO_ENTITY = {
   clients: 'Customer', jobs: 'Customer', items: 'Item', vendors: 'Vendor', estimates: 'Estimate', invoices: 'Invoice',
   payments: 'Payment', bills: 'Bill', purchaseOrders: 'PurchaseOrder', timeEntries: 'TimeActivity', stripePayouts: 'Transfer',
 };
 /** Entities updated with `sparse: true` (5.5; VERIFY whether the others accept it, 11.4 item 5). */
-export const SPARSE_ENTITIES = new Set(['Customer', 'Invoice', 'Estimate', 'Deposit']);
+export const SPARSE_ENTITIES = new Set(['Customer', 'Invoice', 'Estimate', 'Deposit', 'CreditMemo']);
+
+/** A credit note (invoice kind 'credit'), from a Fishtape record or a canonical form (r1-get-paid.md 9.2). */
+export const isCreditNote = (r) => r?.kind === 'credit' || r?.extra?.kind === 'credit';
+/**
+ * A bill whose lines add up below zero, from a Fishtape record or a canonical form: a supplier credit,
+ * which goes to QuickBooks as a VendorCredit (9.2). Receipts stay Purchases (a refund is Credit: true).
+ */
+export function isSupplierCredit(r) {
+  if (!r || r.kind === 'receipt') return false;
+  if (r.extra?.vendorCredit != null) return r.extra.vendorCredit === true;
+  const lines = r.lines || [];
+  return lines.length > 0 && lines.reduce((s, l) => s + (Number.isInteger(l.amountCents) ? l.amountCents : lineCents(l)), 0) < 0;
+}
 /**
  * QBO may refuse a line whose Amount differs from its own Qty × UnitPrice (fault 6000; VERIFY 11.4
  * item 3). While true, such a line goes out as Qty 1 at its amount with " (2.6667 h × $95.00)" in
@@ -49,11 +63,13 @@ const option = (ctx, key, dflt) => (ctx?.mappings?.option && ctx.mappings.option
 const feat = (ctx, key) => Boolean(ctx?.features?.[key]);
 const sum = (arr) => arr.reduce((s, x) => s + x, 0);
 
-/** The QBO entity a canonical form goes to. */
+/** The QBO entity a canonical form (or a Fishtape record) goes to. */
 export function entityFor(collection, canon, role = 'main') {
   if (role === 'fee') return 'Purchase';
   if (collection === 'payments' && role === 'deposit') return 'Invoice';
-  if (collection === 'bills') return canon?.kind === 'receipt' ? 'Purchase' : 'Bill';
+  if (collection === 'payments' && role === 'apply') return 'Payment';
+  if (collection === 'bills') return canon?.kind === 'receipt' ? 'Purchase' : (isSupplierCredit(canon) ? 'VendorCredit' : 'Bill');
+  if (collection === 'invoices' && isCreditNote(canon)) return 'CreditMemo';
   const e = QBO_ENTITY[collection];
   if (!e) throw new Error(`no QBO entity for ${collection}`);
   return e;
@@ -120,6 +136,7 @@ export function canonToQbo(collection, canon, ctx = {}, opts = {}) {
   const out = { entity, body: null, sparse: Boolean(existing && SPARSE_ENTITIES.has(entity)), warnings: [] };
   if (role === 'fee' && collection === 'payments') out.body = paymentFeeBody(canon, ctx, existing);
   else if (role === 'fee' && collection === 'stripePayouts') out.body = payoutFeeBody(canon, ctx, existing);
+  else if (role === 'apply' && collection === 'payments') out.body = creditApplyBody(canon, ctx, existing, opts);
   else if (role === 'deposit') { out.body = { Deposit: toDollars(canon.amountCents) }; out.sparse = Boolean(existing); }
   else {
     switch (collection) {
@@ -202,7 +219,8 @@ function vendorBody(c, ctx, existing, opts) {
 const EST_TXN = { pending: 'Pending', accepted: 'Accepted', rejected: 'Rejected' };
 
 function docBody(collection, c, ctx, existing, want, opts, out) {
-  const inv = collection === 'invoices';
+  const credit = collection === 'invoices' && isCreditNote(c);
+  const inv = collection === 'invoices' && !credit;
   const { meta } = linkInfo(ctx);
   const body = {};
   const numbering = option(ctx, 'numbering', feat(ctx, 'customTxnNumbers') === false ? 'quickbooks' : 'fishtape');
@@ -214,12 +232,14 @@ function docBody(collection, c, ctx, existing, want, opts, out) {
   if (want('clientRef') || want('jobRef')) body.CustomerRef = refOf(c.jobRef || c.clientRef);
   if (want('date')) body.TxnDate = c.date || undefined;
   if (inv && want('dueDate')) body.DueDate = c.dueDate || undefined;
-  if (!inv && want('validUntil')) body.ExpirationDate = c.validUntil || undefined;
+  if (!inv && !credit && want('validUntil')) body.ExpirationDate = c.validUntil || undefined;
   if (want('notes')) body.CustomerMemo = c.notes ? { value: c.notes.slice(0, CUSTOMER_MEMO_MAX) } : (existing?.CustomerMemo?.value ? { value: '' } : undefined);
-  // The marker is put back on every write (QBO edits to PrivateNote are ignored, 4.7).
-  body.PrivateNote = [str(meta.marker), c.title].filter(Boolean).join(' · ').slice(0, NOTES_MAX) || undefined;
+  // The marker is put back on every write (QBO edits to PrivateNote are ignored, 4.7). A bad-debt
+  // credit note carries the memo "Bad debt write-off" (r1-get-paid.md 9.2).
+  const badDebt = credit && c.extra?.creditReason === 'bad_debt' ? BAD_DEBT_MEMO : null;
+  body.PrivateNote = [str(meta.marker), c.title, badDebt].filter(Boolean).join(' · ').slice(0, NOTES_MAX) || undefined;
   if (want('lines')) {
-    const built = salesLines(collection, c, ctx, existing);
+    const built = salesLines(collection, c, ctx, existing, { credit });
     if (built.error) { out.error = built.error; out.body = null; return; }
     body.Line = built.lines;
     out.lossyLines = built.lossy;
@@ -229,9 +249,10 @@ function docBody(collection, c, ctx, existing, want, opts, out) {
     const linked = (existing?.LinkedTxn || []).some((t) => t.TxnType === 'Estimate' && String(t.TxnId) === String(c.estimateRef));
     if (!linked) body.LinkedTxn = [{ TxnId: String(c.estimateRef), TxnType: 'Estimate' }];
   }
-  if (!inv && want('status') && EST_TXN[c.status] && !['Closed', 'Converted'].includes(existing?.TxnStatus)) {
-    body.TxnStatus = EST_TXN[c.status];
-    if (c.status === 'accepted') body.AcceptedDate = opts.today || localDay(ctx.now || new Date(), ctx?.company?.zone);
+  if (!inv && !credit && want('status') && EST_TXN[c.status] && !['Closed', 'Converted'].includes(existing?.TxnStatus)) {
+    // A superseded estimate is Closed in QuickBooks (r1-get-paid.md 9.5); a signed one Accepted as before.
+    body.TxnStatus = c.extra?.superseded ? 'Closed' : EST_TXN[c.status];
+    if (c.status === 'accepted' && !c.extra?.superseded) body.AcceptedDate = opts.today || localDay(ctx.now || new Date(), ctx?.company?.zone);
   }
   if (!existing) {
     Object.assign(body, { EmailStatus: 'NotSet', PrintStatus: 'NotSet' });
@@ -258,12 +279,16 @@ function lineText(description, ex) {
   return description;
 }
 
-function salesLines(collection, c, ctx, existing) {
-  const entity = collection === 'invoices' ? 'Invoice' : 'Estimate';
+function salesLines(collection, c, ctx, existing, { credit = false } = {}) {
+  const entity = collection === 'invoices' ? (credit ? 'CreditMemo' : 'Invoice') : 'Estimate';
   const exLines = new Map(flatSalesLines(existing).filter((l) => l.Id != null).map((l) => [String(l.Id), l]));
   const exCanon = existing ? new Map(qboToCanon(entity, existing, { ...ctx, collection }).lines.filter((l) => l.lineId).map((l) => [l.lineId, l])) : new Map();
-  const lines = c.lines || [];
-  const negatives = lines.some((l) => l.amountCents < 0);
+  // A CreditMemo holds the credit note's lines as positive amounts (9.2): every amount is negated
+  // here, and qboToCanon negates them back, so both sides compare in Fishtape's sign.
+  const own = c.lines || [];
+  const lines = own.map((l) => (credit ? { ...l, amountCents: -l.amountCents, unitCents: -l.unitCents } : l));
+  // The holdback line (9.2) is always a negative sales line on item.holdback, never a discount.
+  const negatives = lines.some((l) => l.amountCents < 0 && !l.holdback);
   if (negatives && !NEGATIVE_SALES_LINES) {
     const taxCodes = new Set(lines.filter((l) => l.amountCents > 0).map((l) => l.taxCodeId));
     if (!feat(ctx, 'discounts') || taxCodes.size > 1) return { error: 'negative_line' };
@@ -273,14 +298,14 @@ function salesLines(collection, c, ctx, existing) {
     const ex = l.lineId ? exLines.get(l.lineId) : null;
     const exC = l.lineId ? exCanon.get(l.lineId) : null;
     if (l.lossy && !l.markup) lossy.push(i);
-    // An unchanged lossy line goes back exactly as QBO has it (4.7).
-    if (l.lossy && ex && exC && canonEqual(collection, 'lines', [l], [exC])) { out.push(clone(ex)); return; }
+    // An unchanged lossy line goes back exactly as QBO has it (4.7); compared in Fishtape's sign.
+    if (l.lossy && ex && exC && canonEqual(collection, 'lines', [own[i]], [exC])) { out.push(clone(ex)); return; }
     const id = ex ? { Id: ex.Id } : {};
     if (l.itemRef == null && !l.amountCents) {
       out.push({ ...id, DetailType: 'DescriptionOnly', Description: (lineText(l.description, ex) || '').slice(0, NOTES_MAX), DescriptionLineDetail: {} });
       return;
     }
-    if (l.amountCents < 0 && !NEGATIVE_SALES_LINES) {
+    if (l.amountCents < 0 && !l.holdback && !NEGATIVE_SALES_LINES) {
       out.push({ ...id, DetailType: 'DiscountLineDetail', Amount: toDollars(-l.amountCents), Description: l.description || 'Discount', DiscountLineDetail: { PercentBased: false } });
       return;
     }
@@ -395,6 +420,25 @@ function paymentBody(c, ctx, existing, want, opts, out) {
   out.body = body;
 }
 
+/**
+ * A credit note applied to an invoice (r1-get-paid.md 9.2): a QuickBooks Payment with TotalAmt 0 and
+ * two lines, the invoice and the CreditMemo, for the amount applied (VERIFY in the sandbox: it is held
+ * in review until confirmed). The customer is the invoice's own QuickBooks customer.
+ */
+function creditApplyBody(c, ctx, existing, opts = {}) {
+  const { meta } = linkInfo(ctx);
+  const body = existing ? fromExisting(existing) : {};
+  const amount = toDollars(Math.abs(Math.round(Number(c.amountCents) || 0)));
+  return Object.assign(body, {
+    CustomerRef: refOf(opts.invoiceCustomerRef || existing?.CustomerRef?.value), TxnDate: c.date || undefined, TotalAmt: 0,
+    PrivateNote: privateNote(meta, ['Credit note applied'], existing),
+    Line: [
+      { Amount: amount, LinkedTxn: [{ TxnId: String(c.invoiceRef), TxnType: 'Invoice' }] },
+      { Amount: amount, LinkedTxn: [{ TxnId: String(c.memoRef), TxnType: 'CreditMemo' }] },
+    ],
+  });
+}
+
 function paymentFeeBody(c, ctx, existing) {
   const { meta } = linkInfo(ctx);
   const acc = maps(ctx, 'account');
@@ -421,10 +465,12 @@ const expenseExtras = (ex, key) => (ex && ex[key] ? Object.fromEntries(Object.en
 
 /**
  * A receipt whose lines add up below zero is a supplier refund: a QuickBooks Purchase with Credit true
- * and every amount positive (4.10). -1 for those, else 1; the tax override uses the same sign (4.8).
+ * and every amount positive (4.10); a bill below zero is a supplier credit, a VendorCredit with
+ * positive amounts (r1-get-paid.md 9.2). -1 for those, else 1; the tax override uses the same sign (4.8).
  */
 export function purchaseSign(c) {
-  return c?.kind === 'receipt' && sum((c.lines || []).map((l) => Number(l.amountCents) || 0)) < 0 ? -1 : 1;
+  if (c?.kind !== 'receipt') return isSupplierCredit(c) ? -1 : 1;
+  return sum((c.lines || []).map((l) => Number(l.amountCents) || 0)) < 0 ? -1 : 1;
 }
 
 function billBody(c, ctx, existing) {
@@ -433,6 +479,7 @@ function billBody(c, ctx, existing) {
   const body = existing ? fromExisting(existing) : {};
   const sign = purchaseSign(c);
   const credit = sign < 0;
+  const vendorCredit = bill && credit;
   if (bill) body.VendorRef = refOf(c.vendorRef);
   else {
     body.EntityRef = c.vendorRef ? { value: String(c.vendorRef), type: 'Vendor' } : undefined;
@@ -442,7 +489,7 @@ function billBody(c, ctx, existing) {
   }
   body.DocNumber = setOrClear(c.number, existing?.DocNumber);
   body.TxnDate = c.date || undefined;
-  if (bill) body.DueDate = c.dueDate || undefined;
+  if (bill && !vendorCredit) body.DueDate = c.dueDate || undefined;
   const full = str(c.extra?.numberFull);
   const longNumber = full && full.length > DOC_NUMBER_MAX ? `Supplier no. ${full}` : null;
   body.PrivateNote = [str(meta.marker), longNumber, c.notes].filter(Boolean).join(' · ').slice(0, NOTES_MAX) || undefined;
@@ -467,7 +514,7 @@ function billBody(c, ctx, existing) {
       Object.assign(detail, { ItemRef: refOf(l.itemRef), Qty: q, UnitPrice: unit });
     } else detail.AccountRef = refOf(l.accountRef);
     const line = { ...(ex ? { Id: ex.Id } : {}), DetailType: key, Amount: toDollars(amount), Description: l.description ? l.description.slice(0, NOTES_MAX) : undefined, [key]: clean(detail) };
-    if (bill && l.poLine?.poRef) line.LinkedTxn = [clean({ TxnId: String(l.poLine.poRef), TxnType: 'PurchaseOrder', TxnLineId: l.poLine.poLineId || undefined })];
+    if (bill && !vendorCredit && l.poLine?.poRef) line.LinkedTxn = [clean({ TxnId: String(l.poLine.poRef), TxnType: 'PurchaseOrder', TxnLineId: l.poLine.poLineId || undefined })];
     return clean(line);
   });
   body.GlobalTaxCalculation = existing ? (str(meta.globalTax) || existing.GlobalTaxCalculation || undefined) : (feat(ctx, 'salesTax') ? 'TaxExcluded' : 'NotApplicable');

@@ -15,7 +15,7 @@
 //  - Payments: QuickBooks Online has no native import for received payments. The file follows
 //    SaasAnt's "Received Payments" template (support.saasant.com 14000052968, 2025-08-20); without
 //    an add-on, record them with + New > Receive payment using the file as the list.
-import { docTotals, docTaxes, lineCents, KINDS } from './money.js';
+import { docTotals, docTaxes, lineCents, lineTaxed, KINDS } from './money.js';
 
 export const QBO_LIMITS = { customerRows: 1000, invoiceRows: 1000, invoicesPerFile: 100 };
 
@@ -30,11 +30,19 @@ export const DEFAULT_TAX_CODES = {
   GST: 'GST', NONE: 'Exempt',
 };
 
-/** The taxes that apply to one line kind on a document: ['GST', 'PST'] (sorted). */
-export function lineTaxIds(doc, kind) {
-  // Same rule as docTotals (money.js): no `applies` means every line kind.
-  return docTaxes(doc).filter((t) => (Number(t.pct) || 0) > 0 && Boolean((t.applies || { material: true, labour: true, other: true })[kind]))
-    .map((t) => String(t.id).toUpperCase()).sort();
+/**
+ * The taxes charged on one line of a document: ['GST', 'PST'] (sorted). Given a line, its kind's
+ * taxes less its taxOff (r1-get-paid.md 9.1; money.js lineTaxed, the rule docTotals uses: no
+ * `applies` means every line kind). Given a kind name, a plain line of that kind.
+ */
+export function lineTaxIds(doc, kindOrLine) {
+  const line = typeof kindOrLine === 'string' ? { kind: kindOrLine } : (kindOrLine || {});
+  return docTaxes(doc).filter((t) => (Number(t.pct) || 0) > 0 && lineTaxed(line, t)).map((t) => String(t.id).toUpperCase()).sort();
+}
+
+/** The taxes a document's holdback is deferred from (its negative line carries them, 9.2). */
+export function holdbackTaxIds(doc, totals = docTotals(doc)) {
+  return totals.taxes.filter((t) => t.deferredCents && (Number(t.pct) || 0) > 0).map((t) => String(t.id).toUpperCase()).sort();
 }
 
 /** The key DEFAULT_TAX_CODES (and the user's own table) is looked up with. */
@@ -45,9 +53,8 @@ export function taxKey(ids, province) {
   return `${ids.join('+')}|${province || ''}`;
 }
 
-/** The QBO tax code name for a line: the user's table first, then the defaults, else a readable guess. */
-export function taxCodeFor(doc, kind, codes = {}) {
-  const ids = lineTaxIds(doc, kind);
+/** The QBO tax code name for taxes with these ids: the user's table first, then the defaults, else a readable guess. */
+function codeName(doc, ids, codes) {
   const key = taxKey(ids, doc.taxProvince);
   if (codes[key]) return codes[key];
   if (DEFAULT_TAX_CODES[key]) return DEFAULT_TAX_CODES[key];
@@ -56,15 +63,31 @@ export function taxCodeFor(doc, kind, codes = {}) {
   return ids.join('/') + (doc.taxProvince ? ` ${doc.taxProvince}` : '');
 }
 
-/** Every tax situation in a set of invoices (for the code table on the export screen). */
+/** The QBO tax code name for a line (or a plain line of a kind): per line, its taxOff included (9.1). */
+export function taxCodeFor(doc, kindOrLine, codes = {}) {
+  return codeName(doc, lineTaxIds(doc, kindOrLine), codes);
+}
+
+/** The tax situations of one invoice's priced lines: its lines, the markup and the holdback line. */
+function invoiceTaxIds(inv) {
+  const out = [];
+  for (const l of inv.lines || []) {
+    if (!l.itemId && !(Number(l.qty) || 0) && !Math.round(Number(l.unitCents) || 0)) continue; // text only
+    out.push(lineTaxIds(inv, l));
+  }
+  const t = docTotals(inv);
+  if (t.markupCents) out.push(lineTaxIds(inv, 'material'));
+  if (t.holdbackCents) out.push(holdbackTaxIds(inv, t));
+  return out;
+}
+
+/** Every tax situation in a set of invoices (for the code table on the export screen), line by line. */
 export function taxKeysUsed(invoices) {
   const out = new Map();
   for (const inv of invoices) {
-    for (const kind of KINDS) {
-      if (!(inv.lines || []).some((l) => (l.kind || 'material') === kind) && !(kind === 'material' && Number(inv.markupPct))) continue;
-      const ids = lineTaxIds(inv, kind);
+    for (const ids of invoiceTaxIds(inv)) {
       const key = taxKey(ids, inv.taxProvince);
-      if (!out.has(key)) out.set(key, { key, ids, province: inv.taxProvince || null, example: inv.number, default: taxCodeFor(inv, kind, {}) });
+      if (!out.has(key)) out.set(key, { key, ids, province: inv.taxProvince || null, example: inv.number, default: codeName(inv, ids, {}) });
     }
   }
   return [...out.values()];
@@ -164,7 +187,7 @@ export function invoicesInRange(invoices, { from, to, includeDrafts = false } = 
  * @returns {{ rows: string[][], problems: { number: string, message: string }[], count: number }}
  */
 export function invoiceRows({ invoices, names, items = {}, codes = {}, dateFormat = 'DD/MM/YYYY', clientOf = (inv) => inv.clientId }) {
-  const itemName = { material: 'Materials', labour: 'Labour', other: 'Other', ...items };
+  const itemName = { material: 'Materials', labour: 'Labour', other: 'Other', deposit: 'Deposits', holdback: 'Holdback', interest: 'Interest', ...items };
   const rows = [INVOICE_HEADERS];
   const problems = [];
   let count = 0;
@@ -172,17 +195,20 @@ export function invoiceRows({ invoices, names, items = {}, codes = {}, dateForma
     const clientId = clientOf(inv);
     const customer = clientId ? names.get(clientId) : null;
     if (!customer) { problems.push({ number: inv.number, message: 'No client on this invoice; QuickBooks needs a customer.' }); continue; }
-    const lines = (inv.lines || []).map((l) => ({ ...l, kind: KINDS.includes(l.kind) ? l.kind : 'material', cents: lineCents(l) }));
+    if (inv.kind === 'credit') { problems.push({ number: inv.number, message: 'A credit note; QuickBooks imports invoices only. Enter it as a credit memo by hand.' }); continue; }
+    // Each line keeps its own tax code (its taxOff, r1-get-paid.md 9.1) and special lines their own products (9.2).
+    const lines = (inv.lines || []).map((l) => ({ ...l, kind: KINDS.includes(l.kind) ? l.kind : 'material', cents: lineCents(l), code: taxCodeFor(inv, l, codes) }));
     const t = docTotals(inv);
-    if (t.markupCents) lines.push({ kind: 'material', description: `Materials markup (${inv.markupPct}%)`, qty: 1, unitCents: t.markupCents, cents: t.markupCents });
-    if (lines.some((l) => l.cents < 0)) { problems.push({ number: inv.number, message: 'Has a negative line (a discount or credit); QuickBooks import refuses those. Enter it by hand.' }); continue; }
+    if (t.markupCents) lines.push({ kind: 'material', description: `Materials markup (${inv.markupPct}%)`, qty: 1, unitCents: t.markupCents, cents: t.markupCents, code: taxCodeFor(inv, 'material', codes) });
+    if (t.holdbackCents) lines.push({ kind: 'other', lineType: 'holdback', description: 'Holdback retained', qty: 1, unitCents: -t.holdbackCents, cents: -t.holdbackCents, code: codeName(inv, holdbackTaxIds(inv, t), codes) });
+    if (lines.some((l) => l.cents < 0)) { problems.push({ number: inv.number, message: 'Has a negative line (a discount, deposit applied or holdback); QuickBooks import refuses those. Enter it by hand.' }); continue; }
     if (!lines.length) { problems.push({ number: inv.number, message: 'No lines.' }); continue; }
     count++;
     for (const l of lines) {
       const rate = Number(l.qty) ? l.cents / 100 / Number(l.qty) : l.cents / 100;
       rows.push([String(inv.number || ''), customer, fmtDay(inv.issueDate, dateFormat), fmtDay(inv.dueDate || inv.issueDate, dateFormat), '',
-        String(inv.notes || inv.title || '').replace(/\s+/g, ' ').slice(0, 1000), itemName[l.kind], String(l.description || '').replace(/[\r\n]+/g, ' ').slice(0, 4000),
-        qty(l.qty || 1), String(Math.round(rate * 10000) / 10000), money(l.cents), taxCodeFor(inv, l.kind, codes), '']);
+        String(inv.notes || inv.title || '').replace(/\s+/g, ' ').slice(0, 1000), itemName[l.lineType] || itemName[l.kind], String(l.description || '').replace(/[\r\n]+/g, ' ').slice(0, 4000),
+        qty(l.qty || 1), String(Math.round(rate * 10000) / 10000), money(l.cents), l.code, '']);
     }
   }
   return { rows, problems, count };
@@ -223,6 +249,9 @@ export function paymentRows({ payments, invoicesById, names, clientOf = (inv) =>
     .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   let n = 0;
   for (const p of list) {
+    // No money came in for a credit note applied to an invoice (r1-get-paid.md 2.6, 9.2): QuickBooks
+    // applies the credit memo itself, so it is listed as a problem, never as a received payment.
+    if (p.method === 'credit-note') { problems.push({ number: invoicesById.get(p.invoiceId)?.number || '?', message: `Credit note applied on ${p.date}: apply the credit memo in QuickBooks.` }); continue; }
     const inv = invoicesById.get(p.invoiceId);
     const customer = inv ? names.get(clientOf(inv)) : null;
     if (!inv || !customer) { problems.push({ number: inv?.number || '?', message: `Payment of ${money(p.amountCents)} on ${p.date}: invoice or client missing.` }); continue; }

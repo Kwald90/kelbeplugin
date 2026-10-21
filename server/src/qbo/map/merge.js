@@ -37,15 +37,18 @@ export const FIELD_RULES = {
   stripePayouts: { money: [], auto: [], pushOnly: ['amountCents', 'date', 'fromRef', 'toRef'] },
   paymentFee: { money: [], auto: [], pushOnly: ['amountCents', 'date'] },
   payoutFee: { money: [], auto: [], pushOnly: ['amountCents', 'date', 'lines'] },
+  // A credit note applied to an invoice: the $0 QuickBooks payment Fishtape writes (r1-get-paid.md 9.2).
+  creditApply: { money: [], auto: [], pushOnly: ['invoiceRef', 'memoRef', 'amountCents', 'date'] },
 };
 
 /** Collections Fishtape owns alone (5.5): L is written whenever L ≠ B or R ≠ B. */
-export const PUSH_ONLY_COLLECTIONS = ['jobs', 'purchaseOrders', 'timeEntries', 'stripePayouts', 'paymentFee', 'payoutFee'];
+export const PUSH_ONLY_COLLECTIONS = ['jobs', 'purchaseOrders', 'timeEntries', 'stripePayouts', 'paymentFee', 'payoutFee', 'creditApply'];
 
-/** The FIELD_RULES key for a link: Stripe fee objects have their own rules. */
+/** The FIELD_RULES key for a link: Stripe fee objects and credit-note applications have their own rules. */
 export function canonCollection(collection, role = 'main') {
   if (role === 'fee' && collection === 'payments') return 'paymentFee';
   if (role === 'fee' && collection === 'stripePayouts') return 'payoutFee';
+  if (role === 'apply' && collection === 'payments') return 'creditApply';
   return collection;
 }
 
@@ -61,7 +64,7 @@ export const MONEY_RECORD_KEYS = {
   },
   invoices: {
     number: ['number'], clientRef: ['clientId'], jobRef: ['jobId'], date: ['issueDate'],
-    lines: ['lines', 'markupPct', 'taxes', 'taxPct', 'taxProvince', 'taxTreatment', 'taxNoneReason'], status: ['status'],
+    lines: ['lines', 'markupPct', 'taxes', 'taxPct', 'taxProvince', 'taxTreatment', 'taxNoneReason', 'holdback'], status: ['status'],
   },
   payments: { invoiceRef: ['invoiceId'], amountCents: ['amountCents'], date: ['date'] },
   bills: {
@@ -200,13 +203,13 @@ const LABELS = {
   status: 'Status', validUntil: 'Valid until', dueDate: 'Due date', estimateRef: 'Estimate', title: 'Title',
   invoiceRef: 'Invoice', amountCents: 'Amount', method: 'Method', reference: 'Reference', vendorRef: 'Supplier', taxes: 'Tax',
   kind: 'Kind', paidWith: 'Paid with', parentRef: 'Client', shipTo: 'Ship to', employeeRef: 'Employee', customerRef: 'Customer or job',
-  itemRef: 'Item', minutes: 'Hours', fromRef: 'From account', toRef: 'To account',
+  itemRef: 'Item', minutes: 'Hours', fromRef: 'From account', toRef: 'To account', memoRef: 'Credit memo',
 };
 /** The label of a field for conflict screens. */
 export const fieldLabel = (field) => LABELS[field] || field;
 
 const MONEY_FIELDS = new Set(['priceCents', 'costCents', 'amountCents']);
-const REF_FIELDS = new Set(['clientRef', 'jobRef', 'estimateRef', 'invoiceRef', 'vendorRef', 'parentRef', 'customerRef', 'itemRef', 'fromRef', 'toRef']);
+const REF_FIELDS = new Set(['clientRef', 'jobRef', 'estimateRef', 'invoiceRef', 'vendorRef', 'parentRef', 'customerRef', 'itemRef', 'fromRef', 'toRef', 'memoRef']);
 const STATUS_WORDS = { open: 'Open', void: 'Void', pending: 'Pending', accepted: 'Accepted', rejected: 'Declined', closed: 'Closed', draft: 'Draft', cancelled: 'Cancelled' };
 
 /** A canonical value as people read it: "3 lines, $1,065.00", "$12.50", "Yes", "(empty)". */

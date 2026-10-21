@@ -17,6 +17,7 @@ import {
   txWrite, getLink, getLinkById, insertLink, updateLink, requeueDependents, finishOutbox, deferOutbox, loadRecord, system,
   linkFailure, holdLink, reconcile, voidLocalInvoice, checkBrake, countWrite, shadowLog, ctxFor, writeOpts, taxCheck, taxAfterWrite,
   optionOf, taxFiledThrough, timeUp, passStopFor, BrakeError, PassStop, localToday, moduleRefusal, linkMeta,
+  specialItemsMissing, rstAccountMissing, timeLockedThrough, inPayrollRun,
 } from './engine.js';
 import { FencedError } from './lease.js';
 import { fishtapeToCanon, qboToCanon, canonEqual, markerFor, toCents, toDollars, str, localDay } from './map/canon.js';
@@ -86,8 +87,11 @@ export async function processRow(run, row) {
   try {
     const record = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, row.collection, row.record_id));
     if (row.collection === 'stripePayouts') return await pushPayout(run, row, record);
-    const link = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, row.collection, row.record_id));
+    let link = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, row.collection, row.record_id));
+    // A credit-note application's link is role apply (9.2).
+    if (!link && row.collection === 'payments') link = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, 'payments', row.record_id, 'apply'));
     if (row.op === 'delete' || !record || record.deleted) return await pushDelete(run, row, record, link);
+    if (link?.role === 'apply') link = null; // processRecord finds it itself
     return await processRecord(run, row.collection, row.record_id, { row, record, link, stale: row.stale, held: row.held, actorType: row.actor_type });
   } catch (e) {
     if (e instanceof BrakeError || e instanceof FencedError || e instanceof PassStop) throw e;
@@ -119,6 +123,8 @@ export async function processRecord(run, collection, id, o = {}) {
     if (!run.shadow) await txWrite(run, async (tx) => { await finishOutbox(tx, run, row); if (message) await writeLog(tx, { direction: 'push', outcome, action: 'skip', actorType: row?.actor_type, collection, recordId: id, label, message }); });
     return 'skipped';
   };
+  // A Fishtape credit note applied to an invoice has its own link (role apply, r1-get-paid.md 9.2).
+  if (collection === 'payments' && doc.method === 'credit-note') return processCreditApply(run, record, { ...o, row, label, skip });
 
   if (link && (link.state === 'unlinked' || link.owner === 'none')) return skip('Not linked to QuickBooks.');
   // A pulled invoice's Deposit and its settlement payment live in QuickBooks (4.7, 4.9): their links
@@ -147,7 +153,7 @@ export async function processRecord(run, collection, id, o = {}) {
 
   // Eligibility (4.1). A wait here finishes the outbox row: a risky writer is kept on the link.
   const el = eligible(run, collection, doc, o);
-  if (el.hold) return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, { kind: doc.kind }), row, state: el.hold.state, reason: el.hold.reason, message: el.hold.message, label, originActor: !o.force && risky(actorType) ? actorType : null });
+  if (el.hold) return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, doc), row, state: el.hold.state, reason: el.hold.reason, message: el.hold.message, label, originActor: !o.force && risky(actorType) ? actorType : null });
   if (!el.ok) {
     if (!link) return skip(null);
     if (collection === 'timeEntries' && link.qbo_id) return pushDelete(run, row, record, link, { unapproved: true });
@@ -161,7 +167,7 @@ export async function processRecord(run, collection, id, o = {}) {
     const who = { api_key: 'an API key', agent: 'the assistant', field_user: 'a field user' }[actorType];
     // A push-only record keeps a change the office chose not to send: every later send needs approval.
     const message = who ? `Made by ${who}; approve to send to QuickBooks.` : 'Holds a change that was not sent to QuickBooks; approve to send it.';
-    return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, { kind: doc.kind }), row, state: 'needs_review', reason: 'origin', message, label, review: { message } });
+    return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, doc), row, state: 'needs_review', reason: 'origin', message, label, review: { message } });
   }
   if (link?.meta?.originRejected && o.force) {
     link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { meta: { ...link.meta, originRejected: undefined, originActor: undefined } }));
@@ -173,12 +179,12 @@ export async function processRecord(run, collection, id, o = {}) {
   const creating = !link || !link.qbo_id;
   const hold = await localHolds(run, collection, doc, { creating, force: o.force, link });
   if (hold?.skip) return skip(hold.skip);
-  if (hold) return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, { kind: doc.kind }), row, state: hold.state, reason: hold.reason, message: hold.message, label, review: hold.state === 'needs_review' ? { message: hold.message } : null });
+  if (hold) return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, doc), row, state: hold.state, reason: hold.reason, message: hold.message, label, review: hold.state === 'needs_review' ? { message: hold.message } : null });
 
   // Dependencies (5.3 step 3), pushed first in this pass.
   const dep = await ensureDependencies(run, collection, doc, o);
   if (dep.blocked) {
-    return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, { kind: doc.kind }), row, state: 'blocked', reason: dep.reason || 'dependency', message: dep.message || 'Waiting for a record it needs.', dependsOn: dep.blocked, label });
+    return holdLink(run, { link, collection, recordId: id, entity: entityFor(collection, doc), row, state: 'blocked', reason: dep.reason || 'dependency', message: dep.message || 'Waiting for a record it needs.', dependsOn: dep.blocked, label });
   }
   if (link && (link.state === 'blocked' || link.state === 'error') && link.qbo_id) {
     link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { state: 'pending', reason: null, meta: { ...(link.meta || {}), dependsOn: undefined } }));
@@ -254,14 +260,21 @@ async function localHolds(run, collection, d, { creating, force, link }) {
   if (DOCS.has(collection)) {
     if (needsTaxReason(d)) return { state: 'blocked', reason: 'tax_reason', message: 'Pick why this has no tax.' };
     if (creating) {
+      // Holdback, deposit and interest lines go on their own products (r1-get-paid.md 9.2, 9.8).
+      const items = specialItemsMissing(run, d);
+      if (items) return { state: 'blocked', reason: 'mapping_missing', message: items };
       const msg = taxCheck(run, d, collection === 'invoices' ? 'invoice' : 'estimate');
       if (msg) return { state: 'blocked', reason: 'mapping_missing', message: msg };
       if (d.number && await localDuplicate(run, collection, d)) return { state: 'blocked', reason: 'duplicate_number_local', message: `Another ${collection === 'invoices' ? 'invoice' : 'estimate'} in Fishtape has number ${d.number}. Renumber it.` };
     }
   }
   if (collection === 'payments') {
-    if (!d.invoiceId) return { state: 'blocked', reason: 'no_invoice', message: 'Not sent: no invoice.' };
     if (d.method === 'credit' && d.source === 'quickbooks') return { skip: 'Settled in QuickBooks; never sent.' };
+    // Never pushed in R1 (9.2): money on account, an application of it, a refund, a reversal. The
+    // office records them in QuickBooks; approving does not send them.
+    const never = neverPushed(d);
+    if (never) return { state: 'needs_review', reason: never.reason, message: never.message };
+    if (!d.invoiceId) return { state: 'blocked', reason: 'no_invoice', message: 'Not sent: no invoice.' };
     if (creating && d.source === 'quickbooks') return { skip: 'From QuickBooks; never sent.' };
     const inv = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, 'invoices', d.invoiceId));
     if (creating && inv?.data?.status === 'void') return { skip: 'The invoice is void.' };
@@ -274,9 +287,15 @@ async function localHolds(run, collection, d, { creating, force, link }) {
     const lines = (d.lines || []).reduce((s, l) => s + (Number.isInteger(l.amountCents) ? l.amountCents : lineCents(l)), 0);
     const taxes = (d.taxes || []).reduce((s, t) => s + (Math.round(Number(t.cents)) || 0), 0);
     if (Number.isInteger(d.totalCents) && Math.abs(lines + taxes - d.totalCents) > 2) return { state: 'blocked', reason: 'totals_mismatch', message: "Bill total doesn't add up." };
+    // RST charged on resale lines goes to account.rstRecoverable (9.3), never into job cost.
+    if (creating) {
+      const missing = rstAccountMissing(run, fishtapeToCanon('bills', d, ctxFor(run, link, 'bills')));
+      if (missing) return { state: 'blocked', reason: 'mapping_missing', message: missing };
+    }
   }
   if (collection === 'timeEntries' && creating && !force) {
-    const locked = str(optionOf(run.ctx.mappings, 'timeLockedThrough', null));
+    // The later of the option and Fishtape's payroll runs (9.6).
+    const locked = timeLockedThrough(run);
     if (locked && date && date <= locked) return { state: 'needs_review', reason: 'payroll_locked', message: 'Hours already paid; change them in QuickBooks Payroll if needed.' };
   }
   if (creating && closed && date && date <= closed && ['estimates', 'invoices', 'payments', 'bills', 'purchaseOrders', 'timeEntries'].includes(collection)) {
@@ -286,6 +305,51 @@ async function localHolds(run, collection, d, { creating, force, link }) {
     return { state: 'needs_review', reason: 'filed_period', message: 'This adds to a GST period already filed.' };
   }
   return null;
+}
+
+/**
+ * Payments R1 never sends (r1-get-paid.md 9.2): money on account (no invoice) and its later
+ * application (appliedFromId), refunds and reversals. They wait in review for the office to record
+ * them in QuickBooks; approving does not send them. Null for any other payment.
+ */
+export function neverPushed(d) {
+  if (!d) return null;
+  if (d.reversesId) return { reason: 'reversal', message: 'Record the returned payment in QuickBooks.' };
+  if (d.method === 'refund') return { reason: 'refund', message: 'Record this refund in QuickBooks.' };
+  if (!d.invoiceId || d.appliedFromId) return { reason: 'on_account', message: 'Record this in QuickBooks: money on account is not sent.' };
+  return null;
+}
+
+/** Review reasons a person settles in QuickBooks: approving them never sends anything (9.2). */
+export const NEVER_PUSHED_REASONS = ['on_account', 'refund', 'reversal'];
+
+/**
+ * A Fishtape credit note applied to an invoice (r1-get-paid.md 9.2): a $0 QuickBooks payment with
+ * the invoice and the CreditMemo as its two lines, link role apply. It is held in review
+ * (credit_apply) until the sandbox confirms QuickBooks takes it (option creditApplyConfirmed) or the
+ * office approves it; both documents go first. Later changes are pushed like any push-only record.
+ */
+async function processCreditApply(run, record, o) {
+  const d = record.data;
+  const { row = null, label, skip } = o;
+  let link = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLink(tx, 'payments', record.id, 'apply'));
+  if (link && (link.state === 'unlinked' || link.owner === 'none')) return skip('Not linked to QuickBooks.');
+  if (link && link.owner === 'quickbooks') return skip('Applied in QuickBooks; change it there.');
+  if (link && link.state === 'needs_review' && !o.force) return skip(null);
+  if (!d.invoiceId || !d.creditNoteId) return skip('Not sent: the credit note or the invoice is missing.');
+  const hold = (state, reason, message, extra = {}) => holdLink(run, { link, collection: 'payments', recordId: record.id, entity: 'Payment', role: 'apply', row, state, reason, message, label, owner: 'fishtape', ...extra });
+  const confirmed = optionOf(run.ctx.mappings, 'creditApplyConfirmed', false) === true;
+  if (!o.force && !confirmed && !link?.qbo_id && link?.meta?.applyApproved !== true) {
+    const message = 'A credit note applied to an invoice. QuickBooks takes it as a $0 payment; approve to send it (this is checked in the QuickBooks sandbox first).';
+    return hold('needs_review', 'credit_apply', message, { review: { message } });
+  }
+  const dep = await ensureDependencies(run, 'payments', d, o);
+  if (dep.blocked) return hold('blocked', dep.reason || 'dependency', dep.message || 'Waiting for the credit note and the invoice to reach QuickBooks.', { dependsOn: dep.blocked });
+  if (link && (link.state === 'blocked' || link.state === 'error') && link.qbo_id) {
+    link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { state: 'pending', reason: null, meta: { ...(link.meta || {}), dependsOn: undefined } }));
+  }
+  if (!link || !link.qbo_id) return createRemote(run, 'payments', record, link, { role: 'apply', row, label });
+  return reconcile(run, link, { record, row, force: o.force, direction: 'push' });
 }
 
 /** Two offline devices issued the same number (4.7): another live document, already linked, has it. */
@@ -318,7 +382,10 @@ async function dependenciesOf(run, collection, d) {
       await job(d.jobId);
       items(d.lines);
       break;
-    case 'payments': if (d.invoiceId) out.push(['invoices', d.invoiceId, true]); break;
+    case 'payments':
+      if (d.invoiceId) out.push(['invoices', d.invoiceId, true]);
+      if (d.method === 'credit-note' && d.creditNoteId) out.push(['invoices', d.creditNoteId, true]); // its CreditMemo (9.2)
+      break;
     case 'bills':
       if (d.vendorId) out.push(['vendors', d.vendorId, true]);
       await job(d.jobId);
@@ -446,7 +513,7 @@ export async function prepareCreate(run, collection, record, link, o = {}) {
   const d = record.data;
   const row = o.row || null;
   const label = o.label || recordLabel(collection, d);
-  const entity = entityFor(collection, { kind: d.kind }, role);
+  const entity = entityFor(collection, d, role);
   if (run.shadow) {
     await shadowLog(run, { direction: 'push', action: 'create', collection, recordId: record.id, qboEntity: entity, label, message: `Would create a QuickBooks ${entity}` });
     return { done: 'pending' };
@@ -460,7 +527,7 @@ export async function prepareCreate(run, collection, record, link, o = {}) {
       const meta = { ...(cur?.meta || {}), marker: markerFor(id), createRequestId: requestIdFor([run.tenantId, id, 'create', ...(gen ? [gen] : [])]), createStartedAt: new Date().toISOString() };
       delete meta.dependsOn;
       if (cur) return updateLink(tx, run, cur.id, { state: 'pending', reason: null, qbo_entity: entity, meta });
-      return insertLink(tx, run, { id, collection, record_id: record.id, role, qbo_entity: entity, state: 'pending', owner: role === 'fee' || ['jobs', 'purchaseOrders', 'timeEntries', 'stripePayouts'].includes(collection) ? 'fishtape' : 'both', meta });
+      return insertLink(tx, run, { id, collection, record_id: record.id, role, qbo_entity: entity, state: 'pending', owner: role === 'fee' || role === 'apply' || ['jobs', 'purchaseOrders', 'timeEntries', 'stripePayouts'].includes(collection) ? 'fishtape' : 'both', meta });
     });
   } else if (link.qbo_entity !== entity) {
     link = await txWrite(run, (tx) => updateLink(tx, run, link.id, { qbo_entity: entity }));
@@ -577,7 +644,7 @@ async function finishCreate(run, link, collection, record, obj, build, { row, la
   }
   // A payment's own line is the invoice it was sent to (4.9): settlement, the line checks and the
   // merge all find the Fishtape payment by it.
-  const paymentLine = collection === 'payments' && link.role === 'main' && entity === 'Payment' ? str(L.invoiceRef) || '' : '';
+  const paymentLine = collection === 'payments' && (link.role === 'main' || link.role === 'apply') && entity === 'Payment' ? str(L.invoiceRef) || '' : '';
   // The link meta first: R of a payment counts the excess this create left as credit (ownExcessCents).
   Object.assign(meta, linkMeta(entity, written, ctxFor(run, { ...link, meta }, collection), { pushed: build }));
   if (paymentLine && d.source === 'stripe' && str(meta.depositTo) && str(meta.depositTo) === str(run.ctx.mappings.account?.stripeClearing)) meta.stripeClearing = true;
@@ -739,9 +806,10 @@ export async function pushDelete(run, row, record, link, { unapproved = false, f
     }
   }
   if (collection === 'timeEntries' && !force) {
-    const locked = str(optionOf(run.ctx.mappings, 'timeLockedThrough', null));
+    // The later of the option and Fishtape's payroll runs; an entry in an exported run is locked (9.6).
+    const locked = timeLockedThrough(run);
     const date = link.snapshot?.date;
-    if (locked && date && date <= locked) return holdLink(run, { link, collection, recordId: id, entity: link.qbo_entity, row, state: 'needs_review', reason: 'payroll_locked', message: 'Hours already paid; change them in QuickBooks Payroll if needed.', label, review: { message: 'Hours already paid; change them in QuickBooks Payroll if needed.' } });
+    if ((locked && date && date <= locked) || await inPayrollRun(run, id)) return holdLink(run, { link, collection, recordId: id, entity: link.qbo_entity, row, state: 'needs_review', reason: 'payroll_locked', message: 'Hours already paid; change them in QuickBooks Payroll if needed.', label, review: { message: 'Hours already paid; change them in QuickBooks Payroll if needed.' } });
   }
   let obj;
   try { obj = await run.client.read(link.qbo_entity, link.qbo_id); } catch (e) {
@@ -769,6 +837,14 @@ export async function pushDelete(run, row, record, link, { unapproved = false, f
     case 'invoices':
       return voidLocalInvoice(run, link, record, obj, { row, label, deleting: true });
     case 'payments':
+      if (link.role === 'apply') {
+        // A credit-note application is Fishtape's own $0 payment (9.2): voided whole.
+        checkBrake(run);
+        const r = await run.client.voidTxn('Payment', { Id: obj.Id, SyncToken: obj.SyncToken }, { requestId: rid('void') });
+        countWrite(run);
+        await markGone('void', 'Credit note application voided in QuickBooks', r?.SyncToken);
+        return 'deleted_local';
+      }
       return deletePayment(run, row, record, link, obj, { label, markGone });
     case 'bills':
       if (link.qbo_entity === 'Bill' && toCents(obj.TotalAmt) > 0 && toCents(obj.Balance) === 0) {
