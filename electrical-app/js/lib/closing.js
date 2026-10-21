@@ -27,6 +27,9 @@ export const LOCK_SAFE_FIELDS = {
     'holdback.retainedByCustomerCents', 'holdback.retainedRecordedAt', 'holdback.retainedRecordedBy', 'updatedAt'],
   payments: ['stripe', 'updatedAt'],
   bills: ['status', 'varianceAck', 'updatedAt'],
+  // Hours in a closed month that no payroll run took are "late hours": they stay approvable (and an
+  // off-site flag reviewable) so the next run can pay them; the hours themselves change by correction.
+  timeEntries: ['approved', 'approvedAt', 'approvedBy', 'flag', 'updatedAt'],
 };
 /** Extra safe fields for one actor: the QuickBooks push writes DocNumber (number) on invoices. */
 export const ACTOR_SAFE_FIELDS = { 'system:qbo': { invoices: ['number'] } };

@@ -75,6 +75,10 @@ describe('lockProblem', () => {
     assert.equal(lockProblem(locks(), 'bills', late, { ...late, date: '2026-09-25', lines: [{ qty: 1 }] }, { zone }), null);
     // Creates in posted collections are never refused.
     assert.equal(lockProblem(locks(), 'payments', null, pay, { zone }), null);
+    // Late hours in a closed month stay approvable; their times do not change.
+    const te = { id: 'te', clockIn: '2026-09-29T14:00:00Z', clockOut: '2026-09-29T22:00:00Z', postedOn: '2026-09-29', approved: false };
+    assert.equal(lockProblem(locks(), 'timeEntries', te, { ...te, approved: true, approvedAt: 'now', approvedBy: 'f' }, { zone }), null);
+    assert.equal(lockProblem(locks(), 'timeEntries', te, { ...te, clockOut: '2026-09-29T23:00:00Z' }, { zone }).code, 'period_locked');
   });
 
   test('status moves: invoices only among sent, partial, paid; bills only open and paid (no overdue)', () => {

@@ -184,6 +184,8 @@ describe('field tickets', { skip }, () => {
     assert.equal(p.status, 200, JSON.stringify(p.body));
     assert.equal((await del(office.token, 'fieldTickets', 'tk-frz')).status, 403, 'void it instead');
     assert.equal((await patch(office.token, 'fieldTickets', 'tk-frz', { status: 'void' })).status, 200);
+    const a = await t.superPool.query("SELECT count(*)::int AS n FROM audit_events WHERE tenant_id = $1 AND action = 'ticket.void' AND record_id = 'tk-frz'", [A.tenantId]);
+    assert.equal(a.rows[0].n, 1, 'voiding a signed ticket is audited');
     const refused = await pushOne(sam.token, { collection: 'fieldTickets', id: 'tk-ref', op: 'upsert', data: ticketData({ status: 'refused' }) });
     assert.equal(refused.status, 'rejected', 'a refusal records who and when');
     assert.equal((await pushOne(sam.token, { collection: 'fieldTickets', id: 'tk-ref', op: 'upsert', data: ticketData({ status: 'refused', refusal: { at: new Date().toISOString(), by: 'Super', reason: 'Not authorised' } }) })).status, 'ok');

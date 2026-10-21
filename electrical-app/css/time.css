@@ -1,5 +1,13 @@
 /* Time clock: travel state, location badges, timesheets, the payroll bar, the small map. Tokens only. */
 
+/* Release 1: cost code and truck under the clock (set without asking), locked entries, corrections, late hours */
+.time-coding { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; font-size: var(--fs-sm); color: var(--text-muted); }
+.time-coding .linkish { color: var(--accent); background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; }
+.time-locked { display: inline-flex; gap: 4px; align-items: center; color: var(--text-muted); font-size: var(--fs-xs); }
+.time-correction { color: var(--info); }
+.time-late { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3); border-radius: var(--r-sm); background: var(--surface-2); font-size: var(--fs-sm); }
+.time-late label { display: flex; gap: var(--s2); align-items: center; }
+
 .ops-clock.travelling { border-color: var(--info); }
 .ops-clock.travelling .ops-clock-ring { border-color: var(--info); color: var(--info); }
 .loc-line { margin-top: var(--s1); gap: var(--s2); }

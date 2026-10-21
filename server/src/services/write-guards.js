@@ -74,6 +74,10 @@ export async function runWriteGuards(tx, p, coll, before, after, who, opts = {})
       if (out) {
         if (!out.number && !before?.number) out = { ...out, number: await nextTicketNumber(tx) };
         await signatureReference(tx, 'fieldTickets', before, out, id, { snapshot: (sig) => ticketSnapshotFor(sig, { ...out, id }) });
+        // Voiding a signed (or refused) ticket is audited on its own (4.1).
+        if (before && before.status !== 'void' && out.status === 'void' && ['signed', 'refused', 'priced', 'billed'].includes(before.status)) {
+          await appendAudit(tx, tx.tenantId, { actor, action: 'ticket.void', collection: 'fieldTickets', recordId: id, summary: String(before.number || id).slice(0, 80), request: who?.request });
+        }
       }
       break;
     case 'estimates':
@@ -237,11 +241,13 @@ function ticketSnapshotFor(sig, ticket) {
 async function signatureReference(tx, coll, before, after, id, { snapshot }) {
   const sid = after.signatureId || null;
   const prevSid = before?.signatureId || null;
-  // Frozen once signed: the signed keys of a document carrying a live signature.
+  // Frozen once signed: the signed keys of a document carrying a live signature. A voided
+  // signature frees the document (it may keep pointing at it).
   if (prevSid) {
     const prev = await liveSignature(tx, prevSid);
-    if (prev) {
-      if (sid !== prevSid) throw new ApiError(409, 'document_signed', 'This was signed. Void the signature first, or make a revision.');
+    if (prev && sid !== prevSid) throw new ApiError(409, 'document_signed', 'This was signed. Void the signature first, or make a revision.');
+    if (sid === prevSid) {
+      if (!prev) return;
       const keys = SIGNED_KEYS[coll] || [];
       const changed = keys.filter((k) => !same(before[k], after[k]));
       if (changed.length) throw new ApiError(409, 'document_signed', `This was signed, so ${changed.slice(0, 3).join(', ')} cannot change. Make a revision or a new document instead.`, { fields: changed });

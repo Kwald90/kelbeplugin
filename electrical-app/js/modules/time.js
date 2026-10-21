@@ -4,10 +4,20 @@
 // in) to suggest the job, flag off-site clock-ins and notice travel (lib/shift-tracker.js).
 // Routes: #/time (clock), #/time/week (timesheets), #/time/location (my location),
 // #/time/settings (owner: location policy and payroll), #/time/map (opt-in live crew map).
+//
+// Release 1 (docs/releases/r1-get-paid.md 2.6, 2.8, 8.2): the open shift shows its cost code (the
+// job's phase) and truck, set at clock-in without asking, with a "Change" link; managers recode a
+// week's entries in approval; entries in an exported payroll run (or a closed period) are read-only
+// and changed by a correction entry; exporting payroll offers "Lock these timesheets" (on by
+// default), includes late hours and corrections from earlier periods, and lists what the run leaves
+// out. The lock is a server call; made offline it waits on Books → Payroll.
 import { addDays } from './schedule.js';
-import { openEntry, reviewFlag, approveEntries } from '../lib/clock.js';
+import { openEntry, reviewFlag, approveEntries, costCodeFor } from '../lib/clock.js';
 import { qboBadge } from '../lib/qbo-ui.js';
-import { weekSheet, weekOf, otRule, ruleText, fmtH, entryMinutes, kindOf, PAYROLL_FORMATS, payrollCsv, fillWagepointTemplate } from '../lib/timesheet.js';
+import { weekSheet, weekOf, otRule, ruleText, fmtH, entryMinutes, kindOf, PAYROLL_FORMATS, payrollCsv, fillWagepointTemplate, isCorrection, entryDay } from '../lib/timesheet.js';
+import { locksFrom, isLocked, zoneFor, isLateHours } from '../lib/closing.js';
+import { activeCostCodes, costCodeLabel } from '../lib/cost-codes.js';
+import { PENDING_RUNS_META } from './books.js';
 import { locationSettings, locationState } from '../lib/location-policy.js';
 import { fmtDistance } from '../lib/geo.js';
 import { myLocation, settingsForm, crewMap } from '../lib/location-ui.js';
@@ -94,6 +104,89 @@ export default {
     const activeJobs = () => store.list('jobs', (j) => ['scheduled', 'in-progress', 'on-hold'].includes(j.status)).sort((a, b) => String(a.number).localeCompare(String(b.number)));
     const jobOpts = (blank) => [{ value: '', label: blank }, ...activeJobs().map((j) => ({ value: j.id, label: `${j.number} · ${j.title}` }))];
     const jobName = (id) => { const j = store.get('jobs', id); return j ? `${j.number} · ${j.title}` : null; };
+    // Release 1: locks, cost codes and trucks.
+    const zone = zoneFor(store.settings()?.company?.province);
+    const locksNow = () => locksFrom(store.settings(), store.list('payrollRuns'));
+    const lockedEntry = (e) => isLocked(locksNow(), 'timeEntries', e, { zone });
+    const codes = () => activeCostCodes(store.list('costCodes'));
+    const codeName = (id) => { const c = id ? store.get('costCodes', id) : null; return c ? costCodeLabel(c) : null; };
+    const trucks = () => store.list('equipment', (q) => q.active !== false && q.kind === 'truck');
+    const truckName = (id) => { const q = id ? store.get('equipment', id) : null; return q ? [q.unitNo, q.name].filter(Boolean).join(' ') : null; };
+    const codeOptions = (blank = 'No cost code') => [{ value: '', label: blank }, ...codes().map((c) => ({ value: c.id, label: costCodeLabel(c) }))];
+
+    /** Clock in. With "ask for a code" on and no phase set on the job, ask once; otherwise nothing is asked. */
+    function clockInWith(opts) {
+      const ask = store.settings().costCodes?.requireOnTime && opts.jobId && !costCodeFor(store, opts.jobId) && codes().length;
+      if (!ask) return tracker.clockInFlow(flow, opts);
+      ui.formSheet({
+        title: 'Which phase are you working on?', submitLabel: 'Clock in',
+        fields: [{ label: 'Cost code', name: 'costCodeId', type: 'select', value: '', options: codeOptions('Not sure (the office codes it)'), span: true }],
+        onSubmit: (v) => { tracker.clockInFlow(flow, { ...opts, costCodeId: v.costCodeId || null }); },
+      });
+      return null;
+    }
+
+    /** The cost code and truck on the open shift: shown, with a "Change" link (nothing is asked at clock-in). */
+    function codingLine(open) {
+      if (!open) return null;
+      const change = () => ui.formSheet({
+        title: 'Cost code and truck',
+        fields: [
+          { label: 'Cost code', name: 'costCodeId', type: 'select', value: open.costCodeId || '', options: codeOptions() },
+          { label: 'Truck', name: 'equipmentId', type: 'select', value: open.equipmentId || '', options: [{ value: '', label: 'No truck' }, ...trucks().map((q) => ({ value: q.id, label: truckName(q.id) }))] },
+        ],
+        onSubmit: (v) => { store.update('timeEntries', open.id, { costCodeId: v.costCodeId || null, equipmentId: v.equipmentId || null }, { silent: true }); ui.toast('Changed', 'success'); },
+      });
+      const any = codes().length || trucks().length;
+      if (!any) return null;
+      return h('div', { class: 'time-coding' },
+        h('span', null, `Code: ${codeName(open.costCodeId) || 'none'}`), h('span', null, '·'), h('span', null, `Truck: ${truckName(open.equipmentId) || 'none'}`),
+        h('button', { type: 'button', class: 'linkish', onClick: change }, 'Change'));
+    }
+
+    /** A locked entry is changed by a correction: minutes added or taken away on its work day. */
+    function correctionSheet(entry) {
+      const day = entryDay(entry) || ui.today();
+      ui.formSheet({
+        title: 'Add a correction', submitLabel: 'Add correction',
+        fields: [
+          { label: 'Minutes to add (negative to take away)', name: 'adjustMinutes', type: 'number', step: '1', value: '', required: true },
+          { label: 'Day it belongs to', name: 'workDay', type: 'date', value: day, required: true },
+          { label: 'Job', name: 'jobId', type: 'select', value: entry?.jobId || '', options: ui.recordOptions(store.list('jobs'), (j) => `${j.number} · ${j.title}`, 'No job') },
+          { label: 'Cost code', name: 'costCodeId', type: 'select', value: entry?.costCodeId || '', options: codeOptions() },
+          { label: 'Why', name: 'note', value: '', required: true, span: true },
+        ],
+        extra: h('p', { class: 'muted loc-small' }, 'These hours were exported to payroll or are in a closed period, so they are not edited. The correction goes in the next payroll export as a prior-period adjustment.'),
+        onSubmit(v) {
+          const mins = Math.round(Number(v.adjustMinutes));
+          if (!mins) { ui.toast('Enter the minutes to add or take away.', 'error'); return false; }
+          store.add('timeEntries', {
+            kind: 'correction', correctsId: entry?.id || null, workDay: v.workDay, adjustMinutes: mins, employeeId: entry?.employeeId || who,
+            jobId: v.jobId || null, costCodeId: v.costCodeId || null, note: v.note, approved: true, approvedAt: new Date().toISOString(), approvedBy: me.id || null, source: 'manual',
+          });
+          ui.toast('Correction added', 'success');
+        },
+      });
+    }
+
+    /** Recode in approval: pick entries of the week and give them a cost code. */
+    function recodeSheet(entries) {
+      const open = entries.filter((e) => !lockedEntry(e) && !isCorrection(e));
+      if (!open.length) { ui.toast('Nothing to recode: these entries are locked.', 'info'); return; }
+      const boxes = open.map((e) => h('label', { class: 'field check' }, h('input', { type: 'checkbox', checked: true, value: e.id }),
+        h('span', null, `${ui.fmtDate(e.clockIn, { weekday: 'short', month: 'short', day: 'numeric' })} ${jobName(e.jobId) || 'No job'} · ${fmtH(entryMinutes(e))} h · ${codeName(e.costCodeId) || 'no code'}`)));
+      ui.formSheet({
+        title: 'Change cost code', submitLabel: 'Change',
+        fields: [{ label: 'New cost code', name: 'costCodeId', type: 'select', value: '', options: codeOptions(), span: true }],
+        extra: h('div', { class: 'stack' }, boxes),
+        onSubmit(v, form) {
+          const ids = [...form.querySelectorAll('input[type=checkbox]:checked')].map((x) => x.value);
+          for (const id of ids) store.update('timeEntries', id, { costCodeId: v.costCodeId || null }, { silent: true });
+          store.log('update', `Recoded ${ids.length} time entr${ids.length === 1 ? 'y' : 'ies'}`, 'timeEntries');
+          ui.toast(`${ids.length} entr${ids.length === 1 ? 'y' : 'ies'} recoded`, 'success');
+        },
+      });
+    }
 
     // ---------- the clock ----------
     function travelSheet() {
@@ -151,6 +244,7 @@ export default {
             h('div', { class: 'ops-clock-status' }, status, open ? h('span', { class: 'muted' }, ` since ${ui.fmtTime(open.clockIn)}`) : null),
             readout,
             h('div', { class: 'muted' }, where, open?.breakMins ? ` · ${open.breakMins} min break` : ''),
+            codingLine(open),
             locLine)),
         h('div', { class: 'ops-clock-controls' },
           open ? null : jobSel,
@@ -162,8 +256,8 @@ export default {
               travel || open.breakStart ? null : ui.button('Travel', { icon: 'truck', size: 'lg', onClick: travelSheet }),
               ui.button('Clock out', { variant: 'dark', icon: 'log-out', size: 'lg', onClick: () => tracker.clockOutFlow(flow, { note: note.value }).then((e) => e && ui.toast(`Clocked out · ${fmtH(entryMinutes(e))} h`, 'success')) }))
             : h('div', { class: 'row' },
-              ui.button('Clock in', { variant: 'primary', icon: 'play', size: 'lg', onClick: () => tracker.clockInFlow(flow, { jobId: jobSel.value || null, note: note.value }) }),
-              ui.button('Start with travel', { icon: 'truck', size: 'lg', onClick: () => tracker.clockInFlow(flow, { jobId: jobSel.value || null, kind: 'travel', note: note.value }) }))));
+              ui.button('Clock in', { variant: 'primary', icon: 'play', size: 'lg', onClick: () => clockInWith({ jobId: jobSel.value || null, note: note.value }) }),
+              ui.button('Start with travel', { icon: 'truck', size: 'lg', onClick: () => clockInWith({ jobId: jobSel.value || null, kind: 'travel', note: note.value }) }))));
     }
 
     function reviewButton(e) {
@@ -205,6 +299,12 @@ export default {
 
     // ---------- entries ----------
     function editEntry(entry) {
+      // Exported to payroll or in a closed period: changed by a correction, never edited.
+      if (entry && (lockedEntry(entry) || isCorrection(entry))) {
+        if (isCorrection(entry)) { ui.toast(lockedEntry(entry) ? 'This correction is locked.' : 'Corrections are not edited: add another one.', 'info'); return; }
+        if (canApprove) correctionSheet(entry); else ui.toast('These hours are locked. Ask the office to add a correction.', 'info');
+        return;
+      }
       const people = store.list('employees', (e) => e.active !== false || e.id === entry?.employeeId);
       const jobs = store.list('jobs');
       const whoDefault = entry?.employeeId || (who !== 'all' ? who : people[0]?.id);
@@ -217,11 +317,13 @@ export default {
           { label: 'Clock in', name: 'clockIn', type: 'datetime-local', value: toLocalInput(entry?.clockIn) || `${week}T07:00`, required: true },
           { label: 'Clock out', name: 'clockOut', type: 'datetime-local', value: toLocalInput(entry?.clockOut) || (entry ? '' : `${week}T15:30`), hint: 'Leave blank if still on the clock' },
           { label: 'Break (minutes)', name: 'breakMins', type: 'number', min: '0', value: entry?.breakMins ?? 30 },
+          codes().length ? { label: 'Cost code', name: 'costCodeId', type: 'select', value: entry?.costCodeId || '', options: codeOptions('The job\'s phase') } : null,
           { label: 'Note', name: 'note', value: entry?.note || '', span: true },
-        ],
+        ].filter(Boolean),
         danger: entry ? { label: 'Delete', onClick: () => store.remove('timeEntries', entry.id) } : null,
         onSubmit(v) {
           const data = { ...v, jobId: v.jobId || null, breakMins: Number(v.breakMins) || 0, clockIn: new Date(v.clockIn).toISOString(), clockOut: v.clockOut ? new Date(v.clockOut).toISOString() : null };
+          if ('costCodeId' in v) data.costCodeId = v.costCodeId || costCodeFor(store, data.jobId);
           if (data.clockOut && data.clockOut <= data.clockIn) { ui.toast('Clock out must be after clock in', 'error'); return false; }
           const other = openEntry(store, data.employeeId);
           if (!data.clockOut && other && other.id !== entry?.id) { ui.toast('That person already has an open shift', 'error'); return false; }
@@ -235,16 +337,17 @@ export default {
     function entriesTable(rows, { onRowClick } = {}) {
       return ui.table({
         columns: [
-          { key: 'day', label: 'Day', render: (t) => ui.fmtDate(t.clockIn, { weekday: 'short', month: 'short', day: 'numeric' }) },
-          { key: 'kind', label: 'Type', render: (t) => kindBadge(ui, t) },
+          { key: 'day', label: 'Day', render: (t) => ui.fmtDate(isCorrection(t) ? t.workDay : t.clockIn, { weekday: 'short', month: 'short', day: 'numeric' }) },
+          { key: 'kind', label: 'Type', render: (t) => (isCorrection(t) ? ui.badge('correction', 'info') : kindBadge(ui, t)) },
           { key: 'job', label: 'Job', render: (t) => { const j = store.get('jobs', t.jobId); return j ? h('a', { href: '#/jobs/' + j.id, onClick: (e) => e.stopPropagation() }, j.number) : h('span', { class: 'muted' }, '—'); } },
-          { key: 'in', label: 'In – out', render: (t) => `${ui.fmtTime(t.clockIn)} – ${t.clockOut ? ui.fmtTime(t.clockOut) : 'open'}` },
-          { key: 'break', label: 'Break', align: 'right', render: (t) => `${t.breakMins || 0}m` },
+          { key: 'code', label: 'Code', render: (t) => { const c = t.costCodeId ? store.get('costCodes', t.costCodeId) : null; return c ? h('span', { title: costCodeLabel(c) }, c.code) : h('span', { class: 'muted' }, '—'); } },
+          { key: 'in', label: 'In – out', render: (t) => (isCorrection(t) ? h('span', { class: 'time-correction', title: t.note || '' }, `${t.adjustMinutes > 0 ? '+' : ''}${fmtH(t.adjustMinutes)} h`) : `${ui.fmtTime(t.clockIn)} – ${t.clockOut ? ui.fmtTime(t.clockOut) : 'open'}`) },
+          { key: 'break', label: 'Break', align: 'right', render: (t) => (isCorrection(t) ? '' : `${t.breakMins || 0}m`) },
           { key: 'hours', label: 'Hours', align: 'right', render: (t) => fmtH(entryMinutes(t)) },
           { key: 'loc', label: 'Location', render: (t) => h('span', { class: 'row loc-cell' }, locBadge(ui, t) || h('span', { class: 'muted' }, '—'), reviewButton(t)) },
-          { key: 'ok', label: 'Approved', render: (t) => h('span', { class: 'row-inline' }, (canApprove && t.clockOut
+          { key: 'ok', label: 'Approved', render: (t) => h('span', { class: 'row-inline' }, lockedEntry(t) ? h('span', { class: 'time-locked', title: 'Exported to payroll or in a closed period: add a correction to change it' }, ui.icon('lock', 14), 'locked') : (canApprove && (t.clockOut || isCorrection(t))
             ? h('input', { type: 'checkbox', checked: !!t.approved, 'aria-label': 'Approve entry', onClick: (e) => e.stopPropagation(),
-              onChange: (e) => store.update('timeEntries', t.id, e.target.checked ? { approved: true, approvedAt: new Date().toISOString(), approvedBy: me.id || null } : { approved: false, approvedAt: null, approvedBy: null }, { summary: `${e.target.checked ? 'approved' : 'unapproved'} time ${ui.localDay(t.clockIn)}` }) })
+              onChange: (e) => store.update('timeEntries', t.id, e.target.checked ? { approved: true, approvedAt: new Date().toISOString(), approvedBy: me.id || null } : { approved: false, approvedAt: null, approvedBy: null }, { summary: `${e.target.checked ? 'approved' : 'unapproved'} time ${isCorrection(t) ? t.workDay : ui.localDay(t.clockIn)}` }) })
             : t.approved ? ui.badge('approved', 'success') : ui.badge(t.clockOut ? 'pending' : 'open', t.clockOut ? 'warning' : 'info')),
             // QuickBooks (contract 8.5): office roles only; qboBadge is null for foremen and crew.
             t.approved ? qboBadge(ctx, 'timeEntries', t.id, { record: t }) : null) },
@@ -255,7 +358,7 @@ export default {
     }
 
     // ---------- timesheets ----------
-    const weekEntries = () => store.list('timeEntries', (t) => t.clockIn && ui.localDay(t.clockIn) >= addDays(week, -1) && ui.localDay(t.clockIn) <= addDays(week, 7));
+    const weekEntries = () => store.list('timeEntries', (t) => { const d = isCorrection(t) ? t.workDay : t.clockIn && ui.localDay(t.clockIn); return d && d >= addDays(week, -1) && d <= addDays(week, 7); });
     const sheetFor = (id, entries = weekEntries()) => weekSheet(entries, { employeeId: id, weekStart: week, province: prefs().otRule });
 
     function approveSheet(sheet, person) {
@@ -296,21 +399,91 @@ export default {
           })))) : null,
         h('h2', { class: 'section' }, 'Entries'),
         entriesTable(s.entries, { onRowClick: mgr ? editEntry : null }),
-        canApprove && s.counts.pending ? h('div', { class: 'row', style: { marginTop: '12px' } }, ui.button(`Approve week for ${person?.name?.split(' ')[0] || 'them'}`, { variant: 'primary', icon: 'check', onClick: () => {
+        canApprove && s.counts.pending ? h('div', { class: 'row time-actions' }, ui.button(`Approve week for ${person?.name?.split(' ')[0] || 'them'}`, { variant: 'primary', icon: 'check', onClick: () => {
           const n = approveSheet(s, person);
           ui.toast(`Week approved (${n} entr${n === 1 ? 'y' : 'ies'})`, 'success');
         } }), s.counts.flagged ? h('span', { class: 'muted loc-small' }, `${s.counts.flagged} off-site clock-in${s.counts.flagged === 1 ? '' : 's'} not reviewed yet.`) : null) : null,
+        canApprove && codes().length && s.entries.length ? h('div', { class: 'row time-actions' }, ui.button('Change cost code', { icon: 'edit', onClick: () => recodeSheet(s.entries) }),
+          ui.button('Add a correction', { variant: 'ghost', icon: 'plus', onClick: () => correctionSheet({ employeeId: id }) })) : null,
       ];
     }
 
+    /**
+     * Export payroll (8.2): the file, then (ticked by default) the lock. Late hours and corrections
+     * from earlier periods go in as prior-period rows; entries in the week that are open or not
+     * approved stay out and wait in Late hours. The lock is a server call; offline it waits on Books.
+     */
     function exportPayroll(format, sheets) {
-      const st = store.settings();
-      const ctxp = { employees: new Map(store.list('employees').map((e) => [e.id, e])), jobs: new Map(store.list('jobs').map((j) => [j.id, j])), clients: new Map(store.list('clients').map((c) => [c.id, c])), periodStart: week, periodEnd: addDays(week, 6) };
-      const out = payrollCsv(format, sheets, ctxp);
-      ui.download(`${PAYROLL_FORMATS[format].file}-${week}.csv`, out.text, 'text/csv');
-      store.log('export', `Payroll CSV (${PAYROLL_FORMATS[format].label}) week ${week}`, 'timeEntries');
-      if (out.warnings.length) showWarnings(`Exported ${out.count} row${out.count === 1 ? '' : 's'}`, out.warnings, PAYROLL_FORMATS[format].note);
-      else ui.toast(`Exported ${out.count} row${out.count === 1 ? '' : 's'} for ${st.company?.name || 'payroll'}`, 'success');
+      const locks = locksNow();
+      const end = addDays(week, 6);
+      const inRun = (e) => locks.payrollEntryIds.has(e.id);
+      const weekRows = sheets.flatMap((s) => s.entries);
+      const ready = (e) => (isCorrection(e) || e.clockOut) && e.approved && !inRun(e);
+      const leftOut = weekRows.filter((e) => !ready(e) && !inRun(e));
+      // Earlier days no run has taken: late hours (on or before the exported-through date) and corrections.
+      const late = store.list('timeEntries', (e) => {
+        const d = entryDay(e);
+        return d && d < week && !inRun(e) && (isCorrection(e) || e.clockOut) && (isLateHours(e, locks, { zone }) || isCorrection(e));
+      });
+      const people = new Map(store.list('employees').map((e) => [e.id, e]));
+      const name = (e) => people.get(e.employeeId)?.name || 'Someone';
+      const lockBox = h('input', { type: 'checkbox', checked: true, name: 'lock' });
+      const lateBoxes = late.map((e) => h('label', null, h('input', { type: 'checkbox', checked: Boolean(e.approved), disabled: !e.approved, value: e.id }),
+        h('span', null, `${name(e)} · ${entryDay(e)} · ${isCorrection(e) ? `correction ${e.adjustMinutes > 0 ? '+' : ''}${fmtH(e.adjustMinutes)} h` : `${fmtH(entryMinutes(e))} h`}${e.approved ? '' : ' (not approved yet)'}`)));
+      const body = h('div', { class: 'stack' },
+        late.length ? h('div', { class: 'time-late' }, h('strong', null, `Late hours and corrections from earlier periods (${late.length})`), ...lateBoxes) : null,
+        leftOut.length ? h('div', { class: 'time-late' }, h('strong', null, `These ${leftOut.length} entr${leftOut.length === 1 ? 'y is' : 'ies are'} not in this run. They will wait in Late hours for the next run.`),
+          h('ul', { class: 'time-warnings' }, leftOut.map((e) => h('li', null, `${name(e)} · ${entryDay(e)} · ${e.clockOut || isCorrection(e) ? 'not approved' : 'still on the clock'}`)))) : null,
+        h('label', { class: 'field check' }, lockBox, h('span', null, 'Lock these timesheets (recommended): exported hours can then only change by a correction')),
+        h('p', { class: 'muted loc-small' }, PAYROLL_FORMATS[format]?.note || ''));
+      const s = ui.openSheet({ title: `Export payroll ${ui.fmtDate(week, { month: 'short', day: 'numeric' })} – ${ui.fmtDate(end, { month: 'short', day: 'numeric' })}`, body,
+        actions: [ui.button('Cancel', { variant: 'ghost', onClick: () => s.close() }), ui.button('Export', { variant: 'primary', icon: 'download', onClick: () => { s.close(); run(); } })] });
+
+      async function run() {
+        const lock = lockBox.checked;
+        const lateIds = new Set(lateBoxes.map((l) => l.querySelector('input')).filter((x) => x.checked).map((x) => x.value));
+        const lateEntries = late.filter((e) => lateIds.has(e.id));
+        // With the lock, the file holds exactly what the run locks: approved, closed entries not exported before.
+        const fileSheets = lock ? sheets.map((sh) => weekSheet(sh.entries.filter(ready), { employeeId: sh.employeeId, weekStart: week, province: prefs().otRule })) : sheets;
+        const ctxp = { employees: people, jobs: new Map(store.list('jobs').map((j) => [j.id, j])), clients: new Map(store.list('clients').map((c) => [c.id, c])), periodStart: week, periodEnd: end, lateEntries };
+        const out = payrollCsv(format, fileSheets, ctxp);
+        ui.download(`${PAYROLL_FORMATS[format].file}-${week}.csv`, out.text, 'text/csv');
+        store.log('export', `Payroll CSV (${PAYROLL_FORMATS[format].label}) week ${week}`, 'timeEntries');
+        if (out.warnings.length) showWarnings(`Exported ${out.count} row${out.count === 1 ? '' : 's'}`, out.warnings, PAYROLL_FORMATS[format].note);
+        else ui.toast(`Exported ${out.count} row${out.count === 1 ? '' : 's'} for ${store.settings().company?.name || 'payroll'}`, 'success');
+        if (!lock) return;
+        const entryIds = weekRows.filter(ready).map((e) => e.id);
+        if (!entryIds.length && !lateEntries.length) return;
+        const req = {
+          id: `run-${week}-${Date.now().toString(36)}`, from: week, to: end, format, entryIds, lateEntryIds: [...lateIds],
+          employeeIds: [...new Set([...entryIds, ...lateIds].map((x) => store.get('timeEntries', x)?.employeeId).filter(Boolean))],
+          totals: { otMinutes: fileSheets.reduce((n, sh) => n + sh.totals.ot + sh.totals.dt, 0) }, lockThrough: true,
+        };
+        await lockRun(req, leftOut.length > 0);
+      }
+    }
+
+    /** POST the run; ask about entries only the server knows of; keep it for Books when offline. */
+    async function lockRun(req, ack) {
+      if (!auth.synced || !ctx.app?.api) { ui.toast('Demo: timesheets are locked when you are signed in to your company.', 'info', 4000); return; }
+      try {
+        await ctx.app.sync?.syncNow?.().catch(() => {});
+        await ctx.app.api.post('/api/v1/closing/payroll-runs', { ...req, leftOutAck: ack });
+        await ctx.app.sync?.syncNow?.().catch(() => {});
+        ui.toast('Timesheets locked', 'success');
+      } catch (e) {
+        if (e.code === 'unexported_entries' && !ack) {
+          const n = e.details?.entries?.length || 0;
+          if (await ui.confirmDialog(`${n} more entr${n === 1 ? 'y' : 'ies'} in this period ${n === 1 ? 'is' : 'are'} not in this run (from other devices). They will wait in Late hours for the next run.`, { title: 'Lock anyway?', okLabel: 'Lock', danger: false })) await lockRun(req, true);
+          return;
+        }
+        if (e.code === 'offline' || e.status === 0 || e.status >= 500) {
+          store.setMeta(PENDING_RUNS_META, [...(store.meta(PENDING_RUNS_META) || []), req]);
+          ui.toast('Exported. The timesheets lock when you are back online (Books → Payroll).', 'info', 5000);
+          return;
+        }
+        ui.toast(e.message || 'The timesheets could not be locked.', 'error', 5000);
+      }
     }
 
     async function fillTemplate(sheets) {

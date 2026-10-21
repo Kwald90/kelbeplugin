@@ -29,14 +29,13 @@ export function dropLocksCache(tx) { cache.delete(tx); }
 export async function loadLocks(tx) {
   if (cache.has(tx)) return cache.get(tx);
   const t = tx.tenantId;
-  const [{ rows: locks }, { rows: runs }, { rows: qbo }, { rows: s }] = await Promise.all([
-    tx.query('SELECT DISTINCT ON (kind) kind, through FROM period_locks WHERE tenant_id = $1 ORDER BY kind, id DESC', [t]),
-    tx.query(
-      `SELECT data->'entryIds' AS ids, data->'lateEntryIds' AS late, data->>'exportedAt' AS at FROM payroll_runs
-        WHERE tenant_id = $1 AND deleted_at IS NULL AND status = 'exported'`, [t]),
-    tx.query("SELECT features->>'bookCloseDate' AS close FROM qbo_connections WHERE tenant_id = $1", [t]),
-    tx.query("SELECT data->'company'->>'province' AS province FROM settings WHERE tenant_id = $1 AND id = 'settings' AND deleted_at IS NULL", [t]),
-  ]);
+  // One connection: the queries run one after the other.
+  const { rows: locks } = await tx.query('SELECT DISTINCT ON (kind) kind, through FROM period_locks WHERE tenant_id = $1 ORDER BY kind, id DESC', [t]);
+  const { rows: runs } = await tx.query(
+    `SELECT data->'entryIds' AS ids, data->'lateEntryIds' AS late, data->>'exportedAt' AS at FROM payroll_runs
+      WHERE tenant_id = $1 AND deleted_at IS NULL AND status = 'exported'`, [t]);
+  const { rows: qbo } = await tx.query("SELECT features->>'bookCloseDate' AS close FROM qbo_connections WHERE tenant_id = $1", [t]);
+  const { rows: s } = await tx.query("SELECT data->'company'->>'province' AS province FROM settings WHERE tenant_id = $1 AND id = 'settings' AND deleted_at IS NULL", [t]);
   const by = Object.fromEntries(locks.map((r) => [r.kind, iso(r.through)]));
   const payrollEntryIds = new Set();
   const payrollEntryDates = new Map();

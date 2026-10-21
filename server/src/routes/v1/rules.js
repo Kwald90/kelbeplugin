@@ -34,10 +34,9 @@ export default async function rulesRoutes(app, { db }) {
       const { rows: s } = await tx.query("SELECT data->'company'->>'province' AS province FROM settings WHERE tenant_id = $1 AND id = 'settings' AND deleted_at IS NULL", [tx.tenantId]);
       const province = req.query.province || s[0]?.province || 'ON';
       const on = req.query.on || dayIn(new Date().toISOString(), zoneFor(s[0]?.province));
-      const [{ rows: platform }, { rows: company }] = await Promise.all([
-        tx.query("SELECT key, province, to_char(effective_from, 'YYYY-MM-DD') AS effective_from, value, status, source, source_url, note, confirmed_by, confirmed_at FROM platform_rules WHERE province IN ('', $1)", [province]),
-        tx.query('SELECT id, data FROM rules WHERE tenant_id = $1 AND deleted_at IS NULL', [tx.tenantId]),
-      ]);
+      const { rows: platform } = await tx.query(
+        "SELECT key, province, to_char(effective_from, 'YYYY-MM-DD') AS effective_from, value, status, source, source_url, note, confirmed_by, confirmed_at FROM platform_rules WHERE province IN ('', $1)", [province]);
+      const { rows: company } = await tx.query('SELECT id, data FROM rules WHERE tenant_id = $1 AND deleted_at IS NULL', [tx.tenantId]);
       const resolved = resolveRules(platform, company.map((r) => ({ ...r.data, id: r.id })), { province, on });
       const defs = Object.fromEntries(Object.entries(RULE_DEFS).map(([k, d]) => [k, {
         label: d.label, unit: d.unit, kind: d.kind, scope: d.scope, province: d.province, yearly: d.yearly, companyOnly: d.companyOnly, usedBy: d.usedBy, description: d.description,
