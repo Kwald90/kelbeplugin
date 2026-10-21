@@ -97,9 +97,12 @@ The same failing jobs/stages exist on base `d68b264`:
 [baseline CI](https://github.com/Kwald90/kelbeplugin/actions/runs/39578359580) and
 [baseline Security](https://github.com/Kwald90/kelbeplugin/actions/runs/39578359724).
 The PR-only dependency review additionally reports that the repository does not
-support it and asks for Dependency graph to be enabled. These remain merge/release
-blockers; this UX sprint does not suppress or disable any checks. Resolve them in
-the repository's CI/security workstream, then rerun the complete PR checks.
+support it and asks for Dependency graph to be enabled. The subsequent
+[CI remediation](CI-REMEDIATION.md) addresses these causes and records local
+validation. Kelvin approved enabling Dependency graph and vulnerability alerts;
+the settings are enabled and the dependency comparison API now succeeds. All
+checks remain active. Follow the PR checks for the current remote result before
+merge or release.
 
 ## Follow-up boundaries
 

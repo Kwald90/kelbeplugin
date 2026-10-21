@@ -49,6 +49,8 @@ jobs:
           tar -xzf gitleaks.tgz gitleaks
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
           rm -f gitleaks gitleaks.tgz
+      - name: Historical fixture exceptions still detect new credentials
+        run: node .github/scripts/check-gitleaks-fixtures.mjs
       - name: Scan the whole git history
         if: always()
         run: gitleaks git --config .gitleaks.toml --redact --no-banner --exit-code 1 --report-format sarif --report-path gitleaks.sarif .

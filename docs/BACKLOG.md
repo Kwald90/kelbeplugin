@@ -19,7 +19,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **K** "Ask us to set this up": real address (placeholder `setup@fishtapehq.com`) and price.
 - **K** "FB Muse": Facebook Lead Ads (built) or Meta's Muse AI model?
 - **K** AI defaults: a US$50/month cap per company, the model (Opus 5.5 now, about US$0.10–0.15 per drafted estimate, unmeasured; `AI_MODEL` can switch to a cheaper one), whether MCP agents may create and update records or only read and draft, and keeping chats (with photos) 180 days.
-- **K** GitHub: make `claude/electrical-concept-app-h4qz12` the default branch, turn on Dependabot alerts, branch protection ("CI passed"), private vulnerability reporting, and the `staging`/`production` environments with secrets (`docs/runbooks/deploy-staging.md`).
+- **K** GitHub: make `claude/electrical-concept-app-h4qz12` the default branch, turn on branch protection ("CI passed"), private vulnerability reporting, and the `staging`/`production` environments with secrets (`docs/runbooks/deploy-staging.md`). Dependency graph and Dependabot vulnerability alerts enabled with Kelvin's approval on 2026-10-21; see [CI remediation](ux/CI-REMEDIATION.md).
 - **K** Offsite backup target in Canada, an uptime monitor, a backup heartbeat URL.
 - **K** Move the backup private key (`C:\Users\Kelvin\.fishtape-keys\fishtape-staging-backup.key`) into the password manager and onto a USB stick.
 - **K** Change the build Mac's password and turn on "Prevent automatic sleeping when the display is off".
