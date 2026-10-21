@@ -4,7 +4,7 @@
 //   1. bills a general contractor with "PST/RST exempt, GST charged" and no exemption on file:
 //      the invoice can't be emailed (the dialog gives the Manitoba hint) and the server refuses it;
 //   2. marks the exemption on the job (subtrade, RST no. 1234567): a new invoice on the job leaves
-//      RST off with the exemption filled in, prints "RST exemption: subtrade, RST no. 1234567",
+//      RST off with the exemption filled in, prints "RST exemption: ...subtrade, RST no. 1234567",
 //      and sends;
 //   3. the same client on another job is charged RST (the client's evidence alone changes nothing);
 //   4. a British Columbia invoice without a PST number only warns, and sends.
@@ -305,10 +305,11 @@ try {
     await own.waitFor('!!document.querySelector("main h1")', 'the job');
     const onCard = await own.evaluate('!!document.querySelector("main .tax-exempt-job input[name=taxExempt]")');
     if (onCard) await own.evaluate('(() => { document.querySelector("main .tax-exempt-job input[name=taxExempt]").click(); return true; })()');
-    else await own.evaluate(`(() => { kelbe.store.update("jobs", ${J(jobA)}, { taxExempt: { basis: "subtrade", number: "1234567", endCustomer: null, details: {}, confirmedBy: kelbe.auth.who(), confirmedAt: new Date().toISOString() } }); return true; })()`);
+    else await own.evaluate(`(() => { kelbe.store.update("jobs", ${J(jobA)}, { taxExempt: { basis: "subtrade", number: "1234567", endCustomer: null, details: {}, confirmedBy: kelbe.auth.who().name, confirmedAt: new Date().toISOString(), province: "MB" } }); return true; })()`);
     await synced(own);
     const ex = (await row('SELECT data->\'taxExempt\' AS x FROM jobs WHERE tenant_id = $1 AND id = $2', [tg, jobA]))[0]?.x;
     if (ex?.basis !== 'subtrade' || ex?.number !== '1234567') throw new Error(`job exemption on the server: ${J(ex)}`);
+    if (typeof ex.confirmedBy !== 'string' || !ex.confirmedBy) throw new Error(`confirmedBy must be the name (jobs schema: a string): ${J(ex.confirmedBy)}`);
     inv2 = await newInvoice(own, jobA);
     let treat = await own.evaluate('document.querySelector("main select[name=taxTreatment]").value');
     let via = 'new invoice default';
@@ -326,7 +327,7 @@ try {
     await synced(own);
     await previewEmail(own);
     const printed = await own.evaluate('document.querySelector("[role=dialog] [data-exemption]")?.innerText || ""');
-    if (!/RST exemption: subtrade, RST no\. 1234567/.test(printed)) throw new Error(`printed: ${printed}`);
+    if (!/RST exemption: [^\n]*subtrade, RST no\. 1234567/i.test(printed)) throw new Error(`printed: ${printed}`);
     await own.shot('r03-printed-exemption');
     await own.click('Email', '[role=dialog]');
     await own.waitFor('!!document.querySelector("[role=dialog] input[name=to]")', 'the email sheet');

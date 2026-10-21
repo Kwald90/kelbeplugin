@@ -234,6 +234,7 @@ export function newDocTax(settings, date = new Date(), { client = null, job = nu
       taxExemptNumber: ex.taxExemptNumber ?? null,
       taxExemptBasis: ex.taxExemptBasis,
       taxExemptDetails: { ...(ex.taxExemptDetails || {}) },
+      ...(job?.taxExempt ? { exemptionConfirmed: exemptionConfirmedFromJob(job) } : {}),
       ...(onReserve ? { taxNoneReason: 'relief' } : {}),
     };
   }
@@ -259,6 +260,38 @@ export const TAX_OFF_PRESETS = [
     printSuffix: '(at cost, no RST)',
   },
 ];
+
+// ---- who said a job's work is exempt (r1-get-paid.md 2.9; jobs.taxExempt.confirmedBy is a name) ----
+
+/** A confirmer as stored: the name string (≤ 128). Older copies kept { id, name }. */
+export function confirmedByName(v) {
+  const name = typeof v === 'string' ? v : (v && typeof v === 'object' ? v.name : null);
+  const t = String(name ?? '').trim();
+  return t ? t.slice(0, 128) : null;
+}
+
+/**
+ * jobs.taxExempt when the office ticks "This job's work is exempt": the client's evidence on file
+ * prefills it; confirmedBy is the person's name (a string, as the jobs schema says) and province
+ * the company's province (exemptionFor skips an exemption recorded for another province).
+ */
+export function jobTaxExemptFrom({ client = null, by = null, province = null, at = new Date().toISOString() } = {}) {
+  const d = client?.taxExemptDetails || {};
+  return {
+    basis: client?.taxExemptBasis || null,
+    number: client?.taxExemptNumber || null,
+    endCustomer: d.endCustomer || null,
+    details: { name: d.name || null, registryNo: d.registryNo || null, band: d.band || null, reserve: d.reserve || null, farmCertNo: d.farmCertNo || null, department: d.department || null },
+    confirmedBy: confirmedByName(by),
+    confirmedAt: at,
+    province: province || null,
+  };
+}
+
+/** A document's exemptionConfirmed taken from its job: { by (name), at, from: 'job' }. */
+export function exemptionConfirmedFromJob(job, now = new Date().toISOString()) {
+  return { by: confirmedByName(job?.taxExempt?.confirmedBy), at: job?.taxExempt?.confirmedAt || now, from: 'job' };
+}
 
 /** The provincial sales tax's short name in a province: 'RST' (MB), 'PST' (BC, SK), 'QST', or null. */
 export function provincialTaxId(province) {

@@ -7,7 +7,7 @@
 // (Excise Tax Act s.232) and the exemption check before sending (sendCheck, confirmSend).
 import { h, clear, icon, button, parseMoney, centsToInput, fmtDate, fmtNum, openSheet, searchBox, toast, badge, field, confirmDialog } from '../ui.js';
 import { docTotals, lineCents, moneyFormatter, combinedPct, KINDS, invoiceKind, holdbackProblem, progressSummary, policyRule, isPassThrough, DEPOSIT_NOTES } from './money.js';
-import { PROVINCES, TREATMENTS, treatmentsFor, treatmentHint, taxComponents, taxSetup, newDocTax, describeTaxes, fmtPct, provinceName, TAX_OFF_PRESETS, provincialTaxId, exemptNumberProblem } from './tax.js';
+import { PROVINCES, TREATMENTS, treatmentsFor, treatmentHint, taxComponents, taxSetup, newDocTax, describeTaxes, fmtPct, provinceName, TAX_OFF_PRESETS, provincialTaxId, exemptNumberProblem, confirmedByName, jobTaxExemptFrom, exemptionConfirmedFromJob } from './tax.js';
 import { EXEMPT_BASES, EXEMPT_EVIDENCE, exemptionProblem, exemptionFor, exemptionPrintLines } from './exemption.js';
 import { store as appStore } from '../store.js';
 import { auth } from '../auth.js';
@@ -20,6 +20,8 @@ const nowIso = () => new Date().toISOString();
 
 /** 'estimates' or 'invoices' for a document (estimates have validUntil, invoices a due date). */
 export const collectionOf = (doc) => (doc && doc.validUntil !== undefined && doc.dueDate === undefined ? 'estimates' : 'invoices');
+/** exemptionProblem's options for a collection (lib/exemption.js reads docType). */
+const docKind = (coll) => ({ docType: coll, collection: coll });
 
 // ---- the rules table (r1-get-paid.md 2.7) ----------------------------------------------
 
@@ -302,11 +304,14 @@ function textField({ label, name, value, readOnly, onInput, hint }) {
 /**
  * exemptionEditor({ doc, job, client, onChange, readOnly }) -> element
  *  - On an estimate or invoice (the default): shown when PST/RST is off (gst-only or none) in BC, SK
- *    or MB. Prefills from the job's exemption, or from the client's evidence once the office ticks
- *    "This work is exempt" (exemptionConfirmed). When the job is exempt but the document still
- *    charges PST/RST, it offers to switch (onTreatment(treatment, extra) when given).
+ *    or MB ("No tax" for a zero-rated, exempt or out-of-scope supply only while lib/exemption.js
+ *    asks for evidence). Drawing never changes the document: it offers the job's exemption (a
+ *    button), and the client's evidence fills in once the office ticks "This work is exempt"
+ *    (exemptionConfirmed); unticking clears the evidence. When the job is exempt but the document
+ *    still charges PST/RST, it offers to switch (onTreatment(treatment, extra) when given).
  *  - On a job (pass doc === job, or mode 'job'): edits job.taxExempt { basis, number, endCustomer,
- *    details, confirmedBy, confirmedAt }; onChange(job.taxExempt) after every edit.
+ *    details, confirmedBy (the name, a string), confirmedAt, province }; onChange(job.taxExempt)
+ *    after every edit.
  */
 export function exemptionEditor({ doc, job = null, client = null, onChange, readOnly = false, store = appStore, mode = null, onTreatment = null }) {
   if (mode === 'job' || (job && doc === job)) return jobExemptionEditor({ job: job || doc, client, onChange, readOnly, store });
@@ -315,7 +320,10 @@ export function exemptionEditor({ doc, job = null, client = null, onChange, read
     clear(el);
     const prov = doc.taxProvince;
     if (!PST_PROVINCES.includes(prov)) return;
-    if (doc.taxTreatment === 'none' && ['zero', 'exempt', 'out_of_scope'].includes(doc.taxNoneReason)) return; // not an exemption
+    // "No tax" for a zero-rated, exempt or out-of-scope supply is not an exemption, unless
+    // lib/exemption.js still asks for evidence: then the editor shows so it can be entered.
+    if (doc.taxTreatment === 'none' && ['zero', 'exempt', 'out_of_scope'].includes(doc.taxNoneReason)
+      && !exemptionProblem(doc, docKind(collectionOf(doc)))) return;
     const tax = provincialTaxId(prov);
     const jobEx = exemptionFor({ job, client, province: prov });
     if (!EXEMPT_TREATMENTS.includes(doc.taxTreatment)) {
@@ -325,7 +333,7 @@ export function exemptionEditor({ doc, job = null, client = null, onChange, read
         h('span', null, `${job?.number || 'This job'} is marked exempt from ${tax} (${exemptionPrintLines({ ...jobEx, taxProvince: prov })[0]}). This document still charges ${tax}.`),
         readOnly ? null : button('Use the job’s exemption', { size: 'sm', onClick: () => {
           const treatment = onReserve ? 'none' : 'gst-only';
-          const extra = { ...jobEx, exemptionConfirmed: fromJob(job), ...(onReserve ? { taxNoneReason: 'relief' } : {}) };
+          const extra = { ...jobEx, exemptionConfirmed: exemptionConfirmedFromJob(job), ...(onReserve ? { taxNoneReason: 'relief' } : {}) };
           if (onTreatment) onTreatment(treatment, extra);
           else {
             doc.taxes = taxComponents({ province: prov, treatment, date: doc.issueDate || new Date() });
@@ -337,12 +345,16 @@ export function exemptionEditor({ doc, job = null, client = null, onChange, read
         } })));
       return;
     }
-    // A job that says the work is exempt prefills a document that has no exemption yet.
-    let prefilled = false;
-    if (!readOnly && !doc.taxExemptBasis && !filled(doc.taxExemptNumber) && jobEx.taxExemptBasis) {
-      Object.assign(doc, jobEx, { exemptionConfirmed: fromJob(job) });
-      prefilled = true;
-    }
+    // A job that says the work is exempt: offered to a document with no exemption yet. Drawing
+    // never changes the document (new documents get it from newDocTax); the office clicks.
+    const offerJob = !readOnly && !doc.taxExemptBasis && !filled(doc.taxExemptNumber) && jobEx.taxExemptBasis
+      ? h('div', { class: 'tax-exempt-note' }, icon('info', 16),
+        h('span', null, `${job?.number || 'This job'} is marked exempt (${exemptionPrintLines({ ...jobEx, taxProvince: prov })[0]}).`),
+        button('Use the job’s exemption', { size: 'sm', onClick: () => {
+          Object.assign(doc, jobEx, { exemptionConfirmed: exemptionConfirmedFromJob(job) });
+          draw(); onChange?.();
+        } }))
+      : null;
     const confirmed = Boolean(doc.exemptionConfirmed);
     const tick = h('input', { type: 'checkbox', name: 'exemptionConfirmed', checked: confirmed, disabled: readOnly,
       onChange: (e) => {
@@ -351,14 +363,15 @@ export function exemptionEditor({ doc, job = null, client = null, onChange, read
           if (!doc.taxExemptBasis && client?.taxExemptBasis) doc.taxExemptBasis = client.taxExemptBasis;
           if (!filled(doc.taxExemptNumber) && filled(client?.taxExemptNumber)) doc.taxExemptNumber = client.taxExemptNumber;
           if (client?.taxExemptDetails) doc.taxExemptDetails = { ...client.taxExemptDetails, ...(doc.taxExemptDetails || {}) };
-          doc.exemptionConfirmed = { by: auth.who().name, at: nowIso() };
-        } else doc.exemptionConfirmed = null;
+          doc.exemptionConfirmed = { by: confirmedByName(auth.who()), at: nowIso() };
+        } else clearExemption(doc); // unticked: the evidence goes too, so nothing prints or passes the send check
+
         draw(); onChange?.();
       } });
     const status = h('div', { class: 'tax-exempt-status', role: 'status' });
     const drawStatus = () => {
       clear(status);
-      const p = exemptionProblem(doc, { collection: collectionOf(doc) });
+      const p = exemptionProblem(doc, docKind(collectionOf(doc)));
       const fmt = exemptNumberProblem({ province: prov, basis: doc.taxExemptBasis, number: doc.taxExemptNumber });
       const lines = exemptionPrintLines(doc);
       h(status, null,
@@ -374,6 +387,7 @@ export function exemptionEditor({ doc, job = null, client = null, onChange, read
       : doc.exemptionConfirmed?.by ? `Confirmed by ${doc.exemptionConfirmed.by} ${fmtDate(doc.exemptionConfirmed.at)}.` : null;
     h(el, null,
       h('div', { class: 'tax-exempt-head' }, h('strong', null, `${tax} exemption`), h('span', { class: 'muted' }, ' · for this contract only')),
+      offerJob,
       h('label', { class: 'field check' }, tick, h('span', null, 'This work is exempt')),
       sourceNote ? h('div', { class: 'muted tax-exempt-src' }, sourceNote) : null,
       h('div', { class: 'form-grid tax-exempt-grid' },
@@ -385,14 +399,11 @@ export function exemptionEditor({ doc, job = null, client = null, onChange, read
       status);
     drawStatus();
     watchDoc(doc, status, drawStatus);
-    if (prefilled) queueMicrotask(() => onChange?.());
   };
   draw();
   el.redraw = draw;
   return el;
 }
-
-const fromJob = (job) => ({ by: job?.taxExempt?.confirmedBy?.name || null, at: job?.taxExempt?.confirmedAt || nowIso(), from: 'job' });
 
 function jobExemptionEditor({ job, client, onChange, readOnly, store }) {
   const el = h('div', { class: 'tax-exempt tax-exempt-job' });
@@ -404,14 +415,8 @@ function jobExemptionEditor({ job, client, onChange, readOnly, store }) {
     const ex = job.taxExempt || null;
     const tick = h('input', { type: 'checkbox', name: 'taxExempt', checked: Boolean(ex?.basis), disabled: readOnly,
       onChange: (e) => {
-        if (e.target.checked) {
-          const d = client?.taxExemptDetails || {};
-          job.taxExempt = {
-            basis: client?.taxExemptBasis || null, number: client?.taxExemptNumber || null, endCustomer: d.endCustomer || null,
-            details: { name: d.name || null, registryNo: d.registryNo || null, band: d.band || null, reserve: d.reserve || null, farmCertNo: d.farmCertNo || null, department: d.department || null },
-            confirmedBy: auth.who(), confirmedAt: nowIso(),
-          };
-        } else job.taxExempt = null;
+        if (e.target.checked) job.taxExempt = jobTaxExemptFrom({ client, by: auth.who(), province: prov, at: nowIso() });
+        else job.taxExempt = null;
         draw(); save();
       } });
     const status = h('div', { class: 'tax-exempt-status', role: 'status' });
@@ -430,9 +435,12 @@ function jobExemptionEditor({ job, client, onChange, readOnly, store }) {
         missing.length ? h('div', { class: 'tax-exempt-msg warn' }, icon('alert', 14), h('span', null, `Still needed: ${missing.join(', ')}. Invoices on this job can't be sent without it.`)) : null,
         fmt ? h('div', { class: 'tax-exempt-msg warn' }, icon('info', 14), h('span', null, fmt)) : null,
         !missing.length ? h('div', { class: 'tax-exempt-msg ok' }, icon('check', 14), h('span', null, `New estimates and invoices on this job leave ${tax} off and print: ${exemptionPrintLines(asDoc).join(' · ')}`)) : null,
-        cur.confirmedBy?.name ? h('div', { class: 'muted tax-exempt-src' }, `Confirmed by ${cur.confirmedBy.name} ${fmtDate(cur.confirmedAt)}.`) : null);
+        confirmedByName(cur.confirmedBy) ? h('div', { class: 'muted tax-exempt-src' }, `Confirmed by ${confirmedByName(cur.confirmedBy)} ${fmtDate(cur.confirmedAt)}.`) : null);
     };
-    const touch = () => { job.taxExempt.confirmedBy = auth.who(); job.taxExempt.confirmedAt = nowIso(); drawStatus(); save(); };
+    const touch = () => {
+      Object.assign(job.taxExempt, { confirmedBy: confirmedByName(auth.who()), confirmedAt: nowIso(), province: job.taxExempt.province || prov || null });
+      drawStatus(); save();
+    };
     h(el, null,
       h('label', { class: 'field check' }, tick, h('span', null, `This job’s work is exempt from ${tax}`)),
       ex ? h('div', { class: 'form-grid tax-exempt-grid' },
@@ -459,7 +467,7 @@ function jobExemptionEditor({ job, client, onChange, readOnly, store }) {
  */
 export function sendCheck(doc, { collection = null } = {}) {
   const coll = collection || collectionOf(doc);
-  const p = exemptionProblem(doc, { collection: coll });
+  const p = exemptionProblem(doc, docKind(coll));
   const hp = coll === 'invoices' ? holdbackProblem(doc) : null;
   return {
     block: p?.level === 'block' ? p.message : hp ? hp.message : null,

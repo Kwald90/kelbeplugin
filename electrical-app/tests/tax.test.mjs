@@ -188,6 +188,24 @@ test('PST/RST exempt hints say who qualifies, per province', () => {
   assert.match(T.treatmentHint('none', 'MB'), /federal government, a farm certificate or a general contractor passing on an exemption still pays GST/);
 });
 
+test('job exemptions store who confirmed them as a name (jobs.taxExempt.confirmedBy is a string)', () => {
+  const client = { taxExemptBasis: 'pass-on', taxExemptNumber: '1234567', taxExemptDetails: { endCustomer: 'Canada Post', note: 'cert on file' } };
+  const x = T.jobTaxExemptFrom({ client, by: { id: 'u1', name: 'Pat Office' }, province: 'MB', at: '2026-10-20T10:00:00Z' });
+  assert.equal(x.confirmedBy, 'Pat Office', 'the name, never the { id, name } object');
+  assert.equal(typeof x.confirmedBy, 'string');
+  assert.equal(x.province, 'MB');
+  assert.deepEqual({ basis: x.basis, number: x.number, endCustomer: x.endCustomer, at: x.confirmedAt }, { basis: 'pass-on', number: '1234567', endCustomer: 'Canada Post', at: '2026-10-20T10:00:00Z' });
+  assert.deepEqual(Object.keys(x.details).sort(), ['band', 'department', 'farmCertNo', 'name', 'registryNo', 'reserve'], 'only the schema detail fields');
+  assert.equal(T.jobTaxExemptFrom({}).basis, null, 'no evidence on file: the office fills it in');
+  // Older copies kept the object; both read as the name, capped at the schema's 128.
+  assert.equal(T.confirmedByName({ id: 'u1', name: 'Pat' }), 'Pat');
+  assert.equal(T.confirmedByName('  Pat  '), 'Pat');
+  assert.equal(T.confirmedByName(null), null);
+  assert.equal(T.confirmedByName('x'.repeat(200)).length, 128);
+  const job = { taxExempt: { ...x, confirmedBy: { name: 'Lee' } } };
+  assert.deepEqual(T.exemptionConfirmedFromJob(job), { by: 'Lee', at: '2026-10-20T10:00:00Z', from: 'job' });
+});
+
 test('newDocTax: a job exemption defaults to gst-only with its snapshot; client evidence alone does not', () => {
   const s = { company: { province: 'MB' } };
   const job = { id: 'j1', taxExempt: { basis: 'subtrade', number: '1234567', confirmedBy: { name: 'Pat' }, confirmedAt: '2026-10-20T10:00:00Z' } };
@@ -197,6 +215,7 @@ test('newDocTax: a job exemption defaults to gst-only with its snapshot; client 
   assert.equal(t.taxExemptBasis, 'subtrade');
   assert.equal(t.taxExemptNumber, '1234567');
   assert.deepEqual(t.taxExemptDetails, {});
+  assert.deepEqual(t.exemptionConfirmed, { by: 'Pat', at: '2026-10-20T10:00:00Z', from: 'job' }, 'who said the job is exempt comes along');
   // A GC passing on its customer's exemption: the end customer comes with it.
   const passOn = T.newDocTax(s, '2026-10-20', { job: { taxExempt: { basis: 'pass-on', number: '7654321', endCustomer: 'Canada Post' } } });
   assert.equal(passOn.taxTreatment, 'gst-only');

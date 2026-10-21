@@ -9,6 +9,7 @@ import { skip, createTestDatabase } from './support/db.js';
 import { call, ownerTenant, startApp, addMember } from './support/app.js';
 import { setFetch } from '../src/integrations/http.js';
 import { taxComponents } from '../../electrical-app/js/lib/tax.js';
+import { exemptionProblem } from '../../electrical-app/js/lib/exemption.js';
 
 const hex = (n) => randomBytes(n).toString('hex');
 const net = {
@@ -118,13 +119,17 @@ describe('sending checks the RST exemption', { skip }, () => {
       lines: [{ description: 'Service upgrade', qty: 1, unitCents: 100000, kind: 'labour' }], taxProvince: 'MB', taxTreatment: 'gst-only', taxes: tx, taxPct: 5,
     } });
     assert.equal(est.status, 201, JSON.stringify(est.body));
+    assert.equal(exemptionProblem(est.body, { docType: 'estimates' })?.level, 'warn', 'the PWA warns on it');
     assert.equal((await email(office, 'estimates', 'est-mb')).status, 201);
     // A credit note follows its original invoice; an interest invoice is exempt by nature.
     await invoice('cr-1', { extra: { kind: 'credit', creditsInvoiceId: 'mb-1', creditReason: 'price', lines: [{ description: 'Price adjustment', qty: 1, unitCents: -10000, kind: 'labour' }] } });
     assert.equal((await email(office, 'invoices', 'cr-1')).status, 201);
-    // "No tax" for an out-of-scope supply is not an exemption either.
-    await invoice('mb-none', { treatment: 'none', extra: { taxNoneReason: 'out_of_scope' } });
-    assert.equal((await email(office, 'invoices', 'mb-none')).status, 201);
+    // "No tax" for an out-of-scope supply: lib/exemption.js decides whether it needs evidence (the
+    // Lead's call, r1-get-paid.md 2.9); the route answers exactly what the PWA's sendCheck shows.
+    const none = await invoice('mb-none', { treatment: 'none', extra: { taxNoneReason: 'out_of_scope' } });
+    const rule = exemptionProblem(none, { docType: 'invoices', collection: 'invoices' });
+    const sent = await email(office, 'invoices', 'mb-none');
+    assert.equal(sent.status, rule?.level === 'block' ? 422 : 201, JSON.stringify({ rule, body: sent.body }));
   });
 
   test('"No tax" for First Nations relief needs the registry number and band or reserve', async () => {

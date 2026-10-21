@@ -420,7 +420,12 @@ export function invoicePaidCents(store, invoiceId) {
   return store.list('payments', (p) => p.invoiceId === invoiceId).reduce((s, p) => s + (Number(p.amountCents) || 0), 0);
 }
 
+/**
+ * What is still owed on an invoice. A credit note: its unapplied part (creditNoteBalance, negative
+ * while open), so a sum of balances never counts an applied credit on top of the reduced original.
+ */
 export function invoiceBalanceCents(store, inv) {
+  if (invoiceKind(inv) === 'credit') return creditNoteBalance(inv, store.list('payments', (p) => p.creditNoteId === inv.id));
   return docTotals(inv).totalCents - invoicePaidCents(store, inv.id);
 }
 

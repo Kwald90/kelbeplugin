@@ -147,7 +147,7 @@ function detailView(root, ctx, id) {
 
     const side = h('div', { class: 'stack crm-side' }, contact,
       exemptionCard(ctx, c),
-      creditCard(ctx, c, { money: !auth || auth.can('invoices') }));
+      creditCard(ctx, c, { money: !auth || (typeof auth.seesMoney === 'function' ? auth.seesMoney() : auth.can('invoices')) }));
 
     const stats = h('div', { class: 'grid crm-stats' },
       ui.stat({ label: 'Open jobs', value: String(jobs.filter((j) => !CLOSED_JOB.has(j.status)).length) }),
@@ -348,6 +348,13 @@ function creditCard(ctx, c, { money }) {
     h('div', { class: 'row' }, ui.button('Print credit application', { size: 'sm', icon: 'printer', onClick: () => printNode(creditApplicationNode(ctx, c)) })));
 }
 
+/** The credit limit typed: null for a blank field (no limit), else whole cents, never negative. */
+export function creditLimitFrom(raw, cents) {
+  if (raw == null || String(raw).trim() === '') return null;
+  const n = Math.round(Number(cents));
+  return Number.isFinite(n) ? Math.max(0, n) : null;
+}
+
 function openCreditSheet({ store, ui, auth }, c, { money }) {
   const cr = c.credit || {};
   const ho = cr.holdOverride || {};
@@ -369,7 +376,7 @@ function openCreditSheet({ store, ui, auth }, c, { money }) {
       { label: 'Why', name: 'holdReason', value: ho.reason || '', span: true },
       { label: 'Note', name: 'note', type: 'textarea', rows: 2, value: cr.note || '', span: true },
     ].filter(Boolean),
-    onSubmit(v) {
+    onSubmit(v, form) {
       const mode = v.holdMode || 'auto';
       const reason = String(v.holdReason || '').trim();
       if (mode !== 'auto' && reason.length < 3) { ui.toast('Say why the hold is forced', 'error'); return false; }
@@ -390,7 +397,8 @@ function openCreditSheet({ store, ui, auth }, c, { money }) {
           : (cr.holdOverride || { mode: 'auto' }),
         note: String(v.note || '').trim() || null,
       };
-      if (money) credit.limitCents = v.limitCents > 0 ? v.limitCents : null;
+      // Blank is "no limit"; $0 is a real limit (cash only: any balance is over it).
+      if (money) credit.limitCents = creditLimitFrom(form?.querySelector?.('[name="limitCents"]')?.value, v.limitCents);
       store.update('clients', c.id, { credit }, { summary: 'Credit details' });
       ui.toast('Credit details saved', 'success');
     },

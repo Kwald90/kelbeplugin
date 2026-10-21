@@ -81,7 +81,8 @@ const notConnected = (label) => new ApiError(409, 'integration_not_connected', `
 
 /** The same check the PWA runs before sending (lib/doc-view.js sendCheck): refuse on 'block' only. */
 function assertExemption(doc, collection) {
-  const p = exemptionProblem(doc, { collection });
+  // lib/exemption.js reads docType ('estimates' warns, never blocks); collection kept for older copies.
+  const p = exemptionProblem(doc, { docType: collection, collection });
   if (p?.level === 'block') throw new ApiError(422, 'exemption_required', p.message, { missing: p.missing || [] });
 }
 

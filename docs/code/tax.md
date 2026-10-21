@@ -81,13 +81,17 @@ federal government's exemption on one job pays RST on the next. So:
   Nations details (name, registry number, band, reserve), farm certificate number, federal
   department, the date it was last checked. It never changes a document by itself.
 - **Job** (`jobs.taxExempt`, Job → Contract and payment): says the exemption applies to this job,
-  with who confirmed it. New estimates and invoices on the job default to `gst-only` (`none` with
-  reason `relief` for First Nations on reserve) and carry the exemption
-  (`newDocTax(settings, date, { job, client })`).
+  with who confirmed it (`confirmedBy` is the person's name, a string) and the province it was
+  recorded for. New estimates and invoices on the job default to `gst-only` (`none` with reason
+  `relief` for First Nations on reserve) and carry the exemption and `exemptionConfirmed`
+  (`newDocTax(settings, date, { job, client })`; the estimate and invoice screens call it with
+  the job and client from R1-D).
 - **Document**: `taxExemptNumber`, `taxExemptBasis`, `taxExemptDetails`, `exemptionConfirmed`
   (who ticked "This work is exempt", or `from: 'job'`). The editor shows under the tax picker when
-  PST/RST is off; it prefills from the job, or from the client's evidence after the tick. Printed
-  as e.g. "RST exemption: subtrade, RST no. 1234567".
+  PST/RST is off. Opening a document never changes it: a draft without an exemption on an exempt
+  job offers "Use the job's exemption"; the client's evidence fills in after the tick; unticking
+  clears the evidence, so nothing prints and the send check applies again. Printed as e.g.
+  "RST exemption: Electrical or mechanical subtrade, RST no. 1234567" (`exemptionPrintLines`).
 
 Evidence per basis (`EXEMPT_EVIDENCE`):
 
@@ -100,12 +104,16 @@ Evidence per basis (`EXEMPT_EVIDENCE`):
 | `first-nations` | the registry number, and the band or the reserve |
 | `farm` | the farm-use certificate number |
 
-Sending: a **Manitoba invoice** with RST off and the evidence missing is not sent: the PWA blocks
-Email, Pay online and Mark sent, and the server refuses the email-document and pay-link routes and
-the change from draft (422 `exemption_required`). Manitoba estimates, and BC and SK documents, get
-a warning. Not checked: interest invoices, credit notes (they follow their original), holdback
-release invoices, security-deposit invoices, documents with no work lines, `none` for zero-rated,
-exempt or out-of-scope supplies, and BC `real-property` (not an exemption). Number formats are a
+Sending: a **Manitoba invoice** with RST off and the evidence missing is not sent: the PWA's
+`confirmSend` blocks Email and Pay online (Mark sent once the invoice screen calls it, R1-D), and
+the server refuses the email-document and pay-link routes and the change from draft (422
+`exemption_required`). Manitoba estimates, and BC and SK documents, get a warning. One rule
+decides, `exemptionProblem(doc, { docType })` in `lib/exemption.js`, for the PWA and the server.
+Not checked: interest invoices, credit notes (they follow their original), holdback release
+invoices, security-deposit invoices, documents with no work lines, and BC `real-property` (not an
+exemption). `none` for a zero-rated, exempt or out-of-scope supply: open (the Lead's call, 2.9 of
+the release contract). The recommended rule skips it; until `exemptionProblem` does, the exemption
+editor shows for it so the evidence can be entered. Number formats are a
 warning only (Registration numbers, below). A QuickBooks pull with the evidence missing is created
 and goes to review (`exemption_missing`).
 
@@ -118,6 +126,10 @@ GST, not RST, and prints "(at cost, no RST)". It is offered in Manitoba while th
 separately billed disbursements). Choosing it warns: "Travel time and permits are taxable. Use a
 normal line for them." While `holdback.excludePassThrough` holds (also `verify`), the line is
 outside the holdback base.
+
+Release order: QuickBooks reads `taxOff`, `lineType` and `holdback` only once R1-F lands. Deploy
+this with R1-F; before that a pass-through line would be pushed with the RST tax code and the daily
+check would flag the total.
 
 ## Holdback and the taxes on it
 
@@ -199,7 +211,7 @@ invoice:  kind: 'standard'|'deposit'|'progress'|'holdback-release'|'credit'|'int
           holdbackInvoiceIds[], creditsInvoiceId, creditReason,
           creditTaxSnapshot { taxProvince, taxTreatment, taxes, taxPct, taxNoneReason, taxExempt*,
                               invoiceNumber, invoiceDate }
-job:      taxExempt { basis, number, endCustomer, details, confirmedBy, confirmedAt }
+job:      taxExempt { basis, number, endCustomer, details, confirmedBy (name), confirmedAt, province }
 client:   taxExemptNumber, taxExemptBasis, taxExemptProvince, taxExemptDetails, taxExemptCheckedAt
           (evidence only)
 ```

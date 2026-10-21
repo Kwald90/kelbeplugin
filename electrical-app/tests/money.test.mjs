@@ -225,6 +225,11 @@ test('creditNoteBalance and the status of a credit note: open, then applied, nev
   // On the original invoice the application counts as paid (payments sum by invoiceId).
   const orig = { id: 'inv-1', status: 'sent', ...doc([lab(100000)]) };
   assert.equal(M.invoiceStatus(storeWith(full.filter((p) => p.creditNoteId)), orig), 'paid');
+  // Balances add up: the applied credit is counted once (on the original), not again on the note.
+  assert.equal(M.invoiceBalanceCents(storeWith(partly), note), -52000);
+  assert.equal(M.invoiceBalanceCents(storeWith(full), note), 0);
+  // Original $1,120 less $1,120 of credit and $50 cash = −$50; the applied note adds nothing (it was −$1,120 before).
+  assert.equal(M.invoiceBalanceCents(storeWith(full), orig) + M.invoiceBalanceCents(storeWith(full), note), -5000);
 });
 
 test('revenueCents per kind: work lines gross of holdback; never deposits, releases or interest', () => {
