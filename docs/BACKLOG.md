@@ -41,6 +41,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 
 ## Code
 
+- **dev** Estimate status panel (electrical-app/js/modules/estimates.js): the R1-D merge kept R1-D's sign/deposit/revise panel and dropped the cloud UX session's "next-step guidance" headline/copy (e.g. "Awaiting the customer", "Plan the work"). All actions remain; re-add that guidance copy on top of the R1-D panel (ask the cloud session for the exact wording).
 - **dev** Server-side sequence runner: steps after day 0 are only queued when someone opens Sequences.
 - **dev** Sequences screen still says providers aren't connected and hides failed outbox items unless "Show sent" is on.
 - **dev** Facebook leads after a downgrade get a 403 and are lost once Meta stops retrying: store them and show them as locked instead.
