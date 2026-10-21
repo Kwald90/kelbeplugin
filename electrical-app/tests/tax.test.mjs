@@ -171,3 +171,74 @@ test('"No tax" no longer suggests it for PST/RST licence holders, and names the 
   assert.match(T.treatmentHint('none', 'MB'), /still pays GST/);
   assert.deepEqual(T.TAX_NONE_REASONS.map((r) => r.id), ['zero', 'exempt', 'out_of_scope', 'relief']);
 });
+
+// ---- Release 1: RST fixes (docs/releases/r1-get-paid.md 3.1, 3.4) ----
+
+test('PST/RST exempt hints say who qualifies, per province', () => {
+  const mb = T.treatmentHint('gst-only', 'MB');
+  assert.match(mb, /^Manitoba: only when the customer is another electrical or mechanical contractor subcontracting this work to you/);
+  assert.match(mb, /A general contractor on an ordinary building job pays RST \(Bulletins 031, 005\)/);
+  assert.match(mb, /record it on the job and their 7-digit RST number on the invoice \(Bulletin 004\)/);
+  assert.match(mb, /Travel time and permits are part of the taxable price\./);
+  assert.match(T.treatmentHint('gst-only', 'SK'), /^Saskatchewan: only when the customer gives a PST vendor’s licence or exemption for this work.*Bulletin PST-12/);
+  assert.equal(T.treatmentHint('gst-only', 'BC'), 'British Columbia: only for a customer who gives a PST number for goods they will resell. Record the number on the invoice.');
+  assert.doesNotMatch(mb, /buying for resale\)/, 'the old "for example a contractor buying for resale" hint is gone in MB');
+  // "No tax" in Manitoba is for First Nations relief; everyone else exempt still pays GST.
+  assert.match(T.treatmentHint('none', 'MB'), /Indian Act s\.87/);
+  assert.match(T.treatmentHint('none', 'MB'), /federal government, a farm certificate or a general contractor passing on an exemption still pays GST/);
+});
+
+test('newDocTax: a job exemption defaults to gst-only with its snapshot; client evidence alone does not', () => {
+  const s = { company: { province: 'MB' } };
+  const job = { id: 'j1', taxExempt: { basis: 'subtrade', number: '1234567', confirmedBy: { name: 'Pat' }, confirmedAt: '2026-10-20T10:00:00Z' } };
+  const t = T.newDocTax(s, '2026-10-20', { job });
+  assert.equal(t.taxTreatment, 'gst-only');
+  assert.equal(t.taxPct, 5);
+  assert.equal(t.taxExemptBasis, 'subtrade');
+  assert.equal(t.taxExemptNumber, '1234567');
+  assert.deepEqual(t.taxExemptDetails, {});
+  // A GC passing on its customer's exemption: the end customer comes with it.
+  const passOn = T.newDocTax(s, '2026-10-20', { job: { taxExempt: { basis: 'pass-on', number: '7654321', endCustomer: 'Canada Post' } } });
+  assert.equal(passOn.taxTreatment, 'gst-only');
+  assert.equal(passOn.taxExemptDetails.endCustomer, 'Canada Post');
+  // First Nations on reserve: no GST and no RST, reason relief.
+  const fn = T.newDocTax(s, '2026-10-20', { job: { taxExempt: { basis: 'first-nations', details: { registryNo: '1234567890', band: 'Peguis', reserve: 'Peguis 1B' } } } });
+  assert.equal(fn.taxTreatment, 'none');
+  assert.equal(fn.taxNoneReason, 'relief');
+  assert.deepEqual(fn.taxes, []);
+  // The client has evidence on file, but the job does not say the work is exempt: RST is charged.
+  const client = { id: 'c1', taxExemptBasis: 'subtrade', taxExemptNumber: '1234567', taxExemptProvince: 'MB' };
+  const plain = T.newDocTax(s, '2026-10-20', { client, job: { id: 'j2' } });
+  assert.equal(plain.taxTreatment, 'pst-all');
+  assert.equal(plain.taxPct, 12);
+  assert.equal(plain.taxExemptBasis, undefined);
+  assert.equal(T.newDocTax(s, '2026-10-20', { client }).taxTreatment, 'pst-all');
+  // Without a job or client nothing changes; outside the PST provinces an exemption is ignored.
+  assert.deepEqual(T.newDocTax(s, '2026-10-20'), T.newDocTax(s, '2026-10-20', {}));
+  assert.equal(T.newDocTax({ company: { province: 'ON' } }, '2026-10-20', { job }).taxTreatment, 'standard');
+  // Custom rates stay custom.
+  assert.equal(T.newDocTax({ company: { province: 'MB' }, tax: { mode: 'custom', custom: [{ label: 'GST', pct: 5 }] } }, '2026-10-20', { job }).taxTreatment, 'custom');
+});
+
+test('the out-of-pocket preset and the provincial tax names', () => {
+  const p = T.TAX_OFF_PRESETS.find((x) => x.id === 'pass-through');
+  assert.equal(p.label, 'Out-of-pocket disbursement at cost (hotel, meals; not travel time or permits)');
+  assert.equal(p.kind, 'other');
+  assert.equal(p.passThrough, true);
+  assert.deepEqual(p.taxOff, ['PST', 'RST']);
+  assert.equal(p.warning, 'Travel time and permits are taxable. Use a normal line for them.');
+  assert.equal(p.printSuffix, '(at cost, no RST)');
+  assert.deepEqual(['MB', 'BC', 'SK', 'QC', 'ON'].map((p) => T.provincialTaxId(p)), ['RST', 'PST', 'PST', 'QST', null]);
+});
+
+test('exemption number formats are warnings only', () => {
+  assert.equal(T.exemptNumberProblem({ province: 'MB', basis: 'subtrade', number: '123456-7' }), null);
+  assert.equal(T.exemptNumberProblem({ province: 'MB', basis: 'subtrade', number: '1234567' }), null);
+  assert.match(T.exemptNumberProblem({ province: 'MB', basis: 'subtrade', number: '12345' }), /7 digits; this has 5/);
+  assert.match(T.exemptNumberProblem({ province: 'MB', basis: 'resale', number: 'RST1234567' }), /7 digits/);
+  assert.equal(T.exemptNumberProblem({ province: 'SK', basis: 'resale', number: '7654321' }), null);
+  assert.equal(T.exemptNumberProblem({ province: 'BC', basis: 'resale', number: 'PST-1234-5678' }), null);
+  assert.match(T.exemptNumberProblem({ province: 'BC', basis: 'resale', number: '1234' }), /PST-1234-5678/);
+  assert.equal(T.exemptNumberProblem({ province: 'MB', basis: 'farm', number: 'anything' }), null);
+  assert.equal(T.exemptNumberProblem({ province: 'MB', basis: 'subtrade', number: '' }), null);
+});

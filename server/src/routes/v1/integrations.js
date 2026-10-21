@@ -2,6 +2,8 @@
 // Anthropic accounts (owner/admin), tests them, and disconnects them. Keys go in once and are
 // never returned: responses carry hints (…abcd) only. Plus the actions built on them:
 // "Pay online" links for invoices, emailing an invoice or estimate, and the public pay page.
+// Both sending routes run the exemption check (docs/releases/r1-get-paid.md 2.9): a Manitoba
+// invoice that leaves RST off without the customer's exemption evidence is refused (422).
 import { ApiError, badRequest, forbidden, notFound } from '../../errors.js';
 import { canRead, canWrite } from '../../auth/access.js';
 import { isUuid } from '../../db.js';
@@ -9,6 +11,7 @@ import { appendAudit, requestFacts } from '../../services/audit.js';
 import { assertFeature, effectivePlan, loadTenantPlan, requireFeature, tenantHas } from '../../services/entitlements.js';
 import { deleteSecret, listSecrets, setSecret, SECRETS } from '../../services/secrets.js';
 import { docTotals, formatMoney } from '../../../../electrical-app/js/lib/money.js';
+import { exemptionProblem } from '../../../../electrical-app/js/lib/exemption.js';
 import { PLANS, planFor } from '../../../../electrical-app/js/plans.js';
 import { ProviderError } from '../../integrations/http.js';
 import { EMAIL_RE, PROVIDERS, PROVIDER_IDS, providerFor, webhookUrl } from '../../integrations/providers.js';
@@ -75,6 +78,12 @@ function card(provider, { secrets, settings, tenant, publicOrigin, tenantId }) {
 }
 
 const notConnected = (label) => new ApiError(409, 'integration_not_connected', `${label} is not connected. An owner or admin can connect it under Integrations.`);
+
+/** The same check the PWA runs before sending (lib/doc-view.js sendCheck): refuse on 'block' only. */
+function assertExemption(doc, collection) {
+  const p = exemptionProblem(doc, { collection });
+  if (p?.level === 'block') throw new ApiError(422, 'exemption_required', p.message, { missing: p.missing || [] });
+}
 
 /** Minimal HTML pages for customers paying an invoice. Everything interpolated is escaped. */
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -262,6 +271,7 @@ export default async function integrationRoutes(app, { config, db, records }) {
     if (!pre.bal) throw notFound('No such invoice. If it was just created, wait for it to sync and try again.');
     if (pre.bal.invoice.status === 'void') throw new ApiError(409, 'invoice_void', 'This invoice is void.');
     if (pre.bal.balanceCents <= 0) throw new ApiError(409, 'invoice_paid', 'Nothing is owing on this invoice.');
+    assertExemption(pre.bal.invoice, 'invoices');
     const currency = (pre.settings.currency || 'CAD').toLowerCase();
 
     // Reuse the invoice's link unless asked for a new one, so printed copies keep working.
@@ -318,6 +328,7 @@ export default async function integrationRoutes(app, { config, db, records }) {
         throw notConnected('Email (SendGrid or Resend)');
       }
       const doc = await records.getRecord(tx, p, collection, id);
+      assertExemption(doc, collection);
       const settings = await companySettings(tx);
       const company = settings.company || {};
       const client = doc.clientId ? (await tx.query('SELECT data FROM clients WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL', [tx.tenantId, doc.clientId])).rows[0]?.data : null;

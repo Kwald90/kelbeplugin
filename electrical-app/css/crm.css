@@ -75,6 +75,58 @@
   .crm-outbox-actions { width: 100%; justify-content: flex-end; }
 }
 
+/* client detail side column: contact, tax exemption evidence, credit (r1-get-paid.md 3.2, 4.6) */
+.crm-side { position: sticky; top: var(--s4); }
+.crm-side .crm-contact { position: static; }
+.crm-side-card { display: flex; flex-direction: column; gap: var(--s2); }
+.crm-side-card h3 { margin: 0; }
+.crm-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px var(--s3); margin: 0; font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.crm-dl dt { color: var(--text-muted); }
+.crm-dl dd { margin: 0; overflow-wrap: anywhere; }
+.crm-warn { display: flex; gap: var(--s2); align-items: flex-start; color: var(--text); background: var(--warning-soft); border-radius: var(--r-sm); padding: 6px 8px; }
+.crm-warn svg { color: var(--warning); flex: none; margin-top: 2px; }
+.crm-hold { display: flex; gap: var(--s2); align-items: center; font-weight: 600; color: var(--danger); background: var(--danger-soft); border-radius: var(--r-sm); padding: 6px 8px; }
+.crm-tax-note { margin: 0; }
+@media (max-width: 900px) { .crm-side { position: static; } }
+
+/* printed blank credit application */
+.crm-app h4 { margin: 0 0 6px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; }
+.crm-app-section { margin-bottom: var(--s4); break-inside: avoid; }
+.crm-app-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px var(--s5); }
+.crm-app-grid .wide { grid-column: 1 / -1; margin: 0; }
+.crm-app-line { height: 22px; border-bottom: 1px solid currentColor; opacity: .35; }
+@media (max-width: 640px) { .crm-app-grid { grid-template-columns: 1fr; } }
+
+/* estimates and invoices (lib/doc-view.js): special lines, out-of-pocket, exemption, holdback */
+.line-code { max-width: 180px; }
+.tax-line-tag { font-size: var(--fs-xs); border-radius: var(--r-pill); background: var(--info-soft); color: var(--text); padding: 1px 8px; }
+.tax-line-special .input[readonly] { background: var(--surface-2); color: var(--text-muted); }
+.tax-unconfirmed { color: var(--warning); font-weight: 600; }
+.totals-hint.tax-unconfirmed { font-weight: 500; }
+.tax-exempt-host[hidden] { display: none; }
+.tax-exempt { display: flex; flex-direction: column; gap: var(--s2); border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--s3); background: var(--surface-2); }
+.tax-exempt:empty { display: none; }
+.tax-exempt-head { font-size: var(--fs-sm); }
+.tax-exempt-src { font-size: var(--fs-xs); line-height: var(--lh-xs); margin: 0; }
+.tax-exempt-grid { margin: 0; }
+.tax-exempt-note { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; font-size: var(--fs-sm); }
+.tax-exempt-note svg { color: var(--info); flex: none; }
+.tax-exempt-note span { flex: 1 1 220px; }
+.tax-exempt-status { display: flex; flex-direction: column; gap: 6px; }
+.tax-exempt-msg { display: flex; gap: var(--s2); align-items: flex-start; font-size: var(--fs-sm); line-height: var(--lh-sm); border-radius: var(--r-sm); padding: 6px 8px; color: var(--text); }
+.tax-exempt-msg svg { flex: none; margin-top: 2px; }
+.tax-exempt-msg.block { background: var(--danger-soft); }
+.tax-exempt-msg.block svg { color: var(--danger); }
+.tax-exempt-msg.warn { background: var(--warning-soft); }
+.tax-exempt-msg.warn svg { color: var(--warning); }
+.tax-exempt-msg.ok { background: var(--success-soft); }
+.tax-exempt-msg.ok svg { color: var(--success); }
+.tax-send-block p { margin: 0; }
+.tax-exempt-print { margin-top: var(--s2); }
+.tax-progress-table { margin: 4px 0 0; min-width: 320px; }
+.tax-progress-table tr.strong td { font-weight: 700; }
+.tax-credit p { margin: 0 0 4px; }
+
 /* client list: drop type, phone and email columns on phones (they're one tap away on the detail page) */
 @media (max-width: 560px) {
   .crm-clients-table th:nth-child(2), .crm-clients-table td:nth-child(2),

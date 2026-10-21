@@ -1,4 +1,71 @@
-# CEC values to verify
+# Values to verify
+
+Two lists: Release 1's tax, payroll and legal values (first), then the CEC values.
+
+## Release 1: tax, payroll and legal values
+
+From the [Release 1 contract](../releases/r1-get-paid.md) (section 14 has the questions and the
+defaults the code uses). The rule-table keys (`platform_rules`, seeded by migration 0160, edited
+on HQ → Rules; company overrides on Books → Rules) never drive a deadline while their status is
+`verify`: a `rate` falls back and says so, a `policy` applies and shows "unconfirmed". Each stream
+adds its VERIFY items here through its merge report; the Lead keeps the list.
+
+Who confirms: **A** accountant, **L** construction lawyer, **K** Kelvin, **T** Travis, **HQ**
+Fishtape staff (published values).
+
+### Sales tax (R1-B; `docs/code/tax.md`)
+
+| Item | What the app does now | Where | Who |
+| --- | --- | --- | --- |
+| When Manitoba RST is due on holdback: at the progress bill or at release (question 3) | Deferred to the release invoice; shown "unconfirmed" with a one-click override. If RST was due at billing, the deferred RST is remitted late with interest. | rule `tax.MB.rstHoldbackAtRelease`; `money.js holdbackSnapshot` | A |
+| The same for SK and BC PST | Deferred to release | rules `tax.SK.pstHoldbackAtRelease`, `tax.BC.pstHoldbackAtRelease` | A |
+| A separately billed out-of-pocket disbursement (hotel, meals) outside RST (question 26) | Offered in Manitoba as a line with RST off, "unconfirmed" | rule `tax.MB.passThroughAllowed`; `tax.js TAX_OFF_PRESETS` | A |
+| The same line outside the holdback base (question 26) | Excluded | rule `holdback.excludePassThrough` | L |
+| Exemption number formats: MB RST 7 digits, SK vendor's licence 7 digits, BC `PST-1234-5678` | Warnings only, never refused | `tax.js exemptNumberProblem` | A |
+| Evidence each exemption basis needs (number; end customer for a GC passing on an exemption; registry number and band or reserve; farm certificate; federal department and number) | A Manitoba invoice without it is not sent | `exemption.js EXEMPT_EVIDENCE` | A |
+| Current wording of Manitoba Bulletins 004, 030, 031 and 033 and RST Guide 700 | The hints quote Bulletins 004, 005 and 031 | `tax.js TREATMENTS['gst-only'].hints` | K (pull the PDFs) |
+| RST on a security deposit follows GST's s.168(9) timing (question 4) | No tax until applied | `money.js depositInvoiceLine` | A |
+| Tax on a forfeited deposit (Excise Tax Act s.182; question 27) | Flagged for the accountant; no tax computed. A forfeited prepayment counts as revenue. | `money.js revenueCents`; R1-D deposits | A |
+| Bad-debt write-off: GST s.231 adjustment and the Manitoba RST bad-debt refund (question 27) | A credit note with reason `bad_debt`, flagged on the month-end export | R1-D, R1-E | A |
+| Interest invoices are an exempt financial service (question 5) | `taxNoneReason: 'exempt'` | R1-D | A |
+| Refund of RST a supplier charged in error on resale material: separate refund application and its time limit | "Ask the supplier for a credit"; write off to cost if refused | R1-E `rst.js` | A |
+| Self-assessment on warranty material when the warranty was priced into an RST-charged contract; shrinkage not self-assessed (question 28) | Warranty material self-assessed; shrinkage not | R1-E `rst.js` | A |
+| Fishtape's own Manitoba RST registration on subscriptions (what Bulletin 033 changed in 2026) | Not in the app | gap analysis section A.7 | A, K |
+
+### Prompt payment, holdback and liens (R1-D)
+
+| Item | What the app does now | Where | Who |
+| --- | --- | --- | --- |
+| Which contracts the Act covers (residential, value thresholds) | Alarms on every MB prime contract signed from 2025-04-01, with "check that the Act applies" | rule `pp.MB.appliesTo` | L |
+| A deadline on a weekend or holiday moves to the next business day | Shown "may move" | rule `pp.MB.dayRollover` | L |
+| Day counts 28, 14 and 7 and the in-force date (published guidance, `sourced`) | Alarms run with "based on published guidance" | rules `pp.MB.*` | L |
+| A GC's notice period to its sub | No alarm | rule `pp.MB.subNonPaymentNoticeDays` | L |
+| What a proper invoice must contain (question 16) | The seeded list, as warnings | rule `properInvoice.MB.fields` | L |
+| Builders' Liens Act holdback percentage | The job's own percentage is used; the rule is shown for reference | rule `holdback.MB.pct` | L |
+| Holdback release period: 60 days (MHCA) or 40 days from the certificate (question 2) | The office types the release date; no countdown | rule `holdback.MB.releaseDays` | L |
+| Lien deadline under the amended Act | `lastSuppliedOn` recorded; no countdown | rule `lien.MB.days` | L |
+
+### Payroll and burden (R1-E)
+
+| Item | What the app does now | Where | Who |
+| --- | --- | --- | --- |
+| 2026 CPP, CPP2 and EI rates and maximums (question 9), each January after | The company's flat statutory % with a warning | rules `payroll.CA.*` | HQ |
+| WCB Manitoba maximum assessable earnings (yearly) and TG's WCB rate | Flat fallback with a warning | rules `payroll.MB.wcb.maxAssessableCents`, `payroll.company.wcbRatePct` | HQ, T |
+| Vacation 4% / 6% after 5 years and the construction holiday pay % (`sourced`) | Used | rules `payroll.MB.*` | A |
+| Health and Post-Secondary Education Tax Levy liability (question 32) | Not in burden | rule `payroll.company.healthLevyPct` | A |
+| Inventory cost method for the books (question 29) | Moving weighted average | R1-E `stock-counts.js` | A |
+
+### QuickBooks (R1-F)
+
+| Item | What the app does now | Where | Who |
+| --- | --- | --- | --- |
+| Holdback as a negative sales line on `item.holdback` | Pushed that way | `docs/integrations/quickbooks.md` 17 | A |
+| Applying a credit memo with a zero-amount `Payment` | Held in review until confirmed in the sandbox | same | A |
+| Grouped receipts (one cheque, several invoices) and the bank deposit | Each allocation is its own payment | same | A |
+| Supplier credits as `VendorCredit`, resale RST to `account.rstRecoverable` | Pushed that way | same | A |
+| Bad debt as a credit memo with memo "Bad debt write-off" | Pushed that way | same | A |
+
+## CEC values
 
 Everything in `electrical-app/js/lib/cec/` carries a source comment. The values below
 could not be confirmed from a public source on 2026-10-19 and are marked `VERIFY` in the
@@ -7,7 +74,7 @@ CSA's text is copyrighted, so the code holds numbers and rule/table references o
 
 Order: things most likely to change a field answer first.
 
-## High: can change a result
+### High: can change a result
 
 | Item | What the app uses now | File |
 | --- | --- | --- |
@@ -22,7 +89,7 @@ Order: things most likely to change a field answer first.
 | Rule 12-3034 details | Bare bonding conductors not counted (the rule counts insulated conductors); the deduction for devices deeper than 25.4 mm is not modelled; connectors as 1 per pair (ABB's reading). | `boxes.js` |
 | Table 23 itself | Volumes from the ABB/Iberville catalogue (CEC 2012 basis). 3 × 2 × 2-3/4 in, 3 × 2 × 3-1/2 in and utility boxes are not listed. | `boxes.js` |
 
-## Medium
+### Medium
 
 | Item | What the app uses now | File |
 | --- | --- | --- |
@@ -35,7 +102,7 @@ Order: things most likely to change a field answer first.
 | CSA C235 voltage table | System list taken from utility service pages and Rule 8-100's divisors; the standard itself is paywalled. | `systems.js` |
 | Rule 62-118 details | 10 kW at 100% then 75% where each room has a thermostat; central heat at 100%. Subrule letters not confirmed. | `loads.js` |
 
-## Not built (no source)
+### Not built (no source)
 
 - **Table 14** (W/m² and demand factors by occupancy, Rule 8-210): only one unreliable figure
   (offices 50 W/m²) was found, so the non-dwelling occupancy calculator was not built.
@@ -45,7 +112,7 @@ Order: things most likely to change a field answer first.
   NMSC bending radius, flush box mounting (12-3016?). These items are left off the CEC
   checklists rather than given a guessed number.
 
-## Adoption facts to confirm
+### Adoption facts to confirm
 
 - Nunavut's edition in force (last found: CEC 2015).
 - City of Vancouver's adoption date for CEC 2024; whether Winnipeg amended its by-law.
