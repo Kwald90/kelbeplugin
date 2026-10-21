@@ -1,0 +1,54 @@
+# Reviewed historical test fixtures only (2026-10-21). No secret values are recorded here.
+# Each fingerprint binds commit + file + rule + line; new commits/findings are NOT ignored.
+# Provenance and regression check: docs/security/gitleaks-fixtures.md.
+
+# QuickBooks R1 test tenant in createTestDatabase; fake QuickBooks connection.
+9109c9dfd3e2e3a16361f00bbd80a708998744b3:server/test/qbo-r1.test.js:generic-api-key:58
+
+# QuickBooks review test tenant in createTestDatabase; fake QuickBooks connection.
+53f166b1ec7b6bdfc575c306ade41789716b3cbe:server/test/qbo-review.test.js:generic-api-key:56
+
+# QuickBooks wizard test tenant in createTestDatabase; fake QuickBooks connection.
+dbe136535679d09bb6e6a5cd5c1dd4f69ea137cc:server/test/qbo-wizard.test.js:generic-api-key:41
+
+# QuickBooks integrity test tenant in createTestDatabase; fake QuickBooks connection.
+ae4db704c2273989935a2cc111ae7370b114b6fe:server/test/qbo-integrity.test.js:generic-api-key:49
+
+# QuickBooks sync test tenant in createTestDatabase; fake QuickBooks connection.
+2545f261e026c55ee6e1ea2511dff8a65ba263cb:server/test/qbo-sync.test.js:generic-api-key:52
+
+# QuickBooks webhook test tenant; fake fetch and disposable test database.
+a59ae70898e7d842b713dfcf2a0b0f66586446a6:server/test/qbo-webhook.test.js:generic-api-key:43
+
+# QuickBooks client test tenant; fake fetch and disposable test database.
+a59ae70898e7d842b713dfcf2a0b0f66586446a6:server/test/qbo-client.test.js:generic-api-key:39
+
+# Migration-isolation test tenant in createTestDatabase; database dropped in teardown.
+a59ae70898e7d842b713dfcf2a0b0f66586446a6:server/test/qbo-migrations.test.js:generic-api-key:19
+
+# QuickBooks connection test tenant; fake fetch and disposable test database.
+a59ae70898e7d842b713dfcf2a0b0f66586446a6:server/test/qbo-connect.test.js:generic-api-key:41
+
+# Deterministic URL-fragment parser input/expected-output token; no authentication request.
+e3d23ba3828484427c2c75c2c2f348fb127ac225:electrical-app/tests/site-pages.test.mjs:generic-api-key:91
+
+# Synthetic Stripe sentinel for response-redaction assertions with fake financeStripe.
+0ef17cdacb0e45d6782e925a4b56d1c1c06a8712:server/test/hq-console.test.js:stripe-access-token:16
+
+# Synthetic mail-provider token; fakeSendgrid intercepts requests in test database suite.
+3eff1fe7970f1481ca160f39208d5ab546acaf4f:server/test/mail.test.js:generic-api-key:20
+
+# Synthetic mail-provider token; fakeSendgrid intercepts requests in test database suite.
+3075e4c356ee9bbd55948887423d916d4b759060:server/test/mail.test.js:generic-api-key:20
+
+# Synthetic Stripe value stored in a test tenant to verify secret-free HQ export.
+bc8f34b64d99e0594304e91e351ad0cce72ff7af:server/test/hq.test.js:stripe-access-token:152
+
+# Synthetic provider-format and scrub assertions; no network or account creation.
+1da6dea86c91a0e8352eb826cc641dcc6175c08c:server/test/integrations-unit.test.js:stripe-access-token:119
+
+# Synthetic provider-format and scrub assertions; no network or account creation.
+1da6dea86c91a0e8352eb826cc641dcc6175c08c:server/test/integrations-unit.test.js:stripe-access-token:120
+
+# Synthetic provider-format and scrub assertions; no network or account creation.
+1da6dea86c91a0e8352eb826cc641dcc6175c08c:server/test/integrations-unit.test.js:stripe-access-token:125
