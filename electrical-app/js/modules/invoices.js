@@ -315,8 +315,12 @@ function invoiceTaxFromEstimate(e, rec) {
  * original, so its total is the amount within a cent. Status 'sent' (a document to keep), numbered CR-.
  */
 export function creditNoteForAmount(store, inv, cents, { reason = 'other', description = '', today: day, status = 'sent' } = {}) {
-  const base = R.baseForAmount(inv, cents);
-  const line ={ itemId: null, kind: 'other', description: description || REASON_LABEL[reason] || 'Credit', qty: 1, unitCents: base, labourHours: 0 };
+  // A security deposit was invoiced tax-free (line taxOff ['*'], Excise Tax Act s.168(9)), so its
+  // refund must mirror that: the refund amount is the base with no gross-up and the line carries no
+  // tax. A prepayment deposit, a dispute or a back-charge WAS taxed, so it keeps the taxed path.
+  const security = inv?.depositModel === 'security';
+  const base = security ? Math.round(cents) : R.baseForAmount(inv, cents);
+  const line ={ itemId: null, kind: 'other', description: description || REASON_LABEL[reason] || 'Credit', qty: 1, unitCents: base, labourHours: 0, ...(security ? { taxOff: ['*'] } : {}) };
   const note = creditNoteFrom({ ...inv, holdback: null, markupPct: 0 }, { lines: [line], reason, today: day, settings: store.settings() });
   delete note.holdback;
   if (inv.holdback && docTotals(inv).holdbackCents) {
