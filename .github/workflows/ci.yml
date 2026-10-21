@@ -51,8 +51,22 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            mobile/package-lock.json
+      # Site contract tests import server routes (and their password/auth dependencies).
+      - name: Install shared test dependencies
+        working-directory: server
+        run: npm ci --no-audit --no-fund
       - name: Unit tests
         run: node --test electrical-app/tests/*.test.mjs
+      - name: Install mobile compatibility test dependencies
+        working-directory: mobile
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Mobile compatibility tests
+        working-directory: mobile
+        run: npm test
       - name: CSP guard
         run: node .github/scripts/check-csp.mjs
 
@@ -73,18 +87,9 @@ jobs:
         run: node .github/scripts/check-committed-files.mjs
 
       - name: Server image ships every PWA file the server imports
-        run: |
-          status=0
-          while IFS= read -r p; do
-            [ -n "$p" ] || continue
-            if ! grep -q "^COPY ${p%/}/\?\s" server/Dockerfile; then
-              echo "::error file=server/Dockerfile::server/src uses $p but the Dockerfile doesn't COPY it"; status=1
-            fi
-            if ! grep -qx "!${p%/}/\?" .dockerignore; then
-              echo "::error file=.dockerignore::server/src uses $p but .dockerignore doesn't allow it (!$p)"; status=1
-            fi
-          done < <(grep -rhE "(import|new URL\()" server/src | grep -oE "electrical-app/js/[A-Za-z0-9_./-]+" | sort -u)
-          exit "$status"
+        # Follow transitive imports and check the actual allow-list plus the broad COPY.
+        # Do not grep prose comments for paths or require one COPY per imported file.
+        run: node --test server/test/docker-context.test.js
 
       - name: Shared deploy scripts are identical in staging and production
         run: |
