@@ -13,8 +13,14 @@ import {
   poLineCents, poTotalCents, poOpen, newPurchaseOrder, poProblems, poText, poBilled, billFromPo, orderableRequest, ordersFromRequests,
   purchasingSummary, billMatches, nextPoNumber, parsePoNumber, poLineLocked, removePoLine, requestAfterPoCancel,
   recordEditor, recordTooBig, tooBigMessage, blankBill, blankPurchaseOrder,
+  billLineWarnings, openReceiptLines, receiveLines, committedByJob, supplierCreditFrom,
 } from '../lib/purchasing.js';
 import { moneyFormatter } from '../lib/money.js';
+import { TAX_USES, TAX_USE_LABEL, billLineTaxUse, billLineCosts, RESALE_RST_MESSAGE } from '../lib/rst.js';
+import { priceVariances } from '../lib/costing.js';
+import { activeCostCodes, costCodeLabel } from '../lib/cost-codes.js';
+import { isLocked, locksFrom, zoneFor, REVERSAL_ACTION } from '../lib/closing.js';
+import { applyMove } from './inventory.js';
 import { PROVINCES } from '../lib/tax.js';
 import { pickItems } from '../lib/doc-view.js';
 import { downscaleImage } from '../lib/safety-capture.js';
@@ -120,6 +126,7 @@ function vendorFields(v) {
     { label: 'Your account number', name: 'accountNumber', value: v.accountNumber || '', hint: 'Your account with this supplier' },
     { label: 'Terms', name: 'terms', value: v.terms || '', placeholder: 'Net 30', hint: '"Net 30" sets a bill’s due date' },
     { label: 'Subcontractor on the T5018 slip', name: 't5018', type: 'checkbox', value: Boolean(v.t5018), span: true },
+    { label: 'Electrical or mechanical subtrade whose work you resell (their bills are resale, no RST cost)', name: 'meSubtrade', type: 'checkbox', value: Boolean(v.meSubtrade), span: true },
     { label: 'Active', name: 'active', type: 'checkbox', value: v.active !== false, span: true },
     { label: 'Notes', name: 'notes', type: 'textarea', rows: 3, value: v.notes || '', span: true },
   ];
@@ -130,6 +137,7 @@ function cleanVendor(v) {
   for (const k of ['name', 'companyName', 'email', 'phone', 'address', 'accountNumber', 'terms', 'notes']) out[k] = String(out[k] ?? '').trim();
   out.name = out.name.slice(0, 100); out.companyName = out.companyName.slice(0, 100);
   out.t5018 = Boolean(out.t5018);
+  out.meSubtrade = Boolean(out.meSubtrade);
   out.active = out.active !== false;
   return out;
 }
@@ -268,8 +276,10 @@ function renderBill(root, ctx, id) {
   doc.taxes = Array.isArray(doc.taxes) ? doc.taxes : [];
   const money = moneyFormatter(store.settings());
   let refund = isRefund(doc);
-  const sign = () => (doc.kind === 'receipt' && refund ? -1 : 1);
-  const readOnly = () => doc.status === 'void';
+  const sign = () => ((doc.kind === 'receipt' && refund) || doc.reversesId ? -1 : 1);
+  // A bill posted in a closed period is read-only (Books → Closing date): it changes by a supplier credit.
+  const locked = () => isLocked(locksFrom(store.settings(), store.list('payrollRuns')), 'bills', doc, { zone: zoneFor(store.settings().company?.province) });
+  const readOnly = () => doc.status === 'void' || locked();
   // Saves only the fields typed into; status and kind go through setStatus and the kind switch, and
   // a status that changes elsewhere (QuickBooks marks it paid, another office user voids it) is
   // taken in here rather than written back over.
@@ -371,12 +381,31 @@ function renderBill(root, ctx, id) {
       cost.addEventListener('change', () => set({ costType: cost.value }));
       const job = h('select', { name: 'lineJobId', class: 'line-kind', disabled: readOnly(), 'aria-label': `Line ${i + 1} job` },
         h('option', { value: '' }, doc.jobId ? 'Bill’s job' : 'No job'), jobs.map((j) => h('option', { value: j.id, selected: l.jobId === j.id }, j.number || j.title)));
-      job.addEventListener('change', () => set({ jobId: job.value || null }));
+      job.addEventListener('change', () => { set({ jobId: job.value || null }); drawLines(); });
+      // Release 1 (3.5, 6): resale or own use (the default lives in lib/rst.js), cost code, truck.
+      const vendor = store.get('vendors', doc.vendorId);
+      const use = h('select', { name: 'taxUse', class: 'line-kind', disabled: readOnly(), 'aria-label': `Line ${i + 1} tax use`, title: 'Resale: material you install and charge RST on. Own use: tools, the shop, trucks, warranty work.' },
+        TAX_USES.map((u) => h('option', { value: u, selected: billLineTaxUse(l, { vendor }) === u }, `${TAX_USE_LABEL[u]}${!l.taxUse && billLineTaxUse(l, { vendor }) === u ? ' (default)' : ''}`)));
+      use.addEventListener('change', () => { set({ taxUse: use.value }); drawLines(); });
+      const codes = activeCostCodes(store.list('costCodes'));
+      const cc = codes.length ? h('select', { name: 'costCodeId', class: 'line-kind', disabled: readOnly(), 'aria-label': `Line ${i + 1} cost code` },
+        h('option', { value: '' }, 'No cost code'), codes.map((c) => h('option', { value: c.id, selected: l.costCodeId === c.id }, costCodeLabel(c)))) : null;
+      cc?.addEventListener('change', () => set({ costCodeId: cc.value || null }));
+      const trucks = store.list('equipment', (q) => q.active !== false || q.id === l.equipmentId);
+      const truck = trucks.length ? h('select', { name: 'equipmentId', class: 'line-kind', disabled: readOnly(), 'aria-label': `Line ${i + 1} truck or equipment` },
+        h('option', { value: '' }, 'Not for a truck'), trucks.map((q) => h('option', { value: q.id, selected: l.equipmentId === q.id }, q.name || 'Truck'))) : null;
+      truck?.addEventListener('change', () => { set({ equipmentId: truck.value || null }); drawLines(); });
+      const lineCost = billLineCosts(doc, { vendor })[i];
+      const warnings = billLineWarnings(l);
       const po = l.poLine?.purchaseOrderId ? store.get('purchaseOrders', l.poLine.purchaseOrderId) : null;
       linesHost.append(h('div', { class: 'line-row pu-line', dataset: { line: String(i) } },
-        h('div', { class: 'line-desc' }, desc, h('div', { class: 'line-meta' }, cost, job,
+        h('div', { class: 'line-desc' }, desc, h('div', { class: 'line-meta' }, cost, job, use, cc, truck,
           l.itemId ? h('span', { class: 'muted' }, 'price book') : null,
-          po ? h('a', { class: 'muted', href: '#/purchasing/orders/' + po.id }, `${po.number} line ${l.poLine.index + 1}`) : null)),
+          po ? h('a', { class: 'muted', href: '#/purchasing/orders/' + po.id }, `${po.number} line ${l.poLine.index + 1}${po.lines?.[l.poLine.index]?.quoteRef ? ` (quote ${po.lines[l.poLine.index].quoteRef})` : ''}`) : null),
+        warnings.map((w) => h('div', { class: 'pu-line-warn', dataset: { warn: 'truck-job' } }, ui.icon('alert', 14), ` ${w}`)),
+        lineCost?.flagged ? h('div', { class: 'pu-line-warn', dataset: { warn: 'resale-rst' } }, ui.icon('alert', 14), ` ${RESALE_RST_MESSAGE} (${money(lineCost.rstCents)})`,
+          readOnly() ? null : ui.button('Write off to cost', { size: 'sm', variant: 'ghost', onClick: () => set({ resaleCreditWrittenOff: { by: String(ctx.auth.who().name || 'office').slice(0, 120), at: new Date().toISOString() } }) })) : null,
+        lineCost?.writtenOff ? h('div', { class: 'muted pu-note' }, `RST credit written off to cost (${money(lineCost.rstCents)}).`) : null),
         h('label', { class: 'line-qty' }, h('span', { class: 'line-label' }, 'Qty'), qty),
         h('label', { class: 'line-unit' }, h('span', { class: 'line-label' }, 'Unit cost'), unit),
         h('label', { class: 'line-amt' }, h('span', { class: 'line-label' }, 'Amount'), amount),
@@ -459,18 +488,41 @@ function renderBill(root, ctx, id) {
       setStatus(enteredStatus(doc));
       ui.toast(doc.kind === 'receipt' ? 'Receipt saved' : 'Bill entered: it is on the To pay list', 'success');
     };
+    // Price variances (6.3): lines above the PO or the price book, until the office marks them checked.
+    const variances = ['open', 'paid'].includes(doc.status) ? priceVariances(doc, { purchaseOrders: store.list('purchaseOrders'), items: store.list('items'), tolerancePct: Number(store.settings().costing?.priceVariancePct ?? 2) }) : [];
+    const isLockedNow = locked();
+    const credit = () => {
+      const draft = supplierCreditFrom(doc, { settings: store.settings(), today: ui.today() });
+      const b = store.add('bills', draft);
+      ui.toast('Supplier credit drafted: trim it to what the supplier credited, then enter it', 'info', 4000);
+      nav('#/purchasing/bills/' + b.id);
+    };
     h(ui.clear(statusHost), null,
-      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), qboBadge(ctx, 'bills', id, { record: doc }), statusBadge(ui, st, BILL_STATUS_LABEL)),
+      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), isLockedNow ? h('span', { class: 'pu-lock', title: 'In a closed period' }, ui.icon('lock', 14)) : null, qboBadge(ctx, 'bills', id, { record: doc }), statusBadge(ui, st, BILL_STATUS_LABEL)),
       problems.length && doc.status !== 'void' ? h('ul', { class: 'pu-problems' }, problems.map((p) => h('li', { class: p.block ? 'block' : 'warn', dataset: { problem: p.code } }, p.message))) : null,
+      variances.length ? h('div', { class: 'pu-variances', dataset: { variances: String(variances.length) } },
+        h('strong', null, doc.varianceAck ? 'Price variances (checked)' : 'Priced above the order or the price book'),
+        h('ul', { class: 'pu-problems' }, variances.map((v) => h('li', { class: doc.varianceAck ? 'ok' : 'warn' },
+          `Line ${v.lineIndex + 1}: ${money(v.billUnitCents)} against ${money(v.refUnitCents)} (${v.refKind === 'po' ? `PO${v.quoteRef ? `, quote ${v.quoteRef}` : ''}` : 'price book'}), ${v.overPct}% over, ${money(v.overCents)}`))),
+        doc.varianceAck ? h('div', { class: 'muted pu-note' }, `Checked by ${doc.varianceAck.by || 'the office'}${doc.varianceAck.note ? `: ${doc.varianceAck.note}` : ''}`)
+          : ui.button('Checked', { size: 'sm', onClick: async () => {
+            const note = await ui.promptDialog('What did you find? (optional)', { title: 'Mark the prices checked', okLabel: 'Checked' });
+            if (note === null) return;
+            ed.write({ varianceAck: { by: String(ctx.auth.who().name || 'office').slice(0, 120), at: new Date().toISOString(), note: String(note || '').slice(0, 500) } }, { summary: 'price variance checked' });
+            drawStatus();
+          } })) : null,
+      isLockedNow ? h('p', { class: 'muted pu-note' }, 'This bill is in a closed period (Books → Closing date). It changes by a supplier credit dated today.') : null,
       h('div', { class: 'row pu-actions' },
         doc.status === 'draft' ? ui.button(doc.kind === 'receipt' ? 'Save receipt' : 'Enter bill', { size: 'sm', variant: 'primary', icon: 'check', onClick: enter }) : null,
         doc.kind === 'bill' && doc.status === 'open' && !paidBy ? ui.button('Mark paid', { size: 'sm', icon: 'dollar', onClick: () => { setStatus('paid'); ui.toast('Marked paid', 'success'); } }) : null,
         doc.kind === 'bill' && doc.status === 'paid' && !paidBy ? ui.button('Mark unpaid', { size: 'sm', onClick: () => setStatus('open') }) : null,
-        doc.status !== 'void' && doc.status !== 'draft' ? ui.button('Void', { size: 'sm', variant: 'ghost danger', onClick: async () => {
+        doc.status !== 'void' && doc.status !== 'draft' && !isLockedNow ? ui.button('Void', { size: 'sm', variant: 'ghost danger', onClick: async () => {
           if (!(await ui.confirmDialog(`Void this ${doc.kind}? It stays on record but no longer counts.`, { okLabel: 'Void' }))) return;
           setStatus('void');
         } }) : null,
-        doc.status === 'void' ? ui.button('Restore', { size: 'sm', onClick: () => setStatus('draft') }) : null),
+        isLockedNow && ['open', 'paid'].includes(doc.status) && !doc.reversesId ? ui.button(REVERSAL_ACTION.bills, { size: 'sm', icon: 'undo', onClick: credit }) : null,
+        doc.status === 'void' && !isLockedNow ? ui.button('Restore', { size: 'sm', onClick: () => setStatus('draft') }) : null),
+      doc.reversesId && store.get('bills', doc.reversesId) ? ui.button('The bill it credits', { size: 'sm', variant: 'ghost', icon: 'file-text', href: '#/purchasing/bills/' + doc.reversesId }) : null,
       // Only for a company with QuickBooks: without it, Mark paid is the whole story.
       doc.kind === 'bill' && ['open', 'paid'].includes(doc.status) && paidBy ? h('p', { class: 'muted pu-note', dataset: { qboPaid: '1' } }, paidBy === 'quickbooks'
         ? 'Pay this bill in QuickBooks: it is marked paid here when the payment comes back.'
@@ -532,6 +584,7 @@ function renderBill(root, ctx, id) {
   };
 
   const remove = async () => {
+    if (locked()) { ui.toast(`This ${doc.kind} is in a closed period. Use "${REVERSAL_ACTION.bills}" instead.`, 'error', 4500); return; }
     if (!(await ui.confirmDialog(`Delete this ${doc.kind}? Voiding keeps a record; deleting doesn’t.`, { okLabel: 'Delete' }))) return;
     ed.stop();
     store.remove('bills', id);
@@ -543,7 +596,8 @@ function renderBill(root, ctx, id) {
   const voidHost = h('div');
   const drawVoid = () => {
     ui.clear(voidHost);
-    if (readOnly()) voidHost.append(h('div', { class: 'card money-void' }, ui.badge('void', 'neutral'), ' Void and read-only. Restore it to change it.'));
+    if (doc.status === 'void') voidHost.append(h('div', { class: 'card money-void' }, ui.badge('void', 'neutral'), ' Void and read-only. Restore it to change it.'));
+    else if (readOnly()) voidHost.append(h('div', { class: 'card money-void', dataset: { locked: '1' } }, ui.icon('lock', 16), ` In a closed period: read-only. Use "${REVERSAL_ACTION.bills}" to change it.`));
   };
   const notesHost = h('div', { class: 'card' });
   const drawNotes = () => {
@@ -749,7 +803,16 @@ function renderOrders(root, ctx) {
     const n = q.trim().toLowerCase();
     const rows = all.filter((p) => inPoTab(tab, p) && (!n || [p.number, vendorName(vendors.get(p.vendorId)), jobs.get(p.jobId)?.number, ...(p.lines || []).map((l) => l.description)].some((s) => String(s || '').toLowerCase().includes(n))))
       .sort((a, b) => String(b.number || '').localeCompare(String(a.number || ''), undefined, { numeric: true }));
-    ui.clear(tableHost).append(
+    // Committed cost per job (r1-get-paid.md 6.1): on order, not received or billed yet.
+    const committed = [...committedByJob(all, bills)].map(([jobId, cents]) => ({ jobId, cents, job: jobs.get(jobId) })).sort((a, b) => b.cents - a.cents);
+    ui.clear(tableHost);
+    if (committed.length) {
+      tableHost.append(h('div', { class: 'card pu-committed', dataset: { committed: String(committed.length) } },
+        h('strong', null, 'Committed by job'),
+        h('p', { class: 'muted pu-note' }, 'On open orders, not received or billed yet. Shown beside job cost, never added to it.'),
+        h('div', { class: 'stack' }, committed.slice(0, 12).map((c) => h('div', { class: 'row' }, h('a', { class: 'grow', href: `#/reports/jobs/${c.jobId}` }, jobLabel(c.job)), h('span', { class: 'num' }, money(c.cents)))))));
+    }
+    tableHost.append(
       ui.table({
         columns: [
           { key: 'number', label: 'Number', render: (p) => h('span', { class: 'mono' }, p.number || '—'), sort: (p) => p.number || '' },
@@ -880,8 +943,17 @@ function renderOrder(root, ctx, id) {
         h('option', { value: '' }, doc.jobId ? 'Order’s job' : 'No job'), jobs.map((j) => h('option', { value: j.id, selected: l.jobId === j.id }, j.number || j.title)));
       job.addEventListener('change', () => set({ jobId: job.value || null }));
       const reqs = (l.materialRequestIds || []).map((rid) => requests.get(rid)).filter(Boolean);
+      // Release 1 (6.3, 6.6): a wholesaler's job quote, the cost code, and what has arrived.
+      const quote = h('input', { class: 'input pu-unit', name: 'quoteRef', value: l.quoteRef || '', placeholder: 'Quote no.', maxlength: '60', readonly: readOnly(), 'aria-label': `Line ${i + 1} quote reference`, title: 'The wholesaler’s job quote this price comes from' });
+      quote.addEventListener('input', () => set({ quoteRef: quote.value.trim() || null }));
+      const codes = activeCostCodes(store.list('costCodes'));
+      const cc = codes.length ? h('select', { name: 'costCodeId', class: 'line-kind', disabled: readOnly(), 'aria-label': `Line ${i + 1} cost code` },
+        h('option', { value: '' }, 'No cost code'), codes.map((c) => h('option', { value: c.id, selected: l.costCodeId === c.id }, costCodeLabel(c)))) : null;
+      cc?.addEventListener('change', () => set({ costCodeId: cc.value || null }));
+      const got = Number(l.receivedQty) || 0;
       linesHost.append(h('div', { class: 'line-row pu-line pu-po-line', dataset: { line: String(i) } },
-        h('div', { class: 'line-desc' }, desc, h('div', { class: 'line-meta' }, job, unit,
+        h('div', { class: 'line-desc' }, desc, h('div', { class: 'line-meta' }, job, unit, cc, quote,
+          got ? h('span', { class: got >= (Number(l.qty) || 0) ? 'muted' : 'pu-partial', dataset: { received: String(got) } }, `received ${got} of ${Number(l.qty) || 0}`) : null,
           l.itemId && items.get(l.itemId) ? h('span', { class: 'muted' }, 'price book') : null,
           reqs.length ? h('span', { class: 'muted', title: reqs.map((r) => `${qtyText(r)} ${requestName(r, items)}`).join('\n') }, `${reqs.length} material request${reqs.length === 1 ? '' : 's'}`) : null)),
         h('label', { class: 'line-qty' }, h('span', { class: 'line-label' }, 'Qty'), qty),
@@ -958,6 +1030,10 @@ function renderOrder(root, ctx, id) {
           st === 'draft' ? ui.button('Place order', { size: 'sm', variant: 'primary', icon: 'check', onClick: place }) : null,
           st === 'open' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: () => setStatus('sent', { sentAt: new Date().toISOString() }) }) : null,
           poOpen(doc) ? ui.button('Enter bill', { size: 'sm', variant: 'primary', icon: 'receipt', onClick: enterBill }) : null,
+          poOpen(doc) && openReceiptLines([doc]).length ? ui.button('Mark received', { size: 'sm', icon: 'truck', onClick: () => {
+            ed.flush();
+            receiveSheet(ctx, { poId: doc.id, onDone: () => { const cur = store.get('purchaseOrders', id); if (cur) doc.lines = cur.lines || []; drawLines(); drawSide(); } });
+          } }) : null,
           poOpen(doc) ? ui.button('Close', { size: 'sm', onClick: () => setStatus('closed', { closedAt: new Date().toISOString() }) }) : null,
           st === 'closed' ? ui.button('Reopen', { size: 'sm', onClick: () => setStatus('open', { closedAt: null }) }) : null,
           ['draft', 'open', 'sent'].includes(st) ? ui.button('Cancel order', { size: 'sm', variant: 'ghost danger', onClick: cancel }) : null,
@@ -1006,6 +1082,93 @@ function renderOrder(root, ctx, id) {
     const cur = store.get('purchaseOrders', id);
     if (ctx.query.fresh && blankPurchaseOrder(cur)) { store.remove('purchaseOrders', id); returnPoNumber(store, cur.number); }
   };
+}
+
+// ---------- receiving (r1-get-paid.md 6.6; Materials, Inventory and the PO screen) ----------
+
+/**
+ * "Receive": what arrived against open purchase orders, without prices. Signed in, it goes through
+ * the server's receiving route (it needs a connection): the PO's received quantity, a receive move at
+ * the PO price, the location's stock and the item's moving average, written by the server. In the
+ * demo it is recorded on this device (no average cost). `poId`, `jobId` or `locationId` narrow the list.
+ */
+export function receiveSheet(ctx, { poId = null, jobId = null, locationId = null, onDone = null } = {}) {
+  ensureStyles();
+  const { store, ui, auth } = ctx;
+  const { h } = ui;
+  const locs = store.list('locations').sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  const load = async () => {
+    if (auth.synced) {
+      const q = jobId ? `?jobId=${encodeURIComponent(jobId)}` : locationId ? `?locationId=${encodeURIComponent(locationId)}` : '';
+      return (await ctx.app.api.get(`/api/v1/receiving${q}`)).lines;
+    }
+    return openReceiptLines(store.list('purchaseOrders'), { jobId, stockOnly: Boolean(locationId) && !jobId });
+  };
+  load().then((all) => {
+    const lines = all.filter((l) => !poId || l.poId === poId);
+    if (!lines.length) { ui.toast('Nothing is waiting to be received', 'info'); return; }
+    const qty = new Map();
+    const dest = h('select', { name: 'destination' },
+      h('option', { value: '' }, 'Onto the job on the order'),
+      locs.map((l) => h('option', { value: l.id, selected: (locationId || (!jobId && lines.every((x) => !x.jobId) ? locs.find((x) => x.kind === 'shop')?.id : null)) === l.id }, `Into ${l.name}`)));
+    const rows = lines.map((l) => {
+      const input = h('input', { class: 'input num', type: 'number', step: 'any', min: '0', inputmode: 'decimal', value: '', placeholder: String(l.remaining), 'aria-label': `${l.description} received` });
+      qty.set(l, input);
+      return h('div', { class: 'rcv-line', dataset: { po: l.poId, line: String(l.index) } },
+        h('div', null, h('strong', null, l.description || 'Material'), h('div', { class: 'muted pu-note' }, `${l.number} line ${l.index + 1}${l.supplier ? ` · ${l.supplier}` : ''} · received ${l.received} of ${l.ordered} ${l.unit || ''}`)),
+        input);
+    });
+    const sheet = ui.openSheet({
+      title: 'Receive material',
+      body: h('div', { class: 'stack' },
+        auth.synced ? null : h('p', { class: 'muted pu-note' }, 'Demo: recorded on this device only.'),
+        h('label', { class: 'field' }, h('span', null, 'Where it goes'), dest),
+        h('p', { class: 'muted pu-note' }, 'Type what arrived. Leave a line empty if it did not come. Material for a job can go straight onto the job; stock goes into a location.'),
+        h('div', { class: 'rcv-lines' }, rows)),
+      actions: [h('span', { class: 'grow' }), ui.button('Cancel', { variant: 'ghost', onClick: () => sheet.close() }), ui.button('Receive', { variant: 'primary', icon: 'check', onClick: () => submit() })],
+    });
+    async function submit() {
+      const picked = lines.map((l) => ({ l, q: Number(qty.get(l).value) })).filter((x) => x.q > 0);
+      if (!picked.length) { ui.toast('Type what arrived on at least one line', 'error'); return; }
+      const toLocationId = dest.value || null;
+      const byPo = new Map();
+      for (const x of picked) { if (!byPo.has(x.l.poId)) byPo.set(x.l.poId, []); byPo.get(x.l.poId).push(x); }
+      try {
+        for (const [id, list] of byPo) {
+          if (auth.synced) {
+            await ctx.app.api.post(`/api/v1/receiving/${encodeURIComponent(id)}`, { lines: list.map((x) => ({ index: x.l.index, qty: x.q })), ...(toLocationId ? { toLocationId } : jobId ? { jobId } : {}) });
+          } else {
+            receiveLocally(store, id, list, { toLocationId, jobId, today: ui.today() });
+          }
+        }
+      } catch (e) {
+        ui.toast(e.code === 'offline' ? 'Receiving needs a connection. Try again when you are online.' : e.message || 'Could not record the receipt', 'error', 5000);
+        return;
+      }
+      sheet.close();
+      if (auth.synced) await ctx.app.sync?.syncNow?.().catch(() => {});
+      ui.toast('Received', 'success');
+      onDone?.();
+    }
+  }).catch((e) => ui.toast(e.code === 'offline' ? 'Receiving needs a connection. Try again when you are online.' : e.message || 'Could not load the orders', 'error', 5000));
+}
+
+/** Demo mode: the same receipt on this device (PO quantities, receive moves, stock). */
+function receiveLocally(store, poId, list, { toLocationId, jobId, today }) {
+  const po = store.get('purchaseOrders', poId);
+  if (!po) return;
+  const { lines, error } = receiveLines(po, list.map((x) => ({ index: x.l.index, qty: x.q })));
+  if (error) throw new Error(error);
+  for (const x of list) {
+    const pl = po.lines[x.l.index];
+    if (toLocationId && pl.itemId) {
+      const r = applyMove(store, { type: 'receive', itemId: pl.itemId, toLocationId, qty: x.q, date: today, note: `${po.number || 'PO'} line ${x.l.index + 1}` });
+      if (r.move) store.update('stockMoves', r.move.id, { use: 'receive', poId, poLineIndex: x.l.index }, { silent: true });
+    } else {
+      store.add('stockMoves', { itemId: pl.itemId || null, fromLocationId: null, toLocationId: null, jobId: jobId || pl.jobId || po.jobId || null, qty: x.q, use: 'receive', poId, poLineIndex: x.l.index, date: today, note: `${po.number || 'PO'} line ${x.l.index + 1}` });
+    }
+  }
+  store.update('purchaseOrders', poId, { lines }, { summary: `${po.number} received` });
 }
 
 // ---------- purchase orders from material requests (modules/materials.js) ----------

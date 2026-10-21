@@ -14,6 +14,12 @@
 // A purchase order: { number 'PO-5001', vendorId, jobId, date, expectedDate, status: draft | open |
 //   sent | closed | cancelled, lines: [{ itemId?, description, qty, unit, unitCents, jobId?,
 //   materialRequestIds[] }], shipTo, notes (shown to the supplier), sentAt, closedAt }.
+//
+// Release 1 (docs/releases/r1-get-paid.md 2.3, 3.5, 6): bill lines carry taxUse (resale or own use;
+// the default is lib/rst.js billLineTaxUse), costCodeId, equipmentId (a truck's fuel, repairs or lease:
+// never a job's cost) and resaleCreditWrittenOff; a bill carries varianceAck once the office checked
+// its price variances (lib/costing.js priceVariances). PO lines carry costCodeId, quoteRef (a
+// wholesaler's job quote), receivedQty and receivedAt (the receiving route, or "Mark received").
 import { ratesOn } from './tax.js';
 import { pctOfCents } from './money.js';
 import { hasFeature, FEATURE_PLAN } from '../plans.js';
@@ -185,7 +191,8 @@ export function billProblems(bill, { money = (c) => (c / 100).toFixed(2), po = n
   if (bill?.kind === 'receipt' && !PAID_WITH.includes(bill.paidWith)) add('no_paid_with', 'Say how it was paid.', true);
   const t = billTotals(bill || {});
   if (t.mismatch) add('totals_mismatch', `Bill total doesn't add up: the lines and taxes come to ${money(t.computedCents)}, the bill says ${money(t.totalCents)}.`);
-  if (bill?.kind !== 'receipt' && t.totalCents < 0) add('negative_bill', 'A bill cannot be negative. Enter a supplier refund or credit as a receipt and tick Refund.', true);
+  // A supplier credit against a bill (reversesId, r1-get-paid.md 2.6) is a bill with negative lines.
+  if (bill?.kind !== 'receipt' && t.totalCents < 0 && !bill?.reversesId) add('negative_bill', 'A bill cannot be negative. Enter a supplier refund or credit as a receipt and tick Refund.', true);
   const signs = new Set((bill?.lines || []).map(lineAmountCents).filter((c) => c !== 0).map(Math.sign));
   if (signs.size > 1) add('mixed_signs', 'Some lines are negative and some positive. A refund has every amount negative; enter the rest as its own receipt.', true);
   if (bill?.kind === 'bill' && bill.dueDate && bill.date && bill.dueDate < bill.date) add('due_before_date', 'The due date is before the bill date.');
@@ -533,6 +540,92 @@ export function billMatches(bill, q, { vendors = new Map(), jobs = new Map() } =
   const job = jobs.get(bill.jobId);
   return [bill.number, vendorName(vendors.get(bill.vendorId)), job?.number, job?.title, bill.notes, ...(bill.lines || []).map((l) => l.description)]
     .some((s) => String(s || '').toLowerCase().includes(n));
+}
+
+// ---- Release 1: receiving, tax use, cost codes, trucks (docs/releases/r1-get-paid.md 3.5, 6.3, 6.6) ----
+
+/**
+ * What a bill line should not carry together: a truck (equipmentId: fuel, repairs, lease) is the
+ * truck's cost, never a job's, so a line with both gets a warning and job costing ignores its job.
+ */
+export function billLineWarnings(line) {
+  const out = [];
+  if (line?.equipmentId && line?.jobId) out.push('This line is for a truck: truck costs are recovered through its rate, not charged to a job. Clear the job, or the truck.');
+  return out;
+}
+
+/**
+ * Open purchase-order lines still to receive, without prices (the field receiving list, 6.6):
+ * [{ poId, number, vendorId, index, itemId, description, unit, ordered, received, remaining, jobId }].
+ * `jobId` keeps the lines for one job; `stockOnly` the lines for no job (stock orders).
+ */
+export function openReceiptLines(purchaseOrders = [], { jobId = null, stockOnly = false } = {}) {
+  const out = [];
+  for (const po of purchaseOrders) {
+    if (!poOpen(po)) continue;
+    (po.lines || []).forEach((l, index) => {
+      const job = l?.jobId || po.jobId || null;
+      if (jobId && job !== jobId) return;
+      if (stockOnly && job) return;
+      const ordered = num(l?.qty);
+      const received = num(l?.receivedQty);
+      const remaining = Math.round((ordered - received) * 100) / 100;
+      if (!(remaining > 0)) return;
+      out.push({ poId: po.id, number: po.number || '', vendorId: po.vendorId || null, index, itemId: l?.itemId || null, description: l?.description || '', unit: l?.unit || 'ea', ordered, received, remaining, jobId: job });
+    });
+  }
+  return out;
+}
+
+/**
+ * The PO lines after receiving `receipts` ([{ index, qty }]) at `at`: receivedQty goes up and
+ * receivedAt is stamped. Returns { lines, error } (error set and lines unchanged when a receipt is bad).
+ */
+export function receiveLines(po, receipts = [], at = new Date().toISOString()) {
+  const lines = (po?.lines || []).map((l) => ({ ...l }));
+  for (const r of receipts) {
+    const i = r?.index;
+    if (!Number.isInteger(i) || i < 0 || i >= lines.length) return { lines: po?.lines || [], error: `There is no line ${Number(i) + 1} on this order.` };
+    if (!(num(r.qty) > 0)) return { lines: po?.lines || [], error: 'Receive a quantity above zero.' };
+    lines[i].receivedQty = Math.round((num(lines[i].receivedQty) + num(r.qty)) * 1000) / 1000;
+    lines[i].receivedAt = at;
+  }
+  return { lines, error: null };
+}
+
+/**
+ * A supplier credit for a bill in a closed period (r1-get-paid.md 2.6): a new bill dated today with
+ * every line and tax negated, pointing back with reversesId. Lines keep their job, tax use and cost
+ * code, so job costing nets the credit on the same job. The office trims it to what was credited.
+ */
+export function supplierCreditFrom(bill, { settings = {}, today = isoDay(new Date()) } = {}) {
+  const neg = (v) => (int(v) == null ? v : -Math.abs(v));
+  return {
+    ...newBill({ kind: bill.kind === 'receipt' ? 'receipt' : 'bill', settings, today, vendorId: bill.vendorId || null, jobId: bill.jobId || null }),
+    reversesId: bill.id, taxProvince: bill.taxProvince || settings?.company?.province || 'ON', dueDate: null,
+    // Negative amounts the way a refund receipt has them (withSign): quantity as is, unit cost and amount negative.
+    lines: (bill.lines || []).map((l) => ({ ...l, qty: Math.abs(num(l.qty)), amountCents: -Math.abs(lineAmountCents(l)), unitCents: -Math.abs(num(l.unitCents)), poLine: null, resaleCreditWrittenOff: null })),
+    taxes: (bill.taxes || []).map((t) => ({ ...t, cents: neg(t.cents) })),
+    totalCents: bill.totalCents == null ? null : -Math.abs(bill.totalCents),
+    notes: `Supplier credit for ${bill.number || 'a bill'} dated ${bill.date || ''}`.trim(),
+    materialRequestIds: [],
+  };
+}
+
+/** Committed cost per job from open and sent POs (lib/costing.js committedCost per job): Map(jobId -> cents). */
+export function committedByJob(purchaseOrders = [], bills = []) {
+  const out = new Map();
+  for (const po of purchaseOrders) {
+    if (!poOpen(po)) continue;
+    const billed = poBilled(po, bills.filter((b) => b.status !== 'draft')).lineQty;
+    (po.lines || []).forEach((l, i) => {
+      const job = l?.jobId || po.jobId;
+      if (!job) return;
+      const qty = Math.round((num(l.qty) - Math.max(num(l.receivedQty), billed[i] || 0)) * 100) / 100;
+      if (qty > 0) out.set(job, (out.get(job) || 0) + Math.round(qty * num(l.unitCents)));
+    });
+  }
+  return out;
 }
 
 /** What a job has cost in bills and receipts (entered ones; refunds netted off), by cost type. */

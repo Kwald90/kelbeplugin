@@ -1,6 +1,12 @@
 // Employees (S20): staff list, roles, licences, rates, PINs; detail with certs, time, schedule, SOP acks.
+// Release 1 (docs/releases/r1-get-paid.md 2.3, 6.4; docs/office/job-costing.md): hire date, bill rate,
+// the truck clock-ins take (defaultEquipmentId), burden overrides, and the wage history: "New rate
+// from <date>" adds to rateHistory and leaves the cost of earlier days alone (rateCents stays the
+// rate in force today). Wages, history and burden are money: managers who see money only.
 import { ROLES } from '../auth.js';
 import { entryHours } from '../lib/money.js';
+import { burdenRate, rateOn, pctText } from '../lib/burden.js';
+import { costingRules } from './reports.js';
 import { weekStart, addDays } from './schedule.js';
 import { sopRev, ackRev } from './sops.js';
 
@@ -18,6 +24,8 @@ function employeeForm(ctx, emp, onSaved) {
   const { store, ui, auth } = ctx;
   const mgr = auth.isManager();
   const me = auth.current();
+  const money = mgr && auth.seesMoney?.();
+  const b = emp?.burden || {};
   // only owners can make or edit owners/admins
   const roleOpts = Object.entries(ROLES).filter(([k]) => me.role === 'owner' || !['owner', 'admin'].includes(k) || emp?.role === k)
     .map(([value, r]) => ({ value, label: r.label }));
@@ -36,14 +44,30 @@ function employeeForm(ctx, emp, onSaved) {
       { label: 'PIN (4 digits, optional)', name: 'pin', value: emp?.pin, placeholder: '••••', hint: 'Asked when switching to this user' },
       { label: 'Colour', name: 'color', type: 'color', value: emp?.color || COLORS[store.count('employees') % COLORS.length] },
       { label: 'Active', name: 'active', type: 'checkbox', value: emp ? emp.active !== false : true },
+      ...(mgr ? [{ label: 'Hire date', name: 'hireDate', type: 'date', value: emp?.hireDate || '', hint: 'Vacation pay goes up on the fifth anniversary' }] : []),
+      ...(mgr ? [{ label: 'Truck they drive', name: 'defaultEquipmentId', type: 'select', value: emp?.defaultEquipmentId || '', options: ui.recordOptions(store.list('equipment', (q) => q.active !== false && q.kind === 'truck'), 'name', '— none —'), hint: 'Clock-ins charge this truck to the job' }] : []),
+      ...(money ? [
+        { label: 'T&M bill rate (optional)', name: 'billRateCents', type: 'money', value: emp?.billRateCents ?? null, hint: 'Overrides the company labour rate on T&M invoices' },
+        { label: 'Vacation pay % (blank = the rule)', name: 'burden.vacationPct', type: 'number', step: '0.01', min: '0', value: b.vacationPct ?? '' },
+        { label: 'Holiday pay % (blank = the rule)', name: 'burden.holidayPct', type: 'number', step: '0.01', min: '0', value: b.holidayPct ?? '' },
+        { label: 'WCB % (blank = the company rate)', name: 'burden.wcbPct', type: 'number', step: '0.01', min: '0', value: b.wcbPct ?? '' },
+        { label: 'Non-productive % (blank = company)', name: 'burden.nonProductivePct', type: 'number', step: '0.1', min: '0', value: b.nonProductivePct ?? '' },
+        { label: 'Paid hours a year (blank = company)', name: 'burden.annualHours', type: 'number', step: '1', min: '0', value: b.annualHours ?? '' },
+        { label: 'Benefits per hour (optional)', name: 'burden.benefitsCentsPerHour', type: 'money', value: b.benefitsCentsPerHour ?? null },
+      ] : []),
     ],
     danger: emp && mgr && emp.id !== me.id ? { label: 'Delete', onClick: async () => {
       if (store.count('timeEntries', (t) => t.employeeId === emp.id)) { store.update('employees', emp.id, { active: false }); ui.toast(`${emp.name} has time on record, so they were deactivated instead`); return; }
       store.remove('employees', emp.id); ui.toast('Employee deleted'); ctx.nav('#/employees');
     } } : null,
-    onSubmit(v) {
+    onSubmit(v, form) {
       if (v.pin && !/^\d{4}$/.test(v.pin)) { ui.toast('PIN must be exactly 4 digits', 'error'); return false; }
-      if (!mgr) { delete v.role; delete v.rateCents; delete v.pin; delete v.payrollId; }
+      if (!mgr) { delete v.role; delete v.rateCents; delete v.pin; delete v.payrollId; delete v.hireDate; delete v.defaultEquipmentId; }
+      Object.assign(v, burdenFields(v, form, emp, money));
+      if (v.hireDate === '') v.hireDate = null;
+      if (v.defaultEquipmentId === '') v.defaultEquipmentId = null;
+      // A changed wage in this form is the rate from today on; the history keeps earlier days.
+      if (money && emp && v.rateCents != null && v.rateCents !== emp.rateCents) v.rateHistory = withRate(emp, ui.today(), v.rateCents);
       if (v.payrollId != null) v.payrollId = String(v.payrollId).trim().slice(0, 64);
       if (emp && emp.id === me.id && v.role && v.role !== emp.role && ['owner', 'admin'].includes(emp.role) && !['owner', 'admin'].includes(v.role)) {
         const admins = store.count('employees', (e) => e.active !== false && ['owner', 'admin'].includes(e.role));
@@ -55,6 +79,81 @@ function employeeForm(ctx, emp, onSaved) {
       onSaved?.(saved);
     },
   });
+}
+
+/** The burden overrides and bill rate from the form ('burden.x' fields; blank = the company default). */
+function burdenFields(v, form, emp, money) {
+  const out = {};
+  for (const k of Object.keys(v)) if (k.startsWith('burden.')) delete v[k];
+  if (!money) { delete v.billRateCents; return out; }
+  const raw = (name) => String(form?.querySelector(`[name="${name}"]`)?.value ?? '').trim();
+  const numOrNull = (name, cents = false) => {
+    const r = raw(name);
+    if (r === '') return null;
+    const n = Number(r);
+    return Number.isFinite(n) ? (cents ? Math.round(n * 100) : n) : null;
+  };
+  const hours = numOrNull('burden.annualHours');
+  const burden = {
+    vacationPct: numOrNull('burden.vacationPct'), holidayPct: numOrNull('burden.holidayPct'), wcbPct: numOrNull('burden.wcbPct'),
+    nonProductivePct: numOrNull('burden.nonProductivePct'), annualHours: hours == null ? null : Math.round(hours),
+    benefitsCentsPerHour: numOrNull('burden.benefitsCentsPerHour', true),
+  };
+  if (Object.values(burden).some((x) => x != null) || emp?.burden) out.burden = burden;
+  out.billRateCents = numOrNull('billRateCents', true);
+  return out;
+}
+
+/**
+ * The rate history with a new rate from `from`: the current rate is kept from the hire date (or the
+ * start) when there was no history yet, and a rate already on that day is replaced.
+ */
+export function withRate(emp, from, rateCents) {
+  let list = Array.isArray(emp?.rateHistory) ? emp.rateHistory.slice() : [];
+  if (!list.length && Number.isInteger(emp?.rateCents)) list.push({ from: /^\d{4}-\d{2}-\d{2}$/.test(emp.hireDate || '') && emp.hireDate < from ? emp.hireDate : '1900-01-01', rateCents: emp.rateCents });
+  list = list.filter((r) => r.from !== from).concat({ from, rateCents }).sort((a, b) => String(a.from).localeCompare(String(b.from)));
+  return list.slice(-200);
+}
+
+function newRateSheet(ctx, emp) {
+  const { store, ui } = ctx;
+  ui.formSheet({
+    title: `New rate for ${emp.name}`,
+    submitLabel: 'Add rate',
+    fields: [
+      { label: 'From', name: 'from', type: 'date', value: ui.today(), required: true },
+      { label: 'Hourly rate (cost)', name: 'rateCents', type: 'money', value: emp.rateCents ?? 0, required: true },
+    ],
+    onSubmit(v) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v.from || '')) { ui.toast('Pick the date the rate starts', 'error'); return false; }
+      const rateHistory = withRate(emp, v.from, v.rateCents);
+      const current = rateOn(rateHistory, ui.today()) ?? v.rateCents;
+      store.update('employees', emp.id, { rateHistory, rateCents: current }, { summary: `${emp.name}: new rate from ${v.from}` });
+      ui.toast(`New rate from ${ui.fmtDate(v.from)}`, 'success');
+    },
+  });
+}
+
+/** Pay and burden on the employee page (managers who see money). */
+function payCard(ctx, e) {
+  const { store, ui } = ctx;
+  const { h } = ui;
+  const br = burdenRate(e, { rules: costingRules(store), settings: store.settings(), on: ui.today() });
+  const hist = (e.rateHistory || []).slice().sort((a, b) => String(b.from).localeCompare(String(a.from)));
+  const truck = e.defaultEquipmentId ? store.get('equipment', e.defaultEquipmentId) : null;
+  const line = (label, value) => h('div', { class: 'row' }, h('span', { class: 'grow' }, label), h('strong', null, value));
+  return h('div', { class: 'card' },
+    h('div', { class: 'row' }, h('h3', { class: 'grow', style: { margin: 0 } }, 'Pay and burden'), ui.button('New rate from…', { size: 'sm', icon: 'plus', onClick: () => newRateSheet(ctx, e) })),
+    h('div', { class: 'stack' },
+      line('Wage today', `${ui.fmtMoney(br.wageCents)}/h`),
+      line('Cost per paid hour', `${ui.fmtMoney(br.costPerPaidHourCents)}/h`),
+      line('Cost per productive hour', `${ui.fmtMoney(br.costPerProductiveHourCents)}/h`),
+      h('div', { class: 'muted' }, `Vacation ${pctText(br.vacationPct)}, holiday ${pctText(br.holidayPct)}, statutory ${pctText(br.statutoryPct)} (CPP ${pctText(br.cppPct)}, EI ${pctText(br.eiPct)}, WCB ${pctText(br.wcbPct)}), non-productive ${pctText(br.nonProductivePct)}`),
+      e.billRateCents ? h('div', { class: 'muted' }, `T&M bill rate ${ui.fmtMoney(e.billRateCents)}/h`) : null,
+      h('div', { class: 'muted' }, `Hired ${e.hireDate ? ui.fmtDate(e.hireDate) : 'date not set'}${truck ? ` · drives ${truck.name}` : ''}`),
+      br.warnings.length ? h('ul', { class: 'muted', style: { margin: 0, paddingLeft: '18px' } }, br.warnings.map((w) => h('li', null, w))) : null,
+      hist.length ? h('details', null, h('summary', null, `Rate history (${hist.length})`),
+        h('ul', { style: { margin: 0, paddingLeft: '18px' } }, hist.map((r) => h('li', null, `From ${r.from === '1900-01-01' ? 'the start' : ui.fmtDate(r.from)}: ${ui.fmtMoney(r.rateCents)}/h`)))) : null));
 }
 
 function listView(root, ctx) {
@@ -124,7 +223,8 @@ function detailView(root, ctx, id) {
           h('div', { class: 'row' }, ui.icon('key', 16), e.pin ? 'PIN set' : h('span', { class: 'muted' }, 'No PIN')))),
       h('div', { class: 'card' }, h('h3', null, 'Certifications'),
         certs.length ? h('div', { class: 'stack' }, certs.map((c) => h('div', { class: 'row' }, h('span', { class: 'grow' }, h('strong', null, c.name), h('span', { class: 'muted' }, ` · ${c.issuer || ''}`)), licenceBadge(ui, c.expiry))))
-          : h('p', { class: 'muted', style: { margin: 0 } }, 'None recorded. Add them in Compliance.'))),
+          : h('p', { class: 'muted', style: { margin: 0 } }, 'None recorded. Add them in Compliance.')),
+      auth.isManager() && auth.seesMoney?.() ? payCard(ctx, e) : null),
     h('h2', { class: 'section' }, 'Upcoming schedule'),
     upcoming.length ? h('div', { class: 'list' }, upcoming.map((s) => {
       const j = store.get('jobs', s.jobId);
@@ -143,7 +243,7 @@ function detailView(root, ctx, id) {
   };
   root.append(host);
   draw();
-  const offs = ['employees', 'certifications', 'timeEntries', 'schedule', 'sops'].map((c) => store.on(c, draw));
+  const offs = ['employees', 'certifications', 'timeEntries', 'schedule', 'sops', 'equipment', 'settings', 'rules'].map((c) => store.on(c, draw));
   return () => offs.forEach((f) => f());
 }
 

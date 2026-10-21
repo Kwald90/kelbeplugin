@@ -38,7 +38,20 @@
 .pu-po-requests .grow { min-width: 160px; }
 .pu-vendor-pick { min-width: 200px; margin: 0; }
 
+/* Release 1: tax use, trucks, price variances, closed periods, receiving, committed cost */
+.pu-line-warn { display: flex; flex-wrap: wrap; gap: var(--s1); align-items: center; margin-top: var(--s1); font-size: var(--fs-sm); color: var(--text); }
+.pu-line-warn svg { color: var(--warning); flex: none; }
+.pu-partial { font-size: var(--fs-sm); color: var(--warning); }
+.pu-variances { display: flex; flex-direction: column; gap: var(--s1); padding: var(--s3); border-radius: var(--r-sm); background: var(--warning-soft); }
+.pu-problems .ok { color: var(--text-muted); }
+.pu-lock { display: inline-flex; color: var(--text-muted); }
+.pu-committed { display: flex; flex-direction: column; gap: var(--s1); padding: var(--s3) var(--s4); }
+.rcv-lines { display: flex; flex-direction: column; gap: var(--s2); }
+.rcv-line { display: grid; grid-template-columns: 1fr 110px; gap: var(--s2); align-items: center; }
+.rcv-line input { width: 100%; }
+
 @media (max-width: 640px) {
   .pu-tax-row { grid-template-columns: 1fr 1fr auto; }
   .pu-vendor-pick { width: 100%; }
+  .rcv-line { grid-template-columns: 1fr 90px; }
 }
