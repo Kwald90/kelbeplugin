@@ -1,16 +1,16 @@
 // S11 Dashboard: today at a glance, plus every alert the other modules raise.
 import { invoiceShown, entryHours, moneyFormatter } from '../lib/money.js';
-import { provinceName } from '../lib/tax.js';
 import { onboardingCard } from './onboarding.js';
 import { workplanTiles } from './workplan.js';
 import { weekHoursTile } from './time.js';
-import { moduleOn, switchOn, linkOn } from '../lib/modules.js';
+import { moduleOn, switchOn } from '../lib/modules.js';
 import { unbilledAcrossJobs } from '../lib/tm.js';
 import { tmSources } from './jobs.js';
+import { dashboardActions, dashboardRouteAllowed } from '../lib/dashboard-actions.js';
 
 export default {
   id: 'dashboard',
-  title: 'Dashboard',
+  title: 'Today',
   icon: 'home',
   group: 'home',
   perm: 'dashboard',
@@ -18,9 +18,10 @@ export default {
     const { store, ui, auth } = ctx;
     const { h } = ui;
     let timer;
+    const expanded = new Set();
 
     // Due sequence steps are queued whenever the office opens the app (not when follow-ups are off).
-    if (moduleOn(store.settings(), 'sequences')) import('./sequences.js').then((m) => m.processSequences?.(store)).catch(() => {});
+    if (auth.can('sequences') && moduleOn(store.settings(), 'sequences')) import('./sequences.js').then((m) => m.processSequences?.(store)).catch(() => {});
 
     const draw = () => {
       ui.clear(root);
@@ -29,6 +30,11 @@ export default {
       const money = moneyFormatter(settings);
       // Tiles, alerts and buttons for turned-off modules are left out (Settings → Modules).
       const on = (m) => moduleOn(settings, m);
+      const allowed = (href) => dashboardRouteAllowed(settings, (p) => auth.can(p), href);
+      const moneyVisible = auth.seesMoney();
+      const detail = (id, label, ...content) => h('details', { class: 'dash-details', open: expanded.has(id),
+        onToggle: (e) => { if (e.currentTarget.open) expanded.add(id); else expanded.delete(id); } },
+      h('summary', null, label), h('div', { class: 'dash-details-body' }, ...content));
       const day = ui.today();
       const hour = new Date().getHours();
       const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -40,21 +46,21 @@ export default {
       const openLeads = store.list('leads', (l) => !['won', 'lost'].includes(l.stage));
       const pipeline = openLeads.reduce((s, l) => s + (l.valueCents || 0), 0);
       const active = jobs.filter((j) => j.status === 'in-progress');
-      const invoices = store.list('invoices', (i) => !['void', 'draft'].includes(i.status));
+      const invoices = moneyVisible && allowed('#/invoices') ? store.list('invoices', (i) => !['void', 'draft'].includes(i.status)) : [];
       const shown = new Map(invoices.map((i) => [i.id, invoiceShown(store, i)]));
       const outstanding = invoices.reduce((s, i) => s + Math.max(0, shown.get(i.id).balanceCents), 0);
       const overdue = invoices.filter((i) => shown.get(i.id).status === 'overdue');
-      const onClock = store.list('timeEntries', (e) => !e.clockOut);
+      const onClock = allowed('#/time') ? store.list('timeEntries', (e) => !e.clockOut && (auth.isManager() || e.employeeId === me.id)) : [];
       const myOpen = onClock.find((e) => e.employeeId === me.id);
-      const unbilled = auth.can('invoices') && on('invoices') ? unbilledAcrossJobs(jobs.filter((j) => !['lead'].includes(j.status)), { settings, ...tmSources(store), dayOf: ui.localDay }) : null;
+      const unbilled = moneyVisible && allowed('#/invoices') && allowed('#/jobs') ? unbilledAcrossJobs(jobs.filter((j) => !['lead'].includes(j.status)), { settings, ...tmSources(store), dayOf: ui.localDay }) : null;
 
       const stats = h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' } },
-        auth.can('leads') && on('leads') ? ui.stat({ label: 'Open pipeline', value: money(pipeline, { whole: true }), hint: `${openLeads.length} open leads` }) : null,
-        ui.stat({ label: 'Jobs in progress', value: String(active.length), hint: `${jobs.filter((j) => j.status === 'scheduled').length} scheduled` }),
-        auth.can('invoices') && on('invoices') ? ui.stat({ label: 'Owed to you', value: money(outstanding, { whole: true }), hint: overdue.length ? `${overdue.length} overdue` : 'nothing overdue', tone: overdue.length ? 'danger' : null }) : null,
+        moneyVisible && allowed('#/leads') ? ui.stat({ label: 'Open pipeline', value: money(pipeline, { whole: true }), hint: `${openLeads.length} open leads` }) : null,
+        allowed('#/jobs') ? ui.stat({ label: 'Jobs in progress', value: String(active.length), hint: `${jobs.filter((j) => j.status === 'scheduled').length} scheduled` }) : null,
+        moneyVisible && allowed('#/invoices') ? ui.stat({ label: 'Owed to you', value: money(outstanding, { whole: true }), hint: overdue.length ? `${overdue.length} overdue` : 'nothing overdue', tone: overdue.length ? 'danger' : null }) : null,
         unbilled ? h('a', { href: '#/jobs', class: 'dash-stat-link', style: { color: 'inherit', textDecoration: 'none' }, dataset: { unbilledTm: String(unbilled.cents) } },
           ui.stat({ label: 'Unbilled T&M', value: money(unbilled.cents, { whole: true }), hint: unbilled.count ? `${unbilled.count} time & material job${unbilled.count === 1 ? '' : 's'} · ${unbilled.hours} h` : 'all billed', tone: unbilled.cents ? 'accent' : null })) : null,
-        on('time') ? ui.stat({ label: 'On the clock', value: String(onClock.length), hint: onClock.map((e) => empById.get(e.employeeId)?.name.split(' ')[0]).filter(Boolean).join(', ') || 'nobody yet', tone: onClock.length ? 'success' : null }) : null,
+        allowed('#/time') ? ui.stat({ label: 'On the clock', value: String(onClock.length), hint: onClock.map((e) => empById.get(e.employeeId)?.name.split(' ')[0]).filter(Boolean).join(', ') || 'nobody yet', tone: onClock.length ? 'success' : null }) : null,
       );
 
       // ---- my clock ----
@@ -65,16 +71,16 @@ export default {
         ui.button(myOpen ? 'Open time clock' : 'Clock in', { variant: myOpen ? 'secondary' : 'primary', icon: 'clock', href: '#/time' })) : null;
 
       // ---- today's crew board ----
-      const todays = store.list('schedule', (s) => s.date === day);
+      const todays = allowed('#/schedule') && allowed('#/jobs') ? store.list('schedule', (s) => s.date === day) : [];
       const byJob = new Map();
       for (const s of todays) { if (!byJob.has(s.jobId)) byJob.set(s.jobId, []); byJob.get(s.jobId).push(s); }
       const today = h('div', { class: 'list' }, byJob.size ? [...byJob].map(([jobId, rows]) => {
         const j = jobById.get(jobId);
         return h('a', { class: 'list-row click', href: `#/jobs/${jobId}`, style: { color: 'inherit', textDecoration: 'none' } },
           h('div', { class: 'grow' }, h('div', { class: 'title' }, j ? `${j.number} · ${j.title}` : 'Job removed'), h('div', { class: 'meta' }, j?.address || '')),
-          h('div', { class: 'row', style: { gap: '4px' } }, rows.map((r) => {
-            const e = empById.get(r.employeeId);
-            return h('span', { class: 'avatar', title: e?.name, style: { background: e?.color || '#5f5a51', width: '28px', height: '28px', fontSize: '11px' } }, ui.initials(e?.name));
+          h('div', { class: 'dash-crew' }, [...new Set(rows.map((r) => r.employeeId))].map((employeeId) => {
+            const e = empById.get(employeeId);
+            return h('span', { class: 'dash-person' }, h('span', { class: 'avatar', 'aria-hidden': 'true', style: { background: e?.color || '#5f5a51', width: '28px', height: '28px', fontSize: '11px' } }, ui.initials(e?.name)), h('span', null, e?.name || 'Unassigned'));
           })),
           j ? ui.statusBadge(j.status) : null);
       }) : h('div', { class: 'list-row muted' }, 'Nobody is scheduled today.'));
@@ -82,7 +88,7 @@ export default {
       // ---- alerts ----
       const alerts = [];
       const add = (tone, iconName, text, href) => alerts.push({ tone, iconName, text, href });
-      for (const i of overdue) add('danger', 'receipt', `${i.number} is overdue: ${money(shown.get(i.id).balanceCents)}`, `#/invoices/${i.id}`);
+
       for (const e of store.list('employees', (x) => x.active !== false && x.licenceExpiry)) {
         const d = ui.daysUntil(e.licenceExpiry);
         if (d < 0) add('danger', 'id-card', `${e.name}'s licence expired ${-d} days ago`, `#/employees/${e.id}`);
@@ -122,12 +128,25 @@ export default {
       }
       const toneOrder = { danger: 0, warning: 1, accent: 2, info: 3 };
       // Alerts about turned-off modules are left out (Settings → Modules).
-      alerts.splice(0, alerts.length, ...alerts.filter((a) => linkOn(settings, a.href)));
+      alerts.splice(0, alerts.length, ...alerts.filter((a) => allowed(a.href)));
       alerts.sort((a, b) => toneOrder[a.tone] - toneOrder[b.tone]);
-      const alertList = h('div', { class: 'list' }, alerts.length ? alerts.slice(0, 10).map((a) =>
-        h('a', { class: 'list-row click', href: a.href, style: { color: 'inherit', textDecoration: 'none' } },
-          h('span', { class: ['badge', a.tone], style: { width: '30px', height: '30px', padding: 0, justifyContent: 'center', borderRadius: '50%' } }, ui.icon(a.iconName, 16)),
-          h('span', { class: 'grow' }, a.text), ui.icon('chevron-right', 16))) : h('div', { class: 'list-row muted' }, 'All clear. Nothing needs you right now.'));
+      const priorities = dashboardActions({ settings, can: (p) => auth.can(p), seesMoney: moneyVisible, day, jobs,
+        estimates: allowed('#/estimates') ? store.list('estimates') : [],
+        schedule: allowed('#/schedule') ? store.list('schedule') : [],
+        tasks: allowed('#/workplan') ? store.list('workTasks', null, { omit: ['photos'] }) : [],
+        overdue: overdue.map((i) => ({ ...i, balanceCents: shown.get(i.id).balanceCents })),
+        tmSources: moneyVisible && allowed('#/invoices') ? { ...tmSources(store), dayOf: ui.localDay } : {}, money });
+      const attentionRows = [...priorities, ...alerts.map((a) => ({ ...a, title: a.text, action: 'Review' }))]
+        .sort((a, b) => toneOrder[a.tone] - toneOrder[b.tone]);
+      const actionRow = (a) => h('a', { class: 'dash-action', href: a.href },
+        h('span', { class: ['dash-action-icon', a.tone], 'aria-hidden': 'true' }, ui.icon(a.iconName, 19)),
+        h('span', { class: 'dash-action-copy' }, h('strong', null, a.title), a.detail ? h('span', null, a.detail) : null),
+        h('span', { class: 'dash-action-label' }, a.action, ui.icon('chevron-right', 16)));
+      const alertList = h('div', { class: 'dash-actions' }, attentionRows.length ? [
+        attentionRows.slice(0, 5).map(actionRow),
+        attentionRows.length > 5 ? detail('attention', `Show ${attentionRows.length - 5} more items`, attentionRows.slice(5).map(actionRow)) : null,
+      ] : h('div', { class: 'dash-clear' }, ui.icon('check', 22), h('div', null,
+        h('strong', null, "You're up to date"), h('p', null, 'No action items in the modules you can access.'))));
 
       // ---- recent drawings ----
       const drawings = store.list('drawings', null, { omit: ['underlay', 'strokes', 'texts', 'rooms'] }).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 4);
@@ -140,31 +159,36 @@ export default {
           h('div', { class: 'stack', style: { alignItems: 'center', gap: '6px' } }, ui.icon('plus', 28), 'New drawing'))) : null;
 
       // ---- activity ----
-      const log = auth.can('security') ? store.list('auditLog').slice(0, 8) : [];
+      const log = allowed('#/security') ? store.list('auditLog').slice(0, 8) : [];
       const activity = log.length ? h('div', { class: 'list' }, log.map((a) => h('div', { class: 'list-row' },
         h('span', { class: 'avatar', style: { background: empById.get(a.userId)?.color || '#5f5a51', width: '28px', height: '28px', fontSize: '11px' } }, ui.initials(empById.get(a.userId)?.name || 'System')),
         h('div', { class: 'grow' }, h('div', null, h('strong', null, empById.get(a.userId)?.name || 'System'), ` ${a.action} ${a.collection === 'app' ? '' : a.collection.replace(/s$/, '')} `, h('span', { class: 'muted' }, a.summary)),
           h('div', { class: 'meta' }, ui.fmtDateTime(a.at)))))) : null;
 
+      const wp = allowed('#/workplan') && allowed('#/today') && auth.can('kpis') ? workplanTiles(ctx) : null;
+      const hours = allowed('#/time') ? weekHoursTile(ctx) : null;
       root.append(ui.page({
-        title: `${hello}, ${me.name.split(' ')[0]}`,
-        subtitle: [new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }), settings.company?.name,
-          settings.company?.province ? `${provinceName(settings.company.province)} · ${settings.codeBook === 'NEC-2023' ? 'NEC 2023' : 'CEC 2024'}` : null].filter(Boolean).join(' · '),
+        title: 'Today',
+        subtitle: [`${hello}, ${me.name.split(' ')[0]}`, new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }), settings.company?.name].filter(Boolean).join(' · '),
         actions: [
-          auth.can('leads') && on('leads') ? ui.button('New lead', { icon: 'funnel', href: '#/leads?new=1' }) : null,
-          auth.can('estimates') && on('estimates') ? ui.button('New quote', { icon: 'file-text', variant: 'primary', href: '#/estimates/new' }) : null,
+          allowed('#/leads') ? ui.button('New lead', { icon: 'funnel', href: '#/leads?new=1' }) : null,
+          allowed('#/estimates') ? ui.button('New quote', { icon: 'file-text', variant: 'primary', href: '#/estimates/new' }) : null,
         ].filter(Boolean),
       },
+      h('div', { class: 'dash-layout' },
+        h('section', { class: 'dash-focus', 'aria-labelledby': 'dash-attention-title' },
+          h('div', { class: 'dash-section-head' }, h('h2', { id: 'dash-attention-title' }, 'Needs attention'),
+            attentionRows.length ? h('span', { class: 'dash-count', 'aria-label': `${attentionRows.length} action items` }, attentionRows.length) : null),
+          h('p', { class: 'dash-section-intro' }, 'Keep work moving. Review a blocker, plan the next visit, or follow up.'), alertList),
+        allowed('#/schedule') && allowed('#/jobs') ? h('section', { class: 'dash-sites', 'aria-labelledby': 'dash-sites-title' },
+          h('div', { class: 'dash-section-head' }, h('h2', { id: 'dash-sites-title' }, 'Today on site'),
+            ui.button('Schedule', { href: '#/schedule', variant: 'ghost', icon: 'calendar' })), today) : null),
+      clockCard ? h('div', { class: 'dash-clock-wrap' }, clockCard) : null,
       onboardingCard(ctx),
-      stats,
-      clockCard ? h('div', { style: { marginTop: 'var(--s4)' } }, clockCard) : null,
-      (() => { const t = on('time') ? weekHoursTile(ctx) : null; return t ? h('div', { style: { marginTop: 'var(--s4)' } }, t) : null; })(),
-      (() => { const wp = on('workplan') ? workplanTiles(ctx) : null; return wp ? [...ui.section('Crew tasks'), wp] : null; })(),
-      h('div', { class: 'grid-2', style: { marginTop: 'var(--s2)' } },
-        h('div', null, ...ui.section('Needs attention'), alertList),
-        on('schedule') ? h('div', null, ...ui.section('Today on site'), today) : null),
-      drawingCards ? [...ui.section('Recent plans & drawings'), drawingCards] : null,
-      activity ? [...ui.section('Recent activity'), activity] : null));
+      detail('overview', 'Business overview', stats),
+      wp || hours ? detail('crew', 'Crew progress & hours', wp, hours) : null,
+      drawingCards ? detail('drawings', 'Recent plans & drawings', drawingCards) : null,
+      activity ? detail('activity', 'Recent activity', activity) : null));
     };
 
     draw();
