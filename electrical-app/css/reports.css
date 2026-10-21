@@ -1,0 +1,46 @@
+/* Job costing and month-end (modules/reports.js, modules/monthend.js) and the inventory count sheets
+   (modules/inventory.js). Tokens only. */
+
+.reports { display: flex; flex-direction: column; gap: var(--s3); }
+.rep-range { flex-wrap: wrap; gap: var(--s3); align-items: flex-end; }
+.rep-range .field { min-width: 160px; }
+.rep-small { font-size: var(--fs-sm); margin: 0; }
+.rep-title { margin: 0; }
+.rep-neg { color: var(--danger); }
+.rep-list { margin: 0; padding-left: var(--s5); font-size: var(--fs-sm); display: flex; flex-direction: column; gap: 2px; }
+.rep-form { padding: var(--s4); }
+
+.rep-note { display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s3) var(--s4); background: var(--info-soft); }
+.rep-note svg { color: var(--info); flex: none; margin-top: 2px; }
+.rep-note p { margin: 0; }
+.rep-note.warn { background: var(--warning-soft); }
+.rep-note.warn svg { color: var(--warning); }
+
+/* Month-end blocks */
+.me-blocks { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--s3); }
+.me-block { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s4); }
+.me-block h3 { margin: 0; }
+.me-block details summary { cursor: pointer; font-size: var(--fs-sm); color: var(--text-muted); }
+.me-rows { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); }
+.me-row { display: flex; justify-content: space-between; gap: var(--s3); }
+.me-row .num { font-variant-numeric: tabular-nums; }
+.me-total { display: flex; justify-content: space-between; gap: var(--s3); font-weight: 600; border-top: 1px solid var(--border); padding-top: var(--s1); }
+.me-journal td, .me-journal th { font-variant-numeric: tabular-nums; }
+
+/* Count sheets (Inventory → Counts) */
+.cnt-lines { display: flex; flex-direction: column; gap: var(--s1); }
+.cnt-line { display: grid; grid-template-columns: 1fr 90px 110px; gap: var(--s2); align-items: center; padding: var(--s1) 0; border-bottom: 1px solid var(--border); }
+.cnt-line input { width: 100%; }
+.cnt-line .diff { font-size: var(--fs-sm); }
+.cnt-line .diff.off { color: var(--warning); }
+
+@media (max-width: 640px) {
+  .rep-range { flex-direction: column; align-items: stretch; }
+  .rep-range .field { min-width: 0; }
+  .me-blocks { grid-template-columns: 1fr; }
+  .cnt-line { grid-template-columns: 1fr 70px 90px; }
+}
+
+@media print {
+  .rep-range, .ops-tabs-row { display: none; }
+}

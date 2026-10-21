@@ -557,3 +557,58 @@ describe('purchasing details', () => {
     assert.equal(P.blankPurchaseOrder({ ...P.newPurchaseOrder({ number: 'PO-5001' }), lines: [{ description: 'x', qty: 1 }] }), false);
   });
 });
+
+describe('Release 1: receiving, trucks and committed cost (r1-get-paid.md 6.6)', () => {
+  const pos = [
+    { id: 'po1', number: 'PO-5001', vendorId: 'v1', jobId: 'j1', status: 'sent', lines: [
+      { itemId: 'i1', description: 'Wire', qty: 10, unit: 'm', unitCents: 150, receivedQty: 4 },
+      { description: 'Boxes', qty: 2, unitCents: 500, jobId: 'j2' },
+      { description: 'Done', qty: 1, unitCents: 100, receivedQty: 1 },
+    ] },
+    { id: 'po2', number: 'PO-5002', vendorId: 'v1', status: 'open', lines: [{ itemId: 'i1', description: 'Stock wire', qty: 50, unitCents: 140 }] },
+    { id: 'po3', number: 'PO-5003', status: 'draft', jobId: 'j1', lines: [{ description: 'Not placed', qty: 1, unitCents: 1 }] },
+  ];
+
+  test('open lines to receive carry quantities, never prices', () => {
+    const all = P.openReceiptLines(pos);
+    assert.deepEqual(all.map((l) => [l.poId, l.index, l.remaining, l.jobId]), [['po1', 0, 6, 'j1'], ['po1', 1, 2, 'j2'], ['po2', 0, 50, null]]);
+    assert.ok(all.every((l) => !('unitCents' in l)));
+    assert.deepEqual(P.openReceiptLines(pos, { jobId: 'j1' }).map((l) => l.index), [0]);
+    assert.deepEqual(P.openReceiptLines(pos, { stockOnly: true }).map((l) => l.poId), ['po2']);
+  });
+
+  test('receiving adds to receivedQty and stamps the time; a bad line changes nothing', () => {
+    const r = P.receiveLines(pos[0], [{ index: 0, qty: 6 }], '2026-10-20T15:00:00Z');
+    assert.equal(r.error, null);
+    assert.equal(r.lines[0].receivedQty, 10);
+    assert.equal(r.lines[0].receivedAt, '2026-10-20T15:00:00Z');
+    assert.equal(pos[0].lines[0].receivedQty, 4, 'the order itself is not changed');
+    assert.match(P.receiveLines(pos[0], [{ index: 9, qty: 1 }]).error, /no line 10/);
+    assert.match(P.receiveLines(pos[0], [{ index: 0, qty: 0 }]).error, /above zero/);
+  });
+
+  test('committed per job: what is still to come on open orders', () => {
+    const bills = [{ id: 'b', status: 'open', lines: [{ qty: 2, poLine: { purchaseOrderId: 'po1', index: 1 } }] }];
+    const m = P.committedByJob(pos, bills);
+    assert.equal(m.get('j1'), 6 * 150);
+    assert.equal(m.get('j2'), undefined, 'billed in full');
+  });
+
+  test('a supplier credit for a bill in a closed period: negative, dated today, pointing back, and it can be entered', () => {
+    const b = bill({ id: 'b9', status: 'open', jobId: 'j1', number: 'INV-77', lines: [line(2, 1000, { taxUse: 'own-use', costCodeId: 'cc1', poLine: { purchaseOrderId: 'po1', index: 0 } })], taxes: [{ id: 'RST', label: 'RST', cents: 140 }], totalCents: 2140 });
+    const c = P.supplierCreditFrom(b, { today: '2026-10-21' });
+    assert.equal(c.reversesId, 'b9');
+    assert.equal(c.date, '2026-10-21');
+    assert.equal(c.status, 'draft');
+    assert.deepEqual(c.lines.map((l) => [l.qty, l.unitCents, l.amountCents, l.taxUse, l.costCodeId, l.poLine]), [[2, -1000, -2000, 'own-use', 'cc1', null]]);
+    assert.deepEqual(c.taxes.map((t) => t.cents), [-140]);
+    assert.equal(c.totalCents, -2140);
+    assert.deepEqual(P.billProblems({ ...c, vendorId: 'v1' }).filter((p) => p.block), [], 'a negative bill is fine when it credits one');
+    assert.ok(P.billProblems({ ...c, reversesId: null, vendorId: 'v1' }).some((p) => p.code === 'negative_bill'));
+  });
+
+  test('a truck line with a job is warned about', () => {
+    assert.deepEqual(P.billLineWarnings({ equipmentId: 't1' }), []);
+    assert.equal(P.billLineWarnings({ equipmentId: 't1', jobId: 'j1' }).length, 1);
+  });
+});

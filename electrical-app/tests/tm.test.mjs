@@ -199,6 +199,67 @@ describe('time & material', () => {
   });
 });
 
+describe('field tickets on a T&M job (r1-get-paid.md 4.1)', () => {
+  // Oct 5: 8 h + 4 h of approved time (t1, t2); the super signed a ticket for 6.5 h and a refused one for 2 h.
+  const ticket = (id, o = {}) => ({ id, number: null, jobId: 'j1', kind: 'tm', date: '2026-10-05', status: 'signed', labour: [{ employeeId: 'e1', name: 'Sam Sparks', hours: 6.5, timeEntryIds: ['t1'] }], ...o });
+  const fieldTickets = [
+    ticket('tk1', { number: 'T-1001' }),
+    ticket('tk2', { number: 'T-1002', status: 'refused', labour: [{ employeeId: 'e2', name: 'Ana Apprentice', hours: 2, timeEntryIds: ['t2'] }], refusal: { at: '2026-10-05T23:00:00Z', by: 'Super', reason: 'not mine' } }),
+    ticket('tk3', { status: 'draft' }), // not signed: never billed
+    ticket('tk4', { status: 'signed', date: '2026-10-20' }), // outside the range
+    ticket('tk5', { status: 'signed', invoiceId: 'inv-old' }), // billed already
+    ticket('tk6', { jobId: 'other' }),
+  ];
+  const range = { issueDate: '2026-10-11', from: '2026-10-05', to: '2026-10-05' };
+
+  test('signed and refused tickets are picked up; the day where billed hours exceed signed hours is flagged', () => {
+    const r = TM.buildTmInvoice({ job, settings, ...range, ...sources, fieldTickets });
+    assert.deepEqual(r.invoice.ticketIds, ['tk1', 'tk2']);
+    assert.deepEqual(r.invoice.ticketReconciliation, [{ day: '2026-10-05', billedMinutes: 12 * 60, signedMinutes: 8.5 * 60 }]);
+    assert.deepEqual(r.flaggedDays, ['2026-10-05'], 'the invoice screen asks for a reason');
+    assert.match(r.invoice.notes, /T-1001, T-1002/);
+    const fine = TM.buildTmInvoice({ job, settings, ...range, ...sources, fieldTickets: [ticket('tk1', { labour: [{ name: 'Crew', hours: 12 }] })] });
+    assert.deepEqual(fine.flaggedDays, []);
+  });
+
+  test('a ticket an invoice billed is not picked up again; no tickets, no reconciliation', () => {
+    const first = { ...TM.buildTmInvoice({ job, settings, ...range, ...sources, fieldTickets }).invoice, id: 'inv1' };
+    assert.deepEqual(TM.billableTickets(job, fieldTickets, { invoices: [first], from: '2026-10-01', to: '2026-10-31' }).map((t) => t.id), ['tk4']);
+    const none = TM.buildTmInvoice({ job, settings, ...range, ...sources });
+    assert.equal(none.invoice.ticketIds, undefined);
+    assert.equal(none.invoice.ticketReconciliation, undefined);
+  });
+
+  test("billFrom 'tickets': labour bills the signed ticket hours; materials still come from moves and requests", () => {
+    const s = { ...settings, tickets: { billFrom: 'tickets' } };
+    const r = TM.buildTmInvoice({ job, settings: s, ...range, ...sources, fieldTickets });
+    const labour = r.invoice.lines.filter((l) => l.kind === 'labour');
+    assert.deepEqual(labour.map((l) => [l.description.split(' (')[0], l.qty]), [['Labour: Ana Apprentice', 2], ['Labour: Sam Sparks', 6.5]]);
+    assert.ok(r.invoice.lines.some((l) => l.kind === 'material'));
+    assert.deepEqual(r.invoice.tm.timeEntryIds.sort(), ['t1', 't2'], 'the entries the tickets name are billed by them');
+    assert.deepEqual(r.flaggedDays, []);
+  });
+
+  test('the invoice takes the job’s exemption (tax.js newDocTax with the job)', () => {
+    const exempt = { ...job, taxExempt: { basis: 'subtrade', number: '1234567', confirmedBy: 'Dana', confirmedAt: '2026-10-01' } };
+    const { invoice } = TM.buildTmInvoice({ job: exempt, settings, ...range, ...sources });
+    assert.equal(invoice.taxTreatment, 'gst-only');
+    assert.equal(invoice.taxExemptNumber, '1234567');
+    assert.equal(docTotals(invoice).taxes.find((t) => t.id === 'RST')?.cents ?? 0, 0, 'no RST charged');
+  });
+
+  test('material returned from the job to the van is credited on the next T&M invoice', () => {
+    const back = { id: 'ret', itemId: 'i1', fromLocationId: null, toLocationId: 'van2', qty: 5, jobId: 'j1', date: '2026-10-06' };
+    assert.equal(TM.isJobReturn(back, 'j1'), true);
+    assert.equal(TM.isJobReturn({ ...back, use: 'receive' }, 'j1'), false, 'a supplier receipt is not a return');
+    assert.equal(TM.isJobReturn({ ...back, fromLocationId: 'shop' }, 'j1'), false, 'a transfer is not a return');
+    const u = TM.unbilledTm({ job, settings, from: '2026-10-01', to: '2026-10-10', ...sources, stockMoves: [...stockMoves, back] });
+    const ret = u.materials.find((m) => m.id === 'ret');
+    assert.equal(ret.qty, -5);
+    assert.equal(u.materialCents, 24000 + 1500 + 1800 - 5 * 1200);
+  });
+});
+
 describe('fixed price: estimate vs actual', () => {
   const fixed = { ...job, billingMode: 'fixed', estimateId: 'e1', changeOrders: [{ id: 'co', amountCents: 50000, status: 'approved' }, { id: 'co2', amountCents: 99999, status: 'pending' }] };
   const estimates = [{

@@ -6,10 +6,15 @@
 // The office marks them ordered or fulfilled, takes them from stock (a stock move onto the job),
 // rolls them into a purchase list or a purchase order (modules/purchasing.js), and sees what is
 // already in the vans. Crew never see prices.
+// Release 1 (docs/releases/r1-get-paid.md 3.5, 6.6): requests for a warranty, callback or unbilled job
+// are own use by default (the office can tag any request own use, with a reason), which feeds the RST
+// self-assessment view; "Receive a delivery" records what arrived against purchase orders, with
+// quantities only (the server's receiving route).
 import { STATUS_LABEL, requestSettings, nextSendAt, fmtSendAt, groupByJob, purchaseList, stockByLocation, stockHint, matchItems, requestName, qtyText } from '../lib/materials.js';
 import { switchOn } from '../lib/modules.js';
+import { ownUseJob, OWN_USE_REASONS, OWN_USE_REASON_LABEL } from '../lib/rst.js';
 import { applyMove } from './inventory.js';
-import { canPurchase, purchaseOrderSheet, requestOrders } from './purchasing.js';
+import { canPurchase, purchaseOrderSheet, requestOrders, receiveSheet } from './purchasing.js';
 import { uid } from '../store.js';
 
 const TABS = [
@@ -85,9 +90,12 @@ export default {
       if (!text) { ui.toast('Say what you need', 'error'); what.focus(); return; }
       if (!(n > 0)) { ui.toast('Enter how many', 'error'); qty.focus(); return; }
       if (auth.synced && !me.id && !manager) { ui.toast('Your account is not linked to an employee record. Ask the office.', 'error', 4000); return; }
+      const job = jobSel.value ? store.get('jobs', jobSel.value) : null;
       const rec = store.add('materialRequests', {
         jobId: jobSel.value || null, itemId: picked?.id || null, description: picked ? picked.name : text, qty: n, unit: unit.value.trim() || picked?.unit || 'ea',
         note: note.value.trim(), urgent: urgent.checked, employeeId: me.id || null, status: 'requested',
+        // Material for warranty, callback or unbilled work is the company's own use (RST self-assessed).
+        ...(ownUseJob(job) ? { use: 'own-use', ownUseReason: ['warranty', 'callback'].includes(job.kind) ? 'warranty' : 'no-charge' } : {}),
       });
       const rs = requestSettings(store.settings());
       ui.toast(rec.urgent ? 'Added as urgent. Tap Send now if it can’t wait.' : `Added. It goes to the office at ${fmtSendAt(rs.sendAt)}.`, 'success', 3200);
@@ -147,13 +155,22 @@ export default {
           { label: 'Quantity', name: 'qty', type: 'number', step: 'any', min: '0', value: r.qty, required: true },
         ],
         onSubmit: (v) => {
-          const res = applyMove(store, { type: 'use', itemId: it.id, fromLocationId: v.fromLocationId, qty: v.qty, jobId: r.jobId, date: ui.today(), note: `Material request: ${qtyText(r)} ${requestName(r, items())}` });
+          const res = applyMove(store, { type: 'use', itemId: it.id, fromLocationId: v.fromLocationId, qty: v.qty, jobId: r.jobId, date: ui.today(), note: `Material request: ${qtyText(r)} ${requestName(r, items())}`,
+            use: r.use === 'own-use' ? 'own-use' : 'job', ownUseReason: r.use === 'own-use' ? r.ownUseReason || 'other' : null, costCodeId: r.costCodeId || null });
           if (res.error) { ui.toast(res.error, 'error'); return false; }
           set(r, { status: 'fulfilled', fulfilledAt: new Date().toISOString(), stockMoveId: res.move.id, fromLocationId: v.fromLocationId }, `from stock ${it.name}`);
           ui.toast(res.warning || `Taken from ${store.get('locations', v.fromLocationId)?.name} onto the job`, res.warning ? 'info' : 'success', 3500);
         },
       });
     };
+    // Own use (3.5): material the company uses itself (warranty, no charge, shop, truck, tools) is not
+    // resold, so its RST is self-assessed (Job costing → RST).
+    const setUse = (r) => ui.formSheet({
+      title: `Own use: ${requestName(r, items())}`, submitLabel: 'Save',
+      fields: [{ label: 'Use', name: 'use', type: 'select', value: r.use === 'own-use' ? r.ownUseReason || 'other' : '', span: true,
+        options: [{ value: '', label: 'Billed to the job (resale)' }, ...OWN_USE_REASONS.map((x) => ({ value: x, label: `Own use: ${OWN_USE_REASON_LABEL[x]}` }))] }],
+      onSubmit: (v) => { set(r, v.use ? { use: 'own-use', ownUseReason: v.use } : { use: 'job', ownUseReason: null }, v.use ? `own use (${v.use})` : 'billed to the job'); },
+    });
     const setCost = async (r) => {
       const v = await ui.promptDialog(`Cost per ${r.unit || 'unit'} for ${requestName(r, items())}`, { title: 'Set cost', value: r.costCents != null ? ui.centsToInput(r.costCents) : '' });
       if (v == null) return;
@@ -211,6 +228,7 @@ export default {
         if (['requested', 'sent', 'ordered'].includes(st)) actions.push(ui.button('Fulfilled', { size: 'sm', onClick: () => markFulfilled([r]) }));
         if (['requested', 'sent', 'ordered'].includes(st) && stock() && it) actions.push(ui.button('From stock', { size: 'sm', icon: 'box', onClick: () => fromStock(r) }));
         if (money && !it && st !== 'cancelled') actions.push(ui.button(r.costCents != null ? ui.fmtMoney(r.costCents) : 'Cost…', { size: 'sm', variant: 'ghost', onClick: () => setCost(r) }));
+        if (st !== 'cancelled') actions.push(ui.button(r.use === 'own-use' ? `Own use: ${OWN_USE_REASON_LABEL[r.ownUseReason] || 'other'}` : 'Own use…', { size: 'sm', variant: 'ghost', onClick: () => setUse(r) }));
       } else if (st === 'requested' && mine(r)) {
         actions.push(ui.button('Cancel', { size: 'sm', variant: 'ghost danger', onClick: async () => {
           if (!(await ui.confirmDialog(`Cancel ${qtyText(r)} ${requestName(r, items())}?`, { okLabel: 'Cancel request', title: 'Cancel request' }))) return;
@@ -275,8 +293,9 @@ export default {
       }
     };
 
-    root.append(ui.page({ title: 'Material requests', subtitle: manager ? 'What the crew need, grouped by job' : 'Ask for material; the office gets one list a day' },
-      form, schedHost, host));
+    root.append(ui.page({ title: 'Material requests', subtitle: manager ? 'What the crew need, grouped by job' : 'Ask for material; the office gets one list a day',
+      actions: [ui.button('Receive a delivery', { icon: 'box', onClick: () => receiveSheet(ctx, { jobId: ctx.query.jobId || null }) })] },
+    form, schedHost, host));
     fillJobs(); drawPicks(); draw();
     if (ctx.query.new) setTimeout(() => what.focus(), 50);
     if (manager && auth.synced && app?.api) {

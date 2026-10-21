@@ -10,8 +10,15 @@
 // billed any of them: restoreConflicts). No other record is changed.
 //
 // Fixed price: time is tracked for payroll and job costing only and never becomes an invoice
-// line. jobCosting() compares the estimate with what was spent: hours, cost and margin.
+// line. jobCosting() compares the estimate with what was spent: hours, cost and margin, using
+// lib/costing.js (docs/releases/r1-get-paid.md 6: burdened labour, trucks, bills, accruals).
+//
+// Field tickets (r1-get-paid.md 4.1): on a T&M job, signed and refused tickets are billed by this
+// builder, never priced as change orders. buildTmInvoice picks them up (ticketIds) and reconciles
+// each day's billed hours from time entries against the hours on the tickets
+// (ticketReconciliation); with settings.tickets.billFrom 'tickets' labour bills the ticket hours.
 import { docTotals, entryHours, lineCents } from './money.js';
+import { jobActuals, contractEstimate, contractValue, estimatedCost, jobVarianceCount, approvedChangeOrders } from './costing.js';
 
 /**
  * Is this time entry travel? One model: `kind: 'travel'` (lib/timesheet.js, lib/clock.js). Entries saved
@@ -88,6 +95,13 @@ const coveredByMove = (r, moveIds, billed = new Set()) => Boolean(r.stockMoveId)
 export const isJobUse = (m, jobId) => m.jobId === jobId && Boolean(m.fromLocationId) && !m.toLocationId && Number(m.qty) > 0;
 
 /**
+ * Is a stock move material coming back from a job (into a van or the shop, from no location)? It
+ * counts as negative job use. Receipts from a supplier and count adjustments are not returns.
+ */
+export const isJobReturn = (m, jobId) => m.jobId === jobId && Boolean(m.toLocationId) && !m.fromLocationId && Number(m.qty) > 0
+  && m.use !== 'receive' && m.use !== 'adjust' && !m.countId;
+
+/**
  * What a T&M job has not billed yet, between `from` and `to` (YYYY-MM-DD, inclusive; either may
  * be empty for open-ended). `firstDay` is the earliest day of anything left to bill (approved or
  * waiting for approval): the invoice builder's default start. The totals are the amounts of the
@@ -128,14 +142,16 @@ export function unbilledTm({ job, settings, timeEntries = [], stockMoves = [], m
   // A move whose request was billed on its own (the move was missing then) is billed already.
   const billedViaRequest = new Set(materialRequests.filter((r) => r.stockMoveId && billed.has(`req:${r.id}`)).map((r) => r.stockMoveId));
   for (const m of stockMoves) {
-    if (!isJobUse(m, job.id) || billed.has(`move:${m.id}`) || billedViaRequest.has(m.id)) continue;
+    // Material used on the job, and material returned from it (a credit at the same price).
+    const back = !isJobUse(m, job.id) && isJobReturn(m, job.id);
+    if ((!isJobUse(m, job.id) && !back) || billed.has(`move:${m.id}`) || billedViaRequest.has(m.id)) continue;
     const day = m.date || dayOf(m.createdAt);
     if (!inRange(day, from, to)) continue;
     seen(day);
     const it = itemById.get(m.itemId);
     const cost = it?.costCents;
-    materials.push({ source: 'move', id: m.id, day, itemId: m.itemId || null, description: it?.name || 'Material', unit: it?.unit || 'ea', qty: Number(m.qty),
-      costCents: cost == null ? null : Number(cost), unitCents: cost == null ? 0 : unit(Number(cost)) });
+    materials.push({ source: 'move', id: m.id, day, itemId: m.itemId || null, description: it?.name || 'Material', unit: it?.unit || 'ea', qty: back ? -Number(m.qty) : Number(m.qty),
+      costCents: cost == null ? null : Number(cost), unitCents: cost == null ? 0 : unit(Number(cost)), ...(back ? { returned: true } : {}) });
   }
   for (const r of materialRequests) {
     if (r.jobId !== job.id || r.status !== 'fulfilled' || coveredByMove(r, moveIds, billed) || billed.has(`req:${r.id}`)) continue;
@@ -201,23 +217,100 @@ export function tmLines(u, { fmtDay = (d) => d } = {}) {
   };
 }
 
+/** Ticket ids a non-void invoice already billed. */
+export function billedTicketIds(invoices = []) {
+  const out = new Set();
+  for (const inv of invoices) if (inv && inv.status !== 'void') for (const id of inv.ticketIds || []) out.add(id);
+  return out;
+}
+
+/** Minutes of labour on a field ticket row: hours, plus travel when it is a number of hours. */
+const ticketRowMinutes = (l) => Math.round(((Number(l?.hours) || 0) + (typeof l?.travel === 'number' ? l.travel : 0)) * 60);
+
+/**
+ * Signed and refused field tickets on a T&M job dated in from..to that no invoice has billed yet
+ * (a refused ticket is billed with its written notice).
+ */
+export function billableTickets(job, fieldTickets = [], { invoices = [], from = '', to = '' } = {}) {
+  const done = billedTicketIds(invoices);
+  return fieldTickets.filter((t) => t && t.jobId === job.id && ['signed', 'refused'].includes(t.status) && !t.invoiceId && !done.has(t.id) && inRange(t.date, from, to))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.number || a.id).localeCompare(String(b.number || b.id)));
+}
+
+/**
+ * Per day: minutes billed from time entries against minutes on the day's signed or refused tickets.
+ * A day where billed exceeds signed needs a reason before the invoice is saved (the invoice screen asks).
+ * Only when the job has tickets in the range; a company that does not use tickets reconciles nothing.
+ */
+export function ticketReconciliation(labour, tickets) {
+  if (!tickets.length) return [];
+  const days = new Map();
+  const at = (d) => { if (!days.has(d)) days.set(d, { day: d, billedMinutes: 0, signedMinutes: 0 }); return days.get(d); };
+  for (const l of labour) at(l.day).billedMinutes += l.hours * 60;
+  for (const t of tickets) for (const l of t.labour || []) at(t.date).signedMinutes += ticketRowMinutes(l);
+  return [...days.values()].map((x) => ({ ...x, billedMinutes: Math.round(x.billedMinutes), signedMinutes: Math.round(x.signedMinutes) }))
+    .map((x) => ({ ...x, needsReason: x.billedMinutes > x.signedMinutes }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+}
+
+/** Labour rows to bill from tickets (settings.tickets.billFrom 'tickets'): the signed hours, at the job's rates. */
+function ticketLabour(job, tickets, rates, employees) {
+  const empById = new Map(employees.map((e) => [e.id, e]));
+  const out = [];
+  for (const t of tickets) {
+    (t.labour || []).forEach((l, i) => {
+      const e = l.employeeId ? empById.get(l.employeeId) : null;
+      const name = l.name || e?.name || 'Crew';
+      const rateCents = Number(e?.billRateCents) > 0 && job.labourRateCents == null ? Number(e.billRateCents) : rates.labourRateCents;
+      const hours = Number(l.hours) || 0;
+      if (hours > 0) out.push({ id: `${t.id}:${i}`, day: t.date, hours, travel: l.travel === true, employeeId: l.employeeId || null, name, rateCents: l.travel === true ? rates.travelRateCents : rateCents, ticketId: t.id });
+      if (typeof l.travel === 'number' && l.travel > 0) out.push({ id: `${t.id}:${i}:travel`, day: t.date, hours: l.travel, travel: true, employeeId: l.employeeId || null, name, rateCents: rates.travelRateCents, ticketId: t.id });
+    });
+  }
+  return out;
+}
+
 /**
  * The draft invoice for "Build invoice from time & material". Taxes come from the company's
- * province (tax.js) on the issue date. Throws for a fixed-price job.
+ * province (tax.js newDocTax, exemption-aware with the job and client) on the issue date. Throws for
+ * a fixed-price job. With `fieldTickets`, signed and refused tickets on the job in the range are picked
+ * up (invoice.ticketIds, and invoice.ticketReconciliation per day; `flaggedDays` lists the days where
+ * billed hours exceed signed hours). With settings.tickets.billFrom 'tickets', labour lines bill the
+ * hours on the tickets instead of time entries (material still comes from moves and requests), and
+ * the time entries those tickets name are marked billed.
  */
-export function buildTmInvoice({ job, settings, issueDate, dueDate, from = '', to = '', fmtDay, ...sources }) {
+export function buildTmInvoice({ job, settings, issueDate, dueDate, from = '', to = '', fmtDay, client = null, fieldTickets = [], ...sources }) {
   if (jobBillingMode(job) !== 'tm') throw new Error('This job is fixed price: bill it from the estimate. Its time is for payroll and job costing.');
   const u = unbilledTm({ job, settings, from, to, ...sources });
-  if (u.empty) throw new Error(u.pendingApproval ? `Nothing approved to bill yet: ${u.pendingApproval} time entr${u.pendingApproval === 1 ? 'y is' : 'ies are'} waiting for approval.` : 'Nothing to bill in that range.');
-  const { lines, refs } = tmLines(u, { fmtDay });
+  const tickets = billableTickets(job, fieldTickets, { invoices: sources.invoices || [], from, to });
+  const fromTickets = settings?.tickets?.billFrom === 'tickets';
+  let billing = u;
+  let reconciliation;
+  if (fromTickets) {
+    const labour = ticketLabour(job, tickets, u.rates, sources.employees || []);
+    billing = { ...u, labour, empty: !labour.length && !u.materials.length };
+    reconciliation = ticketReconciliation(labour, tickets).map((x) => ({ ...x, needsReason: false }));
+  } else {
+    reconciliation = ticketReconciliation(u.labour, tickets);
+  }
+  if (billing.empty) throw new Error(u.pendingApproval ? `Nothing approved to bill yet: ${u.pendingApproval} time entr${u.pendingApproval === 1 ? 'y is' : 'ies are'} waiting for approval.` : 'Nothing to bill in that range.');
+  const { lines, refs } = tmLines(billing, { fmtDay });
+  if (fromTickets) {
+    const named = new Set(tickets.flatMap((t) => (t.labour || []).flatMap((l) => l.timeEntryIds || [])));
+    refs.timeEntryIds = u.labour.filter((l) => named.has(l.id)).map((l) => l.id);
+  }
   const range = from && to ? `${from} to ${to}` : from ? `from ${from}` : to ? `up to ${to}` : 'to date';
+  const ticketPart = tickets.length ? ` Field tickets ${tickets.map((t) => t.number || `T-pending ${String(t.id).slice(0, 4)}`).join(', ')}.` : '';
   return {
     invoice: {
       clientId: job.clientId || null, jobId: job.id, estimateId: null, title: job.title || '', status: 'draft', lines,
-      ...newDocTax(settings, issueDate), issueDate, dueDate,
-      notes: `Time and material ${range}.`, billingMode: 'tm', tm: { from: from || null, to: to || null, ...refs },
+      ...newDocTax(settings, issueDate, { job, client }), issueDate, dueDate,
+      notes: `Time and material ${range}.${ticketPart}`, billingMode: 'tm', tm: { from: from || null, to: to || null, ...refs },
+      ...(tickets.length ? { ticketIds: tickets.map((t) => t.id), ticketReconciliation: reconciliation.map(({ day, billedMinutes, signedMinutes }) => ({ day, billedMinutes, signedMinutes })) } : {}),
     },
-    unbilled: u,
+    unbilled: billing,
+    tickets,
+    flaggedDays: reconciliation.filter((x) => x.needsReason).map((x) => x.day),
   };
 }
 
@@ -231,52 +324,53 @@ export function docHours(d) {
 }
 
 /**
- * Estimate against actual for a job (fixed price, though it works for T&M too).
- * Estimate: accepted estimates (else every estimate on the job) plus approved change orders.
- * Actual: every closed time entry at each person's cost rate, and material used at cost.
- * Labour cost in the estimate uses the average cost rate of the job's crew (else everyone's).
+ * Estimate against actual for a job (fixed price, though it works for T&M too), through lib/costing.js.
+ * Contract: contract.valueCents, else the latest accepted estimate that is not superseded (else, for
+ * display only, the job's latest open estimate), plus change orders approved on or before asOf.
+ * Estimate: the job's stored budget (costing.budget), else the estimate's at the burdened rate, plus
+ * change-order budgets; costing.estCostOverrideCents wins. Actual: jobActuals (6.1).
+ * Old keys keep their names: labourCents is burdened labour with the overtime premium (the bare wage
+ * when no burden data exists, then burdenMissing is true), materialCents is stock and requests net of
+ * returns, costCents is every cost including accrued.
  */
-export function jobCosting({ job, estimates = [], timeEntries = [], stockMoves = [], materialRequests = [], items = [], employees = [], now = new Date() }) {
-  const mine = estimates.filter((e) => e.jobId === job.id || e.id === job.estimateId);
-  const accepted = mine.filter((e) => e.status === 'accepted');
-  const basis = accepted.length ? accepted : mine;
-  const itemById = new Map(items.map((i) => [i.id, i]));
-  const empById = new Map(employees.map((e) => [e.id, e]));
-  const coCents = (job.changeOrders || []).filter((c) => c.status === 'approved').reduce((s, c) => s + (Number(c.amountCents) || 0), 0);
-  const contractCents = basis.reduce((s, e) => s + docValue(e), 0) + coCents;
-  const estHours = round2(basis.reduce((s, e) => s + docHours(e), 0));
-  const estMaterialCents = basis.reduce((s, e) => s + (e.lines || []).filter((l) => l.kind !== 'labour' && l.kind !== 'other')
-    .reduce((a, l) => a + Math.round((Number(l.qty) || 0) * (Number(itemById.get(l.itemId)?.costCents) || 0)), 0), 0);
-  const crew = (job.crewIds || []).map((id) => empById.get(id)).filter((e) => e && Number(e.rateCents) > 0);
-  const pool = crew.length ? crew : employees.filter((e) => e.active !== false && Number(e.rateCents) > 0);
-  const avgRate = pool.length ? Math.round(pool.reduce((s, e) => s + Number(e.rateCents), 0) / pool.length) : 0;
-  const estLabourCents = Math.round(estHours * avgRate);
-  const estCostCents = estLabourCents + estMaterialCents;
+export function jobCosting({
+  job, estimates = [], timeEntries = [], stockMoves = [], materialRequests = [], items = [], employees = [], bills = [], vendors = [],
+  purchaseOrders = [], equipment = [], equipmentUse = [], rules = null, settings = null, asOf = '', now = new Date(), dayOf,
+}) {
+  const accepted = contractEstimate(job, estimates);
+  const open = estimates.filter((e) => (e.jobId === job.id || e.id === job.estimateId) && !['declined', 'superseded', 'void'].includes(e.status))
+    .sort((a, b) => String(b.issueDate || b.createdAt || '').localeCompare(String(a.issueDate || a.createdAt || '')));
+  const basis = accepted || open[0] || null;
+  const coCents = approvedChangeOrders(job, { asOf }).reduce((s, c) => s + (Number(c.amountCents) || 0), 0);
+  const contractCents = accepted || Number.isInteger(job?.contract?.valueCents) ? contractValue(job, estimates, { asOf }) : (basis ? docValue(basis) : 0) + coCents;
+  const est = estimatedCost(job, { estimates, items, employees, equipment, rules, settings, asOf, estimate: basis });
+  const budget = est.budget;
+  const estHours = budget ? round2(Number(budget.labourHours) || 0) : 0;
+  const estLabourCents = budget ? Number(budget.labourCostCents) || 0 : 0;
+  const estMaterialCents = budget ? Number(budget.materialCents) || 0 : 0;
+  const estCostCents = est.estCostCents;
 
-  let hours = 0, travelHours = 0, labourCents = 0;
-  for (const t of timeEntries) {
-    if (t.jobId !== job.id || !t.clockIn) continue;
-    const h = entryHours(t, now);
-    if (isTravel(t)) travelHours += h; else hours += h;
-    labourCents += Math.round(h * (Number(empById.get(t.employeeId)?.rateCents) || 0));
+  const a = jobActuals({ job, timeEntries, stockMoves, materialRequests, items, employees, bills, vendors, purchaseOrders, equipment, equipmentUse, rules, settings, asOf,
+    now: now instanceof Date ? now.getTime() : now, ...(dayOf ? { dayOf } : {}) });
+  const byCostCode = { ...a.byCostCode };
+  for (const [k, v] of Object.entries(budget?.byCostCode || {})) {
+    byCostCode[k] = { estCents: 0, actualCents: 0, hours: 0, ...byCostCode[k] };
+    byCostCode[k].estCents = Number(v.estCents) || 0;
   }
-  let materialCents = 0;
-  for (const m of stockMoves) if (isJobUse(m, job.id)) materialCents += Math.round(Number(m.qty) * (Number(itemById.get(m.itemId)?.costCents) || 0));
-  const moveIds = new Set(stockMoves.map((m) => m.id));
-  for (const r of materialRequests) {
-    if (r.jobId !== job.id || r.status !== 'fulfilled' || coveredByMove(r, moveIds)) continue;
-    materialCents += Math.round((Number(r.qty) || 0) * (Number(r.costCents ?? itemById.get(r.itemId)?.costCents) || 0));
-  }
-  const costCents = labourCents + materialCents;
-  const marginCents = contractCents - costCents;
+  const marginCents = contractCents - a.costCents;
   return {
-    estimates: basis.length, contractCents, coCents,
+    estimates: basis ? 1 : 0, contractCents, coCents,
     estHours, estLabourCents, estMaterialCents, estCostCents,
-    hours: round2(hours), travelHours: round2(travelHours), labourCents, materialCents, costCents,
-    hoursUsedPct: estHours ? Math.round(((hours + travelHours) / estHours) * 100) : null,
-    costUsedPct: estCostCents ? Math.round((costCents / estCostCents) * 100) : null,
+    hours: a.hours, travelHours: a.travelHours, labourCents: a.labourCents, materialCents: a.materialCents, costCents: a.costCents,
+    hoursUsedPct: estHours ? Math.round(((a.hours + a.travelHours) / estHours) * 100) : null,
+    costUsedPct: estCostCents ? Math.round((a.costCents / estCostCents) * 100) : null,
     marginCents, marginPct: contractCents ? Math.round((marginCents / contractCents) * 100) : null,
     estMarginCents: contractCents - estCostCents,
+    labourWageCents: a.labourWageCents, burdenCents: a.burdenCents, otPremiumCents: a.otPremiumCents,
+    billsCents: a.billsCents, subcontractCents: a.subcontractCents, equipmentCents: a.equipmentCents, otherCents: a.otherCents,
+    accruedCents: a.accruedCents, committedCents: a.committedCents, byCostCode,
+    varianceCount: jobVarianceCount(job.id, { bills, purchaseOrders, items, tolerancePct: settings?.costing?.priceVariancePct ?? 2 }),
+    burdenMissing: a.burdenMissing,
   };
 }
 
