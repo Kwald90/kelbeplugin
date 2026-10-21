@@ -16,7 +16,13 @@ export default {
   perm: 'estimates',
   render(root, ctx) {
     const [sub] = ctx.params;
-    if (sub === 'new') return createNew(ctx);
+    if (sub === 'new') {
+      if (ctx.readOnly) {
+        root.append(ctx.ui.page({ title: 'Estimates are view only' }, ctx.ui.empty({ icon: 'lock', title: 'Creating estimates requires a plan with Estimates', text: 'Your existing estimates are available to view.', action: ctx.ui.button('All estimates', { href: '#/estimates' }) })));
+        return;
+      }
+      return createNew(ctx);
+    }
     if (sub) return renderDetail(root, ctx, sub);
     return renderList(root, ctx);
   },
@@ -60,14 +66,14 @@ function renderList(root, ctx) {
           { key: 'client', label: 'Client', render: (e) => clientName(store, e.clientId), sort: (e) => clientName(store, e.clientId) },
           { key: 'title', label: 'Title', render: (e) => e.title || '—', sort: (e) => e.title || '' },
           { key: 'total', label: 'Total', align: 'right', render: (e) => money(docTotals(e).totalCents), sort: (e) => docTotals(e).totalCents },
-          { key: 'status', label: 'Status', render: (e) => h('span', { class: 'row-inline' }, ui.statusBadge(e.status), qboBadge(ctx, 'estimates', e.id, { record: e })), sort: (e) => e.status },
+          { key: 'status', label: 'Status', render: (e) => h('span', { class: 'row-inline' }, ui.statusBadge(e.status), ctx.readOnly ? null : qboBadge(ctx, 'estimates', e.id, { record: e })), sort: (e) => e.status },
           { key: 'validUntil', label: 'Valid until', render: (e) => validCell(ui, e), sort: (e) => e.validUntil || '' },
         ],
         rows: r,
         onRowClick: (e) => nav('#/estimates/' + e.id),
         empty: ui.empty({ icon: 'file-text', title: all.length ? 'No estimates match' : 'No estimates yet',
           text: all.length ? 'Try another tab or search.' : 'Build a quote from the price book, or run a takeoff from a drawing.',
-          action: all.length ? null : ui.button('New estimate', { variant: 'primary', icon: 'plus', href: '#/estimates/new' }) }),
+          action: all.length || ctx.readOnly ? null : ui.button('New estimate', { variant: 'primary', icon: 'plus', href: '#/estimates/new' }) }),
       }));
     }
   };
@@ -75,7 +81,7 @@ function renderList(root, ctx) {
 
   root.append(ui.page({
     title: 'Estimates', subtitle: 'Quotes built from the price book and drawing takeoffs',
-    actions: [ui.button('New estimate', { variant: 'primary', icon: 'plus', href: '#/estimates/new' })],
+    actions: ctx.readOnly ? [] : [ui.button('New estimate', { variant: 'primary', icon: 'plus', href: '#/estimates/new' })],
   }, body));
   draw();
   return store.on('estimates', draw);
@@ -201,11 +207,12 @@ function renderDetail(root, ctx, id) {
     return;
   }
   const doc = est;
+  const readOnly = Boolean(ctx.readOnly);
   const money = moneyFormatter(store.settings());
   // Saves only the fields changed here (never status, which its buttons write), and takes in what
   // QuickBooks or another device changed while the estimate is open (QuickBooks contract 5.10).
   const save = docEditor(store, 'estimates', id, doc, {
-    write: (patch, opts) => store.update('estimates', id, patch, opts),
+    write: (patch, opts) => readOnly ? store.get('estimates', id) : store.update('estimates', id, patch, opts),
     onPulled: (fields, clashes) => {
       if (clashes.length) ui.toast(`${doc.number} changed in QuickBooks or on another device while you were editing it. The latest version is shown; check your last change.`, 'info', 7000);
       if (fields.some((f) => FORM_FIELDS.includes(f))) { redraw(); return; }
@@ -224,7 +231,7 @@ function renderDetail(root, ctx, id) {
   const on = (m) => (ctx.on ? ctx.on(m) : moduleOn(store.settings(), m));
   const changed = () => { totals.update(doc); noTax.update(); save(); };
   // "Why no tax?" (QuickBooks contract 8.5): every company; each reason lands on its own GST return line.
-  const noTax = noTaxReasonPicker(ctx, doc, { onChange: () => save() });
+  const noTax = noTaxReasonPicker(ctx, doc, { onChange: () => save(), readOnly });
 
   const clients = store.list('clients').sort((a, b) => a.name.localeCompare(b.name));
   const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
@@ -232,69 +239,108 @@ function renderDetail(root, ctx, id) {
   const fieldEl = (f, onVal) => {
     const el = ui.field(f);
     const c = el.querySelector('[name]');
+    c.disabled = readOnly;
     c.addEventListener(c.tagName === 'SELECT' ? 'change' : 'input', () => { onVal(ui.readForm(el)[f.name]); changed(); });
     return el;
   };
 
   const header = h('div', { class: 'form-grid' },
-    fieldEl({ label: 'Title', name: 'title', value: doc.title, span: true }, (v) => { doc.title = v; }),
-    fieldEl({ label: 'Client', name: 'clientId', type: 'select', value: doc.clientId || '', options: ui.recordOptions(clients) }, (v) => { doc.clientId = v || null; }),
-    fieldEl({ label: 'Job', name: 'jobId', type: 'select', value: doc.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`) }, (v) => { doc.jobId = v || null; }),
+    fieldEl({ label: 'Customer', name: 'clientId', type: 'select', value: doc.clientId || '', options: ui.recordOptions(clients) }, (v) => { doc.clientId = v || null; }),
     fieldEl({ label: 'Valid until', name: 'validUntil', type: 'date', value: doc.validUntil }, (v) => { doc.validUntil = v; }),
-    fieldEl({ label: 'Labour rate ($/h)', name: 'labourRateCents', type: 'money', value: doc.labourRateCents }, (v) => { doc.labourRateCents = v; }),
-    fieldEl({ label: 'Materials markup %', name: 'markupPct', type: 'number', step: '0.1', min: '0', value: doc.markupPct ?? 0, hint: 'Extra uplift on material lines' }, (v) => { doc.markupPct = v || 0; }),
-    taxEditor({ doc, store, onChange: changed }), noTax);
+    fieldEl({ label: 'Work to be quoted', name: 'title', value: doc.title, span: true, placeholder: 'For example: panel replacement at the shop' }, (v) => { doc.title = v; }),
+    fieldEl({ label: 'Linked job (optional)', name: 'jobId', type: 'select', value: doc.jobId || '', span: true, options: ui.recordOptions(jobs, (j) => `${j.number} - ${j.title}`) }, (v) => { doc.jobId = v || null; drawStatus(); }));
+
+  const pricing = h('details', { class: 'card estimate-pricing' },
+    h('summary', null, 'Pricing & tax settings'),
+    h('p', { class: 'muted estimate-hint' }, 'Review labour rates, material markup and tax treatment for this work.'),
+    h('div', { class: 'form-grid' },
+      fieldEl({ label: 'Labour rate ($/h)', name: 'labourRateCents', type: 'money', value: doc.labourRateCents }, (v) => { doc.labourRateCents = v; }),
+      fieldEl({ label: 'Materials markup %', name: 'markupPct', type: 'number', step: '0.1', min: '0', value: doc.markupPct ?? 0, hint: 'Extra uplift on material lines' }, (v) => { doc.markupPct = v || 0; }),
+      taxEditor({ doc, store, onChange: changed, readOnly })));
 
   const notes = fieldEl({ label: 'Notes shown on the estimate', name: 'notes', type: 'textarea', value: doc.notes, span: true }, (v) => { doc.notes = v; });
-  const editor = lineEditor({ doc, store, onChange: changed });
+  const editor = lineEditor({ doc, store, onChange: changed, readOnly });
   const totals = totalsPanel(doc, { money });
 
-  const statusHost = h('div', { class: 'stack' });
+  const preview = () => { save.flush(); previewDocument({ kind: 'Estimate', doc, store, readOnly }); };
+  const linkedJob = () => {
+    const latest = store.get('estimates', id);
+    return (latest?.jobId && store.get('jobs', latest.jobId)) || (doc.jobId && store.get('jobs', doc.jobId)) || store.list('jobs').find((j) => j.estimateId === id);
+  };
+  const jobHref = (job) => '#/jobs/' + job.id + (on('schedule') ? '?tab=schedule' : '');
+  const statusHost = h('section', { class: 'card estimate-next', 'aria-label': 'Quote next step' });
   const drawStatus = () => {
     ui.clear(statusHost);
     const st = doc.status;
+    const job = linkedJob();
+    const next = readOnly ? ['View quote', 'This estimate is available to view. Editing requires a plan with Estimates.']
+      : st === 'accepted' ? [job ? 'Plan the work' : 'Turn approval into a job', 'Open the job to choose dates and assign the crew.']
+      : st === 'sent' ? ['Awaiting the customer', 'When the customer approves by email, phone or in person, record that approval here.']
+      : st === 'declined' ? ['Review the feedback', 'Return to draft to revise the scope and price before sending again.']
+      : ['Review before sending', 'Preview the customer quote, then print it or email it when an email integration is connected.'];
+    const primary = readOnly ? ui.button('Preview quote', { variant: 'primary', icon: 'file-text', onClick: preview })
+      : st === 'accepted' ? ui.button(job ? 'Open job' : 'Create job', { variant: 'primary', icon: 'briefcase', onClick: createJob })
+      : st === 'sent' ? ui.button('Record approval', { variant: 'primary', icon: 'check', onClick: accept })
+      : st === 'declined' ? ui.button('Return to draft', { variant: 'primary', onClick: () => setStatus('draft') })
+      : ui.button('Preview quote', { variant: 'primary', icon: 'file-text', onClick: preview });
     h(statusHost, null,
-      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), qboBadge(ctx, 'estimates', id, { detail: true, record: doc }), ui.statusBadge(st)),
-      st === 'draft' ? lookupAction(ctx, { entity: 'estimates', clientId: doc.clientId }) : null,
-      h('div', { class: 'row' },
-        st !== 'sent' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: () => setStatus('sent') }) : null,
-        st !== 'accepted' ? ui.button('Accepted', { size: 'sm', variant: 'primary', icon: 'check', onClick: () => accept() }) : null,
-        st !== 'declined' ? ui.button('Declined', { size: 'sm', variant: 'ghost danger', icon: 'x', onClick: () => setStatus('declined') }) : null,
-        st !== 'draft' ? ui.button('Back to draft', { size: 'sm', variant: 'ghost', onClick: () => setStatus('draft') }) : null),
-      st === 'accepted' ? h('div', { class: 'row' },
-        doc.jobId ? ui.button('Open job', { size: 'sm', icon: 'briefcase', href: '#/jobs/' + doc.jobId }) : ui.button('Create job', { size: 'sm', icon: 'briefcase', onClick: createJob }),
-        on('invoices') ? ui.button('Create invoice', { size: 'sm', icon: 'receipt', onClick: () => { save.flush(); nav('#/invoices/new?estimateId=' + id); } }) : null) : null);
+      h('div', { class: 'estimate-next-copy' },
+        h('div', { class: 'row' }, h('h2', null, next[0]), ui.statusBadge(st), !readOnly ? qboBadge(ctx, 'estimates', id, { detail: true, record: doc }) : null),
+        h('p', { class: 'muted estimate-hint' }, next[1])),
+      h('div', { class: 'row estimate-next-actions' }, primary,
+        !readOnly && st === 'accepted' && on('invoices') ? ui.button('Create invoice', { icon: 'receipt', onClick: () => { save.flush(); nav('#/invoices/new?estimateId=' + id); } }) : null),
+      !readOnly ? h('details', { class: 'estimate-status-actions' },
+        h('summary', null, 'Update status'),
+        h('p', { class: 'muted estimate-hint' }, 'These actions record what happened outside Fishtape. Mark sent does not send an email.'),
+        h('div', { class: 'row' },
+          st !== 'sent' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: () => setStatus('sent') }) : null,
+          st !== 'accepted' ? ui.button('Record approval', { size: 'sm', icon: 'check', onClick: accept }) : null,
+          st !== 'declined' ? ui.button('Record decline', { size: 'sm', variant: 'ghost danger', icon: 'x', onClick: () => setStatus('declined') }) : null,
+          st !== 'draft' ? ui.button('Back to draft', { size: 'sm', variant: 'ghost', onClick: () => setStatus('draft') }) : null,
+          st === 'draft' ? lookupAction(ctx, { entity: 'estimates', clientId: doc.clientId }) : null)) : null);
   };
-  const setStatus = (st) => { save.write({ status: st }, { summary: `${doc.number} → ${st}` }); drawStatus(); ui.toast(`${doc.number} marked ${st}`, 'success'); };
+  const setStatus = (st) => {
+    if (readOnly) return;
+    save.write({ status: st }, { summary: `${doc.number} -> ${st}` });
+    drawStatus();
+    ui.toast(st === 'accepted' ? `Approval recorded for ${doc.number}` : `${doc.number} marked ${st}`, 'success');
+  };
   const createJob = () => {
+    if (readOnly) return;
     save.flush();
+    // Reuse the linked job or an existing conversion, including a link received from sync.
+    // Cross-device uniqueness still belongs to the server; this prevents repeat local creation.
+    const existing = linkedJob();
+    if (existing) { nav(jobHref(existing)); return existing; }
     const job = store.add('jobs', {
       number: store.nextNumber('job'), title: doc.title || 'New job', clientId: doc.clientId || null,
       address: doc.clientId ? (store.get('clients', doc.clientId)?.address || '') : '', status: 'scheduled',
       startDate: '', endDate: '', crewIds: [], estimateId: id, description: doc.notes || '', changeOrders: [],
     });
     save.write({ jobId: job.id });
-    drawStatus();
-    ui.toast(`Job ${job.number} created`, 'success');
+    ui.toast(`Job ${job.number} created. Choose dates and assign the crew.`, 'success');
+    nav(jobHref(job));
     return job;
   };
   const accept = () => {
-    setStatus('accepted');
-    if (doc.leadId && on('leads')) { const l = store.get('leads', doc.leadId); if (l && l.stage !== 'won') store.update('leads', l.id, { stage: 'won' }); }
+    if (readOnly) return;
     const s = ui.openSheet({
-      title: 'Estimate accepted', dialog: true,
-      body: h('p', { style: { margin: 0 } }, `${doc.number} is accepted. What next?`),
+      title: 'Record customer approval', dialog: true,
+      body: h('p', { class: 'estimate-hint' }, `Record approval for ${doc.number} only after receiving it from the customer by email, phone or in person. This updates the estimate status; it does not capture a customer signature. Keep the original approval with your job records.`),
       actions: [
-        ui.button('Later', { variant: 'ghost', onClick: () => s.close() }),
-        doc.jobId ? ui.button('Open job', { icon: 'briefcase', onClick: () => { s.close(); nav('#/jobs/' + doc.jobId); } })
-          : ui.button('Create job', { icon: 'briefcase', onClick: () => { s.close(); createJob(); } }),
-        on('invoices') ? ui.button('Create invoice', { variant: 'primary', icon: 'receipt', onClick: () => { s.close(); nav('#/invoices/new?estimateId=' + id); } }) : null,
-      ].filter(Boolean),
+        ui.button('Cancel', { variant: 'ghost', onClick: () => s.close() }),
+        ui.button('Record approval', { variant: 'primary', icon: 'check', onClick: () => {
+          setStatus('accepted');
+          if (doc.leadId && on('leads')) { const l = store.get('leads', doc.leadId); if (l && l.stage !== 'won') store.update('leads', l.id, { stage: 'won' }); }
+          s.close();
+        } }),
+      ],
     });
   };
   drawStatus();
 
   const duplicate = () => {
+    if (readOnly) return;
     save.flush();
     const copy = { ...pick(doc), number: store.nextNumber('estimate'), status: 'draft', title: `${doc.title || ''} (copy)`.trim(), validUntil: ui.today(30) };
     const c = store.add('estimates', copy);
@@ -302,6 +348,7 @@ function renderDetail(root, ctx, id) {
     nav('#/estimates/' + c.id);
   };
   const remove = async () => {
+    if (readOnly) return;
     if (!(await ui.confirmDialog(`Delete estimate ${doc.number}? This can't be undone.`, { okLabel: 'Delete' }))) return;
     save.flush();
     store.remove('estimates', id);
@@ -318,20 +365,24 @@ function renderDetail(root, ctx, id) {
     title: `${doc.number}`,
     subtitle: h('span', null, ui.h('a', { href: '#/estimates' }, 'Estimates'), ' / ', doc.title || 'Untitled estimate'),
     actions: [
-      ui.button('Print / PDF', { icon: 'printer', onClick: () => { save.flush(); previewDocument({ kind: 'Estimate', doc, store }); } }),
-      ui.button('Duplicate', { icon: 'copy', onClick: duplicate }),
-      ui.button('', { icon: 'trash', variant: 'ghost danger', title: 'Delete estimate', onClick: remove }),
+      ui.button('Preview quote', { icon: 'file-text', onClick: preview }),
+      !readOnly ? ui.button('Duplicate', { icon: 'copy', onClick: duplicate }) : null,
+      !readOnly ? ui.button('', { icon: 'trash', variant: 'ghost danger', title: 'Delete estimate', onClick: remove }) : null,
     ],
   },
-  h('div', { class: 'doc-layout' },
-    h('div', { class: 'stack' },
-      h('div', { class: 'card' }, header),
-      h('div', { class: 'card' }, h('h3', null, 'Lines'), editor),
-      h('div', { class: 'card' }, h('div', { class: 'form-grid' }, notes)),
-      links),
-    h('aside', { class: 'doc-side stack' },
-      h('div', { class: 'card' }, statusHost),
-      h('div', { class: 'card' }, h('h3', null, 'Totals'), totals)))));
+  h('div', { class: 'estimate-experience stack' },
+    statusHost,
+    h('div', { class: 'doc-layout' },
+      h('div', { class: 'stack' },
+        h('section', { class: 'card' }, h('h3', null, 'Customer & work'), header),
+        h('section', { class: 'card' }, h('h3', null, 'Scope & line items'), editor),
+        h('section', { class: 'card' }, h('h3', null, 'Customer notes'), h('div', { class: 'form-grid' }, notes)),
+        pricing,
+        links),
+      h('aside', { class: 'doc-side stack', 'aria-label': 'Quote totals' },
+        h('div', { class: 'card' }, h('h3', null, 'Quote total'), totals,
+          h('div', { class: 'form-grid estimate-tax-reason' }, noTax)))))));
+
 
   return () => save.stop();
 }

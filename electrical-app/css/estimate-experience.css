@@ -1,0 +1,18 @@
+/* Quote workflow: keep scope readable and advanced configuration available on demand. */
+.estimate-experience .estimate-next { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s3); align-items: center; }
+.estimate-experience .estimate-next h2 { margin: 0; font-size: var(--fs-lg); line-height: var(--lh-lg); }
+.estimate-experience .estimate-hint { margin: var(--s2) 0 0; line-height: 1.5; }
+.estimate-experience .estimate-next-actions { justify-content: flex-end; }
+.estimate-experience .estimate-status-actions { grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: var(--s2); }
+.estimate-experience details > summary { cursor: pointer; font-weight: 600; padding: var(--s2) 0; min-height: 44px; align-content: center; }
+.estimate-experience details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r-sm); }
+.estimate-experience details[open] > summary { margin-bottom: var(--s2); }
+.estimate-experience .estimate-pricing .form-grid { margin-top: var(--s3); }
+.estimate-experience .estimate-status-actions .row { margin-top: var(--s3); }
+.estimate-experience .estimate-tax-reason:has(.qbo-notax:not([hidden])) { margin-top: var(--s4); padding-top: var(--s3); border-top: 1px solid var(--border); }
+.estimate-experience .btn { min-height: 44px; }
+@media (max-width: 640px) {
+  .estimate-experience .estimate-next { grid-template-columns: 1fr; }
+  .estimate-experience .estimate-next-actions { justify-content: flex-start; }
+  .estimate-experience .estimate-next-actions > .btn { flex: 1; }
+}
