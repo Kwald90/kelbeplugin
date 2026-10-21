@@ -84,6 +84,23 @@ See the [preview index](README.md#sprint-02-previews) for committed screenshots.
 These do not establish real-device usability or live service delivery. No production
 deployment or live customer messaging/payment was performed.
 
+## Review and CI handoff
+
+[Draft PR #2](https://github.com/Kwald90/kelbeplugin/pull/2) contains this sprint.
+Local checks above pass, but GitHub CI is not green. On commit `9fd8d76`, the web
+job fails to import `@node-rs/argon2` through the existing `site-pages.test.mjs`;
+the web job does not install the server dependencies that are already present in
+the local workspace. Deploy configuration checks fail on their Docker COPY/import
+allow-list checks. Whole-history gitleaks and OSV dependency scans also fail.
+
+The same failing jobs/stages exist on base `d68b264`:
+[baseline CI](https://github.com/Kwald90/kelbeplugin/actions/runs/39578359580) and
+[baseline Security](https://github.com/Kwald90/kelbeplugin/actions/runs/39578359724).
+The PR-only dependency review additionally reports that the repository does not
+support it and asks for Dependency graph to be enabled. These remain merge/release
+blockers; this UX sprint does not suppress or disable any checks. Resolve them in
+the repository's CI/security workstream, then rerun the complete PR checks.
+
 ## Follow-up boundaries
 
 User research, job-type templates, a complete first-quote onboarding flow, broader
