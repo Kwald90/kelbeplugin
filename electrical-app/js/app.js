@@ -1,4 +1,4 @@
-// Boot, shell (floating rail + radial wheel) and hash router.
+// Boot, labelled navigation shell, quick actions and hash router.
 //
 // Boot modes:
 //   synced   signed in (/api/v1/me answers): the company's own database, synced with the API
@@ -19,6 +19,7 @@ import { createSync } from './sync.js';
 import { FEATURE_PLAN, hasFeature } from './plans.js';
 import { notifyBell } from './modules/notifications.js';
 import { moduleOn, linkOn, hrefModule, SWITCHES } from './lib/modules.js';
+import { primaryNavigation, navigationLabel } from './lib/navigation.js';
 
 const { h, icon } = ui;
 const put = (el, ...kids) => h(ui.clear(el), null, ...kids);
@@ -38,6 +39,8 @@ const FIELD_ROLES = ['electrician', 'apprentice'];
 let landed = false;
 
 let main, rail, cleanup = null;
+let moreSheet = null;
+let navStatusObserver = null;
 let mode = null; // 'synced' | 'demo'
 let sync = null;
 let syncStatus = null;
@@ -143,6 +146,7 @@ function hasRecords(id) {
 
 function route() {
   if (!main) return;
+  moreSheet?.close();
   const { id, params, query } = parseHash();
   if (['sign-in', 'reset-password', 'forgot-password', 'welcome'].includes(id)) { nav('dashboard'); return; }
   if (!landed) {
@@ -154,10 +158,16 @@ function route() {
   cleanup = null;
   ui.clear(main);
   main.className = 'main' + (mod.fullBleed ? ' full-bleed' : '');
+  shell?.classList.toggle('canvas-route', Boolean(mod.fullBleed));
   main.scrollTop = 0;
   document.title = `${mod.title} · ${BRAND.name}`;
   for (const a of rail.querySelectorAll('[data-mod]')) {
     if (a.dataset.mod === mod.id) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  }
+  const moreButton = rail.querySelector('.nav-more');
+  if (moreButton) {
+    if (!rail.querySelector(`.mobile-primary [data-mod="${mod.id}"]`)) moreButton.setAttribute('aria-current', 'page');
+    else moreButton.removeAttribute('aria-current');
   }
   if (!auth.can(mod.perm)) {
     main.append(ui.page({ title: mod.title }, ui.empty({ icon: 'lock', title: 'No access', text: `Your role (${ROLES[auth.role()]?.label}) can't open ${mod.title}. Ask an owner or admin.` })));
@@ -179,7 +189,7 @@ function route() {
     return;
   }
   try {
-    cleanup = mod.render(main, { params, query, store, ui, auth, nav, route, app: shellApi, on: moduleEnabled });
+    cleanup = mod.render(main, { params, query, store, ui, auth, nav, route, app: shellApi, on: moduleEnabled, readOnly: locked });
     if (locked) main.prepend(readOnlyBanner(mod));
     const trial = trialBanner(mod);
     if (trial) main.prepend(trial);
@@ -191,30 +201,104 @@ function route() {
 
 // ---------- rail ----------
 
+function visibleModules() {
+  return MODULES.filter((m) => !m.hidden && auth.can(m.perm) && moduleEnabled(m.id));
+}
+
+function navigationLink(m, { onClick } = {}) {
+  const locked = !moduleUnlocked(m.id);
+  const label = navigationLabel(m);
+  return h('a', {
+    class: ['rail-btn', locked ? 'locked' : null], href: '#/' + m.id,
+    dataset: { mod: m.id }, title: locked ? `${label} (not in your plan)` : label,
+    'aria-label': locked ? `${label} (not in your plan)` : label, onClick,
+    'aria-current': parseHash().id === m.id ? 'page' : null,
+  }, icon(m.icon, 22), h('span', { class: 'nav-label' }, label),
+  locked ? h('span', { class: 'rail-lock', 'aria-hidden': 'true' }, icon('lock', 11)) : null);
+}
+
+function openMore() {
+  if (moreSheet) return;
+  const trigger = rail.querySelector('.nav-more');
+  trigger.setAttribute('aria-expanded', 'true');
+  moreSheet = ui.openSheet({
+    title: 'More', initialFocus: 'a[href]',
+    onClose: () => { moreSheet = null; trigger.setAttribute('aria-expanded', 'false'); },
+    body: (close) => {
+      const body = h('nav', { class: 'more-navigation', 'aria-label': 'All destinations' });
+      for (const [group, label] of Object.entries(GROUPS)) {
+        const items = visibleModules().filter((m) => m.group === group);
+        if (!items.length) continue;
+        body.append(h('section', null, h('h3', { class: 'nav-group-title' }, label),
+          h('div', { class: 'more-links' }, items.map((m) => navigationLink(m, { onClick: close })))));
+      }
+      const utility = (label, glyph, action) => h('button', { type: 'button', class: 'rail-btn', onClick: () => { close(); action(); } }, icon(glyph, 22), h('span', { class: 'nav-label' }, label));
+      body.append(h('section', null, h('h3', { class: 'nav-group-title' }, 'Your account'),
+        h('div', { class: 'more-links' },
+          utility('Notifications', '<path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>', () => rail.querySelector('.notify-bell')?.click()),
+          utility(mode === 'synced' ? 'Sync status' : 'Demo on this device', 'activity', () => mode === 'synced' ? openSyncSheet(shellApi) : nav('account')),
+          utility(isDark() ? 'Use light appearance' : 'Use dark appearance', isDark() ? 'sun' : 'moon', toggleTheme),
+          utility(mode === 'synced' ? 'Account' : 'Switch demo user', 'user', () => mode === 'synced' ? nav('account') : switchUser()))));
+      return body;
+    },
+  });
+  // Keep keyboard navigation within this modal; the shared sheet handles Escape and focus return.
+  moreSheet.el.addEventListener('keydown', (event) => {
+    if (event.key !== 'Tab') return;
+    const items = [...moreSheet.el.querySelectorAll('a[href], button:not([disabled])')];
+    const first = items[0], last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  });
+}
+
 function buildRail() {
   rail = h('nav', { class: 'rail', 'aria-label': 'Main' });
-  rail.append(h('a', { class: 'rail-logo', href: '#/dashboard', title: BRAND.name }, icon('zap', 22)));
-  let lastGroup = null;
-  for (const m of MODULES) {
-    if (m.hidden || !auth.can(m.perm) || !moduleEnabled(m.id)) continue;
-    if (lastGroup && m.group !== lastGroup) rail.append(h('div', { class: 'rail-sep' }));
-    lastGroup = m.group;
-    const locked = !moduleUnlocked(m.id);
-    rail.append(h('a', { class: ['rail-btn', locked ? 'locked' : null], href: '#/' + m.id, dataset: { mod: m.id }, 'aria-label': locked ? `${m.title} (not in your plan)` : m.title },
-      icon(m.icon, 22), locked ? h('span', { class: 'rail-lock', 'aria-hidden': 'true' }, icon('lock', 11)) : null,
-      h('span', { class: 'tip' }, locked ? `${m.title} · upgrade` : m.title)));
+  const collapse = h('button', { type: 'button', class: 'rail-btn rail-collapse', title: 'Collapse navigation', 'aria-label': 'Collapse navigation', onClick: () => {
+    const compact = !shell.classList.contains('nav-compact');
+    shell.classList.toggle('nav-compact', compact);
+    try { localStorage.setItem('ft.navCompact', compact ? '1' : '0'); } catch { /* storage unavailable */ }
+    collapse.setAttribute('aria-expanded', String(!compact));
+    collapse.setAttribute('aria-label', compact ? 'Expand navigation' : 'Collapse navigation');
+    collapse.title = compact ? 'Expand navigation' : 'Collapse navigation';
+  } }, icon('menu', 20));
+  rail.append(h('div', { class: 'rail-head' },
+    h('a', { class: 'rail-logo', href: FIELD_ROLES.includes(auth.role()) && auth.can('today') && moduleEnabled('today') && moduleUnlocked('today') ? '#/today' : '#/dashboard', title: BRAND.name, 'aria-label': BRAND.name }, icon('zap', 22), h('span', { class: 'nav-label' }, BRAND.name)), collapse));
+  const list = h('div', { class: 'rail-destinations' });
+  for (const [group, label] of Object.entries(GROUPS)) {
+    const items = visibleModules().filter((m) => m.group === group);
+    if (!items.length) continue;
+    list.append(h('section', { class: 'nav-section' }, h('h2', { class: 'nav-group-title' }, label), items.map((m) => navigationLink(m))));
   }
+  rail.append(list);
   const u = auth.current();
   rail.append(h('div', { class: 'rail-bottom' },
     notifyBell(ui),
     mode === 'synced' ? syncButton() : demoButton(),
-    h('button', { class: 'rail-btn', 'aria-label': 'Toggle dark mode', onClick: toggleTheme }, icon(isDark() ? 'sun' : 'moon', 20), h('span', { class: 'tip' }, 'Theme')),
+    h('button', { class: 'rail-btn', 'aria-label': 'Toggle dark mode', title: 'Toggle dark mode', onClick: toggleTheme }, icon(isDark() ? 'sun' : 'moon', 20), h('span', { class: 'tip' }, 'Appearance')),
     mode === 'synced'
-      ? h('a', { class: 'rail-btn', href: '#/account', dataset: { mod: 'account' }, 'aria-label': 'Account' },
-        h('span', { class: 'avatar', style: { background: u.color || '#5f5a51' } }, ui.initials(u.name)), h('span', { class: 'tip' }, `${u.name} · ${auth.account?.tenantName || 'account'}`))
-      : h('button', { class: 'rail-btn', 'aria-label': 'Switch user', onClick: switchUser },
-        h('span', { class: 'avatar', style: { background: u.color || '#5f5a51' } }, ui.initials(u.name)), h('span', { class: 'tip' }, `${u.name} · switch user`))));
+      ? h('a', { class: 'rail-btn', href: '#/account', dataset: { mod: 'account' }, 'aria-label': 'Account', title: `${u.name}, Account` },
+        h('span', { class: 'avatar', style: { background: u.color || '#5f5a51' } }, ui.initials(u.name)), h('span', { class: 'tip' }, u.name))
+      : h('button', { class: 'rail-btn', 'aria-label': 'Switch user', title: `${u.name}, Switch demo user`, onClick: switchUser },
+        h('span', { class: 'avatar', style: { background: u.color || '#5f5a51' } }, ui.initials(u.name)), h('span', { class: 'tip' }, u.name))));
+  rail.append(h('div', { class: 'mobile-primary' },
+    primaryNavigation(visibleModules(), auth.role()).map((m) => navigationLink(m)),
+    h('button', { type: 'button', class: 'rail-btn nav-more', 'aria-label': 'More destinations and account', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', onClick: openMore }, icon('menu', 22), h('span', { class: 'nav-label' }, 'More'), h('span', { class: 'nav-status', 'aria-hidden': 'true', hidden: true }))));
   return rail;
+}
+
+/** Keep notification and sync attention visible when utilities live inside More. */
+function paintMobileStatus() {
+  const button = rail?.querySelector('.nav-more');
+  if (!button) return;
+  const notifications = rail.querySelector('.notify-bell');
+  const unread = notifications?.querySelector('.notify-count')?.textContent;
+  const syncText = mode === 'synced' ? syncLabel(syncStatus).text : '';
+  const needsSync = mode === 'synced' && (['offline', 'error'].includes(syncStatus?.state) || syncStatus?.waiting > 0 || syncStatus?.rejected > 0);
+  const badge = button.querySelector('.nav-status');
+  badge.hidden = !unread && !needsSync;
+  badge.textContent = needsSync ? '!' : (unread || '');
+  button.setAttribute('aria-label', ['More destinations and account', unread ? notifications.getAttribute('aria-label') : '', syncText ? `Sync: ${syncText}` : ''].filter(Boolean).join('. '));
 }
 
 function syncButton() {
@@ -319,12 +403,24 @@ function buildWheel() {
 
 let shell;
 function rebuild() {
+  moreSheet?.close();
+  navStatusObserver?.disconnect();
   shell?.remove();
   for (const el of document.querySelectorAll('.wheel, .wheel-scrim, .wheel-fab')) el.remove();
   main = h('main', { class: 'main', id: 'main' });
   shell = h('div', { class: 'app' }, buildRail(), main);
+  let compact = false;
+  try { compact = localStorage.getItem('ft.navCompact') === '1'; } catch { /* storage unavailable */ }
+  shell.classList.toggle('nav-compact', compact);
+  const collapse = rail.querySelector('.rail-collapse');
+  collapse.setAttribute('aria-expanded', String(!compact));
+  collapse.setAttribute('aria-label', compact ? 'Expand navigation' : 'Collapse navigation');
+  collapse.title = compact ? 'Expand navigation' : 'Collapse navigation';
   modulesKey = currentModulesKey();
   document.body.append(shell, ...buildWheel());
+  navStatusObserver = new MutationObserver(paintMobileStatus);
+  navStatusObserver.observe(rail.querySelector('.notify-bell'), { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label'] });
+  paintMobileStatus();
   route();
 }
 
@@ -502,6 +598,7 @@ async function startSynced(me) {
     onStatus: (s) => {
       syncStatus = s;
       paintSync(rail?.querySelector('.sync-btn'), s);
+      paintMobileStatus();
       paintBanner();
       for (const fn of statusListeners) { try { fn(s); } catch (e) { console.error(e); } }
     },

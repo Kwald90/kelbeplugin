@@ -43,7 +43,7 @@
 
   --t-fast: 120ms; --t-base: 220ms; --ease: cubic-bezier(.2, .8, .2, 1);
 
-  --rail: 72px; --header: 56px; --content-max: 1280px; --wheel: 168px;
+  --navigation-width: 224px; --rail: 72px; --header: 56px; --content-max: 1280px; --wheel: 168px;
   color-scheme: light;
 }
 

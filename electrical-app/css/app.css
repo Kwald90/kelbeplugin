@@ -260,3 +260,75 @@ table.table { width: 100%; border-collapse: collapse; }
 .settings-grid, .account-grid, .int-grid { display: block; columns: auto 340px; column-gap: var(--s4); }
 .int-grid { columns: auto 420px; }
 .settings-grid > *, .account-grid > *, .int-grid > * { break-inside: avoid; margin: 0 0 var(--s4); }
+
+
+/* Labelled shell: desktop destinations scroll independently of account utilities. */
+@media screen {
+  .app { --rail: var(--navigation-width); }
+  .app.nav-compact, .app.canvas-route { --rail: 72px; }
+  .rail { align-items: stretch; padding: var(--s2); overflow: hidden; box-shadow: var(--shadow-card); }
+  .rail-head { display: flex; align-items: center; gap: var(--s1); flex: none; padding-bottom: var(--s2); }
+  .rail-logo { display: flex; align-items: center; gap: var(--s2); width: auto; min-height: 44px; height: auto; flex: 1; margin: 0; padding: var(--s2); font-weight: 750; text-decoration: none; }
+  .rail-logo > svg, .rail-btn > svg { flex: none; }
+  .rail-collapse { width: 44px !important; padding: 0 !important; justify-content: center !important; }
+  .rail-destinations { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  .nav-group-title { color: var(--text-muted); font-size: 11px; line-height: 16px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; margin: var(--s4) var(--s2) var(--s1); }
+  .nav-section:first-child .nav-group-title { margin-top: var(--s1); }
+  .rail .rail-btn { display: flex; align-items: center; justify-content: flex-start; gap: var(--s3); width: 100%; padding: 8px 10px; text-align: left; }
+  .rail .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+  .rail .rail-btn[aria-current="page"] { font-weight: 650; }
+  .rail .rail-btn[aria-current="page"]::before { left: 0; }
+  .rail-bottom { flex: none; align-items: stretch; margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--border); }
+  .rail-bottom .tip { position: static; transform: none; opacity: 1; color: inherit; background: none; padding: 0; font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .rail-bottom .avatar { width: 24px; height: 24px; }
+  .rail-bottom .notify-count, .rail-bottom .sync-count { right: auto; left: 24px; top: 0; }
+  .rail .rail-btn.locked { padding-right: 26px; }
+  .rail .rail-lock { right: 6px; bottom: 14px; }
+  .mobile-primary { display: none; }
+  :is(.nav-compact, .canvas-route) .rail-head { flex-direction: column; }
+  :is(.nav-compact, .canvas-route) .rail-logo { padding: 0; width: 44px; justify-content: center; }
+  :is(.nav-compact, .canvas-route) .rail :is(.nav-label, .nav-group-title, .tip) { display: none; }
+  :is(.nav-compact, .canvas-route) .rail .rail-btn { justify-content: center; padding: 8px 0; }
+  :is(.nav-compact, .canvas-route) .nav-section + .nav-section { border-top: 1px solid var(--border); padding-top: var(--s2); margin-top: var(--s2); }
+  :is(.nav-compact, .canvas-route) .rail .rail-lock { bottom: 4px; right: 0; }
+  .canvas-route .rail-collapse { display: none; }
+}
+.more-navigation { display: flex; flex-direction: column; gap: var(--s4); }
+.more-navigation .nav-group-title { margin: 0 0 var(--s2); }
+.more-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); }
+.more-links .rail-btn { display: flex; align-items: center; gap: var(--s3); width: 100%; min-height: 52px; padding: 10px 24px 10px 12px; border: 1px solid var(--border); text-align: left; }
+.more-links .rail-btn > svg { flex: none; }
+.more-links .nav-label { overflow-wrap: anywhere; }
+.more-links .rail-btn[aria-current="page"]::before { display: none; }
+@media screen and (max-width: 760px) {
+  .app { --rail: 72px; }
+  .rail { padding: 4px; height: 68px; gap: 0; border-radius: var(--r-lg); overflow: visible; }
+  .rail :is(.rail-head, .rail-destinations, .rail-bottom) { display: none; }
+  .rail .mobile-primary { display: flex; width: 100%; height: 100%; align-items: stretch; }
+  .rail .mobile-primary .rail-btn { flex: 1; min-width: 0; min-height: 44px; flex-direction: column; justify-content: center; gap: 3px; padding: 4px 2px; font-size: 11px; line-height: 14px; }
+  .rail .mobile-primary .nav-label { display: block; max-width: 100%; }
+  .rail .mobile-primary .rail-btn[aria-current="page"]::before { display: none; }
+  .rail .mobile-primary .rail-lock { top: 0; bottom: auto; right: 4px; }
+  .main { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+  .main.full-bleed { padding-bottom: 0; }
+  .wheel-fab { bottom: calc(100px + env(safe-area-inset-bottom)); }
+  .wheel { bottom: calc(100px + 28px - 150px + env(safe-area-inset-bottom)); }
+  .toasts { bottom: calc(88px + env(safe-area-inset-bottom)); }
+}
+/* Field controls remain comfortable when using touch, including small button variants. */
+@media (pointer: coarse), (max-width: 760px) {
+  :is(.btn, .btn.sm, .btn.icon, .btn.sm.icon), .tabs button, .field.check { min-height: 44px; min-width: 44px; }
+  .input, .field input:not([type=checkbox]):not([type=radio]):not([type=color]), .field select { min-height: 44px; }
+}
+@media (max-width: 360px) { .more-links { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+.nav-status:not([hidden]) { position: absolute; top: 0; right: 8px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: var(--r-pill); background: var(--danger); color: var(--surface); font-size: 10px; font-weight: 700; line-height: 17px; text-align: center; }
+
+/* A labelled sidebar needs the document's single-column breakpoint earlier. */
+@media screen and (min-width: 761px) and (max-width: 1200px) {
+  .app:not(.nav-compact) .doc-layout { grid-template-columns: 1fr; }
+  .app:not(.nav-compact) .doc-side { position: static; }
+}
