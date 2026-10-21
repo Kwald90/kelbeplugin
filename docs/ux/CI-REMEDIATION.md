@@ -19,6 +19,7 @@ worktrees; the lead integrates and records the combined result.
 | Vulnerable dependencies | OSV reports `GHSA-w5hq-g745-h8pq` in Xcode's `uuid@7.0.3` development dependency | Override only Xcode's UUID to patched `11.1.1`; six mobile tests and audit pass |
 | Whole-history secret scan | Historical test credentials and mock-provider/parser fixtures trigger scanner rules | 17 verified historical fingerprints; full-history scan passes and three new synthetic credentials are still detected |
 | Dependency review | GitHub reports Dependency graph unavailable; alerts API confirms disabled | Kelvin approved enabling Dependency graph and vulnerability alerts; enabled and verified via the alerts and comparison APIs |
+| Server test reporting | `npm test` piped through `tee` could report success despite a failed test | Enable `pipefail`; a synthetic failing command retained exit code 37 through the logging pipeline |
 
 ## Repository configuration
 
@@ -50,6 +51,9 @@ visibility were not changed. The PR check remains active.
 | Integrated gitleaks 8.30.1 full-history scan | 246 local commits scanned, no leaks found; includes local agent history |
 | Integrated gitleaks fixture regression | 17 exact historical exceptions; three fresh test/production-path samples all detected |
 | GitHub configuration verification | Alerts enabled; dependency comparison API succeeds |
+| QuickBooks connection suite with embedded PostgreSQL | 32 passed; caller-owned transaction assertion also passed independently |
+| QuickBooks mutation check | Temporarily holding a transaction across refresh failed the intended assertion; production source restored |
+| Server logging pipeline | Synthetic failure exit 37 propagates through `tee`; actionlint remains clean |
 
 CI now installs both server and mobile locked dependencies and runs the six mobile
 compatibility tests. The deploy job invokes the strengthened Docker-context suite.
@@ -66,9 +70,22 @@ Windows tests validate the Xcode project tools; a native macOS/iOS build remains
 part of mobile release validation. Docker is unavailable locally; Compose, nginx,
 image-build and container-smoke validation will come from the Linux CI jobs.
 
+The first remote remediation run exposed a further issue through log review: the
+server job showed success while its TAP summary reported 1000 passes and one
+failure. The duplicate run passed all 1001 tests. The failing QuickBooks test
+counted every connection's idle transaction while four callers read tokens;
+another caller's brief read could be mistaken for the refreshing caller holding
+a transaction during the provider request. The test now tags each caller's
+transactions and inspects the refreshing caller only. A deliberately held
+unrelated transaction serves as a negative control, while one-refresh and
+shared-token assertions remain. Production QuickBooks code is unchanged. The
+logging pipeline now propagates test failures, so a green job cannot conceal
+that failure again. Final verification must inspect both job status and the
+server TAP summary.
+
 ## Security review
 
-All scan jobs remain active and fail on unresolved findings. No broad ignore,
+All required scan jobs remain active and fail on unresolved findings. No broad ignore,
 history rewrite, credential rotation, production access, or deployment is part of
 this work. The PR requires Kelvin's review before merge. Reports contain safe
 metadata only and do not reproduce credential values.
