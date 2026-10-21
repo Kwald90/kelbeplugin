@@ -193,6 +193,23 @@ export default {
         actions);
     }
 
+    // ---------- field tickets (r1-get-paid.md 4.1): extra work and T&M signed on site, offline ----------
+    function ticketsBlock(day, jobById) {
+      const on = ctx.on ? ctx.on('tickets') : true;
+      if (!on || !empId) return null;
+      const openEntry = store.list('timeEntries', (e) => e.employeeId === empId && !e.clockOut && e.jobId)[0] || null;
+      const mineOpen = store.list('fieldTickets', (t) => t.employeeId === empId && (t.status === 'draft' || t.date === day))
+        .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      const label = (t) => t.number || `T-pending ${String(t.id).replace(/[^A-Za-z0-9]/g, '').slice(0, 4)}`;
+      return h('section', { class: 'card tk-today', dataset: { ticketsToday: String(mineOpen.length) } },
+        h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Field tickets'),
+          ui.button('New ticket', { variant: 'primary', icon: 'pen', href: `#/tickets/new${openEntry ? `?jobId=${encodeURIComponent(openEntry.jobId)}` : ''}` })),
+        mineOpen.length ? h('div', { class: 'list' }, mineOpen.map((t) => h('a', { class: 'list-row click', href: `#/tickets/${t.id}` },
+          h('div', { class: 'grow' }, h('div', { class: 'title' }, `${label(t)} · ${t.title || 'Untitled'}`), h('div', { class: 'meta' }, jobById.get(t.jobId)?.number || '')),
+          ui.statusBadge(t.status))))
+          : h('p', { class: 'muted' }, 'Extra work or T&M today? Write a ticket and get it signed before you leave.'));
+    }
+
     // ---------- views ----------
     function mine() {
       const day = ui.today();
@@ -208,6 +225,7 @@ export default {
       const unacked = todays.filter((t) => !t.ackAt && t.status !== 'done');
       const nextLabel = next === W.addDays(day, 1) ? 'Tomorrow' : next ? ui.fmtDate(next, { weekday: 'long', month: 'short', day: 'numeric' }) : 'Tomorrow';
       return [
+        ticketsBlock(day, jobById),
         todays.length ? h('div', { class: 'wp-dayhead' },
           h('div', { class: 'wp-dayhead-count' }, h('strong', { class: 'num' }, `${done}/${todays.length}`), h('span', { class: 'muted' }, ' done')),
           h('div', { class: 'wp-dayhead-bar', role: 'progressbar', 'aria-valuenow': done, 'aria-valuemin': 0, 'aria-valuemax': todays.length, 'aria-label': 'Tasks done today' }, h('span', { style: { width: `${todays.length ? (100 * done) / todays.length : 0}%` } })),
@@ -291,6 +309,7 @@ export default {
       }),
       store.on('jobs', later),
       store.on('employees', later),
+      store.on('fieldTickets', later),
       ctx.app?.onSyncStatus?.(paintSync) || (() => {}),
     ];
     return () => { clearTimeout(pending); clearTimeout(arrivedTimer); offs.forEach((f) => f()); };

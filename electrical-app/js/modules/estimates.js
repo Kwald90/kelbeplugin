@@ -2,11 +2,39 @@
 import { docTotals, moneyFormatter } from '../lib/money.js';
 import { newDocTax } from '../lib/tax.js';
 import { mergeForTakeoff, sortSheets } from '../lib/plansets.js';
-import { lineEditor, taxEditor, totalsPanel, previewDocument, clientName } from '../lib/doc-view.js';
+import { lineEditor, taxEditor, totalsPanel, previewDocument, clientName, confirmSend, ruleRows } from '../lib/doc-view.js';
 import { moduleOn } from '../lib/modules.js';
 import { qboBadge, noTaxReasonPicker, lookupAction, docEditor } from '../lib/qbo-ui.js';
+import { buildSignature, signatureSheet, emailAcceptanceSheet, queueSignatureFirst } from '../lib/esign.js';
 
-const STATUSES = ['draft', 'sent', 'accepted', 'declined'];
+const STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'];
+
+/**
+ * The job's budget from the accepted estimate (r1-get-paid.md 4.2, 6.2): R1-E's costing.js
+ * budgetFromEstimate. Until that library ships, jobs compute the budget on the fly (nothing stored).
+ */
+async function storeBudget(store, est, ui) {
+  if (!est?.jobId) return;
+  const job = store.get('jobs', est.jobId);
+  if (!job) return;
+  let lib = null;
+  try { lib = await import('../lib/costing.js'); } catch { return; }
+  if (typeof lib?.budgetFromEstimate !== 'function') return;
+  try {
+    const b = lib.budgetFromEstimate(est, { items: store.list('items'), employees: store.list('employees'), rules: ruleRows(store), settings: store.settings(), on: ui.today() });
+    const cur = store.get('jobs', est.jobId);
+    store.update('jobs', est.jobId, { costing: { ...(cur.costing || {}), budget: { at: new Date().toISOString(), estimateId: est.id, ...b } } }, { summary: `${cur.number}: budget from ${est.number}` });
+  } catch { /* the budget is worked out on the fly instead */ }
+}
+
+/** Accepting (or signing) a revision supersedes the estimate it revises, in the same write batch (4.2). */
+function acceptSideEffects(store, est, ui) {
+  if (est.revisionOf) {
+    const orig = store.get('estimates', est.revisionOf);
+    if (orig && orig.status !== 'superseded') store.update('estimates', orig.id, { status: 'superseded' }, { summary: `${orig.number} superseded by ${est.number}` });
+  }
+  storeBudget(store, est, ui);
+}
 
 export default {
   id: 'estimates',
@@ -94,6 +122,8 @@ function validCell(ui, e) {
 function createNew(ctx) {
   const { store, ui, query } = ctx;
   const s = store.settings();
+  const job0 = query.jobId ? store.get('jobs', query.jobId) : null;
+  const client0 = store.get('clients', query.clientId || job0?.clientId || '') || null;
   const rec = {
     number: store.nextNumber('estimate'),
     clientId: query.clientId || null,
@@ -103,14 +133,12 @@ function createNew(ctx) {
     lines: [],
     labourRateCents: s.labourRateCents ?? 9500,
     markupPct: 0,
-    ...newDocTax(s), // { taxProvince, taxTreatment, taxes, taxPct }
+    // { taxProvince, taxTreatment, taxes, taxPct } and, on an exempt job, its exemption (3.1).
+    ...newDocTax(s, ui.today(), { job: job0, client: client0 }),
     notes: '',
     validUntil: ui.today(30),
   };
-  if (query.jobId) {
-    const job = store.get('jobs', query.jobId);
-    if (job) { rec.clientId = rec.clientId || job.clientId || null; rec.title = job.title || ''; }
-  }
+  if (job0) { rec.clientId = rec.clientId || job0.clientId || null; rec.title = job0.title || ''; }
   if (query.leadId) {
     const lead = store.get('leads', query.leadId);
     if (lead) { rec.clientId = rec.clientId || lead.clientId || null; rec.title = lead.title || ''; rec.leadId = lead.id; }
@@ -223,8 +251,10 @@ function renderDetail(root, ctx, id) {
   // Invoicing or leads turned off (Settings → Modules): no buttons into them.
   const on = (m) => (ctx.on ? ctx.on(m) : moduleOn(store.settings(), m));
   const changed = () => { totals.update(doc); noTax.update(); save(); };
+  // A signed estimate is frozen (its signed keys never change: the server refuses); a revision changes it.
+  const readOnly = Boolean(doc.signatureId) || doc.status === 'superseded';
   // "Why no tax?" (QuickBooks contract 8.5): every company; each reason lands on its own GST return line.
-  const noTax = noTaxReasonPicker(ctx, doc, { onChange: () => save() });
+  const noTax = noTaxReasonPicker(ctx, doc, { onChange: () => save(), readOnly });
 
   const clients = store.list('clients').sort((a, b) => a.name.localeCompare(b.name));
   const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
@@ -232,6 +262,7 @@ function renderDetail(root, ctx, id) {
   const fieldEl = (f, onVal) => {
     const el = ui.field(f);
     const c = el.querySelector('[name]');
+    if (readOnly) c.disabled = true;
     c.addEventListener(c.tagName === 'SELECT' ? 'change' : 'input', () => { onVal(ui.readForm(el)[f.name]); changed(); });
     return el;
   };
@@ -243,29 +274,89 @@ function renderDetail(root, ctx, id) {
     fieldEl({ label: 'Valid until', name: 'validUntil', type: 'date', value: doc.validUntil }, (v) => { doc.validUntil = v; }),
     fieldEl({ label: 'Labour rate ($/h)', name: 'labourRateCents', type: 'money', value: doc.labourRateCents }, (v) => { doc.labourRateCents = v; }),
     fieldEl({ label: 'Materials markup %', name: 'markupPct', type: 'number', step: '0.1', min: '0', value: doc.markupPct ?? 0, hint: 'Extra uplift on material lines' }, (v) => { doc.markupPct = v || 0; }),
-    taxEditor({ doc, store, onChange: changed }), noTax);
+    taxEditor({ doc, store, onChange: changed, readOnly }), noTax);
 
   const notes = fieldEl({ label: 'Notes shown on the estimate', name: 'notes', type: 'textarea', value: doc.notes, span: true }, (v) => { doc.notes = v; });
-  const editor = lineEditor({ doc, store, onChange: changed });
+  const editor = lineEditor({ doc, store, onChange: changed, readOnly });
   const totals = totalsPanel(doc, { money });
 
   const statusHost = h('div', { class: 'stack' });
   const drawStatus = () => {
     ui.clear(statusHost);
-    const st = doc.status;
+    const cur = store.get('estimates', id) || doc;
+    const st = cur.status;
+    const signed = Boolean(cur.signatureId);
     h(statusHost, null,
-      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), qboBadge(ctx, 'estimates', id, { detail: true, record: doc }), ui.statusBadge(st)),
-      st === 'draft' ? lookupAction(ctx, { entity: 'estimates', clientId: doc.clientId }) : null,
-      h('div', { class: 'row' },
-        st !== 'sent' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: () => setStatus('sent') }) : null,
-        st !== 'accepted' ? ui.button('Accepted', { size: 'sm', variant: 'primary', icon: 'check', onClick: () => accept() }) : null,
+      h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), qboBadge(ctx, 'estimates', id, { detail: true, record: cur }), ui.statusBadge(st)),
+      signed ? h('div', { class: 'money-signed', dataset: { signedBy: cur.signedName || '' } }, ui.icon('pen', 16), ` Signed by ${cur.signedName || 'the customer'} ${ui.fmtDateTime(cur.signedAt)}`) : null,
+      cur.revisionOf ? h('div', { class: 'muted' }, 'Revises ', h('a', { href: '#/estimates/' + cur.revisionOf }, store.get('estimates', cur.revisionOf)?.number || 'an earlier estimate')) : null,
+      st === 'superseded' ? h('p', { class: 'muted' }, 'A later revision replaced this estimate.') : null,
+      st === 'draft' ? lookupAction(ctx, { entity: 'estimates', clientId: cur.clientId }) : null,
+      !signed && st !== 'superseded' ? h('div', { class: 'row money-actions' },
+        st !== 'accepted' ? ui.button('Sign on this device', { size: 'sm', variant: 'primary', icon: 'pen', onClick: signHere }) : null,
+        st !== 'sent' && st !== 'accepted' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: markSent }) : null,
+        st !== 'accepted' ? ui.button('Accepted', { size: 'sm', icon: 'check', onClick: () => accept() }) : null,
+        st !== 'accepted' ? ui.button('Customer accepted by email', { size: 'sm', variant: 'ghost', onClick: byEmail }) : null,
         st !== 'declined' ? ui.button('Declined', { size: 'sm', variant: 'ghost danger', icon: 'x', onClick: () => setStatus('declined') }) : null,
-        st !== 'draft' ? ui.button('Back to draft', { size: 'sm', variant: 'ghost', onClick: () => setStatus('draft') }) : null),
+        st !== 'draft' ? ui.button('Back to draft', { size: 'sm', variant: 'ghost', onClick: () => setStatus('draft') }) : null) : null,
+      (signed || st === 'accepted') && st !== 'superseded' ? h('div', { class: 'row' }, ui.button('Revise', { size: 'sm', icon: 'copy', onClick: revise })) : null,
       st === 'accepted' ? h('div', { class: 'row' },
-        doc.jobId ? ui.button('Open job', { size: 'sm', icon: 'briefcase', href: '#/jobs/' + doc.jobId }) : ui.button('Create job', { size: 'sm', icon: 'briefcase', onClick: createJob }),
-        on('invoices') ? ui.button('Create invoice', { size: 'sm', icon: 'receipt', onClick: () => { save.flush(); nav('#/invoices/new?estimateId=' + id); } }) : null) : null);
+        cur.jobId ? ui.button('Open job', { size: 'sm', icon: 'briefcase', href: '#/jobs/' + cur.jobId }) : ui.button('Create job', { size: 'sm', icon: 'briefcase', onClick: createJob }),
+        on('invoices') ? ui.button('Create invoice', { size: 'sm', icon: 'receipt', onClick: () => { save.flush(); nav('#/invoices/new?estimateId=' + id); } }) : null,
+        on('invoices') ? ui.button('New deposit invoice', { size: 'sm', icon: 'dollar', onClick: () => { save.flush(); nav(`#/invoices/new?kind=deposit&estimateId=${id}`); } }) : null) : null);
   };
-  const setStatus = (st) => { save.write({ status: st }, { summary: `${doc.number} → ${st}` }); drawStatus(); ui.toast(`${doc.number} marked ${st}`, 'success'); };
+  const setStatus = (st, extra = {}) => { save.write({ status: st, ...extra }, { summary: `${doc.number} → ${st}` }); drawStatus(); ui.toast(`${doc.number} marked ${st}`, 'success'); };
+  // Sending runs the exemption check (Manitoba estimates warn, 2.9).
+  const markSent = async () => { save.flush(); if (!(await confirmSend(store.get('estimates', id) || doc, { collection: 'estimates' }))) return; setStatus('sent'); };
+  const job = () => (doc.jobId ? store.get('jobs', doc.jobId) : null);
+  // "Sign on this device" (4.2): the customer sees number, title, scope, total with tax, valid-until and notes.
+  const signHere = () => {
+    save.flush();
+    const cur = store.get('estimates', id) || doc;
+    const t = docTotals(cur);
+    signatureSheet(ui, {
+      title: `Sign ${cur.number}`, job: job(), captureLocation: store.settings().tickets?.captureLocation !== false, askEmail: true,
+      summary: h('div', { class: 'stack' }, h('div', { class: 'title' }, `${cur.number} · ${cur.title || ''}`),
+        h('ul', { class: 'es-lines' }, (cur.lines || []).map((l) => h('li', null, `${l.qty ?? ''} ${l.description || ''}`.trim()))),
+        h('div', { class: 'es-total' }, `Total with tax: ${money(t.totalCents)}`), cur.validUntil ? h('div', { class: 'muted' }, `Valid until ${ui.fmtDate(cur.validUntil)}`) : null,
+        cur.notes ? h('p', { class: 'es-notes' }, cur.notes) : null),
+      agreementText: 'I accept this estimate and the work it describes at the total shown.',
+      onSigned: async (s) => {
+        const sig = await buildSignature({ docType: 'estimate', doc: cur, jobId: cur.jobId || null, clientId: cur.clientId || null, ...s,
+          capturedBy: { employeeId: ctx.auth.current().id || null, name: ctx.auth.who().name }, device: navigator.userAgent.slice(0, 120) });
+        // The signature first, the estimate second, in the same tick (2.10).
+        store.add('signatures', sig);
+        save.write({ status: 'accepted', signatureId: sig.id, signedAt: sig.signedAt, signedName: sig.signerName, acceptedVia: 'signature' }, { summary: `${cur.number} signed` });
+        queueSignatureFirst(store, sig.id, [{ coll: 'estimates', id }]);
+        acceptSideEffects(store, store.get('estimates', id), ui);
+        redraw();
+        ui.toast(`${cur.number} signed by ${sig.signerName}`, 'success');
+      },
+    });
+  };
+  const byEmail = async () => {
+    save.flush();
+    const r = await emailAcceptanceSheet(ui, { title: `${doc.number}: accepted by email` });
+    if (!r) return;
+    const cur = store.get('estimates', id) || doc;
+    const sig = await buildSignature({ docType: 'estimate', doc: cur, method: 'email-reply', signerName: r.signerName, signerEmail: r.signerEmail, evidence: r.evidence,
+      jobId: cur.jobId || null, clientId: cur.clientId || null, capturedBy: { employeeId: ctx.auth.current().id || null, name: ctx.auth.who().name } });
+    store.add('signatures', sig);
+    save.write({ status: 'accepted', signatureId: sig.id, signedAt: sig.signedAt, signedName: sig.signerName, acceptedVia: 'signature' }, { summary: `${cur.number} accepted by email` });
+    queueSignatureFirst(store, sig.id, [{ coll: 'estimates', id }]);
+    acceptSideEffects(store, store.get('estimates', id), ui);
+    redraw();
+  };
+  // A signed or accepted estimate changes by a revision: a copy with revisionOf; accepting it supersedes this one.
+  const revise = () => {
+    save.flush();
+    const cur = store.get('estimates', id) || doc;
+    const copy = { ...pick(cur), number: store.nextNumber('estimate'), status: 'draft', revisionOf: id, validUntil: ui.today(30), title: cur.title || '' };
+    for (const k of ['signatureId', 'signedAt', 'signedName', 'acceptedVia']) delete copy[k];
+    const c = store.add('estimates', copy);
+    ui.toast(`Revision ${c.number} started`, 'success');
+    nav('#/estimates/' + c.id);
+  };
   const createJob = () => {
     save.flush();
     const job = store.add('jobs', {
@@ -279,7 +370,8 @@ function renderDetail(root, ctx, id) {
     return job;
   };
   const accept = () => {
-    setStatus('accepted');
+    setStatus('accepted', { acceptedVia: 'manual' });
+    acceptSideEffects(store, store.get('estimates', id), ui);
     if (doc.leadId && on('leads')) { const l = store.get('leads', doc.leadId); if (l && l.stage !== 'won') store.update('leads', l.id, { stage: 'won' }); }
     const s = ui.openSheet({
       title: 'Estimate accepted', dialog: true,
@@ -320,8 +412,8 @@ function renderDetail(root, ctx, id) {
     actions: [
       ui.button('Print / PDF', { icon: 'printer', onClick: () => { save.flush(); previewDocument({ kind: 'Estimate', doc, store }); } }),
       ui.button('Duplicate', { icon: 'copy', onClick: duplicate }),
-      ui.button('', { icon: 'trash', variant: 'ghost danger', title: 'Delete estimate', onClick: remove }),
-    ],
+      doc.signatureId ? null : ui.button('', { icon: 'trash', variant: 'ghost danger', title: 'Delete estimate', onClick: remove }),
+    ].filter(Boolean),
   },
   h('div', { class: 'doc-layout' },
     h('div', { class: 'stack' },
@@ -337,11 +429,13 @@ function renderDetail(root, ctx, id) {
 }
 
 /** Estimate fields the detail screen shows in its form: changed elsewhere, the screen is drawn again. */
-const FORM_FIELDS = ['number', 'title', 'clientId', 'jobId', 'validUntil', 'labourRateCents', 'markupPct', 'taxes', 'taxPct', 'taxProvince', 'taxTreatment', 'taxNoneReason', 'notes', 'lines'];
+const FORM_FIELDS = ['number', 'title', 'clientId', 'jobId', 'validUntil', 'labourRateCents', 'markupPct', 'taxes', 'taxPct', 'taxProvince', 'taxTreatment', 'taxNoneReason', 'notes', 'lines',
+  'taxExemptNumber', 'taxExemptBasis', 'taxExemptDetails', 'exemptionConfirmed', 'signatureId'];
 
+/** A copy's fields: never the id, timestamps, signature or revision link of the original. */
 function pick(d) {
-  const { id, createdAt, updatedAt, ...rest } = d;
-  void id; void createdAt; void updatedAt;
+  const { id, createdAt, updatedAt, signatureId, signedAt, signedName, acceptedVia, revisionOf, ...rest } = d;
+  void id; void createdAt; void updatedAt; void signatureId; void signedAt; void signedName; void acceptedVia; void revisionOf;
   return rest;
 }
 

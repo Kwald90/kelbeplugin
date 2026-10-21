@@ -51,15 +51,32 @@ export default {
         ],
         danger: entry ? { label: 'Remove', onClick: () => store.remove('schedule', entry.id) } : null,
         onSubmit(v) {
-          if (entry) store.update('schedule', entry.id, v);
-          else {
-            store.add('schedule', v);
-            const job = store.get('jobs', v.jobId);
-            if (job && !(job.crewIds || []).includes(v.employeeId)) store.update('jobs', job.id, { crewIds: [...(job.crewIds || []), v.employeeId] }, { silent: true });
+          const commit = (data) => {
+            if (entry) store.update('schedule', entry.id, data);
+            else {
+              store.add('schedule', data);
+              const job = store.get('jobs', data.jobId);
+              if (job && !(job.crewIds || []).includes(data.employeeId)) store.update('jobs', job.id, { crewIds: [...(job.crewIds || []), data.employeeId] }, { silent: true });
+            }
+            ui.toast('Schedule updated', 'success');
+          };
+          // Past-due hold at dispatch (r1-get-paid.md 4.5): assigning a held client's job needs "Dispatch anyway".
+          const held = heldClient(v.jobId);
+          if (held && !(entry?.holdAck && entry.jobId === v.jobId)) {
+            ui.confirmDialog(`${held.name} is on hold for a past-due account. Check with the office before sending a crew.`, { title: 'Past due: hold work', okLabel: 'Dispatch anyway', danger: true })
+              .then((ok) => { if (ok) commit({ ...v, holdAck: { by: auth.who().name, at: new Date().toISOString() } }); });
+            return;
           }
-          ui.toast('Schedule updated', 'success');
+          commit(v);
         },
       });
+    }
+
+    /** The job's client when it is on a past-due or over-limit hold (no amounts: the flag only). */
+    function heldClient(jobId) {
+      const job = jobId ? store.get('jobs', jobId) : null;
+      const client = job?.clientId ? store.get('clients', job.clientId) : null;
+      return client?.credit?.hold?.on ? client : null;
     }
 
     function chip(s) {
@@ -67,7 +84,8 @@ export default {
       return h('button', {
         type: 'button', class: 'ops-chip', style: { '--job': jobColor(s.jobId) }, title: `${job?.title || 'Job'}${s.note ? ' — ' + s.note : ''}`,
         onClick: (e) => { e.stopPropagation(); assign(s.employeeId, s.date, s); },
-      }, h('span', { class: 'ops-chip-num' }, job?.number || '?'), h('span', { class: 'ops-chip-title' }, job?.title || 'Deleted job'), h('span', { class: 'ops-chip-hrs' }, `${s.hours}h`));
+      }, h('span', { class: 'ops-chip-num' }, job?.number || '?'), heldClient(s.jobId) ? h('span', { class: 'ops-chip-hold', title: 'Past due: hold work' }, ui.icon('alert', 12)) : null,
+      h('span', { class: 'ops-chip-title' }, job?.title || 'Deleted job'), h('span', { class: 'ops-chip-hrs' }, `${s.hours}h`));
     }
 
     const draw = () => {
@@ -128,7 +146,7 @@ export default {
 
     root.append(host);
     draw();
-    const offs = ['schedule', 'employees', 'jobs'].map((c) => store.on(c, draw));
+    const offs = ['schedule', 'employees', 'jobs', 'clients'].map((c) => store.on(c, draw));
     return () => offs.forEach((f) => f());
   },
 };

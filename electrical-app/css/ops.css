@@ -98,3 +98,13 @@
   .ops-joblist + .table-wrap { display: none; }
   .ops-toolbar .search { flex: 1 1 100%; }
 }
+
+/* The contract and payment card, holdback and the final-billing checklist (r1-get-paid.md 4.8, 7.1, 7.3) */
+.ops-contract h4 { margin: var(--s4) 0 var(--s2); font-size: var(--fs-sm); }
+.ops-kvs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--s2) var(--s4); margin-top: var(--s2); }
+.ops-kv { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); }
+.ops-holdback { margin-bottom: var(--s4); }
+.ops-recon { display: flex; flex-direction: column; gap: var(--s2); }
+.ops-recon .input { min-height: 32px; padding: 4px 8px; border: 1px solid var(--border-input); border-radius: var(--r-sm); background: var(--surface); width: 100%; }
+.ops-chip-hold { display: inline-flex; color: var(--danger); }
+.dash-stat-link { color: inherit; text-decoration: none; }
