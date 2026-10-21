@@ -112,6 +112,117 @@
       ],
       "maxLength": 64,
       "description": "The employee number in the payroll system (Wagepoint, QuickBooks), for payroll exports."
+    },
+    "hireDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "billRateCents": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 100000000000,
+      "description": "T&M bill rate (lib/tm.js). Money in integer cents (CAD)."
+    },
+    "defaultEquipmentId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "The truck they drive: clock-ins take it."
+    },
+    "rateHistory": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+          },
+          "rateCents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100000000000,
+            "description": "Money in integer cents (CAD)."
+          }
+        }
+      },
+      "description": "Effective-dated wages (office only)."
+    },
+    "burden": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "vacationPct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "holidayPct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "wcbPct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "nonProductivePct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "benefitsCentsPerHour": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100000000000,
+          "description": "Money in integer cents (CAD)."
+        },
+        "annualHours": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 8760
+        }
+      },
+      "description": "Overrides of the burden rates for this person."
     }
   },
   "additionalProperties": true

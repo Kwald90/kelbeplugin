@@ -31,6 +31,10 @@ export const FEATURE_PLAN = {
   materials: 'starter',
   // QuickBooks Online two-way sync, and supplier bills, receipts and purchase orders
   quickbooks: 'pro', purchasing: 'pro',
+  // Release 1 (docs/releases/r1-get-paid.md 2.11), generous per Kelvin: the books (period lock,
+  // payroll runs, rules table, cost codes), signed field tickets and job costing are in every plan;
+  // the WIP report and the month-end cutoff export are Pro.
+  books: 'starter', tickets: 'starter', reports: 'starter', 'reports.wip': 'pro', monthend: 'pro',
   // features inside modules
   'drawings.rooms': 'pro', 'wireruns.trace': 'pro', portal: 'pro', 'payments.online': 'pro', 'integrations.email': 'pro',
   'ai.assistant': 'business', 'ai.cec': 'business', 'ai.background': 'business', api: 'business', mcp: 'business',

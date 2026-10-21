@@ -57,7 +57,7 @@
         "null"
       ],
       "maxLength": 40,
-      "description": "Known values: cash, check, card, transfer, credit. credit is written only by the QuickBooks sync: the part of an invoice settled in QuickBooks by credit memos or journal entries (source quickbooks); office users cannot create or edit it."
+      "description": "Known values: cash, check, card, transfer, credit, credit-note, refund. credit is written only by the QuickBooks sync: the part of an invoice settled in QuickBooks by credit memos or journal entries (source quickbooks); office users cannot create or edit it. credit-note is an application of a Fishtape credit note (office); refund is money paid back to the customer. A negative amountCents is allowed only with reversesId or method refund."
     },
     "reference": {
       "type": [
@@ -140,6 +140,61 @@
         }
       },
       "additionalProperties": true
+    },
+    "postedOn": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$",
+      "description": "Server: the day this record posts on (its own date, or the first open day after a closed period; docs/releases/r1-get-paid.md 2.6). Devices cannot set it."
+    },
+    "late": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Server: posted after the period it belongs to was closed."
+    },
+    "clientId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "Required when invoiceId is null (on-account)."
+    },
+    "receiptId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "Groups the allocations of one cheque or deposit."
+    },
+    "appliedFromId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "An application of on-account credit."
+    },
+    "creditNoteId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "A credit note applied to this invoice."
+    },
+    "reversesId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "A reversal of an earlier payment."
     }
   },
   "additionalProperties": true

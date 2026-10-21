@@ -14,6 +14,7 @@ import { createValidator } from '../src/schemas.js';
 import { refreshReference } from '../src/qbo/reference.js';
 import { acquireLease, releaseLease } from '../src/qbo/lease.js';
 import { syncTenant } from '../src/qbo/engine.js';
+import { setLock } from '../src/services/period-lock.js';
 
 let t, app, A, B, keyA, keyAReadJobs, bIds;
 const SECRET = 'B-ONLY-SECRET';
@@ -51,10 +52,22 @@ before(async () => {
     const id = coll === 'settings' ? 'settings' : `b-${coll}-1`;
     const data = coll === 'settings' ? { company: { name: SECRET } } : { name: SECRET, title: SECRET, note: SECRET };
     if (coll === 'locationPoints' || coll === 'locationConsents') Object.assign(data, { employeeId: 'b-owner-emp', at: new Date().toISOString(), lat: 49.9, lng: -97.1 });
+    // Release 1: a company rule is typed per its definition; a signature carries its pad image.
+    if (coll === 'rules') Object.assign(data, { key: 'payroll.company.wcbRatePct', value: 1.5, status: 'sourced', source: SECRET });
+    if (coll === 'signatures') Object.assign(data, { docType: 'fieldTicket', docId: 'b-fieldTickets-1', dataUrl: 'data:image/jpeg;base64,AAAA' });
+    bIds[coll] = id;
+    if (coll === 'payrollRuns') {
+      // Only the closing route writes payroll runs: a device push is refused (and listed for B's office).
+      const refused = await push(B.token, [mut({ collection: coll, id, op: 'upsert', data })]);
+      assert.equal(refused.body.results[0].status, 'rejected');
+      await t.superPool.query('INSERT INTO payroll_runs (tenant_id, id, data) VALUES ($1, $2, $3)', [B.tenantId, id, { ...data, status: 'exported', entryIds: [] }]);
+      continue;
+    }
     const r = await push(B.token, [mut({ collection: coll, id, op: 'upsert', data })]);
     assert.equal(r.body.results[0].status, 'ok', `${coll}: ${JSON.stringify(r.body.results[0])}`);
-    bIds[coll] = id;
   }
+  // B's period lock history (Release 1 platform tables: period_locks, sync_rejections, doc_counters).
+  await t.db.withTenant({ tenantId: B.tenantId }, (tx) => setLock(tx, { kind: 'payroll', through: '2026-01-01', reason: SECRET, actor: { type: 'system', id: 'test', label: SECRET } }));
   // A has a little data of its own.
   await push(A.token, [mut({ collection: 'jobs', id: 'a-job-1', op: 'upsert', data: { title: 'Alpha job' } })]);
   keyA = await apiKey(app, A.token, ['*:write']);
@@ -230,10 +243,27 @@ describe('database: fishtape_app without a tenant sees nothing and cannot cross 
       const r = await t.appPool.query(`SELECT count(*)::int AS n FROM ${table}`);
       assert.equal(r.rows[0].n, 0, `${table} visible without tenant`);
     }
-    for (const table of ['audit_events', 'sync_mutations', 'record_history', 'tenant_secrets']) {
+    for (const table of ['audit_events', 'sync_mutations', 'record_history', 'tenant_secrets', 'period_locks', 'sync_rejections', 'doc_counters']) {
+      const all = await t.superPool.query(`SELECT count(*)::int AS n FROM ${table}`);
+      if (['period_locks', 'sync_rejections', 'doc_counters'].includes(table)) assert.ok(all.rows[0].n > 0, `${table} has data`);
       const r = await t.appPool.query(`SELECT count(*)::int AS n FROM ${table}`);
       assert.equal(r.rows[0].n, 0, `${table} visible without tenant`);
     }
+  });
+
+  test("Release 1: A never sees B's locks, refused writes or ticket counter", async () => {
+    await t.db.withTenant({ tenantId: A.tenantId }, async (tx) => {
+      for (const table of ['period_locks', 'sync_rejections', 'doc_counters']) {
+        const seen = await tx.query(`SELECT DISTINCT tenant_id FROM ${table}`);
+        assert.ok(seen.rows.every((r) => r.tenant_id === A.tenantId), table);
+      }
+      await assert.rejects(tx.savepoint(() => tx.query("INSERT INTO period_locks (tenant_id, kind, through, actor) VALUES ($1, 'books', '2026-01-01', 'x')", [B.tenantId])), /row-level security/);
+      await assert.rejects(tx.savepoint(() => tx.query("INSERT INTO doc_counters (tenant_id, kind, next) VALUES ($1, 'ticket', 5000)", [B.tenantId])), /row-level security/);
+    });
+    // platform_rules are shared law (every company reads them) and hold no tenant data.
+    const pr = await t.appPool.query('SELECT count(*)::int AS n FROM platform_rules');
+    assert.ok(pr.rows[0].n > 10);
+    await assert.rejects(t.appPool.query("UPDATE platform_rules SET value = '1' WHERE key = 'pp.MB.paymentDays'"), /permission denied/);
   });
 
   test('the tenant setting does not leak to the next use of a pooled connection', async () => {

@@ -64,7 +64,7 @@
         "null"
       ],
       "maxLength": 40,
-      "description": "Known values: draft, sent, accepted, declined."
+      "description": "Known values: draft, sent, accepted, declined, superseded."
     },
     "lines": {
       "type": [
@@ -123,6 +123,56 @@
               "null"
             ],
             "maxLength": 128
+          },
+          "costCodeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128,
+            "description": "costCodes record (docs/releases/r1-get-paid.md 2.8)."
+          },
+          "taxOff": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 6,
+            "items": {
+              "enum": [
+                "GST",
+                "HST",
+                "PST",
+                "RST",
+                "QST",
+                "*"
+              ]
+            },
+            "description": "Taxes not charged on this line ('*' = all). Only on labour and other lines."
+          },
+          "passThrough": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "An out-of-pocket disbursement billed at cost (hotel, meals): no RST, outside the holdback base."
+          },
+          "lineType": {
+            "enum": [
+              "deposit",
+              "holdback",
+              "interest",
+              null
+            ],
+            "description": "Special lines: a deposit or its application, a holdback release, overdue interest."
+          },
+          "depositInvoiceId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128,
+            "description": "The deposit invoice a negative deposit line applies."
           }
         }
       }
@@ -169,6 +219,153 @@
         "null"
       ],
       "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "taxExemptNumber": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "description": "The customer's RST or PST number (or the end customer's, when a general contractor passes on an exemption)."
+    },
+    "taxExemptBasis": {
+      "enum": [
+        "resale",
+        "subtrade",
+        "pass-on",
+        "federal",
+        "first-nations",
+        "farm",
+        null
+      ],
+      "description": "Why PST/RST is not charged on this contract (js/lib/exemption.js EXEMPT_BASES)."
+    },
+    "taxExemptDetails": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "registryNo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "band": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "reserve": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "farmCertNo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 60
+        },
+        "department": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "endCustomer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        }
+      },
+      "description": "Evidence per basis (js/lib/exemption.js EXEMPT_EVIDENCE)."
+    },
+    "exemptionConfirmed": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        }
+      },
+      "description": "Who ticked \"This work is exempt\" on the document, and when."
+    },
+    "signatureId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "signedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "signedName": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 120
+    },
+    "acceptedVia": {
+      "enum": [
+        "signature",
+        "manual",
+        "quickbooks",
+        null
+      ]
+    },
+    "revisionOf": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "The estimate this one revises."
     }
   },
   "additionalProperties": true

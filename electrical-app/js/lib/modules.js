@@ -31,11 +31,14 @@ export const SWITCHES = [
   { id: 'wireruns', group: 'work', label: 'Wire runs', desc: 'Measured runs with allowances, pushed to estimates.', modules: ['wireruns'] },
   { id: 'panels', group: 'work', label: 'Panel schedules', desc: 'Circuits, loads and printable directories.', modules: ['panels'] },
   { id: 'bending', group: 'work', label: 'Pipe bending', desc: 'Offsets, saddles and kicks with marks.', modules: ['bending'] },
+  { id: 'tickets', group: 'work', label: 'Field tickets', desc: 'Signed extra work and T&M tickets on the phone, priced by the office.', modules: ['tickets'], core: true },
   { id: 'estimates', group: 'money', label: 'Estimates', desc: 'Quotes from the price book and drawing takeoffs.', modules: ['estimates'], core: true },
   { id: 'invoices', group: 'money', label: 'Invoices', desc: 'Billing, payments and what is owed.', modules: ['invoices'], core: true },
   { id: 'pricebook', group: 'money', label: 'Price book', desc: 'Your items with cost and sell prices.', modules: [], core: true },
   { id: 'inventory', group: 'money', label: 'Stock', desc: 'Stock in the shop and vans, and what moved where.', modules: [] },
   { id: 'purchasing', group: 'money', label: 'Purchasing', desc: 'Suppliers, bills, receipts and purchase orders.', modules: ['purchasing'] },
+  { id: 'reports', group: 'money', label: 'Job costing and reports', desc: 'Job profit, truck rates, break-even, RST self-assessment and WIP.', modules: ['reports'], core: true },
+  { id: 'monthend', group: 'money', label: 'Month-end', desc: 'The month-end cutoff export for your accountant and inventory valuation.', modules: ['monthend'] },
   { id: 'time', group: 'people', label: 'Time clock', desc: 'Clock in and out against jobs; weekly timesheets.', modules: ['time'], core: true },
   { id: 'employees', group: 'people', label: 'Employees', desc: 'Crew records, licences and pay rates.', modules: ['employees'], core: true },
   { id: 'safety', group: 'people', label: 'Safety', desc: 'Hazard assessments, toolbox talks and incidents.', modules: ['safety'], core: true },
@@ -52,7 +55,7 @@ export const SWITCHES = [
 export const SWITCH_BY_ID = Object.fromEntries(SWITCHES.map((s) => [s.id, s]));
 
 /** Module ids no switch can turn off (the shell, settings and the job list everything hangs off). */
-export const ALWAYS_ON = ['dashboard', 'jobs', 'settings', 'billing', 'help', 'notifications', 'onboarding', 'account', 'import', 'developer'];
+export const ALWAYS_ON = ['dashboard', 'jobs', 'settings', 'billing', 'help', 'notifications', 'onboarding', 'account', 'import', 'developer', 'books'];
 
 /** Switches that show a module. The Inventory screen holds the price book and the stock. */
 const MODULE_SWITCHES = { inventory: ['pricebook', 'inventory'], kpis: ['workplan'] };
@@ -161,6 +164,13 @@ export const COLLECTION_SWITCHES = {
   vendors: ['purchasing'],
   bills: ['purchasing'],
   purchaseOrders: ['purchasing'],
+  // Release 1 (docs/releases/r1-get-paid.md 2.2). Cost codes, company rules and signatures are shared
+  // by many screens and always writable.
+  payrollRuns: ['time'],
+  fieldTickets: ['tickets'],
+  equipment: ['reports', 'inventory', 'time'],
+  equipmentUse: ['reports', 'tickets'],
+  stockCounts: ['inventory'],
 };
 
 /** The switch that blocks a write to `coll`, or null when the write is allowed. */

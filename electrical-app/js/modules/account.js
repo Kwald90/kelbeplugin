@@ -420,7 +420,11 @@ export function syncLabel(s) {
   return { icon: ICON.cloudOk, text: 'Synced', tone: 'success' };
 }
 
-const COLL_LABEL = { timeEntries: 'time entry', stockMoves: 'stock move', wireRuns: 'wire run', benderProfiles: 'bender profile', settings: 'settings' };
+const COLL_LABEL = {
+  timeEntries: 'time entry', stockMoves: 'stock move', wireRuns: 'wire run', benderProfiles: 'bender profile', settings: 'settings',
+  costCodes: 'cost code', rules: 'company rule', payrollRuns: 'payroll run', signatures: 'signature', fieldTickets: 'field ticket',
+  equipment: 'truck or equipment', equipmentUse: 'equipment use', stockCounts: 'stock count',
+};
 const describeEntry = (store, e) => {
   const r = store.get(e.collection, e.id);
   const name = r ? String(r.number || r.name || r.title || r.description || '').slice(0, 60) : '';

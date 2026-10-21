@@ -130,6 +130,56 @@
               "null"
             ],
             "maxLength": 128
+          },
+          "costCodeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128,
+            "description": "costCodes record (docs/releases/r1-get-paid.md 2.8)."
+          },
+          "taxOff": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 6,
+            "items": {
+              "enum": [
+                "GST",
+                "HST",
+                "PST",
+                "RST",
+                "QST",
+                "*"
+              ]
+            },
+            "description": "Taxes not charged on this line ('*' = all). Only on labour and other lines."
+          },
+          "passThrough": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "An out-of-pocket disbursement billed at cost (hotel, meals): no RST, outside the holdback base."
+          },
+          "lineType": {
+            "enum": [
+              "deposit",
+              "holdback",
+              "interest",
+              null
+            ],
+            "description": "Special lines: a deposit or its application, a holdback release, overdue interest."
+          },
+          "depositInvoiceId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128,
+            "description": "The deposit invoice a negative deposit line applies."
           }
         }
       }
@@ -170,6 +220,540 @@
         "null"
       ],
       "maxLength": 20000
+    },
+    "taxExemptNumber": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "description": "The customer's RST or PST number (or the end customer's, when a general contractor passes on an exemption)."
+    },
+    "taxExemptBasis": {
+      "enum": [
+        "resale",
+        "subtrade",
+        "pass-on",
+        "federal",
+        "first-nations",
+        "farm",
+        null
+      ],
+      "description": "Why PST/RST is not charged on this contract (js/lib/exemption.js EXEMPT_BASES)."
+    },
+    "taxExemptDetails": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "registryNo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "band": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "reserve": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "farmCertNo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 60
+        },
+        "department": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "endCustomer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        }
+      },
+      "description": "Evidence per basis (js/lib/exemption.js EXEMPT_EVIDENCE)."
+    },
+    "exemptionConfirmed": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        }
+      },
+      "description": "Who ticked \"This work is exempt\" on the document, and when."
+    },
+    "kind": {
+      "enum": [
+        "standard",
+        "deposit",
+        "progress",
+        "holdback-release",
+        "credit",
+        "interest",
+        null
+      ],
+      "description": "Missing = standard."
+    },
+    "depositModel": {
+      "enum": [
+        "prepayment",
+        "security",
+        null
+      ]
+    },
+    "forfeitedOn": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "holdback": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "pct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "cents": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -100000000000,
+          "maximum": 100000000000,
+          "description": "Money in integer cents (CAD)."
+        },
+        "deferTaxIds": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "maxLength": 10
+          }
+        },
+        "retainedByCustomerCents": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -100000000000,
+          "maximum": 100000000000,
+          "description": "Money in integer cents (CAD)."
+        },
+        "retainedRecordedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        },
+        "retainedRecordedBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        }
+      }
+    },
+    "holdbackInvoiceIds": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 200,
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      }
+    },
+    "creditsInvoiceId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "creditReason": {
+      "enum": [
+        "error",
+        "price",
+        "dispute",
+        "backcharge",
+        "bad_debt",
+        "deposit-refund",
+        "other",
+        null
+      ]
+    },
+    "creditTaxSnapshot": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The original invoice's tax fields a credit note keeps."
+    },
+    "interestFor": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "properties": {
+          "invoiceId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+          },
+          "cents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": -100000000000,
+            "maximum": 100000000000,
+            "description": "Money in integer cents (CAD)."
+          }
+        }
+      }
+    },
+    "termsText": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2000
+    },
+    "interestDisclosed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "properInvoice": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "periodFrom": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "periodTo": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "contractRef": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 120
+    },
+    "promptPayment": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "deliveredOn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "deliveredVia": {
+          "enum": [
+            "fishtape-email",
+            "email",
+            "gc-portal",
+            "hand",
+            "mail",
+            "quickbooks",
+            null
+          ]
+        },
+        "gcPaidOn": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "nonPaymentNotice": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "receivedOn": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+            },
+            "disputedCents": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -100000000000,
+              "maximum": 100000000000,
+              "description": "Money in integer cents (CAD)."
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 500
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1000
+            }
+          }
+        }
+      }
+    },
+    "disputes": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "lineIndex": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 2000
+          },
+          "cents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": -100000000000,
+            "maximum": 100000000000,
+            "description": "Money in integer cents (CAD)."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "status": {
+            "enum": [
+              "open",
+              "conceded",
+              "won",
+              null
+            ]
+          },
+          "openedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "openedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "resolvedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "resolvedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "creditNoteId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          }
+        }
+      }
+    },
+    "ticketIds": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 500,
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      }
+    },
+    "ticketReconciliation": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 400,
+      "items": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+          },
+          "billedMinutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "signedMinutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          }
+        }
+      }
+    },
+    "sentAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
     }
   },
   "additionalProperties": true

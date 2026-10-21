@@ -46,7 +46,10 @@ export default async function syncRoutes(app, { db, records, bodyLimit }) {
     },
   }, async (req) => {
     const p = req.principal;
-    const results = await db.withTenant(tenantCtx(p), (tx) => records.push(tx, p, req.body.mutations, who(req)), { write: true });
+    // The device (a shared iPad's crew session) goes with any refused write listed on Books
+    // (docs/releases/r1-get-paid.md 2.6); records.push stores the refusals in sync_rejections.
+    const deviceId = req.auth?.session?.device_id || null;
+    const results = await db.withTenant(tenantCtx(p), (tx) => records.push(tx, p, req.body.mutations, { ...who(req), deviceId }), { write: true });
     return { results };
   });
 

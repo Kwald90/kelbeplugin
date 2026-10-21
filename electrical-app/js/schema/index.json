@@ -44,6 +44,14 @@
     "locationConsents": "./locationConsents.json",
     "vendors": "./vendors.json",
     "bills": "./bills.json",
-    "purchaseOrders": "./purchaseOrders.json"
+    "purchaseOrders": "./purchaseOrders.json",
+    "costCodes": "./costCodes.json",
+    "rules": "./rules.json",
+    "payrollRuns": "./payrollRuns.json",
+    "signatures": "./signatures.json",
+    "fieldTickets": "./fieldTickets.json",
+    "equipment": "./equipment.json",
+    "equipmentUse": "./equipmentUse.json",
+    "stockCounts": "./stockCounts.json"
   }
 }

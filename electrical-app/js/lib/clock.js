@@ -5,9 +5,29 @@
 // States: off the clock (no open entry) -> working (kind 'work', jobId) <-> travelling (kind
 // 'travel', travelFromJobId, jobId = where they are going once known). Every change closes the
 // open entry and opens the next at the same instant, so hours never overlap or go missing.
+//
+// Clock-in picks nothing (docs/releases/r1-get-paid.md 2.8): the entry takes the job's current phase
+// as its cost code (jobs.currentCostCodeId, lib/cost-codes.js defaultCostCode) and the person's truck
+// (employees.defaultEquipmentId), without asking. The time clock shows both with a "Change" link.
 import { siteCheck, entriesForSegments } from './geo.js';
+import { defaultCostCode } from './cost-codes.js';
 
 export const openEntry = (store, employeeId) => (employeeId ? store.list('timeEntries', (t) => t.employeeId === employeeId && t.clockIn && !t.clockOut)[0] || null : null);
+
+/** The cost code a new entry on a job takes (null when the job has no phase set). */
+export function costCodeFor(store, jobId) {
+  if (!jobId) return null;
+  return defaultCostCode(store.get('jobs', jobId), store.list('costCodes'));
+}
+
+/** Cost code and truck for a new entry: { costCodeId, equipmentId } (explicit values win). */
+export function clockCoding(store, { employeeId, jobId, costCodeId, equipmentId } = {}) {
+  const emp = employeeId ? store.get('employees', employeeId) : null;
+  return {
+    costCodeId: costCodeId !== undefined ? costCodeId || null : costCodeFor(store, jobId),
+    equipmentId: equipmentId !== undefined ? equipmentId || null : emp?.defaultEquipmentId || null,
+  };
+}
 
 const iso = (at) => (at ? new Date(at).toISOString() : new Date().toISOString());
 
@@ -37,13 +57,22 @@ export function recordPoint(store, { entry, fix, source, siteId = null }) {
   }, { silent: true });
 }
 
-/** Clock in. Returns the new entry. A second open shift for the same person is refused (null). */
-export function clockIn(store, { employeeId, jobId = null, kind = 'work', travelFromJobId = null, at, note = '', locStatus = null }) {
+/**
+ * Clock in. Returns the new entry. A second open shift for the same person is refused (null).
+ * The cost code (the job's phase) and the truck (the person's default) are set without asking.
+ */
+export function clockIn(store, { employeeId, jobId = null, kind = 'work', travelFromJobId = null, at, note = '', locStatus = null, costCodeId, equipmentId }) {
   if (!employeeId || openEntry(store, employeeId)) return null;
   return store.add('timeEntries', {
     employeeId, jobId: jobId || null, kind: kind === 'travel' ? 'travel' : 'work', ...(kind === 'travel' ? { travelFromJobId: travelFromJobId || null } : {}),
+    ...clockCoding(store, { employeeId, jobId, costCodeId, equipmentId }),
     clockIn: iso(at), clockOut: null, breakMins: 0, breakStart: null, note: note || '', approved: false, source: 'clock', locStatus,
   });
+}
+
+/** A different job on the open entry (a suggestion taken, an arrival): the cost code follows the job. */
+export function setEntryJob(store, entryId, jobId, opts) {
+  return store.update('timeEntries', entryId, { jobId: jobId || null, costCodeId: costCodeFor(store, jobId) }, opts);
 }
 
 /** Attach a clock-in or clock-out fix to an entry (and keep the raw point while the shift is open). */
@@ -76,16 +105,17 @@ export function switchTo(store, open, { kind, jobId = null, at, note = '' }) {
   if (Date.parse(when) <= Date.parse(cur.clockIn)) {
     // Nothing recorded yet on this entry: change it in place instead of leaving a zero-length one.
     return store.update('timeEntries', cur.id, kind === 'travel'
-      ? { kind: 'travel', travelFromJobId: cur.kind === 'travel' ? cur.travelFromJobId || null : cur.jobId || null, jobId: jobId || null }
-      : { kind: 'work', jobId: jobId || null, travelFromJobId: null });
+      ? { kind: 'travel', travelFromJobId: cur.kind === 'travel' ? cur.travelFromJobId || null : cur.jobId || null, jobId: jobId || null, costCodeId: costCodeFor(store, jobId) }
+      : { kind: 'work', jobId: jobId || null, travelFromJobId: null, costCodeId: costCodeFor(store, jobId) });
   }
   const patch = {};
-  if (cur.kind === 'travel' && kind === 'work' && jobId && cur.jobId !== jobId) patch.jobId = jobId;
+  if (cur.kind === 'travel' && kind === 'work' && jobId && cur.jobId !== jobId) { patch.jobId = jobId; patch.costCodeId = costCodeFor(store, jobId); }
   if (Object.keys(patch).length) store.update('timeEntries', cur.id, patch, { silent: true });
   closeEntry(store, cur.id, { at: when });
   return store.add('timeEntries', {
     employeeId: cur.employeeId, jobId: jobId || null, kind: kind === 'travel' ? 'travel' : 'work',
     ...(kind === 'travel' ? { travelFromJobId: cur.kind === 'travel' ? cur.travelFromJobId || null : cur.jobId || null } : {}),
+    costCodeId: costCodeFor(store, jobId), equipmentId: cur.equipmentId || null,
     clockIn: when, clockOut: null, breakMins: 0, breakStart: null, note, approved: false, source: 'clock', locStatus: cur.locStatus || null,
   });
 }

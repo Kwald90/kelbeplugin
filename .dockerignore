@@ -17,6 +17,27 @@
 !electrical-app/js/lib/modules.js
 !electrical-app/js/lib/materials.js
 !electrical-app/js/lib/location-policy.js
+# Release 1 shared libraries (docs/releases/r1-get-paid.md 2.12); harmless until a file exists.
+!electrical-app/js/lib/rules.js
+!electrical-app/js/lib/closing.js
+!electrical-app/js/lib/cost-codes.js
+!electrical-app/js/lib/exemption.js
+!electrical-app/js/lib/signing.js
+!electrical-app/js/lib/timesheet.js
+!electrical-app/js/lib/csv.js
+!electrical-app/js/lib/tm.js
+!electrical-app/js/lib/doc-view.js
+!electrical-app/js/lib/receivables.js
+!electrical-app/js/lib/prompt-payment.js
+!electrical-app/js/lib/closeout.js
+!electrical-app/js/lib/tickets.js
+!electrical-app/js/lib/costing.js
+!electrical-app/js/lib/burden.js
+!electrical-app/js/lib/rst.js
+!electrical-app/js/lib/month-end.js
+!electrical-app/js/lib/stock-counts.js
+!electrical-app/js/lib/purchasing.js
+!electrical-app/js/lib/geo.js
 !compliance/controls.yaml
 
 # Never send these into the build, even inside allowed folders.

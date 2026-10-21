@@ -18,6 +18,8 @@ export const FEATURE_LABELS = {
   'integrations.sms': 'SMS (Twilio)', 'integrations.facebook': 'Facebook Lead Ads', 'locations.multi': 'Multiple stock locations',
   sso: 'Single sign-on', 'setup.service': 'Setup done for you',
   quickbooks: 'QuickBooks Online sync', purchasing: 'Supplier bills and purchase orders',
+  books: 'Period lock, payroll runs and the rules table', tickets: 'Signed field tickets', reports: 'Job costing and reports',
+  'reports.wip': 'WIP (over and under billing) report', monthend: 'Month-end cutoff export',
 };
 
 /** Features a plan adds over the one below it. */

@@ -22,9 +22,15 @@ export const KIND_LABEL = {
   job_assigned: 'Jobs', timesheet: 'Time', ai_suggestion: 'AI suggestions', payment: 'Payments', lead: 'Leads',
   expiring: 'Expiring', announcement: 'Announcements', system: 'System', safety: 'Safety', workplan: 'Crew tasks', materials: 'Material requests',
   quickbooks: 'QuickBooks',
+  // Release 1 (docs/releases/r1-get-paid.md 10.2). None of these carries an amount.
+  period_lock: 'Books', payroll_reopened: 'Payroll', late_posting: 'Books', signature_unverified: 'Signatures',
+  prompt_payment: 'Prompt payment', gst_due: 'GST', credit_hold: 'Credit holds', ticket_signed: 'Field tickets',
+  service_draft: 'Field tickets', billing_cutoff: 'Billing', closeout_due: 'Billing', holdback_due: 'Holdback',
 };
 export const KIND_ICON = {
   job_assigned: 'briefcase', timesheet: 'clock', ai_suggestion: 'zap', payment: 'dollar', lead: 'funnel', expiring: 'id-card', announcement: 'info', system: 'info', safety: 'shield-check', workplan: 'list', materials: 'truck', quickbooks: 'link',
+  period_lock: 'lock', payroll_reopened: 'unlock', late_posting: 'calendar', signature_unverified: 'alert', prompt_payment: 'clock', gst_due: 'receipt',
+  credit_hold: 'stop', ticket_signed: 'pen', service_draft: 'file-text', billing_cutoff: 'calendar', closeout_due: 'check', holdback_due: 'dollar',
 };
 
 /**

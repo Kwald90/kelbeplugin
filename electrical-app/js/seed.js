@@ -7,6 +7,8 @@ import { newDocTax } from './lib/tax.js';
 import { CEC_TEMPLATES } from './lib/cec/checklists.js';
 import { seedDemoPlan } from './lib/workplan.js';
 import { presetModules } from './lib/modules.js';
+import { STANDARD_COST_CODES } from './lib/cost-codes.js';
+import { snapshotOf, signedContent, digestHex } from './lib/signing.js';
 
 // Canvas symbol ids (js/canvas/symbols.js draws them). Price book items point
 // at these so a drawing's symbol count can become an estimate.
@@ -185,9 +187,10 @@ export function seedIfEmpty(store) {
   }, S);
 
   // time entries (yesterday + one open shift today)
-  store.add('timeEntries', { employeeId: marcus.id, jobId: j1.id, clockIn: iso(-1, 7, 0), clockOut: iso(-1, 15, 30), breakMins: 30, note: '', approved: true }, S);
-  store.add('timeEntries', { employeeId: tom.id, jobId: j1.id, clockIn: iso(-1, 7, 5), clockOut: iso(-1, 15, 30), breakMins: 30, note: '', approved: false }, S);
-  store.add('timeEntries', { employeeId: marcus.id, jobId: j1.id, clockIn: new Date(Date.now() - 2.5 * 3600e3).toISOString(), clockOut: null, breakMins: 0, note: '', approved: false }, S);
+  // (the cost code is the job's phase, set at clock-in without asking; Release 1 demo codes below)
+  store.add('timeEntries', { employeeId: marcus.id, jobId: j1.id, costCodeId: 'cc-rough-in', clockIn: iso(-1, 7, 0), clockOut: iso(-1, 15, 30), breakMins: 30, note: '', approved: true }, S);
+  store.add('timeEntries', { employeeId: tom.id, jobId: j1.id, costCodeId: 'cc-rough-in', clockIn: iso(-1, 7, 5), clockOut: iso(-1, 15, 30), breakMins: 30, note: '', approved: false }, S);
+  store.add('timeEntries', { employeeId: marcus.id, jobId: j1.id, costCodeId: 'cc-rough-in', clockIn: new Date(Date.now() - 2.5 * 3600e3).toISOString(), clockOut: null, breakMins: 0, note: '', approved: false }, S);
 
   // stock moves
   store.add('stockMoves', { itemId: items.rec.id, fromLocationId: shop.id, toLocationId: van1.id, qty: 10, jobId: null, date: today(-3), note: 'Restock van' }, S);
@@ -196,6 +199,8 @@ export function seedIfEmpty(store) {
   // material requests from the crew (one waiting for today's send, one the office has to order)
   store.add('materialRequests', { jobId: j1.id, itemId: items.rec.id, description: 'Duplex receptacle 15 A TR (5-15R), installed', qty: 12, unit: 'ea', note: 'Op 4 north wall', urgent: false, employeeId: tom.id, status: 'requested' }, S);
   store.add('materialRequests', { jobId: j1.id, itemId: null, description: '3/4" EMT', qty: 20, unit: 'sticks', note: '', urgent: true, employeeId: marcus.id, status: 'sent', sentAt: iso(-1, 15, 0), batchId: 'demo-batch-1' }, S);
+
+  seedReleaseOne(store, { S, iso, tax, shop, van1, van2, marcus, priya, tom, j1, j2, c1, c3 });
 
   // SOPs
   store.add('sops', {
@@ -299,4 +304,66 @@ export function seedIfEmpty(store) {
 
   store.log('seed', 'Demo data loaded');
   return true;
+}
+
+// A 1 x 1 white JPEG: the demo signature's pad image.
+const DEMO_SIGNATURE = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+
+/**
+ * Release 1 demo data (docs/releases/r1-get-paid.md 13.3): the standard cost codes with a phase on
+ * the jobs, two trucks driven by the foreman and the electrician, wage history and burden fields on
+ * the crew, a signed field ticket, a deposit invoice and a progress invoice with holdback. Uses only
+ * add, update and settings (the schema test runs it against a small stand-in store).
+ */
+function seedReleaseOne(store, { S, iso, tax, van1, van2, marcus, priya, tom, j1, j2, c1, c3 }) {
+  for (const cc of STANDARD_COST_CODES) store.add('costCodes', { ...cc, active: true }, S);
+  store.update('jobs', j1.id, { currentCostCodeId: 'cc-rough-in', kind: 'standard', billable: true }, S);
+  store.update('jobs', j2.id, {
+    currentCostCodeId: 'cc-service', kind: 'standard', billable: true,
+    contract: { role: 'prime', signedOn: today(-30), ownerName: 'Northside Brewing Co.', contractNo: 'NB-2026-01', valueCents: 4850000, holdbackPct: 10, paymentTermsDays: 28, properInvoiceRequired: true },
+  }, S);
+
+  // Trucks: day rates are demo values (Job costing → Rates sets the real ones).
+  const truck = (name, unitNo, loc, driver) => store.add('equipment', {
+    name, kind: 'truck', unitNo, plate: '', rateCents: 9500, rateUnit: 'day', rateHistory: [{ from: today(-365), rateCents: 9500, rateUnit: 'day' }],
+    billRateCents: null, locationId: loc.id, defaultEmployeeId: driver.id, active: true, note: 'Demo rate',
+  }, S);
+  const t1 = truck('Truck 1 (Transit)', 'T1', van1, marcus);
+  const t2 = truck('Truck 2 (Sprinter)', 'T2', van2, priya);
+  const burden = { vacationPct: 4, holidayPct: 4, wcbPct: null, nonProductivePct: 10, benefitsCentsPerHour: null, annualHours: 2000 };
+  store.update('employees', marcus.id, { defaultEquipmentId: t1.id, hireDate: today(-2900), rateHistory: [{ from: today(-400), rateCents: 5200 }, { from: today(-40), rateCents: 5400 }], burden }, S);
+  store.update('employees', priya.id, { defaultEquipmentId: t2.id, hireDate: today(-1500), rateHistory: [{ from: today(-1500), rateCents: 4800 }], burden }, S);
+  store.update('employees', tom.id, { hireDate: today(-200), rateHistory: [{ from: today(-200), rateCents: 2600 }], burden }, S);
+
+  // A signed extra-work ticket on the T&M job (no money on it: the office prices it).
+  const ticket = {
+    id: 'demo-ticket-1', number: 'T-1001', jobId: j1.id, clientId: c1.id, kind: 'extra', date: today(-1), title: 'Relocate two receptacles in Op 4',
+    description: 'Dentist asked to move two receptacles 600 mm east for the new cabinet layout.', requestedBy: 'Dr. Demo (owner)',
+    pricingBasis: 'contract-rates', rateSheetRef: 'rates on the signed estimate',
+    labour: [{ employeeId: tom.id, name: 'Tom Becker', hours: 1.5 }], materials: [{ description: 'Duplex receptacle 15 A TR', qty: 2, unit: 'ea' }], equipment: [], photos: [],
+    agreementText: 'I confirm the work listed above was requested and done. Billed at the rates on the signed estimate.',
+    status: 'signed', employeeId: tom.id, costCodeId: 'cc-change-order', signatureId: 'demo-sig-1', signedAt: iso(-1, 14, 10), signerName: 'Dr. Demo',
+  };
+  const snapshot = snapshotOf('fieldTicket', ticket);
+  store.add('signatures', {
+    id: 'demo-sig-1', v: snapshot.v, docType: 'fieldTicket', docId: ticket.id, jobId: j1.id, clientId: c1.id, signerName: 'Dr. Demo', signerTitle: 'Owner',
+    method: 'on-device', dataUrl: DEMO_SIGNATURE, signedAt: iso(-1, 14, 10), capturedBy: { employeeId: tom.id, name: 'Tom Becker' }, device: 'Demo phone',
+    snapshot, digest: null, status: 'valid',
+  }, S);
+  // The digest is SHA-256 (crypto.subtle, async): filled in a moment after the seed.
+  digestHex(signedContent(snapshot)).then((digest) => store.update('signatures', 'demo-sig-1', { digest }, S)).catch(() => {});
+  store.add('fieldTickets', ticket, S);
+
+  // A prepayment deposit on the brewhouse job and a progress invoice with 10% holdback (HST deferred to release).
+  store.add('invoices', {
+    number: store.nextNumber('invoice'), clientId: c3.id, jobId: j2.id, estimateId: null, status: 'paid', kind: 'deposit', depositModel: 'prepayment',
+    lines: [{ itemId: null, description: 'Deposit on the brewhouse distribution contract', qty: 1, unitCents: 500000, labourHours: 0, kind: 'other', lineType: 'deposit' }],
+    ...tax(), issueDate: today(-28), dueDate: today(-21), notes: 'Prepayment: tax charged now and credited on the final invoice.',
+  }, S);
+  store.add('invoices', {
+    number: store.nextNumber('invoice'), clientId: c3.id, jobId: j2.id, estimateId: null, status: 'sent', kind: 'progress',
+    lines: [{ itemId: null, description: 'Progress billing: rough-in 40%', qty: 1, unitCents: 1940000, labourHours: 0, kind: 'other', costCodeId: 'cc-rough-in' }],
+    holdback: { pct: 10, cents: 194000, deferTaxIds: ['HST'] }, contractRef: 'NB-2026-01', periodFrom: today(-30), periodTo: today(-1), properInvoice: true,
+    ...tax(), issueDate: today(-1), dueDate: today(27), notes: '',
+  }, S);
 }

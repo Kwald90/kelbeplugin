@@ -77,6 +77,110 @@
         "null"
       ],
       "maxLength": 2000
+    },
+    "use": {
+      "enum": [
+        "job",
+        "own-use",
+        "transfer",
+        "adjust",
+        "receive",
+        null
+      ],
+      "description": "Missing = derived from the locations as before."
+    },
+    "ownUseReason": {
+      "enum": [
+        "warranty",
+        "no-charge",
+        "shop",
+        "truck",
+        "tools",
+        "other",
+        null
+      ]
+    },
+    "unitCostCents": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": -100000000000,
+      "maximum": 100000000000,
+      "description": "Server: the item cost when the move was made (office only). Money in integer cents (CAD)."
+    },
+    "costCodeId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "countId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "reversesId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "poId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "poLineIndex": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 2000
+    },
+    "billId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "billLineIndex": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 2000
+    },
+    "ticketId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "postedOn": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$",
+      "description": "Server: the day this record posts on (its own date, or the first open day after a closed period; docs/releases/r1-get-paid.md 2.6). Devices cannot set it."
+    },
+    "late": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Server: posted after the period it belongs to was closed."
     }
   },
   "additionalProperties": true

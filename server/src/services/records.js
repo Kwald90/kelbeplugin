@@ -12,6 +12,7 @@ import { assertCollectionModuleOn, loadModuleSettings } from './modules.js';
 import { QBO_COLLECTIONS, qboAfterDelete, qboAfterWrite } from '../qbo/hooks.js';
 import { readQboConfig } from '../qbo/env.js';
 import { MONEY_RECORD_KEYS } from '../qbo/map/merge.js';
+import { runWriteGuards } from './write-guards.js';
 
 export const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const META_KEYS = ['id', 'version', 'changeSeq', 'deleted', 'tenantId'];
@@ -72,6 +73,21 @@ export async function loadMoneyAccess(tx, p) {
   p.seesMoney = rows[0]?.f === true;
 }
 
+/**
+ * Refusals worth listing on Books (docs/releases/r1-get-paid.md 2.6): who, what and why, never the
+ * data. Rows older than 90 days go on every insert.
+ */
+export async function recordRejection(q, tenantId, { actor, deviceId = null, collection, recordId, code, message }) {
+  await q.query(
+    `INSERT INTO sync_rejections (tenant_id, actor, device_id, collection, record_id, code, message) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [tenantId, String(actor || 'unknown').slice(0, 200), deviceId ? String(deviceId).slice(0, 128) : null, String(collection || '').slice(0, 64),
+      String(recordId || '').slice(0, 128), String(code || 'rejected').slice(0, 64), message ? String(message).slice(0, 500) : null]);
+  await q.query("DELETE FROM sync_rejections WHERE tenant_id = $1 AND at < now() - interval '90 days'", [tenantId]);
+}
+
+/** Codes from the Release 1 guards: a REST or system write refused with one of these is recorded too. */
+const GUARD_CODES = new Set(['period_locked', 'payroll_locked', 'signature_invalid', 'document_signed', 'exemption_required', 'closeout_required', 'duplicate_code', 'duplicate_rule']);
+
 function rowTime(row) {
   if (row.deleted_at) return new Date(row.deleted_at).getTime();
   const t = Date.parse(row.data?.updatedAt);
@@ -81,8 +97,25 @@ function rowTime(row) {
 /**
  * @param {{ validator: ReturnType<import('../schemas.js').createValidator> }} deps
  */
-export function createRecords({ validator, config = null }) {
+export function createRecords({ validator, config = null, db = null }) {
   const toRecord = (row) => ({ ...row.data, id: row.id, version: row.version });
+
+  /**
+   * The Release 1 guards (services/write-guards.js) for a REST or system write. A refusal is listed
+   * on Books in its own transaction (the caller's rolls back), when this service was given the db.
+   */
+  async function guard(tx, p, coll, id, before, after, who) {
+    try {
+      return await runWriteGuards(tx, p, coll, before, after, who, { id });
+    } catch (e) {
+      if (db && e instanceof ApiError && GUARD_CODES.has(e.code)) {
+        const ctx = { tenantId: tx.tenantId, userId: tx.userId || null };
+        await db.withTenant(ctx, (t2) => recordRejection(t2, tx.tenantId, { actor: actorString(who.actor), collection: coll, recordId: id, code: e.code, message: e.message }))
+          .catch(() => {});
+      }
+      throw e;
+    }
+  }
 
   // QuickBooks (docs/integrations/quickbooks.md 5.2): off unless the server's QBO_ENVIRONMENT and app
   // credentials are set; then the hook runs no query at all.
@@ -186,7 +219,10 @@ export function createRecords({ validator, config = null }) {
 
   function checkRules(p, coll, existing, next) {
     const msg = checkWriteRules(p, coll, existing, next);
-    if (msg) throw forbidden(msg);
+    if (!msg) return;
+    // Release 1 rules may answer with their own status and code (422 exemption_required...).
+    if (typeof msg === 'object') throw new ApiError(msg.status || 403, msg.code || 'forbidden', msg.message, msg.details);
+    throw forbidden(msg);
   }
 
   /** Is this existing row visible to the principal? (own-rows filter) */
@@ -304,8 +340,9 @@ export function createRecords({ validator, config = null }) {
     const id = body?.id ?? randomUUID();
     assertId(id);
     if (await lockRow(tx, def, id)) throw conflict('A record with this id already exists.');
-    const data = restoreHiddenFields(p, coll, null, prepare(coll, id, body, null, Date.now()));
+    let data = restoreHiddenFields(p, coll, null, prepare(coll, id, body, null, Date.now()));
     checkRules(p, coll, null, data);
+    data = await guard(tx, p, coll, id, null, data, who);
     const row = await insertRow(tx, def, id, data, who);
     await audit(tx, who, 'record.create', coll, id, data, { via: 'rest' });
     await afterWrite(tx, coll, id, null, data, who);
@@ -328,8 +365,9 @@ export function createRecords({ validator, config = null }) {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw validationFailed('The patch must be a JSON object.');
     const merged = { ...cur.data, ...patch };
     if (patch.updatedAt === undefined) delete merged.updatedAt;
-    const data = restoreHiddenFields(p, coll, cur.data, prepare(coll, id, merged, cur.data, Date.now()));
+    let data = restoreHiddenFields(p, coll, cur.data, prepare(coll, id, merged, cur.data, Date.now()));
     checkRules(p, coll, cur.data, data);
+    data = await guard(tx, p, coll, id, cur.data, data, who);
     // A QuickBooks pull keeps the version it replaced, so a device editing that version can still
     // tell which fields it changed (stale-write field merge, docs/integrations/quickbooks.md 5.2).
     if (isQboWriter(who)) await keepHistory(tx, coll, id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, null);
@@ -352,6 +390,7 @@ export function createRecords({ validator, config = null }) {
       throw new ApiError(409, 'version_conflict', `The record changed (version ${cur.version}).`, { version: cur.version });
     }
     checkRules(p, coll, cur.data, null);
+    await guard(tx, p, coll, id, cur.data, null, who);
     if (isQboWriter(who)) await keepHistory(tx, coll, id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, null);
     const row = await softDeleteRow(tx, def, id, who);
     await audit(tx, who, 'record.delete', coll, id, cur.data, { via: 'rest' });
@@ -374,10 +413,11 @@ export function createRecords({ validator, config = null }) {
     if (!cur || !visible(p, coll, cur)) throw notFound();
     if (!cur.deleted_at) return view(p, coll, cur);
     checkRules(p, coll, null, cur.data);
-    const row = await updateRow(tx, def, id, cur.data, who);
-    await audit(tx, who, 'record.restore', coll, id, cur.data, { via: 'rest' });
-    await afterWrite(tx, coll, id, null, cur.data, who);
-    await qboWrite(tx, coll, id, null, cur.data, p, who);
+    const data = await guard(tx, p, coll, id, null, cur.data, who);
+    const row = await updateRow(tx, def, id, data, who);
+    await audit(tx, who, 'record.restore', coll, id, data, { via: 'rest' });
+    await afterWrite(tx, coll, id, null, data, who);
+    await qboWrite(tx, coll, id, null, data, p, who);
     return view(p, coll, row);
   }
 
@@ -424,9 +464,10 @@ export function createRecords({ validator, config = null }) {
     const cur = await lockRow(tx, def, m.id);
 
     if (m.op === 'upsert') {
-      const data = restoreHiddenFields(p, coll, cur && !cur.deleted_at ? cur.data : null, prepare(coll, m.id, m.data, cur && !cur.deleted_at ? cur.data : null, now));
+      let data = restoreHiddenFields(p, coll, cur && !cur.deleted_at ? cur.data : null, prepare(coll, m.id, m.data, cur && !cur.deleted_at ? cur.data : null, now));
       if (!cur) {
         checkRules(p, coll, null, data);
+        data = await runWriteGuards(tx, p, coll, null, data, who, { id: m.id });
         const row = await insertRow(tx, def, m.id, data, who);
         await audit(tx, who, 'record.create', coll, m.id, data, meta);
         await afterWrite(tx, coll, m.id, null, data, who);
@@ -438,10 +479,11 @@ export function createRecords({ validator, config = null }) {
       // meanwhile both survive. Never a whole-record loss.
       // A time entry reviewed or approved on an older copy takes only those fields.
       const fresh = m.baseVersion === cur.version;
-      const mergedData = !cur.deleted_at ? (mergeWrite(p, coll, cur.data, data, { itemMerge: m.itemMerge === true }) || (!fresh ? reviewMerge(coll, cur.data, data, m.fields) : null)) : null;
+      const mergedData = !cur.deleted_at ? (mergeWrite(p, coll, cur.data, data, { itemMerge: m.itemMerge === true, stale: !fresh }) || (!fresh ? reviewMerge(coll, cur.data, data, m.fields) : null)) : null;
       if (mergedData) {
-        const stored = prepare(coll, m.id, mergedData, cur.data, now);
+        let stored = prepare(coll, m.id, mergedData, cur.data, now);
         checkRules(p, coll, cur.data, stored);
+        stored = await runWriteGuards(tx, p, coll, cur.data, stored, who, { id: m.id });
         if (!fresh) await keepHistory(tx, coll, m.id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, m.mid);
         const row = await updateRow(tx, def, m.id, stored, who);
         await audit(tx, who, 'record.update', coll, m.id, stored, fresh ? meta : { ...meta, conflict: 'merged' });
@@ -458,8 +500,9 @@ export function createRecords({ validator, config = null }) {
       if (!fresh && !cur.deleted_at && QBO_COLLECTIONS.includes(coll) && qboEnabled() && await hasQboConnection(tx)) {
         const q = await qboStaleMerge(tx, coll, m, cur, data, now);
         if (q) {
-          const stored = prepare(coll, m.id, q.merged, cur.data, now);
+          let stored = prepare(coll, m.id, q.merged, cur.data, now);
           checkRules(p, coll, cur.data, stored);
+          stored = await runWriteGuards(tx, p, coll, cur.data, stored, who, { id: m.id });
           await keepHistory(tx, coll, m.id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, m.mid);
           const row = await updateRow(tx, def, m.id, stored, who);
           await audit(tx, who, 'record.update', coll, m.id, stored, { ...meta, conflict: 'merged', ...(q.heldKeys.length ? { held: q.heldKeys } : {}) });
@@ -475,6 +518,7 @@ export function createRecords({ validator, config = null }) {
         await keepHistory(tx, coll, m.id, { version: m.baseVersion, deleted: false, data }, 'rejected', who, m.mid);
         return { mid: m.mid, status: 'conflict', server: serverView(p, coll, cur) };
       }
+      data = await runWriteGuards(tx, p, coll, cur.deleted_at ? null : cur.data, data, who, { id: m.id });
       if (!fresh) await keepHistory(tx, coll, m.id, { version: cur.version, deleted: Boolean(cur.deleted_at), data: cur.data }, 'overwritten', who, m.mid);
       const row = await updateRow(tx, def, m.id, data, who);
       await audit(tx, who, cur.deleted_at ? 'record.restore' : 'record.update', coll, m.id, data, fresh ? meta : { ...meta, conflict: 'client-won' });
@@ -492,6 +536,7 @@ export function createRecords({ validator, config = null }) {
       await keepHistory(tx, coll, m.id, { version: m.baseVersion, deleted: true, data: null }, 'rejected', who, m.mid);
       return { mid: m.mid, status: 'conflict', server: serverView(p, coll, cur) };
     }
+    await runWriteGuards(tx, p, coll, cur.data, null, who, { id: m.id });
     if (!fresh) await keepHistory(tx, coll, m.id, { version: cur.version, deleted: false, data: cur.data }, 'overwritten', who, m.mid);
     const row = await softDeleteRow(tx, def, m.id, who);
     await audit(tx, who, 'record.delete', coll, m.id, cur.data, fresh ? meta : { ...meta, conflict: 'client-won' });
@@ -570,6 +615,10 @@ export function createRecords({ validator, config = null }) {
       await tx.query(
         'INSERT INTO sync_mutations (tenant_id, mid, collection, record_id, result) VALUES ($1, $2, $3, $4, $5)',
         [tx.tenantId, m.mid, m.collection, m.id, result]);
+      // Refused writes are listed on Books (who, what and why; never the data).
+      if (result.status === 'rejected' && m.collection !== AUDIT_COLLECTION) {
+        await recordRejection(tx, tx.tenantId, { actor: actorString(who.actor), deviceId: who.deviceId || null, collection: m.collection, recordId: m.id, code: result.error.code, message: result.error.message });
+      }
       results.push(result);
     }
     return results;
