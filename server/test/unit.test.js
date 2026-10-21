@@ -14,6 +14,7 @@ import { readConfig } from '../src/config.js';
 import { redactUrl } from '../src/logger.js';
 import { passwordProblem, pinProblem } from '../src/auth/passwords.js';
 import { OUT, generate, outputs } from '../scripts/gen-collections-sql.js';
+import { COLLECTION_FEATURES } from '../src/services/entitlements.js';
 import { COLLECTIONS as PWA_COLLECTIONS } from '../../electrical-app/js/store.js';
 import { PERMS as PWA_PERMS, ROLES as PWA_ROLES } from '../../electrical-app/js/auth.js';
 
@@ -308,6 +309,25 @@ describe('Release 1 access rules (docs/releases/r1-get-paid.md 2.5-2.10, 4.1, 4.
     assert.match(msg(checkWriteRules(p('office', { crew: true }), 'fieldTickets', signed, { ...signed, status: 'void' })), /full sign-in/);
     assert.ok(checkWriteRules(p('office'), 'fieldTickets', signed, null));
     assert.equal(checkWriteRules(el, 'fieldTickets', t, null), null, 'a draft can be deleted');
+  });
+
+  test('plan features of the new collections (contract 2.11): shared ones in every plan', () => {
+    for (const c of ['costCodes', 'rules', 'signatures', 'equipment', 'equipmentUse']) assert.equal(COLLECTION_FEATURES[c], null, c);
+    assert.deepEqual(COLLECTION_FEATURES.payrollRuns, ['time']);
+    assert.deepEqual(COLLECTION_FEATURES.fieldTickets, ['tickets']);
+    assert.deepEqual(COLLECTION_FEATURES.stockCounts, ['inventory']);
+  });
+
+  test('a void ticket that was signed or refused is kept; a negative payment from an API key must reverse or refund', () => {
+    const voided = { employeeId: 'e1', title: 'Move pots', status: 'void', signatureId: 's1' };
+    assert.match(msg(checkWriteRules(p('office'), 'fieldTickets', voided, null)), /kept/);
+    assert.ok(checkWriteRules(p('office'), 'fieldTickets', { ...voided, signatureId: null, refusal: { by: 'GC', at: 'x' } }, null), 'refused, then voided');
+    assert.equal(checkWriteRules(p('office'), 'fieldTickets', { employeeId: 'e1', title: 'Never signed', status: 'void' }, null), null, 'a draft voided by the office can go');
+    const key = { kind: 'api_key', perms: new Set(), scopes: ['*:write'] };
+    assert.match(msg(checkWriteRules(key, 'payments', null, { invoiceId: 'i1', amountCents: -500, method: 'cheque' })), /reverse an earlier payment/);
+    assert.equal(checkWriteRules(key, 'payments', null, { invoiceId: 'i1', amountCents: -500, method: 'cheque', reversesId: 'p1' }), null);
+    assert.equal(checkWriteRules(key, 'payments', null, { invoiceId: 'i1', amountCents: -500, method: 'refund' }), null);
+    assert.equal(checkWriteRules(sys('qbo'), 'payments', null, { invoiceId: 'i1', amountCents: -500, method: 'cheque' }), null, 'system actors are not held to it');
   });
 
   test('a job set invoiced needs its checklist; a Manitoba invoice needs its exemption evidence', () => {

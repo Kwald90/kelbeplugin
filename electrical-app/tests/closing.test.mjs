@@ -58,6 +58,18 @@ describe('lockProblem', () => {
     assert.equal(lockProblem(locks({ qboBookCloseDate: '2026-08-31' }), 'invoices', null, { ...draft, status: 'sent' }, { zone, actor: { type: 'system', id: 'qbo' } }).code, 'period_locked');
   });
 
+  test('an open invoice cannot be re-dated into the closed period (sent, partial, paid)', () => {
+    const sentOct = { id: 'i3', status: 'sent', issueDate: '2026-10-05', lines: [{ qty: 1, unitCents: 100 }] };
+    const p = lockProblem(locks(), 'invoices', sentOct, { ...sentOct, issueDate: '2026-09-15' }, { zone });
+    assert.equal(p?.code, 'period_locked');
+    assert.match(p.message, /cannot be re-dated into a closed period/);
+    assert.equal(lockProblem(locks(), 'invoices', sentOct, { ...sentOct, status: 'paid', issueDate: '2026-09-30' }, { zone })?.code, 'period_locked');
+    assert.equal(lockProblem(locks(), 'invoices', sentOct, { ...sentOct, issueDate: '2026-10-01' }, { zone }), null, 'still in the open period');
+    assert.equal(lockProblem(locks(), 'invoices', sentOct, { ...sentOct, status: 'draft', issueDate: '2026-09-15' }, { zone }), null, 'back to draft: drafts are never locked');
+    // The QuickBooks history import is for creates only; a pulled re-date into the closed period goes to review.
+    assert.equal(lockProblem(locks({ qboBookCloseDate: '2026-09-30' }), 'invoices', sentOct, { ...sentOct, issueDate: '2026-09-15' }, { zone, actor: { type: 'system', id: 'qbo' } })?.code, 'period_locked');
+  });
+
   test('locked records: only safe fields change; deletes are refused', () => {
     assert.equal(isLocked(locks(), 'invoices', sentSept, { zone }), true);
     assert.equal(lockProblem(locks(), 'invoices', sentSept, { ...sentSept, lines: [] }, { zone }).code, 'period_locked');
@@ -105,6 +117,18 @@ describe('lockProblem', () => {
     assert.equal(lockProblem(locks(), 'jobs', job, { ...job, changeOrders: [job.changeOrders[1]] }, { zone }).code, 'period_locked', 'removed');
     assert.equal(lockProblem(locks(), 'jobs', job, { ...job, changeOrders: [job.changeOrders[0], { ...job.changeOrders[1], amountCents: 9 }] }, { zone }), null);
     assert.equal(lockProblem(locks(), 'jobs', job, { ...job, title: 'renamed', changeOrders: [...job.changeOrders, { id: 'co3', amountCents: -1000 }] }, { zone }), null);
+  });
+
+  test('a change order cannot be approved, or back-dated, into the closed period', () => {
+    const job = { id: 'j', changeOrders: [{ id: 'co2', title: 'Later', amountCents: 5, approvedOn: '2026-10-02' }] };
+    const add = lockProblem(locks(), 'jobs', job, { ...job, changeOrders: [...job.changeOrders, { id: 'co4', title: 'Back-dated', amountCents: 10, approvedOn: '2026-09-10' }] }, { zone });
+    assert.equal(add?.code, 'period_locked');
+    assert.match(add.message, /cannot be approved on 2026-09-10/);
+    assert.equal(lockProblem(locks(), 'jobs', job, { ...job, changeOrders: [{ ...job.changeOrders[0], approvedOn: '2026-09-28' }] }, { zone })?.code, 'period_locked', 'approval day moved back');
+    const pending = { id: 'j', changeOrders: [{ id: 'co5', title: 'Pending', amountCents: 5 }] };
+    assert.equal(lockProblem(locks(), 'jobs', pending, { ...pending, changeOrders: [{ ...pending.changeOrders[0], approvedOn: '2026-09-30' }] }, { zone })?.code, 'period_locked', 'approved today with a September date');
+    assert.equal(lockProblem(locks(), 'jobs', pending, { ...pending, changeOrders: [{ ...pending.changeOrders[0], approvedOn: '2026-10-20' }] }, { zone }), null);
+    assert.equal(lockProblem(locks(), 'jobs', null, { id: 'j2', changeOrders: [{ id: 'co6', approvedOn: '2026-09-01' }] }, { zone })?.code, 'period_locked', 'a new job with one');
   });
 
   test('payroll lock is by entry id only, approval included; the date does not lock', () => {

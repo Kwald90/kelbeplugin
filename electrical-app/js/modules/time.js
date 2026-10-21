@@ -108,6 +108,8 @@ export default {
     const zone = zoneFor(store.settings()?.company?.province);
     const locksNow = () => locksFrom(store.settings(), store.list('payrollRuns'));
     const lockedEntry = (e) => isLocked(locksNow(), 'timeEntries', e, { zone });
+    // Only an exported payroll run locks approval; late hours in a closed month stay approvable (2.6).
+    const payrollLocked = (e) => locksNow().payrollEntryIds.has(e.id);
     const codes = () => activeCostCodes(store.list('costCodes'));
     const codeName = (id) => { const c = id ? store.get('costCodes', id) : null; return c ? costCodeLabel(c) : null; };
     const trucks = () => store.list('equipment', (q) => q.active !== false && q.kind === 'truck');
@@ -345,7 +347,7 @@ export default {
           { key: 'break', label: 'Break', align: 'right', render: (t) => (isCorrection(t) ? '' : `${t.breakMins || 0}m`) },
           { key: 'hours', label: 'Hours', align: 'right', render: (t) => fmtH(entryMinutes(t)) },
           { key: 'loc', label: 'Location', render: (t) => h('span', { class: 'row loc-cell' }, locBadge(ui, t) || h('span', { class: 'muted' }, '—'), reviewButton(t)) },
-          { key: 'ok', label: 'Approved', render: (t) => h('span', { class: 'row-inline' }, lockedEntry(t) ? h('span', { class: 'time-locked', title: 'Exported to payroll or in a closed period: add a correction to change it' }, ui.icon('lock', 14), 'locked') : (canApprove && (t.clockOut || isCorrection(t))
+          { key: 'ok', label: 'Approved', render: (t) => h('span', { class: 'row-inline' }, payrollLocked(t) ? h('span', { class: 'time-locked', title: 'Exported to payroll: add a correction to change it' }, ui.icon('lock', 14), 'locked') : (canApprove && (t.clockOut || isCorrection(t))
             ? h('input', { type: 'checkbox', checked: !!t.approved, 'aria-label': 'Approve entry', onClick: (e) => e.stopPropagation(),
               onChange: (e) => store.update('timeEntries', t.id, e.target.checked ? { approved: true, approvedAt: new Date().toISOString(), approvedBy: me.id || null } : { approved: false, approvedAt: null, approvedBy: null }, { summary: `${e.target.checked ? 'approved' : 'unapproved'} time ${isCorrection(t) ? t.workDay : ui.localDay(t.clockIn)}` }) })
             : t.approved ? ui.badge('approved', 'success') : ui.badge(t.clockOut ? 'pending' : 'open', t.clockOut ? 'warning' : 'info')),
@@ -445,7 +447,9 @@ export default {
         const lateEntries = late.filter((e) => lateIds.has(e.id));
         // With the lock, the file holds exactly what the run locks: approved, closed entries not exported before.
         const fileSheets = lock ? sheets.map((sh) => weekSheet(sh.entries.filter(ready), { employeeId: sh.employeeId, weekStart: week, province: prefs().otRule })) : sheets;
-        const ctxp = { employees: people, jobs: new Map(store.list('jobs').map((j) => [j.id, j])), clients: new Map(store.list('clients').map((c) => [c.id, c])), periodStart: week, periodEnd: end, lateEntries };
+        const ctxp = { employees: people, jobs: new Map(store.list('jobs').map((j) => [j.id, j])), clients: new Map(store.list('clients').map((c) => [c.id, c])), periodStart: week, periodEnd: end, lateEntries,
+          // Late hours count overtime on their own week, against what earlier runs already paid.
+          paidEntries: store.list('timeEntries', inRun), province: prefs().otRule, weekStartsOn: prefs().weekStartsOn };
         const out = payrollCsv(format, fileSheets, ctxp);
         ui.download(`${PAYROLL_FORMATS[format].file}-${week}.csv`, out.text, 'text/csv');
         store.log('export', `Payroll CSV (${PAYROLL_FORMATS[format].label}) week ${week}`, 'timeEntries');

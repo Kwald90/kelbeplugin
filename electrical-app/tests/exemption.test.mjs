@@ -19,6 +19,14 @@ describe('provincialTaxOff', () => {
     assert.equal(provincialTaxOff(mbInvoice({ lines: [{ kind: 'other', lineType: 'deposit', qty: 1, unitCents: -100 }] })), false);
     assert.equal(provincialTaxOff(mbInvoice({ lines: [{ kind: 'other', passThrough: true, taxOff: ['PST', 'RST'] }] })), false);
   });
+
+  test('a work line that turns RST off itself (taxOff, not a pass-through) counts as not charged', () => {
+    const labour = (o = {}) => ({ kind: 'labour', qty: 8, unitCents: 9500, taxOff: ['RST'], ...o });
+    const inv = mbInvoice({ taxes: mbTaxes(ALL), taxTreatment: 'pst-all', lines: [labour(), labour({ taxOff: ['*'] })] });
+    assert.equal(provincialTaxOff(inv), true);
+    assert.equal(exemptionProblem(inv).level, 'block', 'labour with RST switched off line by line still needs the evidence');
+    assert.equal(provincialTaxOff(mbInvoice({ taxes: mbTaxes(ALL), lines: [labour({ taxOff: ['GST'] })] })), false, 'GST off only: RST still charged');
+  });
 });
 
 describe('exemptionProblem', () => {

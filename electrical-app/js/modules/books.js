@@ -296,7 +296,16 @@ export async function retryPendingRuns(ctx) {
   let done = 0;
   for (const req of store.meta(PENDING_RUNS_META) || []) {
     try {
-      await ctx.app.api.post('/api/v1/closing/payroll-runs', { ...req, leftOutAck: true });
+      try {
+        await ctx.app.api.post('/api/v1/closing/payroll-runs', { ...req, leftOutAck: false });
+      } catch (e) {
+        // Entries that reached the server after the export are left out only when the office says so (8.2).
+        if (e.code !== 'unexported_entries') throw e;
+        const n = e.details?.entries?.length || 0;
+        const ok = await ui.confirmDialog(`${n} more entr${n === 1 ? 'y' : 'ies'} from ${req.from} to ${req.to} ${n === 1 ? 'is' : 'are'} not in this payroll export (they arrived after it). They will wait in Late hours for the next run.`, { title: 'Lock anyway?', okLabel: 'Lock', danger: false });
+        if (!ok) { left.push(req); continue; }
+        await ctx.app.api.post('/api/v1/closing/payroll-runs', { ...req, leftOutAck: true });
+      }
       done++;
     } catch (e) {
       if (e.code === 'already_exported') { done++; continue; }

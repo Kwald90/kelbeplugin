@@ -45,16 +45,23 @@ const PROVINCIAL = new Set(['PST', 'RST']);
 const KINDS = ['material', 'labour', 'other'];
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
 
-/** Lines that count for the exemption: no lineType (deposit, holdback, interest) and no taxOff. */
-const workLines = (doc) => (doc?.lines || []).filter((l) => l && !l.lineType && !(Array.isArray(l.taxOff) && l.taxOff.length) && !l.passThrough);
+/**
+ * Lines that count for the exemption: no lineType (deposit, holdback, interest) and not an
+ * out-of-pocket pass-through. A work line that turns PST/RST off itself (taxOff) counts as not
+ * charged: Bulletin 031 puts RST on the labour too, so taxOff on labour is no way around the evidence.
+ */
+const workLines = (doc) => (doc?.lines || []).filter((l) => l && !l.lineType && !l.passThrough);
+const offIds = (line) => (Array.isArray(line?.taxOff) ? line.taxOff.map((x) => String(x).toUpperCase()) : []);
 
 /** Does a provincial tax component charge this line? */
 function provincialOn(line, taxes) {
+  const off = offIds(line);
+  if (off.includes('*') || off.some((x) => PROVINCIAL.has(x))) return false;
   const kind = KINDS.includes(line.kind) ? line.kind : 'material';
   return (taxes || []).some((t) => PROVINCIAL.has(String(t?.id || '').toUpperCase()) && Number(t.pct) > 0 && (t.applies ? Boolean(t.applies[kind]) : true));
 }
 
-/** PST/RST not charged on any work line (lines with a lineType or taxOff are not counted). */
+/** PST/RST not charged on any work line (lines with a lineType and pass-through lines are not counted). */
 export function provincialTaxOff(doc) {
   const lines = workLines(doc);
   if (!lines.length) return false;

@@ -65,8 +65,12 @@ before(async () => {
     mut({ collection: 'payments', id: 'pay-sep', op: 'upsert', data: { invoiceId: 'inv-sent', amountCents: 5000, date: INSIDE, method: 'cheque' } }),
     mut({ collection: 'bills', id: 'bill-sep', op: 'upsert', data: { number: 'B-1', date: INSIDE, status: 'open', lines: [{ description: 'Wire', qty: 1, unitCents: 1000, amountCents: 1000 }] } }),
     mut({ collection: 'timeEntries', id: 'te-sep', op: 'upsert', data: { employeeId: 'emp-sam', jobId: 'job-1', clockIn: iso(INSIDE, 13), clockOut: iso(INSIDE, 21), breakMins: 0, approved: true } }),
+    mut({ collection: 'payments', id: 'pay-del', op: 'upsert', data: { invoiceId: 'inv-sent', amountCents: 700, date: INSIDE, method: 'cheque' } }),
   ]);
   for (const x of r.body.results) assert.equal(x.status, 'ok', JSON.stringify(x));
+  // Deleted before the close; QuickBooks puts it back after (a restore).
+  const d = await call(app, { method: 'DELETE', url: '/api/v1/payments/pay-del', token: A.token });
+  assert.ok(d.status < 300, JSON.stringify(d.body));
   const c = await closeBooks(A.token, THROUGH, 'Month-end close for the test period');
   assert.equal(c.status, 200, JSON.stringify(c.body));
 });
@@ -207,6 +211,36 @@ describe('locked records', { skip }, () => {
     assert.equal(r.body.error.code, 'period_locked');
     r = await patch(A.token, 'jobs', 'job-1', { title: 'Clinic (renamed)', changeOrders: [...job.changeOrders, { id: 'co-fix', title: 'Credit on extra pots', amountCents: -10000, status: 'approved', approvedOn: today }] });
     assert.equal(r.status, 200, JSON.stringify(r.body));
+  });
+});
+
+describe('nothing moves into a closed period', { skip }, () => {
+  test('a sent invoice cannot be re-dated into the closed period', async () => {
+    const c = await post(A.token, 'invoices', { id: 'inv-oct', number: 'INV-3050', status: 'sent', issueDate: today, taxProvince: 'MB', taxTreatment: 'pst-all', taxes: [{ id: 'RST', pct: 7 }], lines: [{ kind: 'labour', qty: 1, unitCents: 100 }] });
+    assert.equal(c.status, 201, JSON.stringify(c.body));
+    const r = await patch(A.token, 'invoices', 'inv-oct', { issueDate: INSIDE });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error.code, 'period_locked');
+    assert.equal((await get(A.token, 'invoices', 'inv-oct')).issueDate, today);
+  });
+
+  test('a change order cannot be approved or back-dated into the closed period', async () => {
+    assert.equal((await post(A.token, 'jobs', { id: 'job-2', number: 'J-2', title: 'Shop', status: 'in-progress', changeOrders: [] })).status, 201);
+    let r = await patch(A.token, 'jobs', 'job-2', { changeOrders: [{ id: 'co-back', title: 'Back-dated', amountCents: 1000, status: 'approved', approvedOn: INSIDE }] });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error.code, 'period_locked');
+    r = await patch(A.token, 'jobs', 'job-2', { changeOrders: [{ id: 'co-now', title: 'Today', amountCents: 1000, status: 'approved', approvedOn: today }] });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    r = await patch(A.token, 'jobs', 'job-2', { changeOrders: [{ id: 'co-now', title: 'Today', amountCents: 1000, status: 'approved', approvedOn: INSIDE }] });
+    assert.equal(r.body.error.code, 'period_locked', 'approval day moved back');
+  });
+
+  test('a record deleted before the close and restored after comes back posted late, not in the closed month', async () => {
+    const { p, who } = qbo(A.tenantId);
+    const rec = await t.db.withTenant({ tenantId: A.tenantId }, (tx) => records.restoreRecord(tx, p, 'payments', 'pay-del', who));
+    assert.equal(rec.date, INSIDE, 'the document date stays');
+    assert.equal(rec.postedOn, AFTER);
+    assert.equal(rec.late, true);
   });
 });
 

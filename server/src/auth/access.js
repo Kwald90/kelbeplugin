@@ -360,10 +360,6 @@ export function checkWriteRules(p, coll, existing, next) {
     if (!Number.isInteger(next.adjustMinutes) || next.adjustMinutes === 0) return 'A correction adds or takes away some minutes (never 0).';
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(next.workDay || ''))) return 'A correction needs the day it belongs to.';
   }
-  // Payments: money back is a reversal (reversesId) or a refund, never a plain negative payment.
-  if (coll === 'payments' && next && p.kind === 'session' && Number(next.amountCents) < 0 && !next.reversesId && next.method !== 'refund') {
-    return 'A negative payment must reverse an earlier payment or be a refund.';
-  }
 
   // Time entries: non-managers write only their own, and cannot approve.
   if (def?.ownRows && !p.isManager) {
@@ -432,6 +428,11 @@ function releaseOneRule(p, coll, existing, next) {
     if (msg) return refusal(422, 'validation_failed', msg);
   }
   if (coll === 'signatures') return signatureRule(p, existing, next);
+  // Payments: money back is a reversal (reversesId) or a refund, never a plain negative payment
+  // (people and API keys; the system actors write what Stripe and QuickBooks recorded).
+  if (coll === 'payments' && next && !isSystem(p) && Number(next.amountCents) < 0 && !next.reversesId && next.method !== 'refund') {
+    return 'A negative payment must reverse an earlier payment or be a refund.';
+  }
   if (coll === 'jobs' && next && !isSystem(p) && next.status === 'invoiced' && (existing?.status || null) !== 'invoiced') {
     const c = next.closeout;
     const open = Array.isArray(c?.open) ? c.open : null;
@@ -482,6 +483,8 @@ function ticketRule(p, existing, next) {
   const was = existing ? existing.status || 'draft' : null;
   if (!next) {
     if (existing && TICKET_DONE.includes(was) && was !== 'void') return 'A signed or refused ticket is kept. Void it instead.';
+    // A void ticket that was signed or refused keeps its record, as its signature is kept.
+    if (existing && was === 'void' && (existing.signatureId || existing.refusal)) return 'This ticket was signed or refused, so it is kept (void).';
     return null;
   }
   const now = next.status || 'draft';

@@ -174,14 +174,17 @@ export function lockProblem(locks, coll, before, after, { zone, actor } = {}) {
 
   if (coll === 'invoices') {
     const wasDraft = !before || (before.status || 'draft') === 'draft';
-    if (after && wasDraft) {
-      // Leaving draft (or a device creating a sent invoice) while dated in the closed period.
+    if (after && !booksLocked(locks, coll, before, { zone })) {
+      // An open copy may not land in the closed period: leaving draft (or a device creating a sent
+      // invoice) while dated in it, or re-dating a sent invoice into it.
       const status = after.status || 'draft';
       const day = dayIn(after.issueDate, zone);
       if (status !== 'draft' && status !== 'void' && day && day <= through) {
         // A QuickBooks import of history dated on or before QuickBooks' own close date is allowed.
         if (!before && key === 'system:qbo' && locks.qboBookCloseDate && day <= locks.qboBookCloseDate) return null;
-        return { ...locked(through), message: `This invoice is dated in a closed period (through ${through}). Re-date this invoice to today.` };
+        return { ...locked(through), message: wasDraft
+          ? `This invoice is dated in a closed period (through ${through}). Re-date this invoice to today.`
+          : `An invoice cannot be re-dated into a closed period (through ${through}). Keep its date, or issue a credit note and a new invoice.` };
       }
       return null;
     }
@@ -191,12 +194,22 @@ export function lockProblem(locks, coll, before, after, { zone, actor } = {}) {
     // Change orders approved on or before the lock are frozen; a new change order corrects them.
     const beforeCos = new Map((before?.changeOrders || []).filter((c) => c?.id).map((c) => [c.id, c]));
     const afterCos = new Map((after?.changeOrders || []).filter((c) => c?.id).map((c) => [c.id, c]));
+    const coName = (co) => (co?.title ? `"${co.title}"` : 'This change order');
     for (const [id, co] of beforeCos) {
       const on = dayIn(co.approvedOn, zone);
       if (!on || on > through) continue;
       if (!afterCos.has(id) || !same(co, afterCos.get(id))) {
-        const name = co.title ? `"${co.title}"` : 'This change order';
-        return { ...locked(through), message: `${name} was approved in a closed period (through ${through}). Add a new change order with a negative amount instead.` };
+        return { ...locked(through), message: `${coName(co)} was approved in a closed period (through ${through}). Add a new change order with a negative amount instead.` };
+      }
+    }
+    // Nor may a change order be approved (or back-dated) into the closed period: a new one, or one
+    // whose approval day changes, must be approved after the lock.
+    for (const [id, co] of afterCos) {
+      const on = dayIn(co.approvedOn, zone);
+      if (!on || on > through) continue;
+      const prev = beforeCos.get(id);
+      if (!prev || dayIn(prev.approvedOn, zone) !== on) {
+        return { ...locked(through), message: `${coName(co)} cannot be approved on ${on}: that is in a closed period (through ${through}). Approve it today.` };
       }
     }
     return null;

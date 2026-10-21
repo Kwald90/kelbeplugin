@@ -10,6 +10,9 @@ import { createHash } from 'node:crypto';
 import { skip, createTestDatabase } from './support/db.js';
 import { addMember, call, ownerTenant, startApp } from './support/app.js';
 import { snapshotOf, signedContent } from '../../electrical-app/js/lib/signing.js';
+import { createRecords } from '../src/services/records.js';
+import { createValidator } from '../src/schemas.js';
+import { systemPrincipal, systemWho } from '../src/integrations/state.js';
 
 let t, app, A, office, foreman, sam, ana;
 const mut = (o) => ({ mid: `m-${Math.random().toString(36).slice(2)}`, baseVersion: null, ...o });
@@ -223,6 +226,24 @@ describe('change orders, closeout, exemption, move cost', { skip }, () => {
     r = await patch(office.token, 'jobs', 'job-1', { changeOrders: r.body.changeOrders.map((c) => (c.id === 'co-3' ? { ...c, amountCents: 1 } : c)) });
     assert.equal(r.status, 409);
     assert.equal(r.body.error.code, 'document_signed');
+  });
+
+  test('a signed estimate is frozen, except the number the QuickBooks push writes', async () => {
+    const est = { id: 'est-sig', number: 'E-1001', title: 'Panel upgrade', status: 'sent', issueDate: '2026-10-20', taxProvince: 'MB', taxTreatment: 'pst-all',
+      taxes: [{ id: 'GST', pct: 5 }, { id: 'RST', pct: 7 }], lines: [{ kind: 'labour', description: 'Upgrade', qty: 1, unitCents: 250000 }] };
+    assert.equal((await post(office.token, 'estimates', est)).status, 201);
+    const sig = signature('estimate', est, { docId: 'est-sig' });
+    assert.equal((await post(office.token, 'signatures', { id: 'sig-est-2', ...sig })).status, 201);
+    let r = await patch(office.token, 'estimates', 'est-sig', { signatureId: 'sig-est-2', status: 'accepted' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    r = await patch(office.token, 'estimates', 'est-sig', { number: 'E-2002' });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error.code, 'document_signed');
+    const records = createRecords({ validator: createValidator(), config: null });
+    const p = systemPrincipal(A.tenantId, 'qbo', 'QuickBooks sync');
+    const out = await t.db.withTenant({ tenantId: A.tenantId }, (tx) => records.patchRecord(tx, p, 'estimates', 'est-sig', { number: 'E-2002' }, null, systemWho(p)));
+    assert.equal(out.number, 'E-2002', 'QuickBooks renumbered it (DocNumber)');
+    await assert.rejects(t.db.withTenant({ tenantId: A.tenantId }, (tx) => records.patchRecord(tx, p, 'estimates', 'est-sig', { lines: [] }, null, systemWho(p))), /signed/);
   });
 
   test('a job is marked invoiced only after its final-billing checklist', async () => {

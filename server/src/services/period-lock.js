@@ -30,7 +30,7 @@ export async function loadLocks(tx) {
   if (cache.has(tx)) return cache.get(tx);
   const t = tx.tenantId;
   // One connection: the queries run one after the other.
-  const { rows: locks } = await tx.query('SELECT DISTINCT ON (kind) kind, through FROM period_locks WHERE tenant_id = $1 ORDER BY kind, id DESC', [t]);
+  const { rows: locks } = await tx.query("SELECT DISTINCT ON (kind) kind, to_char(through, 'YYYY-MM-DD') AS through FROM period_locks WHERE tenant_id = $1 ORDER BY kind, id DESC", [t]);
   const { rows: runs } = await tx.query(
     `SELECT data->'entryIds' AS ids, data->'lateEntryIds' AS late, data->>'exportedAt' AS at FROM payroll_runs
       WHERE tenant_id = $1 AND deleted_at IS NULL AND status = 'exported'`, [t]);
@@ -58,7 +58,7 @@ export async function loadLocks(tx) {
 /** The newest rows of each kind (who and when), for GET /api/v1/closing. */
 export async function lockHistory(tx, limit = 50) {
   const { rows } = await tx.query(
-    `SELECT id, kind, through, previous, reason, preflight, actor, created_at FROM period_locks WHERE tenant_id = $1 ORDER BY id DESC LIMIT $2`, [tx.tenantId, limit]);
+    `SELECT id, kind, to_char(through, 'YYYY-MM-DD') AS through, to_char(previous, 'YYYY-MM-DD') AS previous, reason, preflight, actor, created_at FROM period_locks WHERE tenant_id = $1 ORDER BY id DESC LIMIT $2`, [tx.tenantId, limit]);
   return rows.map((r) => ({ id: String(r.id), kind: r.kind, through: iso(r.through), previous: iso(r.previous), reason: r.reason, preflight: r.preflight, actor: r.actor, at: r.created_at.toISOString() }));
 }
 

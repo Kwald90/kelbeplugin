@@ -203,4 +203,26 @@ describe('corrections and late hours (docs/releases/r1-get-paid.md 2.6, 8.2)', (
     const wp = S.payrollRows('wagepoint', sheets, ctx).rows;
     assert.deepEqual(wp[1], ['1042', 'Jackson Pike', 'J-1001', 'Clinic', 13, 0, 0], 'Wagepoint has no dates: late hours join the job row');
   });
+
+  test('a late correction is paid at overtime when its day was already full (counted on its own week)', () => {
+    const employees = new Map([['emp', { id: 'emp', name: 'Jackson Pike', payrollId: '1042' }]]);
+    const prev = '2026-10-12'; // the Monday of the week before
+    const at = (day, h) => `${day}T${String(h).padStart(2, '0')}:00:00.000Z`;
+    const paidMon = { id: 'p1', employeeId: 'emp', jobId: 'j1', clockIn: at(prev, 13), clockOut: at(prev, 21), breakMins: 0, approved: true };
+    const ctx = { employees, jobs: new Map(), clients: new Map(), periodStart: WEEK, periodEnd: S.addDays(WEEK, 6), dayOf, province: 'MB',
+      paidEntries: [paidMon], lateEntries: [corr(prev, 60)] };
+    const rows = S.payrollRows('generic', [], ctx).rows.slice(1);
+    assert.deepEqual(rows.map((r) => [r[4], r[9], r[10], r[15]]), [[prev, 0, 1, 'yes']], '+1 h on an 8 h Manitoba day is 1 h of overtime');
+    // A 9 h Friday left out of last week's run (not approved in time) after four paid 8 h days.
+    const paid = [0, 1, 2, 3].map((d) => ({ id: `p${d + 10}`, employeeId: 'emp', jobId: 'j1', clockIn: at(S.addDays(prev, d), 12), clockOut: at(S.addDays(prev, d), 20), breakMins: 0, approved: true }));
+    const fri = { id: 'fri', employeeId: 'emp', jobId: 'j1', clockIn: at(S.addDays(prev, 4), 12), clockOut: at(S.addDays(prev, 4), 21), breakMins: 0, approved: true };
+    const split = S.lateSplits([fri], paid, { province: 'MB', dayOf });
+    assert.deepEqual(split.get('fri'), { reg: 480, ot: 60, dt: 0 });
+    // Not counted against hours of another person or another week.
+    const other = S.lateSplits([fri], paid.map((x) => ({ ...x, employeeId: 'someone' })), { province: 'MB', dayOf });
+    assert.deepEqual(other.get('fri'), { reg: 480, ot: 60, dt: 0 }, 'a 9 h day alone is still 1 h of daily overtime');
+    // A late shift that starts before the paid one on the same day still takes the overtime itself.
+    const early = { id: 'early', employeeId: 'emp', jobId: 'j1', clockIn: at(prev, 10), clockOut: at(prev, 12), breakMins: 0, approved: true };
+    assert.deepEqual(S.lateSplits([early], [paidMon], { province: 'MB', dayOf }).get('early'), { reg: 0, ot: 120, dt: 0 });
+  });
 });

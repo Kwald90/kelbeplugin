@@ -287,17 +287,65 @@ export const PAYROLL_FORMATS = {
 
 const get = (m, id) => (id == null ? null : (m instanceof Map ? m.get(id) : m?.[id]) || null);
 
+const sumSplit = (split) => {
+  const t = { reg: 0, ot: 0, dt: 0 };
+  for (const a of split.values()) { t.reg += a.reg; t.ot += a.ot; t.dt += a.dt; }
+  return t;
+};
+
+/**
+ * The regular / overtime / double-time split of late entries (hours from an earlier week that missed
+ * its run, and corrections), counted on their own week against the hours already paid for it.
+ * Each late entry gets what it adds to that week: the week's split with it minus the split without
+ * it. So a +1 h correction on an 8 h Manitoba day is 1 h of overtime, and a 9 h Friday that waited
+ * for approval is 8 h regular and 1 h overtime (or all overtime once the paid week passed 40 h).
+ * @param {object[]} late   the late entries going into this run
+ * @param {object[]} paid   entries already in exported payroll runs (any people, any dates)
+ * @param {{ rule?: object, province?: string, weekStartsOn?: number, dayOf?: Function }} o
+ * @returns {Map<string, { reg: number, ot: number, dt: number }>} minutes per late entry id
+ */
+export function lateSplits(late, paid, { rule, province, weekStartsOn = 1, dayOf = localDay } = {}) {
+  const r = rule || otRule(province);
+  const out = new Map();
+  const lateIds = new Set((late || []).filter(Boolean).map((e) => e.id));
+  const weeks = new Map();
+  for (const e of late || []) {
+    const day = e && entryDay(e, dayOf);
+    if (!day) { if (e) out.set(e.id, { reg: entryMinutes(e), ot: 0, dt: 0 }); continue; }
+    const k = `${e.employeeId ?? ''}|${weekOf(day, weekStartsOn)}`;
+    if (!weeks.has(k)) weeks.set(k, []);
+    weeks.get(k).push(e);
+  }
+  for (const [k, list] of weeks) {
+    const sep = k.lastIndexOf('|');
+    const emp = k.slice(0, sep), start = k.slice(sep + 1), end = addDays(start, 6);
+    let set = (paid || []).filter((e) => {
+      if (!e || lateIds.has(e.id) || String(e.employeeId ?? '') !== emp || (!e.clockOut && !isCorrection(e))) return false;
+      const d = entryDay(e, dayOf);
+      return d && d >= start && d <= end;
+    });
+    let prev = sumSplit(allocateOvertime(set, r, { dayOf }));
+    for (const e of [...list].sort((a, b) => entryTime(a) - entryTime(b))) {
+      set = [...set, e];
+      const next = sumSplit(allocateOvertime(set, r, { dayOf }));
+      out.set(e.id, { reg: next.reg - prev.reg, ot: next.ot - prev.ot, dt: next.dt - prev.dt });
+      prev = next;
+    }
+  }
+  return out;
+}
+
 /**
  * Closed entries of every sheet, each with its regular/overtime split and context, then the late
  * entries (ctx.lateEntries: hours from earlier periods that missed their run, and corrections of
- * entries already exported) as prior-period rows flagged late. Late rows are regular time: their own
- * week's overtime was settled in the earlier run (VERIFY a late week that crosses the overtime line).
+ * entries already exported) as prior-period rows flagged late. A late row's overtime is worked out on
+ * its own week against the hours already paid for that week (lateSplits, ctx.paidEntries).
  */
 function lines(sheets, ctx) {
   const out = [];
   const add = (p, e, a, late) => {
     const j = get(ctx.jobs, e.jobId);
-    out.push({ p, e, a, j, c: j?.clientId ? get(ctx.clients, j.clientId) : null, day: entryDay(e), kind: kindOf(e), late });
+    out.push({ p, e, a, j, c: j?.clientId ? get(ctx.clients, j.clientId) : null, day: entryDay(e, ctx.dayOf || localDay), kind: kindOf(e), late });
   };
   for (const s of sheets) {
     const p = get(ctx.employees, s.employeeId) || { id: s.employeeId, name: 'Unknown' };
@@ -306,9 +354,10 @@ function lines(sheets, ctx) {
       add(p, e, s.split.get(e.id) || { reg: entryMinutes(e), ot: 0, dt: 0 }, false);
     }
   }
-  for (const e of ctx.lateEntries || []) {
-    if (!e || (!e.clockOut && !isCorrection(e))) continue;
-    add(get(ctx.employees, e.employeeId) || { id: e.employeeId, name: 'Unknown' }, e, { reg: entryMinutes(e), ot: 0, dt: 0 }, true);
+  const late = (ctx.lateEntries || []).filter((e) => e && (e.clockOut || isCorrection(e)));
+  const split = late.length ? lateSplits(late, ctx.paidEntries || [], { rule: ctx.rule || sheets[0]?.rule, province: ctx.province, weekStartsOn: ctx.weekStartsOn ?? 1, dayOf: ctx.dayOf || localDay }) : new Map();
+  for (const e of late) {
+    add(get(ctx.employees, e.employeeId) || { id: e.employeeId, name: 'Unknown' }, e, split.get(e.id) || { reg: entryMinutes(e), ot: 0, dt: 0 }, true);
   }
   return out;
 }
@@ -351,7 +400,7 @@ export function payrollRows(format, sheets, ctx) {
   const warnings = warningsFor(format, sheets, ctx);
   const all = lines(sheets, ctx);
   const lateCount = all.filter((x) => x.late).length;
-  if (lateCount) warnings.push(`${lateCount} late entr${lateCount === 1 ? 'y' : 'ies'} from earlier periods (or corrections) ${lateCount === 1 ? 'is' : 'are'} included as regular time${format === 'wagepoint' ? '' : ', marked late'}.`);
+  if (lateCount) warnings.push(`${lateCount} late entr${lateCount === 1 ? 'y' : 'ies'} from earlier periods (or corrections) ${lateCount === 1 ? 'is' : 'are'} included, with overtime counted on their own week${format === 'wagepoint' ? '' : ', marked late'}.`);
   if (format === 'wagepoint') {
     const rows = [['Employee ID', 'Employee Name', 'Job ID', 'Job Name', 'Regular Hours', 'Overtime Hours', 'Double Time Hours']];
     for (const g of group(all, (x) => `${x.p.id}|${x.e.jobId || ''}`).sort((a, b) => a.p.name.localeCompare(b.p.name) || jobCode(a.j).localeCompare(jobCode(b.j)))) {

@@ -22,7 +22,7 @@ import { ApiError, validationFailed } from '../errors.js';
 import { appendAudit } from './audit.js';
 import { notify } from './notify.js';
 import { loadLocks } from './period-lock.js';
-import { POSTED_COLLECTIONS, lockProblem, postingFor, dayIn } from '../../../electrical-app/js/lib/closing.js';
+import { POSTED_COLLECTIONS, lockProblem, postingFor, lockDay, addDay, dayIn } from '../../../electrical-app/js/lib/closing.js';
 import { SIGNED_KEYS, SNAPSHOT_BUILDERS, signedContent, snapshotOf, signatureCovers, sameSnapshot } from '../../../electrical-app/js/lib/signing.js';
 import { ruleIdentity } from '../../../electrical-app/js/lib/rules.js';
 
@@ -61,11 +61,18 @@ export async function runWriteGuards(tx, p, coll, before, after, who, opts = {})
       const problem = lockProblem(locks, coll, before ? { ...before, id: before.id ?? id } : null, out ? { ...out, id: out.id ?? id } : null, { zone: locks.zone, actor });
       if (problem) throw new ApiError(409, problem.code, problem.message, { through: problem.through });
     }
-    // A restored record (undo of a soft delete) keeps the posting date it had.
-    if (!before && out && POSTED_COLLECTIONS.includes(coll) && !out.postedOn) {
-      const posting = postingFor(coll, out, locks, { zone: locks.zone, today: locks.today });
-      out = { ...out, postedOn: posting.postedOn, late: posting.late };
-      if (posting.late) await lateNotice(tx, locks.today);
+    if (!before && out && POSTED_COLLECTIONS.includes(coll)) {
+      if (!out.postedOn) {
+        const posting = postingFor(coll, out, locks, { zone: locks.zone, today: locks.today });
+        out = { ...out, postedOn: posting.postedOn, late: posting.late };
+        if (posting.late) await lateNotice(tx, locks.today);
+      } else if (key !== 'system:closing' && locks.booksThrough && lockDay(coll, out, { zone: locks.zone }) <= locks.booksThrough) {
+        // A restored record (undo of a soft delete, a QuickBooks un-delete) keeps its posting date
+        // unless that day is now closed: then it comes back like a late arrival, on the first open
+        // day and flagged late, so a closed month never changes.
+        out = { ...out, postedOn: addDay(locks.booksThrough, 1), late: true };
+        await lateNotice(tx, locks.today);
+      }
     }
   }
 
@@ -81,7 +88,7 @@ export async function runWriteGuards(tx, p, coll, before, after, who, opts = {})
       }
       break;
     case 'estimates':
-      if (out) await signatureReference(tx, 'estimates', before, out, id, { snapshot: (sig) => rebuild(sig, { ...out, id }) });
+      if (out) await signatureReference(tx, 'estimates', before, out, id, { snapshot: (sig) => rebuild(sig, { ...out, id }), actorKey: key });
       if (before && !out && before.signatureId && await liveSignature(tx, before.signatureId)) {
         throw new ApiError(409, 'document_signed', 'A signed estimate is kept. Revise it instead.');
       }
@@ -238,7 +245,7 @@ function ticketSnapshotFor(sig, ticket) {
  * (422 signature_invalid). Newly linked to a 'valid' signature whose snapshot differs: the
  * signature becomes unverified (the document still lands). Once signed, the signed keys are frozen.
  */
-async function signatureReference(tx, coll, before, after, id, { snapshot }) {
+async function signatureReference(tx, coll, before, after, id, { snapshot, actorKey: who = '' }) {
   const sid = after.signatureId || null;
   const prevSid = before?.signatureId || null;
   // Frozen once signed: the signed keys of a document carrying a live signature. A voided
@@ -248,7 +255,8 @@ async function signatureReference(tx, coll, before, after, id, { snapshot }) {
     if (prev && sid !== prevSid) throw new ApiError(409, 'document_signed', 'This was signed. Void the signature first, or make a revision.');
     if (sid === prevSid) {
       if (!prev) return;
-      const keys = SIGNED_KEYS[coll] || [];
+      // The QuickBooks push may renumber a signed estimate (DocNumber); its content stays frozen.
+      const keys = (SIGNED_KEYS[coll] || []).filter((k) => !(who === 'system:qbo' && k === 'number'));
       const changed = keys.filter((k) => !same(before[k], after[k]));
       if (changed.length) throw new ApiError(409, 'document_signed', `This was signed, so ${changed.slice(0, 3).join(', ')} cannot change. Make a revision or a new document instead.`, { fields: changed });
       return;

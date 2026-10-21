@@ -37,6 +37,12 @@ number.
 **Draft invoices are never locked**: edit, re-date, delete or void them. Sending one that is dated in
 the closed period is refused: "Re-date this invoice to today."
 
+**Nothing moves into a closed period.** A sent invoice dated in an open month cannot be re-dated into
+a closed one (keep its date, or issue a credit note and a new invoice). A change order cannot be
+approved with, or moved to, an approval day in a closed period: approve it today. A record deleted
+before the close and restored afterwards (by undo, or by QuickBooks) comes back like a late arrival:
+posted on the first open day and flagged late.
+
 **Moving the date back** (or clearing it) needs a reason and warns that payroll and filed returns
 may no longer match. A closing date must be before today. Every move is kept in the history with who,
 when and why, audited, and owners and admins are told.
@@ -68,7 +74,9 @@ than QuickBooks'. Close both through the same day.
 
 - **Late hours and corrections from earlier periods** are listed, ticked, and go in the file as
   prior-period rows with their work date and a `late` column (Wagepoint's file has no dates: they join
-  the person's job row).
+  the person's job row). Their overtime is counted on their own week, against the hours earlier runs
+  already paid for it: a +1 h correction on a Monday that already had 8 h goes in as 1 h of overtime
+  (Manitoba), and a 9 h Friday that waited for approval goes in as 8 h regular and 1 h overtime.
 - Entries in the week that are **still on the clock or not approved** are listed: "These 3 entries are
   not in this run. They will wait in Late hours for the next run." With the lock on, the file holds
   exactly what the run locks.
@@ -102,6 +110,7 @@ or accrued (the month-end export then accrues them).
 
 ## VERIFY
 
-- Late hours exported in a later run are regular time; when a late week crosses its overtime line, the
-  payroll provider adjusts it by hand.
+- Late hours take the overtime they add to their own week (against what earlier runs paid). An earlier
+  run's own split is never redone: if an earlier run was exported without the lock (and so without
+  recording its entries), its hours are not counted and the office checks the late rows by hand.
 - Whether a closed period should also refuse new **draft** invoices dated in it (today it does not).

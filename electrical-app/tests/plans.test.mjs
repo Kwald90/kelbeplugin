@@ -28,6 +28,18 @@ test('tiers unlock what the pricing table says', () => {
   assert.equal(planFor('drawings'), 'pro');
 });
 
+test('Release 1 (contract 2.11): books, field tickets and job costing in every plan; WIP and month-end on Pro', () => {
+  for (const f of ['books', 'tickets', 'reports']) {
+    assert.equal(FEATURE_PLAN[f], 'starter', f);
+    assert.equal(hasFeature('starter', f), true, f);
+  }
+  for (const f of ['reports.wip', 'monthend']) {
+    assert.equal(FEATURE_PLAN[f], 'pro', f);
+    assert.equal(hasFeature('starter', f), false, f);
+    assert.equal(hasFeature('pro', f), true, f);
+  }
+});
+
 test('HQ overrides win over the plan, both ways', () => {
   assert.equal(hasFeature('starter', 'drawings', { drawings: true }), true);
   assert.equal(hasFeature('business', 'mcp', { mcp: false }), false);

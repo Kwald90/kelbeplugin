@@ -87,6 +87,27 @@ describe('module switches', () => {
     for (const g of new Set(M.SWITCHES.map((s) => s.group))) assert.ok(M.SWITCH_GROUPS.some((x) => x.id === g), g);
   });
 
+  test('Release 1 (contract 2.11, 2.2): books always on; tickets and reports core; month-end not; their collections', () => {
+    assert.ok(M.ALWAYS_ON.includes('books'));
+    assert.equal(M.moduleOn(withModules(M.nextModules(null, Object.fromEntries(M.SWITCHES.map((x) => [x.id, false])))), 'books'), true, 'no switch turns Books off');
+    const sw = (id) => M.SWITCH_BY_ID[id];
+    assert.deepEqual([sw('tickets').group, sw('tickets').core, sw('tickets').modules], ['work', true, ['tickets']]);
+    assert.deepEqual([sw('reports').group, sw('reports').core, sw('reports').modules], ['money', true, ['reports']]);
+    assert.deepEqual([sw('monthend').group, Boolean(sw('monthend').core), sw('monthend').modules], ['money', false, ['monthend']]);
+    assert.equal(M.DEFAULT_MODULES.tickets, true);
+    assert.equal(M.DEFAULT_MODULES.reports, true);
+    assert.equal(M.DEFAULT_MODULES.monthend, false);
+    assert.deepEqual(M.COLLECTION_SWITCHES.payrollRuns, ['time']);
+    assert.deepEqual(M.COLLECTION_SWITCHES.fieldTickets, ['tickets']);
+    assert.deepEqual(M.COLLECTION_SWITCHES.equipment, ['reports', 'inventory', 'time']);
+    assert.deepEqual(M.COLLECTION_SWITCHES.equipmentUse, ['reports', 'tickets']);
+    assert.deepEqual(M.COLLECTION_SWITCHES.stockCounts, ['inventory']);
+    for (const c of ['costCodes', 'rules', 'signatures']) assert.equal(M.COLLECTION_SWITCHES[c], undefined, `${c} is shared and always writable`);
+    const off = withModules(M.nextModules(null, { tickets: false }));
+    assert.equal(M.blockingSwitch(off, 'fieldTickets'), 'tickets');
+    assert.equal(M.blockingSwitch(off, 'costCodes'), null);
+  });
+
   test('hrefModule reads the route', () => {
     assert.equal(M.hrefModule('#/invoices/abc?x=1'), 'invoices');
     assert.equal(M.hrefModule('#invoices'), 'invoices');
