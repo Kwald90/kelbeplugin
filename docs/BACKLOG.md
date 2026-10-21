@@ -41,7 +41,9 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 
 ## Code
 
-- **dev** Estimate status panel (electrical-app/js/modules/estimates.js): the R1-D merge kept R1-D's sign/deposit/revise panel and dropped the cloud UX session's "next-step guidance" headline/copy (e.g. "Awaiting the customer", "Plan the work"). All actions remain; re-add that guidance copy on top of the R1-D panel (ask the cloud session for the exact wording).
+- **dev, implemented on `codex/ux-sprint-02`, pending merge** Estimate next-step guidance restored alongside R1 signing/deposit/revision controls; see [Sprint 02](ux/SPRINT-02.md) for validation.
+- **dev** Signed estimates: existing `readOnly` combines plan locks with signed-record freezing, preventing Revise and Create job for an unlinked signed quote. Separate immutable quote fields from authorized handoff/revision actions with server-contract regression coverage; keep signed evidence unchanged.
+- **dev** Quote defaults: new estimate creation currently initializes material markup to zero, while setup stores a company markup. Decide and test how company defaults should seed new quotes; onboarding now asks users to review each quote's pricing rather than promising automatic application.
 - **dev** Server-side sequence runner: steps after day 0 are only queued when someone opens Sequences.
 - **dev** Sequences screen still says providers aren't connected and hides failed outbox items unless "Show sent" is on.
 - **dev** Facebook leads after a downgrade get a 403 and are lost once Meta stops retrying: store them and show them as locked instead.

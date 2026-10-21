@@ -78,6 +78,16 @@ try {
   await page('Emulation.setDeviceMetricsOverride', { width: 1366, height: 900, deviceScaleFactor: 1, mobile: false });
   assert.ok(await evaluate("document.querySelector('.main').scrollWidth <= document.querySelector('.main').clientWidth"), 'populated desktop estimate fits');
   await shot('desktop-estimate');
+  const jobId = await evaluate("kelbe.store.list('jobs').find(j => j.status === 'in-progress').id");
+  await evaluate(`kelbe.nav('jobs/${jobId}')`);
+  await wait("!!document.querySelector('[data-job-overview]')");
+  assert.ok(await evaluate("document.querySelector('.job-exp-details summary').textContent.includes('Billing')"), 'owner can reach costing details');
+  assert.ok(await evaluate("document.querySelector('.main').scrollWidth <= document.querySelector('.main').clientWidth"), 'desktop job overview fits');
+  await shot('desktop-job');
+  await evaluate("kelbe.nav('onboarding')");
+  await wait("!!document.querySelector('#ob-essentials-title')");
+  assert.ok(await evaluate("!!document.querySelector('.ob-later') && !!document.querySelector('.ob-quote-entry a')"), 'essentials, later setup and quote entry remain reachable');
+  await shot('desktop-onboarding');
   await evaluate("kelbe.nav('dashboard')");
   await wait("location.hash === '#/dashboard'");
   await page('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -85,6 +95,15 @@ try {
   assert.deepEqual(await evaluate("[...document.querySelectorAll('.mobile-primary [data-mod]')].map(a=>a.dataset.mod)"), ['dashboard', 'clients', 'jobs', 'invoices']);
   assert.ok(await evaluate("[...document.querySelectorAll('.mobile-primary .rail-btn')].every(a=>a.getBoundingClientRect().height>=44 && a.getBoundingClientRect().width>=44)"));
   await shot('phone-owner');
+  await evaluate(`kelbe.nav('jobs/${jobId}')`);
+  await wait("!!document.querySelector('[data-job-overview]')");
+  assert.ok(await evaluate("document.querySelector('.main').scrollWidth <= document.querySelector('.main').clientWidth"), 'phone job overview fits');
+  assert.ok(await evaluate("[...document.querySelectorAll('.ops-tabs-row .tabs button')].every(b => b.scrollWidth <= b.clientWidth)"), 'phone job tab labels fit within separate scrollable targets');
+  await shot('phone-job');
+  await evaluate("kelbe.nav('onboarding')");
+  await wait("!!document.querySelector('#ob-essentials-title')");
+  assert.ok(await evaluate("document.querySelector('.main').scrollWidth <= document.querySelector('.main').clientWidth"), 'phone onboarding fits');
+  await shot('phone-onboarding');
   await evaluate("kelbe.nav('estimates/' + kelbe.store.list('estimates').find(e => e.lines?.length).id)");
   await wait("!!document.querySelector('.doc-layout')");
   assert.ok(await evaluate("document.querySelector('.main').scrollWidth <= document.querySelector('.main').clientWidth"), 'phone estimate has no horizontal overflow');
@@ -106,7 +125,22 @@ try {
   assert.deepEqual(await evaluate("[...document.querySelectorAll('.mobile-primary [data-mod]')].map(a=>a.dataset.mod)"), ['today', 'jobs', 'time', 'drawings']);
   await click('.mobile-primary [data-mod=today]');
   await wait("location.hash === '#/today'");
+  await wait("!!document.querySelector('.field-shift')");
+  assert.ok(await evaluate("document.querySelector('.field-day').textContent.includes('payroll')"), 'task and payroll distinction is visible');
+  const timeBefore = await evaluate("JSON.stringify(kelbe.store.list('timeEntries'))");
+  const started = await evaluate("(() => { const button = [...document.querySelectorAll('.wp-actions button')].find(b => b.textContent.trim() === 'Start task'); if (!button) return null; const id = button.closest('[data-task]').dataset.task; button.click(); return id; })()");
+  assert.ok(started, 'a demo task can be started');
+  await sleep(150);
+  assert.equal(await evaluate(`kelbe.store.get('workTasks', ${JSON.stringify(started)}).status`), 'in-progress', 'starting a task records its progress');
+  assert.equal(await evaluate("JSON.stringify(kelbe.store.list('timeEntries'))"), timeBefore, 'starting a task does not change payroll time records');
+  await sleep(4000); // Let task feedback clear so the review image shows the controls beneath it.
   await shot('phone-field');
+  await evaluate(`kelbe.nav('jobs/${jobId}')`);
+  await wait("!!document.querySelector('[data-job-overview]')");
+  assert.ok(await evaluate("!document.querySelector('.job-exp-details summary').textContent.includes('Billing')"), 'field job details omit financial summary');
+  await shot('phone-field-job');
+  await evaluate("kelbe.nav('today')");
+  await wait("!!document.querySelector('.field-shift')");
   await click('.nav-more');
   assert.equal(await evaluate("!!document.querySelector('.more-navigation [data-mod=invoices]')"), false);
   // Exercise a settings sync update: the shell must refresh and dismiss stale More links.
@@ -129,7 +163,7 @@ try {
   assert.notEqual(await evaluate("getComputedStyle(document.querySelector('.rail')).display"), 'none');
   assert.ok(!await evaluate("document.querySelector('meta[name=viewport]').content.includes('user-scalable=no')"));
   assert.deepEqual(errors, [], 'no JavaScript runtime errors');
-  console.log(JSON.stringify({ passed: true, artifacts, checks: ['desktop labels and collapse persistence', 'mobile role destinations and 44px targets', 'all permitted modules reachable through More', 'More active state', 'demo role switch', 'disabled module update', 'canvas shell restoration', 'zoom enabled', 'runtime errors'] }, null, 2));
+  console.log(JSON.stringify({ passed: true, artifacts, checks: ['desktop labels and collapse persistence', 'mobile role destinations and 44px targets', 'all permitted modules reachable through More', 'More active state', 'demo role switch', 'disabled module update', 'canvas shell restoration', 'zoom enabled', 'desktop and phone job overview layout', 'phone job tab labels fit', 'field job financial summary hidden', 'onboarding essentials and quote entry', 'phone onboarding layout', 'field task start leaves payroll unchanged', 'runtime errors'] }, null, 2));
 } finally {
   ws?.close(); chrome.kill(); server.closeAllConnections(); server.close();
 }

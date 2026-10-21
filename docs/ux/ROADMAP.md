@@ -31,6 +31,18 @@ and customer-facing design continue as follow-up work.
 
 ## Measurement
 
+### Implementation checkpoint: 2026-10-21
+
+Sprint 01 delivered the first slices of UX-01 through UX-04. [Sprint 02](SPRINT-02.md)
+implements the operational job overview (UX-05), task/time and sync clarity (UX-06),
+and essential-versus-later setup (UX-07). It also restores UX-03 guidance alongside
+R1 signing controls. Sprint 02 is locally verified and pending review/merge.
+
+Service/project templates, first-use research, real-device recovery testing and
+customer-facing UX-08 through UX-10 remain. The next implementation should first
+resolve signed-quote job/revision handoffs, then define customer access and approval
+versioning against the existing R1 contracts before adding a portal.
+
 Collect a baseline before attributing improvements. Use consenting pilot users and
 avoid capturing customer scope text, addresses, or financial content in analytics.
 

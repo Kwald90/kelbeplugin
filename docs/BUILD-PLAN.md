@@ -167,6 +167,11 @@ Settings additions (workstream B): `company.province`, `codeBook ('CEC-2024'|'NE
 
 ### Customer experience sprint (2026-10-20)
 
+Continuation on 2026-10-21: [Sprint 02](ux/SPRINT-02.md) assigns isolated ownership
+for job overview, My day, and onboarding, with estimate guidance/integration owned
+by the lead. Work integrates on `codex/ux-sprint-02`, not the deploy branch, and
+preserves the newer [R1 contracts](releases/r1-get-paid.md).
+
 Kelvin requested the [UX programme](ux/README.md) and parallel implementation.
 Current UI ownership and acceptance criteria live in [Sprint 01](ux/SPRINT-01.md).
 For this sprint, the navigation workstream owns the shell and navigation styles;

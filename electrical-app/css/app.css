@@ -163,7 +163,7 @@ h2.section { font-size: var(--fs-base); line-height: var(--lh-base); margin: var
 .search input { padding-left: 38px !important; border-radius: var(--r-pill) !important; border-color: var(--border) !important; }
 
 .tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-pill); overflow-x: auto; max-width: 100%; }
-.tabs button { border: 0; background: transparent; height: 32px; padding: 0 14px; border-radius: var(--r-pill); font-weight: 600; font-size: var(--fs-xs); color: var(--text-muted); cursor: pointer; white-space: nowrap; }
+.tabs button { flex-shrink: 0; border: 0; background: transparent; height: 32px; padding: 0 14px; border-radius: var(--r-pill); font-weight: 600; font-size: var(--fs-xs); color: var(--text-muted); cursor: pointer; white-space: nowrap; }
 .tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); }
 
 .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); overflow-x: auto; }
