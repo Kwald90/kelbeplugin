@@ -107,6 +107,9 @@ export function readConfig(env = process.env) {
       maxQueueLagS: int(env.READY_MAX_QUEUE_LAG_S, 900),
     },
     backupStatusFile: env.BACKUP_STATUS_FILE || '',
+    // Restore tests and offsite drills (JSON lines): restore-test.sh on the server appends to it, and
+    // HQ health appends a drill result uploaded from Kelvin's PC (docs/runbooks/offsite-backups.md).
+    restoreTestsFile: env.RESTORE_TESTS_FILE || '',
     tlsCertFile: env.TLS_CERT_FILE || '',
     worker: {
       pollMs: int(env.WORKER_POLL_MS, 2000),

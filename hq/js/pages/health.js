@@ -1,7 +1,10 @@
 // Developer health: every environment's version, then this server's database, migrations,
-// queue, backups, deploys, errors, TLS, disk and memory. Refreshes every 15 s while visible.
-import { get } from '../api.js';
+// queue, backups (with the offsite copy and restore drills, and "Record a drill result"), deploys,
+// errors, TLS, disk and memory. Refreshes every 15 s while visible.
+import { get, post } from '../api.js';
 import { TONE, ago, bytes, duration, ms, pct, sha } from '../fmt.js';
+
+const BACKUP_TONE = { ok: 'success', degraded: 'warning', failed: 'danger', skipped: 'neutral' };
 
 const NS = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}, ...kids) => {
@@ -53,7 +56,59 @@ export default {
       return h('div', { class: 'hq-bar' }, h('span', null, label), h('div', { class: ['progress', v > 90 ? 'bad' : v > 75 ? 'warn' : ''] }, h('i', { style: { width: `${(v / max) * 100}%` } })), h('span', { class: 'right num' }, pct(value)));
     };
 
+    // Offsite copy (backup.sh's offsite fields) and restore drills (RESTORE_TESTS_FILE).
+    function offsiteCard(b) {
+      if (!b?.configured || b.error) return card('Offsite copy', 'upload', h('p', { class: 'muted' }, 'Shown once BACKUP_STATUS_FILE is readable.'));
+      const o = b.offsite || {};
+      if (!o.configured) {
+        return card('Offsite copy', 'upload', h('p', { class: d0.environment === 'production' ? null : 'muted' },
+          d0.environment === 'production' ? ui.badge('Not configured', 'danger') : 'Not configured (optional on this environment).'),
+        h('p', { class: 'muted hq-small' }, 'Set OFFSITE_RCLONE_REMOTE in backup.conf: docs/runbooks/offsite-backups.md.'));
+      }
+      return card('Offsite copy', 'upload', kv([
+        ['Last run', o.status ? ui.badge(o.status, BACKUP_TONE[o.status] || 'neutral') : '—'],
+        ['Last good copy', o.lastOkAt ? `${ui.fmtDateTime(o.lastOkAt)} (${ago(o.lastOkAt)})` : 'never'],
+        ['Fresh', o.stale ? ui.badge('Stale (over 26 h)', 'danger') : ui.badge('Yes', 'success')],
+        ['Target', o.target || '—'],
+      ]));
+    }
+
+    function drillCard(r) {
+      const record = ui.button('Record a drill result', { size: 'sm', icon: 'plus', onClick: recordDrill });
+      if (!r?.configured) return card('Restore drill', 'download', h('p', { class: 'muted' }, 'Set RESTORE_TESTS_FILE to keep restore tests and offsite drills here.'));
+      if (r.error) return card('Restore drill', 'download', h('p', { class: 'muted' }, `RESTORE_TESTS_FILE is ${r.error}.`), record);
+      return card('Restore drill', 'download', kv([
+        ['Last pass', r.lastPassAt ? `${ui.fmtDateTime(r.lastPassAt)} (${ago(r.lastPassAt)})` : ui.badge('None recorded', 'danger')],
+        r.lastPassAt ? ['Where', `${r.lastSource === 'offsite' ? 'Offsite copy' : 'Local backup'} on ${r.lastHost || 'unknown host'}`] : null,
+        r.lastPassAt ? ['Secrets', r.secretsChecked ? ui.badge('Decrypt checked', 'success') : ui.badge('Not checked', 'warning')] : null,
+        ['Due', r.stale ? ui.badge(r.lastPassAt ? 'Overdue (over 92 days)' : 'Overdue', 'danger') : ui.badge(`In ${92 - (r.ageDays || 0)} days`, 'success')],
+        ['Last offsite drill', r.lastOffsitePassAt ? `${ui.fmtDate(r.lastOffsitePassAt)} (${ago(r.lastOffsitePassAt)})` : 'never'],
+        r.lastRun && !r.lastRun.ok ? ['Last run', h('span', null, ui.badge('Failed', 'danger'), ` ${ago(r.lastRun.at)}${r.lastRun.failures ? `: ${r.lastRun.failures}` : ''}`)] : null,
+      ]), record);
+    }
+
+    function recordDrill() {
+      ui.formSheet({
+        title: 'Record a drill result',
+        fields: [{
+          label: 'The JSON line offsite-drill.sh printed (or paste the whole restore-tests.jsonl: the last line is used)',
+          name: 'line', type: 'textarea', rows: 8, required: true, span: true,
+          placeholder: '{"ts":"…","environment":"production","source":"offsite","host":"off-box","ok":true,…}',
+        }],
+        extra: h('p', { class: 'muted hq-small' }, 'Checked, trimmed to the known fields and kept on this server with your name; the drill is due again in 92 days. No keys are in the line.'),
+        submitLabel: 'Record',
+        onSubmit: (v) => {
+          post('/api/hq/restore-tests', { line: v.line }).then((r) => {
+            ui.toast(r.duplicate ? 'That result was already recorded' : `Recorded: ${r.result.ok ? 'passed' : 'failed'} ${r.result.ts.slice(0, 10)}`, r.duplicate ? 'info' : 'success');
+            load();
+          }, (e) => ui.toast(e.message, 'error'));
+        },
+      });
+    }
+
+    let d0 = {};
     function draw(d) {
+      d0 = d;
       ui.clear(body);
       const s = d.summary;
       body.append(h('div', { class: ['hq-banner', s.level] }, ui.icon(s.level === 'ok' ? 'check' : 'alert', 20),
@@ -96,10 +151,12 @@ export default {
         ]) : h('p', { class: 'muted' }, 'Database unreachable.')),
         card('Last backup', 'save', d.backup.configured ? (d.backup.error ? h('p', { class: 'muted' }, `BACKUP_STATUS_FILE is ${d.backup.error}.`) : kv([
           ['When', d.backup.at ? `${ui.fmtDateTime(d.backup.at)} (${ago(d.backup.at)})` : '—'],
-          ['Result', d.backup.ok == null ? '—' : yes(d.backup.ok, 'OK', 'Failed')],
+          ['Result', d.backup.status ? ui.badge(d.backup.status, BACKUP_TONE[d.backup.status] || 'neutral') : d.backup.ok == null ? '—' : yes(d.backup.ok, 'OK', 'Failed')],
           ['Fresh', d.backup.stale ? ui.badge('Stale (over 26 h)', 'danger') : ui.badge('Yes', 'success')],
-          ['Size', bytes(d.backup.sizeBytes)], ['Target', d.backup.target], d.backup.message ? ['Message', d.backup.message] : null,
+          ['Size', bytes(d.backup.sizeBytes)], d.backup.message ? ['Message', d.backup.message] : null,
         ])) : h('p', { class: 'muted' }, 'Set BACKUP_STATUS_FILE to the JSON the backup script writes.')),
+        offsiteCard(d.backup),
+        drillCard(d.restoreTest),
         card('TLS certificate', 'lock', d.tls.checked ? kv([
           ['Host', d.tls.host || d.tls.source], ['Expires', `${ui.fmtDate(d.tls.validTo)} (${d.tls.daysLeft} days)`],
           ['Issuer', d.tls.issuer], d.tls.authorized === false ? ['Trust', ui.badge(d.tls.authorizationError || 'not trusted', 'danger')] : null,
@@ -151,6 +208,21 @@ export default {
           empty: h('div', { class: 'card flat muted' }, 'No deploys logged yet.'),
         }))
         : h('div', { class: 'card flat muted' }, 'Set DEPLOY_LOG_FILE to the log the deploy script appends to (JSON lines).')));
+
+      if (d.restoreTest?.recent?.length) {
+        body.append(...ui.section('Restore tests and drills', ui.table({
+          columns: [
+            { key: 'ts', label: 'When', render: (x) => `${ui.fmtDateTime(x.ts)} (${ago(x.ts)})` },
+            { key: 'source', label: 'Copy', render: (x) => (x.source === 'offsite' ? 'Offsite' : 'Local') },
+            { key: 'host', label: 'Run on', render: (x) => h('span', { class: 'mono hq-small' }, x.host || '—') },
+            { key: 'ok', label: 'Result', render: (x) => yes(x.ok, 'Passed', 'Failed') },
+            { key: 'secrets', label: 'Secrets', render: (x) => (x.secretsChecked ? yes(x.secretsOk !== false, 'Decrypt', 'Did not decrypt') : '—') },
+            { key: 'file', label: 'Backup', render: (x) => h('span', { class: 'mono hq-small' }, x.file || '—') },
+            { key: 'note', label: 'Note', render: (x) => x.failures || (x.recordedBy ? `recorded by ${x.recordedBy}` : '—') },
+          ],
+          rows: d.restoreTest.recent,
+        })));
+      }
 
       body.append(...ui.section('Last 24 hours by hour', ui.table({
         columns: [

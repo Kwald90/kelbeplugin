@@ -54,6 +54,9 @@ done
 mkdir -p "$STATE_DIR/status"
 # HQ Mail files: only the containers' user (uid 1000) may read them.
 install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/mail"
+# Restore tests and offsite drill results (RESTORE_TESTS_FILE): hq-api appends uploaded drills,
+# restore-test.sh appends local tests, the worker reads them for the hourly backup alerts.
+install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/drills"
 # Hero videos and posters: uploaded by hq-api (uid 1000), served read-only by nginx at /media/.
 install -d -o 1000 -g 1000 -m 755 "$STATE_DIR/media"
 chmod 755 "$STATE_DIR" "$STATE_DIR/status"

@@ -18,7 +18,12 @@
 #   --identity <file>   age identity file, or - to read it from stdin (required)
 #   --keep              leave the container running afterwards (prints how to remove it)
 #   --log <file>        also append the JSON result line to <file> (evidence when run on your own
-#                       computer; on the server it always goes to /var/lib/fishtape-<env>/restore-tests.jsonl)
+#                       computer; on the server it always goes to /var/lib/fishtape-<env>/restore-tests.jsonl,
+#                       and to drills/restore-tests.jsonl there, which HQ health reads)
+#   --name <name>       name the throwaway container (offsite-drill.sh uses it with --keep to check
+#                       secrets against the restored database before removing it)
+#
+# The offsite drill (offsite-drill.sh, off the server) fetches the newest offsite copy and runs this.
 #
 # deploy/production/restore-test.sh is an identical copy; CI fails if they differ.
 set -Eeuo pipefail
@@ -33,17 +38,20 @@ FILE=""
 IDENTITY=""
 KEEP=0
 LOG=""
+NAME=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --file) FILE="${2:-}"; shift 2 ;;
     --identity) IDENTITY="${2:-}"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     --log) LOG="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    --name) NAME="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
 [ -n "$IDENTITY" ] || { echo "--identity is required (the offline age key, or - for stdin)" >&2; exit 2; }
+if [ -n "$NAME" ] && ! [[ "$NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$ ]]; then echo "--name: letters, digits, _ . - only" >&2; exit 2; fi
 command -v age >/dev/null || { echo "age is not installed" >&2; exit 1; }
 command -v docker >/dev/null || { echo "docker is not installed" >&2; exit 1; }
 
@@ -81,7 +89,7 @@ fi
 # Same Postgres image as the live stack.
 IMAGE="$(grep -m1 -E '^[[:space:]]*image:[[:space:]]*postgres:' "$HERE/docker-compose.yml" 2>/dev/null | sed -E 's/^[[:space:]]*image:[[:space:]]*//; s/[[:space:]]+$//' || true)"
 IMAGE="${IMAGE:-postgres:17}"
-NAME="fishtape-restore-test-$ENV_NAME-$$"
+NAME="${NAME:-fishtape-restore-test-$ENV_NAME-$$}"
 PW="$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')"
 
 cleanup() {
@@ -178,11 +186,17 @@ fi
 # Evidence (A1.3): one JSON line per test, next to the backup log when run on the server, and in
 # --log <file> when given.
 esc() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '%s' "$s"; }
-RESULT_LINE="$(printf '{"ts":"%s","environment":"%s","host":"%s","file":"%s","sha256":"%s","ok":%s,"tables":%s,"rlsForcedTables":%s,"migrations":%s,"tenants":%s,"newestAuditEvent":"%s","databaseSize":"%s","durationSeconds":%d,"failures":"%s"}' \
+RESULT_LINE="$(printf '{"ts":"%s","environment":"%s","source":"local","host":"%s","file":"%s","sha256":"%s","ok":%s,"tables":%s,"rlsForcedTables":%s,"migrations":%s,"tenants":%s,"newestAuditEvent":"%s","databaseSize":"%s","durationSeconds":%d,"failures":"%s"}' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ENV_NAME" "$(hostname)" "$(basename "$FILE")" "$SHA256" "$OK" "$TABLES" "$RLS_TABLES" "$MIGRATIONS" "$TENANTS" \
   "$NEWEST_AUDIT" "$DB_SIZE" "$(( $(date +%s) - START ))" "$(esc "${FAILURES[*]:-}")")"
 if [ -d "$STATE_DIR" ] && [ -w "$STATE_DIR" ]; then
   printf '%s\n' "$RESULT_LINE" >> "$STATE_DIR/restore-tests.jsonl"
+  # The copy HQ health reads (RESTORE_TESTS_FILE, mounted into hq-api and the worker as uid 1000).
+  if [ -d "$STATE_DIR/drills" ]; then
+    printf '%s\n' "$RESULT_LINE" >> "$STATE_DIR/drills/restore-tests.jsonl"
+    chown 1000:1000 "$STATE_DIR/drills/restore-tests.jsonl" 2>/dev/null || true
+    chmod 600 "$STATE_DIR/drills/restore-tests.jsonl"
+  fi
 fi
 if [ -n "$LOG" ]; then
   printf '%s\n' "$RESULT_LINE" >> "$LOG"

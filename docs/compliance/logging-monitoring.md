@@ -30,7 +30,7 @@ Staging and production. Local development logs are not kept.
 | Auth events | Sign-in success and failure, MFA challenges, lockouts, password resets, session and device revocations, API key creation and revocation | `audit_events` and API logs | As above |
 | HQ access | Every HQ read of tenant data | `audit_events` | As above |
 | Deploys | One JSON line per `update.sh` run; deploy-gate requests in the system journal (`fishtape-deploy-gate`) | `/var/lib/fishtape-<env>/deploy-log.jsonl` | 3 years (with evidence bundles) |
-| Backups and restore tests | One JSON line per run | `backup-log.jsonl`, `restore-tests.jsonl` | 3 years |
+| Backups and restore tests | One JSON line per run (offsite drills: recorded through HQ health) | `backup-log.jsonl`, `restore-tests.jsonl`, `drills/restore-tests.jsonl` | 3 years |
 | Host status | Disk, certificate expiry, load, memory, reboot and security-update flags, every 15 minutes | `status/host-status.json` (overwritten) | Latest only |
 | SSH and system | Logins, sudo, fail2ban bans, ufw blocks | System journal and `/var/log/auth.log` | 30 days |
 | GitHub | Account security log, workflow runs and approvals, security alerts | GitHub | GitHub's own limits; exported into evidence bundles |
@@ -79,6 +79,7 @@ secret does end up in a log, treat it as exposed: rotate it, then remove the log
 | Disk | `host-status.json`; `check-host.sh` warns at 70% and fails at 85% | Investigate at 70% | Partial |
 | Pending security updates, reboot required | `host-status.json`, `check-host.sh` | Weekly glance | Partial |
 | Code and dependency alerts | Dependabot, CodeQL, secret scanning, `security.yml` weekly run | GitHub email notifications | Partial (Dependabot security updates off) |
+| Backups, offsite copy and restore drills | The `hq_backup_alerts` job hourly (general worker pool, `server/src/services/backup-alerts.js`) reads `last-backup.json` and `RESTORE_TESTS_FILE`: backup stale or failed, offsite failed, stale (over 26 hours) or not configured in production, restore drill overdue (over 92 days), no offsite drill yet. HQ > Developer health shows the same lines. First steps in `docs/runbooks/offsite-backups.md` | Email to `HQ_NOTIFY_EMAIL`, at most one per problem a day | Built in Release 1 |
 | QuickBooks | The `hq_qbo_alerts` job every 10 minutes (general worker pool) (`server/src/qbo/alerts.js`), rules below; HQ > Developer > QuickBooks for the month's reads against the budget; HQ > the company > QuickBooks for one company's health | Email to `HQ_NOTIFY_EMAIL`, at most one per alert an hour (budget thresholds once a month) | Built with the QuickBooks sync |
 
 ### QuickBooks alerts
@@ -140,3 +141,4 @@ Through [information-security.md](information-security.md#exceptions).
 | --- | --- | --- | --- |
 | 2026-10-19 | Kelvin Waldner | First version | Drafted with an AI agent; adopted when Kelvin merges it. |
 | 2026-10-20 | Kelvin Waldner | QuickBooks added | Sync log, platform events, call counts, what QuickBooks code never logs, the HQ alerts. |
+| 2026-10-20 | Kelvin Waldner | Backup alerts | The hourly HQ backup alerts and the offsite drill record (Release 1, section 5). |

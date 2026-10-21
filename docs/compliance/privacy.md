@@ -10,7 +10,7 @@ not legal advice. Where it says "confirm with counsel", do that before relying o
 | Applies to | All personal information Fishtape collects, holds or processes, for itself or for tenants |
 | Review cadence | Annually (October), after any breach, and before entering a new province |
 | Last reviewed | 2026-10-20 |
-| Related controls | PRV-01 to PRV-06, DAT-03, DAT-04 |
+| Related controls | PRV-01 to PRV-07, DAT-03, DAT-04 |
 
 ## Purpose
 
@@ -134,7 +134,7 @@ after the breach is determined). Stored in the encrypted evidence store. Fields:
 - A request about Fishtape's own data (a tenant user's account): Fishtape answers within 30 days.
   Verify identity first, through the account or a known email.
 - Deleting a whole tenant: [docs/runbooks/offboard-tenant.md](../runbooks/offboard-tenant.md).
-  Deleted data stays in encrypted backups for up to about 8 weeks, then ages out. Say so in the reply.
+  Deleted data stays in encrypted backups for up to about 8 weeks on the server and about 13 months in the offsite weekly copies, then ages out. Say so in the reply.
 
 ## Location while clocked in
 
@@ -163,6 +163,30 @@ location a condition of using the clock (today it is the worker's choice).
 
 Tenants should tell their crews before turning location on, keep the policy text accurate for their
 province and any collective agreement, and not use it for anything the notice doesn't say.
+
+## Location, photos and signatures on field tickets and signed documents
+
+From Release 1 (contract `docs/releases/r1-get-paid.md` 2.2, 2.10, 4.1, 4.2), a crew member's phone
+records signed extra-work and T&M tickets, and the office's iPad records signatures on estimates and
+change orders. Each signature keeps the signer's name (and title and email when given), the
+signature image, the device time, a snapshot of what was signed and its digest, and, when
+`settings.tickets.captureLocation` is on (the default, contract question 15), **one location fix
+taken at the moment of signing** (latitude, longitude, accuracy, time). Tickets can carry up to four
+photos of the work. The people involved are the customer's signer (often a general contractor's
+site staff or a homeowner, not the tenant's employee) and the crew member who captured it.
+
+| question | what Fishtape does |
+| --- | --- |
+| Purpose | Evidence that the extra work was requested and agreed, at the site, at that time: to get paid for it and to settle disputes. Not tracking of the signer or the crew, not marketing. |
+| Notice | The signing screen tells the signer, before they sign, that their name, signature, the time and the device's location are kept with the ticket and that they can ask for a copy; a copy is emailed when they give an address. Kelvin tells TG's crews that a location is recorded with each ticket signature (contract section 15, item 17). |
+| Minimisation | One fix at signing, never continuous and never in the background; no fix when the setting is off or the device refuses permission (the ticket is still accepted and the refusal is noted). Photos are downscaled on the device (at most 250 KB each). No ID numbers or other documents of the signer are collected. |
+| Access | Office roles (the `invoices` permission) see tickets and signatures; a crew member sees the tickets they wrote; field roles never see prices. Signatures are never deleted, only voided with a reason by the office (audited). Not readable by the AI assistant or MCP agents (contract question 18). HQ reads them only through the audited company export. |
+| Retention | Kept with the tenant's business records (the contract and billing evidence) for the life of the account, then exported and deleted at offboarding; they age out of backups like all tenant data. Per-record retention and legal hold come in Release 2. |
+| Requests | A signer's request to see or correct their information goes to the tenant (the organization in control); a signed record is corrected by voiding it and signing again, never by editing it. |
+| Third parties | None: the fix comes from the device, and no map or geocoding service is called for it. |
+
+Counsel to confirm the notice wording and that recording a third party's location with their
+signature is reasonable for this purpose in each province where Fishtape operates (VERIFY).
 
 ## QuickBooks Online
 
@@ -229,3 +253,4 @@ None for legal duties. Process changes go through [information-security.md](info
 | 2026-10-19 | Kelvin Waldner | First version | Drafted with an AI agent; adopted when Kelvin merges it. Needs a review by privacy counsel before launch. |
 | 2026-10-20 | Kelvin Waldner | Location while clocked in | New section for GPS time tracking, drafted with an AI agent. Counsel to confirm the consent model for each province before launch. |
 | 2026-10-20 | Kelvin Waldner | QuickBooks Online | New section: two-way sync at the tenant's request, the AI disclosure, deletion on disconnect. |
+| 2026-10-20 | Kelvin Waldner | Ticket signatures | New section: one location fix, photos and the signature kept with field tickets and signed documents (Release 1). Counsel to confirm the notice wording. Backup ageing updated for the offsite weeklies. |

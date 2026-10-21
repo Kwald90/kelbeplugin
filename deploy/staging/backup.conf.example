@@ -23,6 +23,10 @@
 #OFFSITE_RSYNC_TARGET=fishtape-backup@backup.example.ca:/srv/backups/fishtape-staging
 #OFFSITE_SSH_KEY=/root/.ssh/fishtape_offsite_ed25519
 #OFFSITE_RCLONE_REMOTE=offsite-ca:fishtape-backups/staging
+# For an S3-compatible bucket with a write-only key, set `no_check_bucket = true` for the remote in
+# root's rclone.conf. backup.sh copies into daily/, weekly/ and predeploy/ (docs/runbooks/offsite-backups.md).
+# Shown on HQ health next to the remote name: provider and region only, never keys or URLs.
+#OFFSITE_LABEL="s3 ca-central-1"
 
 # Dead-man's switch: pinged after every run (".../fail" when it failed or the offsite copy failed).
 # A service such as healthchecks.io alerts you when the ping doesn't arrive on schedule.

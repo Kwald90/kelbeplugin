@@ -9,7 +9,7 @@ are proven.
 | Applies to | Staging and production databases, their backups, logs, evidence, and all data types Fishtape stores |
 | Review cadence | Annually, and after any change to `backup.sh` |
 | Last reviewed | 2026-10-19 |
-| Related controls | BCK-01, BCK-02, BCK-03, BCK-04, BCK-07, CRY-02, DAT-03 |
+| Related controls | BCK-01, BCK-02, BCK-03, BCK-04, BCK-07, BCK-08, CRY-02, DAT-03 |
 
 ## Purpose
 
@@ -28,7 +28,9 @@ the schedule below.
    start if the pre-deploy backup fails.
 2. Backups are encrypted before they touch the disk. The server can write backups but can't read them.
 3. Production backups are copied offsite, to a location in Canada, with provider-side retention or object lock.
-4. A backup that hasn't been restored isn't trusted: a restore test runs every quarter.
+4. A backup that hasn't been restored isn't trusted: a restore test runs every quarter, and once an
+   offsite copy exists, a quarterly drill restores the offsite copy off the server and checks its
+   secrets decrypt.
 5. Data is kept only as long as the schedule below says, then deleted.
 
 ## What is backed up
@@ -54,7 +56,7 @@ before it holds production data.
 - Private keys stay offline: password manager plus encrypted USB. They are never written to a
   server's disk; `restore-test.sh --identity -` reads the key from stdin over SSH.
 - Each backup gets a `.sha256` file; `restore-test.sh` checks it before restoring.
-- After replacing a key, keep the old private key until every backup encrypted to it has aged out (8 weeks).
+- After replacing a key, keep the old private key until every backup encrypted to it has aged out: 8 weeks on the server, about 13 months (400 days) for offsite weeklies.
 
 ### Schedule
 
@@ -63,21 +65,35 @@ before it holds production data.
 | Nightly | systemd timer: production 02:47, staging 03:17 server time, plus up to 10 minutes; missed runs catch up at boot | 14 daily |
 | Weekly | Sunday's nightly, hard-linked (no extra space) | 8 weekly |
 | Pre-deploy | Before migrations, by `update.sh` (required in production, optional in staging) | 5 most recent |
-| Offsite (production) | After each backup: rsync over SSH or rclone, encrypted files only | Provider-side retention of at least 8 weeks, object lock where offered |
+| Offsite (production) | After each backup: rclone (or rsync over SSH), encrypted files only, into `daily/`, `weekly/` (the weekly one) and `predeploy/` | Bucket lifecycle: `daily/` 35 days, `weekly/` 400 days, `predeploy/` 30 days; object lock (compliance mode) 35 days |
 
-Deleted tenant data can stay in backups for up to about 8 weeks, then ages out.
+Deleted tenant data can stay in local backups for up to about 8 weeks, and in the offsite weeklies
+for up to about 13 months (400 days), then ages out. The privacy notice and offboarding letter say
+so (TM-BCK-05).
 
 ### Offsite
 
 Required for production, optional for staging. The location must be in Canada and with a different
-provider from the production host. The credentials on the server should only be able to write (not
-delete or overwrite) where the provider supports it. Configured in `backup.conf` (root, mode 600).
-Status: planned; a provider is still to be chosen.
+provider from the production host. Recommended: an S3-compatible bucket in a Canadian region
+(default AWS S3 `ca-central-1`; VERIFY region and price when choosing) with versioning and object
+lock. Two keys limited to the bucket: the server's can write and read but not delete; the drill's
+is read-only and lives only on Kelvin's computer. Configured in `backup.conf` (root, mode 600) and
+root's `rclone.conf`. Setup: [docs/runbooks/offsite-backups.md](../runbooks/offsite-backups.md).
+Status: planned; the provider is still to be chosen (contract question 17).
+
+`last-backup.json` records the offsite result (`ok`, `failed`, `skipped`), the target by provider
+kind and remote or host name only (never keys, bucket paths or URLs), and the time of the last good
+offsite copy, kept across failed runs.
 
 ### Monitoring
 
-- `last-backup.json` (status `ok`, `degraded` when offsite failed, or `failed`; time of last success)
-  is read by `/api/hq/health`.
+- `last-backup.json` (status `ok`, `degraded` when offsite failed, or `failed`; time of last success;
+  the offsite result, target and last good offsite copy) is read by HQ > Developer health.
+- `RESTORE_TESTS_FILE` (`/var/lib/fishtape-<env>/drills/restore-tests.jsonl`) holds restore tests and
+  offsite drills; HQ health shows the last pass, where it ran and whether secrets were checked.
+- The worker's hourly `hq_backup_alerts` job emails HQ (at most once a day per problem) when the
+  backup is stale or failed, the offsite copy failed, is over 26 hours old or (production) is not
+  configured, the last passing restore test is over 92 days old, or no offsite drill has passed.
 - `backup-log.jsonl` keeps one line per run.
 - A heartbeat ping goes to `HEARTBEAT_URL` after each run (the `/fail` URL on failure); the monitor
   alerts Kelvin's phone if no ping arrives.
@@ -96,6 +112,14 @@ FORCE row-level security. On the server it appends a line to `restore-tests.json
 `--log restore-tests-<env>.jsonl` and put that file in the month's evidence bundle. A failed test is at least a SEV3: find the cause before relying on any
 backup made the same way.
 
+Once an offsite copy exists, the quarterly test for that environment is the **offsite drill**:
+`offsite-drill.sh` on Kelvin's computer (never the server) fetches the newest offsite daily with
+the read-only key, checks its checksum, restores it into a scratch Postgres, and with
+`--verify-secrets` checks that a sample of every kind of encrypted value decrypts with
+`SECRETS_MASTER_KEY` (`server/scripts/verify-restore.mjs`). Its JSON line (`"source": "offsite"`,
+`"host": "off-box"`) is recorded on HQ health and goes in the evidence bundle. A drill whose secrets
+don't decrypt is a SEV2. Steps: [docs/runbooks/offsite-backups.md](../runbooks/offsite-backups.md).
+
 ## Data retention schedule
 
 | data | where | kept | then |
@@ -111,7 +135,7 @@ backup made the same way.
 | nginx logs | Hosts | 30 days | Rotated out |
 | Deploy, backup and restore logs | Hosts and evidence bundles | 3 years | Deleted |
 | Evidence bundles | Encrypted store outside git | 3 years | Deleted |
-| Database backups | Hosts and offsite | 14 daily, 8 weekly, 5 pre-deploy | Pruned by `backup.sh` and offsite retention |
+| Database backups | Hosts and offsite | Host: 14 daily, 8 weekly, 5 pre-deploy. Offsite: dailies 35 days, weeklies 400 days, pre-deploy 30 days (35-day object lock) | Pruned by `backup.sh` on the host; expired by the bucket's lifecycle rules offsite |
 | Breach records | Encrypted evidence store | 3 years (law requires at least 24 months) | Deleted |
 | CASL consent and unsubscribe records | Postgres | While messages are sent to the contact, plus 3 years | Deleted |
 | Fishtape's own billing and tax records | Stripe, accounting records | 6 years (Canada Revenue Agency) | Deleted |
@@ -128,7 +152,7 @@ backup made the same way.
 | Records that came from QuickBooks (clients, invoices, payments, bills) | Postgres, devices | As tenant business records (first row) | As tenant business records |
 
 Every QuickBooks table cascades when the tenant is deleted; closing a company disconnects
-QuickBooks (with revoke) first. Backups keep deleted rows until they age out (about 8 weeks), as
+QuickBooks (with revoke) first. Backups keep deleted rows until they age out (about 8 weeks on the server, 13 months for offsite weeklies), as
 for all tenant data.
 
 Tenants decide how long to keep their own business records (for example, CRA expects business
@@ -137,7 +161,7 @@ when the tenant leaves.
 
 ## Evidence
 
-- `backup-log-<env>.jsonl`, `last-backup-<env>.json`, `restore-tests-<env>.jsonl` in each monthly bundle.
+- `backup-log-<env>.jsonl`, `last-backup-<env>.json`, `restore-tests-<env>.jsonl` in each monthly bundle, plus `drills/restore-tests.jsonl` (restore tests and offsite drills recorded through HQ) and the drill output saved on Kelvin's computer.
 - `check-host-production.json` (backup timer and last-backup checks).
 - The heartbeat monitor's history (screenshot at the quarterly review).
 
@@ -151,3 +175,4 @@ Staging pre-deploy backups are optional. RPO of 24 hours is accepted until WAL a
 | --- | --- | --- | --- |
 | 2026-10-19 | Kelvin Waldner | First version | Drafted with an AI agent; adopted when Kelvin merges it. |
 | 2026-10-20 | Kelvin Waldner | QuickBooks rows | Retention of the QuickBooks sync tables and Stripe payouts (contract 10.4). |
+| 2026-10-20 | Kelvin Waldner | Offsite drill | Offsite retention (35/400/30 days, object lock), offsite tracking in `last-backup.json`, the quarterly offsite drill with a secrets check, HQ backup alerts (contract r1-get-paid.md section 5). |

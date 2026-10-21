@@ -19,6 +19,12 @@ AGE_RECIPIENTS_FILE=/srv/fishtape/repo/deploy/production/backup-recipients.txt
 #OFFSITE_RSYNC_TARGET=fishtape-backup@backup.example.ca:/srv/backups/fishtape-production
 #OFFSITE_SSH_KEY=/root/.ssh/fishtape_offsite_ed25519
 #OFFSITE_RCLONE_REMOTE=offsite-ca:fishtape-backups/production
+# The recommended setup (docs/runbooks/offsite-backups.md): an S3-compatible bucket in a Canadian
+# region with versioning and object lock, a key that can write but not delete, and in root's
+# rclone.conf for that remote `no_check_bucket = true` (a write-only key can't check the bucket).
+# backup.sh copies into daily/, weekly/ and predeploy/; the bucket's lifecycle rules expire them.
+# Shown on HQ health next to the remote name: provider and region only, never keys or URLs.
+#OFFSITE_LABEL="s3 ca-central-1"
 
 # Dead-man's switch (alerts when the nightly ping is missing or reports /fail).
 #HEARTBEAT_URL=https://hc-ping.com/00000000-0000-0000-0000-000000000000

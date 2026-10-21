@@ -9,8 +9,11 @@
 #   sudo ./backup.sh --kind predeploy   before migrations (update.sh); keeps the last 5
 #
 # Retention: 14 daily, 8 weekly (Sunday's daily, hard-linked), 5 pre-deploy. Optional copy
-# offsite (rsync over SSH or rclone). Writes $STATE_DIR/status/last-backup.json, which the API
-# reads for /api/hq/health, and appends the same JSON to $STATE_DIR/backup-log.jsonl.
+# offsite (rsync over SSH or rclone) into daily/, weekly/ and predeploy/ on the far side.
+# Writes $STATE_DIR/status/last-backup.json, which the API reads for /api/hq/health, and
+# appends the same JSON to $STATE_DIR/backup-log.jsonl. The JSON names the offsite target only
+# by provider kind and host or remote name (plus OFFSITE_LABEL), never keys, paths or URLs, and
+# keeps the time of the last good offsite copy (lastOffsiteOkAt) across failed runs.
 #
 # The environment (staging | production) is this script's folder name. Settings: backup.conf
 # next to this script (see backup.conf.example). deploy/production/backup.sh is an identical
@@ -34,6 +37,7 @@ WEEKLY_DAY=7               # ISO weekday that is copied to weekly/ (7 = Sunday)
 OFFSITE_RSYNC_TARGET=""    # user@host:/path   (rsync over SSH)
 OFFSITE_SSH_KEY=""         # key for the rsync target; its host key must be in root's known_hosts
 OFFSITE_RCLONE_REMOTE=""   # remote:bucket/path (rclone, configured in root's rclone.conf)
+OFFSITE_LABEL=""           # shown in HQ health, e.g. "s3 ca-central-1": provider and region, never keys
 HEARTBEAT_URL=""           # dead-man's switch, e.g. https://hc-ping.com/<uuid>; /fail on failure
 
 CONF="$HERE/backup.conf"
@@ -85,15 +89,34 @@ jstr() { # JSON string or null
 }
 count() { find "$BACKUP_DIR/$1" -maxdepth 1 -name 'fishtape-*.dump.age' | wc -l; }
 
+# Where offsite copies go, for the status file: provider kind and host (rsync) or remote name
+# (rclone), plus OFFSITE_LABEL. Never the user, path, bucket, keys or an inline rclone connection
+# string (everything from the first ',' or ':' is dropped).
+offsite_target() {
+  local label="${OFFSITE_LABEL//[^A-Za-z0-9 ._-]/}" name
+  label="${label:0:60}"
+  if [ -n "$OFFSITE_RSYNC_TARGET" ]; then
+    name="${OFFSITE_RSYNC_TARGET%%:*}"; name="${name##*@}"
+    printf 'rsync %s%s' "${name//[^A-Za-z0-9._-]/}" "${label:+ ($label)}"
+  elif [ -n "$OFFSITE_RCLONE_REMOTE" ]; then
+    name="${OFFSITE_RCLONE_REMOTE%%:*}"; name="${name%%,*}"
+    printf 'rclone %s%s' "${name//[^A-Za-z0-9._-]/}" "${label:+ ($label)}"
+  fi
+}
+OFFSITE_TARGET="$(offsite_target)"
+
 finish() { # status [error]
-  local status="$1" err="${2:-}" now dur last_ok json
+  local status="$1" err="${2:-}" now dur last_ok last_offsite json
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   dur=$(( $(date +%s) - START ))
   if [ "$status" != failed ]; then printf '%s\n' "$now" > "$STATE_DIR/last-backup-success"; fi
+  if [ "$OFFSITE" = ok ]; then printf '%s\n' "$now" > "$STATE_DIR/last-offsite-success"; fi
   last_ok="$(cat "$STATE_DIR/last-backup-success" 2>/dev/null || true)"
-  json=$(printf '{"schema":1,"environment":%s,"kind":%s,"status":%s,"startedAt":%s,"finishedAt":%s,"durationSeconds":%d,"file":%s,"bytes":%d,"sha256":%s,"encryption":"age","offsite":%s,"lastSuccessAt":%s,"error":%s,"retention":{"daily":%d,"weekly":%d,"predeploy":%d},"counts":{"daily":%d,"weekly":%d,"predeploy":%d},"host":%s}' \
+  last_offsite="$(cat "$STATE_DIR/last-offsite-success" 2>/dev/null || true)"
+  json=$(printf '{"schema":1,"environment":%s,"kind":%s,"status":%s,"startedAt":%s,"finishedAt":%s,"durationSeconds":%d,"file":%s,"bytes":%d,"sha256":%s,"encryption":"age","offsite":%s,"offsiteTarget":%s,"lastOffsiteOkAt":%s,"lastSuccessAt":%s,"error":%s,"retention":{"daily":%d,"weekly":%d,"predeploy":%d},"counts":{"daily":%d,"weekly":%d,"predeploy":%d},"host":%s}' \
     "$(jstr "$ENV_NAME")" "$(jstr "$KIND")" "$(jstr "$status")" "$(jstr "$STARTED_AT")" "$(jstr "$now")" "$dur" \
-    "$(jstr "${FILE:+$(basename "$FILE")}")" "$BYTES" "$(jstr "$SHA256")" "$(jstr "$OFFSITE")" "$(jstr "$last_ok")" "$(jstr "$err")" \
+    "$(jstr "${FILE:+$(basename "$FILE")}")" "$BYTES" "$(jstr "$SHA256")" "$(jstr "$OFFSITE")" "$(jstr "$OFFSITE_TARGET")" "$(jstr "$last_offsite")" \
+    "$(jstr "$last_ok")" "$(jstr "$err")" \
     "$KEEP_DAILY" "$KEEP_WEEKLY" "$KEEP_PREDEPLOY" "$(count daily)" "$(count weekly)" "$(count predeploy)" "$(jstr "$(hostname -s)")")
   printf '%s\n' "$json" > "$STATUS_DIR/last-backup.json.tmp"
   chmod 644 "$STATUS_DIR/last-backup.json.tmp"
@@ -105,7 +128,7 @@ finish() { # status [error]
     [ "$status" = ok ] || url="${HEARTBEAT_URL%/}/fail"
     curl -fsS -m 10 --retry 3 -o /dev/null "$url" || echo "warning: heartbeat ping failed" >&2
   fi
-  echo "backup $status: ${FILE:-none} ${err:+($err)}"
+  echo "backup $status: ${FILE:-none} offsite $OFFSITE${OFFSITE_TARGET:+ ($OFFSITE_TARGET)}${last_offsite:+, last offsite copy $last_offsite} ${err:+($err)}"
 }
 
 die() {
@@ -147,11 +170,13 @@ SHA256="$(sha256sum "$FILE" | cut -d' ' -f1)"
 printf '%s  %s\n' "$SHA256" "$(basename "$FILE")" > "$FILE.sha256"
 
 # ---- weekly copy (hard link: no extra space) ----
+WEEKLY=0
 if [ "$KIND" = nightly ]; then
   recent_weekly="$(find "$BACKUP_DIR/weekly" -maxdepth 1 -name 'fishtape-*.dump.age' -mtime -6 | head -1)"
   if [ "$(date -u +%u)" = "$WEEKLY_DAY" ] || [ -z "$recent_weekly" ]; then
     ln -f "$FILE" "$BACKUP_DIR/weekly/"
     ln -f "$FILE.sha256" "$BACKUP_DIR/weekly/"
+    WEEKLY=1
   fi
 fi
 
@@ -164,15 +189,22 @@ prune daily "$KEEP_DAILY"
 prune weekly "$KEEP_WEEKLY"
 prune predeploy "$KEEP_PREDEPLOY"
 
-# ---- offsite (encrypted files only; the far side should keep its own retention/immutability) ----
-SUB="$(basename "$DEST")"
-if [ -n "$OFFSITE_RSYNC_TARGET" ]; then
-  ssh_cmd="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes"
-  [ -n "$OFFSITE_SSH_KEY" ] && ssh_cmd="$ssh_cmd -i $OFFSITE_SSH_KEY"
-  if rsync -a --mkpath -e "$ssh_cmd" "$FILE" "$FILE.sha256" "${OFFSITE_RSYNC_TARGET%/}/$SUB/"; then OFFSITE=ok; else OFFSITE=failed; fi
-elif [ -n "$OFFSITE_RCLONE_REMOTE" ]; then
-  if rclone copy --no-traverse "$FILE" "${OFFSITE_RCLONE_REMOTE%/}/$SUB/" \
-     && rclone copy --no-traverse "$FILE.sha256" "${OFFSITE_RCLONE_REMOTE%/}/$SUB/"; then OFFSITE=ok; else OFFSITE=failed; fi
+# ---- offsite (encrypted files only; the far side keeps its own retention and object lock) ----
+# daily/ and predeploy/ get every backup; weekly/ gets the nightly that was linked into weekly/
+# here, so the bucket's lifecycle rules can keep weeklies longer than dailies.
+ssh_cmd="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes${OFFSITE_SSH_KEY:+ -i $OFFSITE_SSH_KEY}"
+copy_offsite() { # subdir: the backup and its .sha256 into <target>/<subdir>/
+  if [ -n "$OFFSITE_RSYNC_TARGET" ]; then
+    rsync -a --mkpath -e "$ssh_cmd" "$FILE" "$FILE.sha256" "${OFFSITE_RSYNC_TARGET%/}/$1/"
+  else
+    rclone copy --no-traverse "$FILE" "${OFFSITE_RCLONE_REMOTE%/}/$1/" \
+      && rclone copy --no-traverse "$FILE.sha256" "${OFFSITE_RCLONE_REMOTE%/}/$1/"
+  fi
+}
+if [ -n "$OFFSITE_RSYNC_TARGET" ] || [ -n "$OFFSITE_RCLONE_REMOTE" ]; then
+  OFFSITE=ok
+  copy_offsite "$(basename "$DEST")" || OFFSITE=failed
+  if [ "$OFFSITE" = ok ] && [ "$WEEKLY" -eq 1 ]; then copy_offsite weekly || OFFSITE=failed; fi
 fi
 
 trap - ERR

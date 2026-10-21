@@ -155,7 +155,7 @@ second, decrypt-only key, each with an id (proposed addition to the contract:
    `qbo.realm_id` and rewrites the hashes, one transaction per tenant.
 5. Confirm no rows still use `k1`. Remove the previous key from `.env` and restart.
 6. Keep `k1` in the password manager until every backup that still holds `k1`-wrapped rows has
-   aged out (about 8 weeks), because restoring one of them needs `k1`. Then destroy it.
+   aged out (about 8 weeks on the server, 13 months for offsite weeklies), because restoring one of them needs `k1`. Then destroy it.
 7. If `k1` leaked (rather than routine rotation), also ask the affected tenants to roll their
    vendor keys: anyone holding `k1` and an older copy of the database can read the old values.
 

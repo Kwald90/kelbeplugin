@@ -18,6 +18,7 @@ Other sites share this box. **Don't touch** the host's Postgres on 127.0.0.1:543
 | `update.sh` | deploy: fetch, build, back up, migrate, switch, health-check, roll back on failure |
 | `backup.sh` | encrypted `pg_dump`, 14 daily / 8 weekly, optional offsite, writes `last-backup.json` |
 | `restore-test.sh` | restores a backup into a throwaway container and checks it |
+| `offsite-drill.sh` | run on your own computer, never the server: fetches the newest offsite copy with a read-only key, checks it, restores it with `restore-test.sh`, optionally checks secrets decrypt (`docs/runbooks/offsite-backups.md`) |
 | `host-status.sh` | disk, certificate expiry and load for the HQ health page, plus `probes`: the HTTP code of the public URLs (`/`, `/api/readyz`, `/site/index.html`) as the outside sees them, which the worker folds into the public status page (a failing probe marks that component down for that run; see `docs/runbooks/status-page.md`) |
 | `security-headers.conf` | HSTS, CSP, Permissions-Policy and friends |
 | `nginx-api.conf.snippet` | everything Fishtape needs inside the vhost (static app, `/api/`, `/hq/`, caching) |
@@ -38,6 +39,7 @@ Other sites share this box. **Don't touch** the host's Postgres on 127.0.0.1:543
 | `/var/www/tgelectrical/current/deploy/staging/.env` | secrets, root 600 |
 | `/var/lib/fishtape-staging/` | `deploy-log.jsonl`, `backup-log.jsonl`, `restore-tests.jsonl`, `current-image` |
 | `/var/lib/fishtape-staging/status/` | `last-backup.json`, `last-deploy.json`, `host-status.json` (mounted read-only into the API) |
+| `/var/lib/fishtape-staging/drills/` | `restore-tests.jsonl` that HQ health reads (uid 1000, made by `update.sh`; hq-api appends drills recorded in HQ, the worker reads it read-only) |
 | `/var/backups/fishtape-staging/` | `daily/`, `weekly/`, `predeploy/` encrypted dumps |
 | docker volume `fishtape-staging_pgdata` | the database |
 
@@ -95,7 +97,8 @@ echo 'age1...your public key...' | sudo tee /var/www/tgelectrical/current/deploy
 ```
 
 Optional: `sudo cp backup.conf.example backup.conf && sudo chmod 600 backup.conf` and set an
-offsite target and a heartbeat URL.
+offsite target and a heartbeat URL (`docs/runbooks/offsite-backups.md`; give staging its own
+bucket, or at least its own `staging/` prefix and its own keys, never production's).
 
 ### 5. Edit the vhost
 

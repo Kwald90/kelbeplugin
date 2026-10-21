@@ -1,16 +1,19 @@
 // HQ, billing and plan helpers that need no database.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { FEATURE_PLAN } from '../../electrical-app/js/plans.js';
 import { COLLECTIONS } from '../src/collections.js';
 import { COLLECTION_FEATURES, assertCollectionWritable, effectivePlan, tenantEntitlements } from '../src/services/entitlements.js';
 import { parseYaml, YamlError } from '../src/services/hq-yaml.js';
 import { loadControls } from '../src/services/hq-compliance.js';
 import { createMetrics, percentile } from '../src/services/hq-metrics.js';
-import { healthLevel, parseDeployLog, readBackupStatus, environmentStatuses } from '../src/services/hq-health.js';
+import {
+  backupProblems, healthLevel, normalizeRestoreResult, parseDeployLog, parseRestoreTests, readBackupStatus, readRestoreTests, environmentStatuses,
+} from '../src/services/hq-health.js';
 import { clipDeep, parseEnvironments } from '../src/services/hq-common.js';
 import { catalog, extraSeats, planFromSubscription, estimateMrrCents } from '../src/services/billing.js';
 import { createLeadLimiter } from '../src/routes/hq-leads.js';
@@ -137,6 +140,76 @@ test('deploy log and backup status parsing', () => {
   assert.deepEqual([b.ok, b.ageHours, b.stale, b.sizeBytes], [true, 36, true, 42]);
   assert.equal(readBackupStatus('').configured, false);
   assert.equal(readBackupStatus(join(dir, 'nope.json')).error, 'unreadable');
+  assert.equal(b.offsite.status, null, 'a status file from before offsite tracking says nothing about offsite');
+  assert.equal(b.offsite.configured, false);
+});
+
+test('readBackupStatus: the offsite copy from backup.sh (status, target, last copy, staleness)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fishtape-backup-'));
+  const now = Date.parse('2026-10-20T12:00:00Z');
+  const write = (o) => { writeFileSync(join(dir, 'b.json'), JSON.stringify({ schema: 1, environment: 'production', status: 'ok', finishedAt: '2026-10-20T09:00:00Z', bytes: 4096, ...o })); return readBackupStatus(join(dir, 'b.json'), now); };
+
+  const ok = write({ offsite: 'ok', offsiteTarget: 'rclone offsite-ca (s3 ca-central-1)', lastOffsiteOkAt: '2026-10-20T09:00:00Z' });
+  assert.deepEqual(ok.offsite, { status: 'ok', configured: true, lastOkAt: '2026-10-20T09:00:00.000Z', ageHours: 3, stale: false, target: 'rclone offsite-ca (s3 ca-central-1)' });
+  assert.equal(ok.sizeBytes, 4096, 'backup.sh writes bytes');
+  assert.equal(ok.target, 'rclone offsite-ca (s3 ca-central-1)');
+  assert.equal(ok.environment, 'production');
+
+  const failed = write({ status: 'degraded', offsite: 'failed', offsiteTarget: 'rclone offsite-ca', lastOffsiteOkAt: '2026-10-18T09:00:00Z' });
+  assert.equal(failed.offsite.status, 'failed');
+  assert.equal(failed.offsite.stale, true);
+  assert.equal(failed.offsite.ageHours, 51);
+  assert.equal(failed.status, 'degraded');
+
+  const skipped = write({ offsite: 'skipped', offsiteTarget: null, lastOffsiteOkAt: null });
+  assert.deepEqual([skipped.offsite.status, skipped.offsite.configured, skipped.offsite.lastOkAt, skipped.offsite.stale], ['skipped', false, null, true]);
+  assert.equal(write({ offsite: 'skipped', lastOffsiteOkAt: '2026-10-01T00:00:00Z' }).offsite.configured, true, 'it was configured once: a skip now is a stale offsite copy');
+  assert.equal(write({ offsite: 'weird' }).offsite.status, null);
+});
+
+test('restore tests: lines from restore-test.sh, the offsite drill and HQ uploads; newest pass, offsite pass, staleness', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fishtape-drills-'));
+  const file = join(dir, 'restore-tests.jsonl');
+  const now = Date.parse('2026-10-20T12:00:00Z');
+  assert.deepEqual(readRestoreTests(''), { configured: false });
+  const none = readRestoreTests(file, now);
+  assert.equal(none.configured, true);
+  assert.equal(none.error, undefined, 'no file yet is not an error');
+  assert.equal(none.stale, true);
+  assert.equal(none.lastPassAt, null);
+
+  writeFileSync(file, [
+    // restore-test.sh on a server (no source: local)
+    JSON.stringify({ ts: '2026-07-01T10:00:00Z', environment: 'production', host: 'vps1', file: 'fishtape-production-20260630T024700Z.dump.age', sha256: 'a'.repeat(64), ok: true, tables: 80, migrations: 40, tenants: 3 }),
+    'not json',
+    JSON.stringify({ ts: 'yesterday', ok: true }),
+    JSON.stringify({ ts: '2026-08-01T10:00:00Z', ok: 'yes' }),
+    // the offsite drill, with secrets checked
+    JSON.stringify({ ts: '2026-09-15T10:00:00Z', environment: 'production', source: 'offsite', host: 'off-box', ok: true, secretsChecked: true, secretsOk: true, migration: '0152', tenants: 3, extra: 'dropped' }),
+    // a failed run after it
+    JSON.stringify({ ts: '2026-10-01T10:00:00Z', environment: 'production', source: 'offsite', host: 'off-box', ok: false, failures: 'checksum mismatch' }),
+  ].join('\n'));
+  const r = readRestoreTests(file, now);
+  assert.equal(r.count, 3);
+  assert.equal(r.lastPassAt, '2026-09-15T10:00:00.000Z');
+  assert.equal(r.lastSource, 'offsite');
+  assert.equal(r.lastHost, 'off-box');
+  assert.equal(r.secretsChecked, true);
+  assert.equal(r.ageDays, 35);
+  assert.equal(r.stale, false);
+  assert.equal(r.lastOffsitePassAt, '2026-09-15T10:00:00.000Z');
+  assert.deepEqual(r.lastRun, { at: '2026-10-01T10:00:00.000Z', ok: false, source: 'offsite', host: 'off-box', failures: 'checksum mismatch' });
+  assert.equal(r.recent.length, 3);
+  assert.equal(r.recent[2].source, 'local');
+  assert.ok(!('extra' in r.recent[1]), 'unknown fields are dropped');
+  assert.equal(readRestoreTests(file, Date.parse('2026-12-17T12:00:00Z')).stale, true, 'over 92 days');
+
+  // Normalization: types checked, junk refused.
+  assert.equal(normalizeRestoreResult({ ts: '2026-10-01T00:00:00Z' }), null, 'ok is required');
+  assert.equal(normalizeRestoreResult([1]), null);
+  const n = normalizeRestoreResult({ ts: '2026-10-01T00:00:00Z', ok: true, host: 'bad host; rm -rf', sha256: 'xyz', tenants: -1, migrations: 3.5, file: '../../etc/passwd', failures: 'x'.repeat(900) });
+  assert.deepEqual([n.host, n.sha256, n.tenants, n.migrations, n.file, n.failures.length], [null, null, null, null, null, 500]);
+  assert.equal(parseRestoreTests(`${'{"ts":"2026-10-01T00:00:00Z","ok":true,"failures":"'}${'y'.repeat(20_000)}"}`).length, 0, 'over-long lines are skipped');
 });
 
 test('health level names the problems', () => {
@@ -147,6 +220,34 @@ test('health level names the problems', () => {
   assert.equal(h.level, 'degraded');
   assert.equal(h.problems.length, 3);
   assert.equal(healthLevel({ ...ok, database: { ok: false } }).level, 'down');
+
+  // Offsite and restore drills (r1-get-paid.md 5.2).
+  const offsite = (o) => ({ configured: true, stale: false, status: 'ok', offsite: { status: 'ok', configured: true, stale: false, ...o } });
+  const drill = (o) => ({ configured: true, stale: false, lastPassAt: '2026-10-01T00:00:00Z', lastOffsitePassAt: '2026-10-01T00:00:00Z', ...o });
+  const prod = { ...ok, environment: 'production', backup: offsite(), restoreTest: drill() };
+  assert.deepEqual(healthLevel(prod), { level: 'ok', problems: [] });
+  assert.deepEqual(healthLevel({ ...prod, backup: offsite({ status: 'skipped', configured: false, stale: true }) }).problems, ['offsite backup not configured']);
+  assert.deepEqual(healthLevel({ ...prod, environment: 'staging', backup: offsite({ status: 'skipped', configured: false, stale: true }) }).problems, [], 'offsite is optional on staging');
+  assert.deepEqual(healthLevel({ ...prod, backup: offsite({ status: 'failed', stale: true }) }).problems, ['offsite backup failed']);
+  assert.deepEqual(healthLevel({ ...prod, backup: offsite({ stale: true }) }).problems, ['offsite backup stale']);
+  assert.deepEqual(healthLevel({ ...prod, restoreTest: drill({ stale: true }) }).problems, ['restore drill overdue']);
+  assert.deepEqual(healthLevel({ ...prod, restoreTest: drill({ lastOffsitePassAt: null }) }).problems, ['no offsite restore drill yet']);
+  assert.deepEqual(healthLevel({ ...prod, restoreTest: drill({ stale: true, lastPassAt: null, lastOffsitePassAt: null }) }).problems,
+    ['restore drill overdue (none recorded yet)', 'no offsite restore drill yet']);
+  assert.deepEqual(healthLevel({ ...prod, restoreTest: { configured: false } }).problems, [], 'no RESTORE_TESTS_FILE on this server: nothing to judge');
+  assert.deepEqual(backupProblems({ ...prod, backup: offsite({ status: 'failed' }) }).map((p) => p.code), ['offsite_failed']);
+});
+
+test('compliance register and threat model carry the Release 1 rows', () => {
+  const root = new URL('../../', import.meta.url);
+  const controls = loadControls(fileURLToPath(new URL('compliance/controls.yaml', root)));
+  assert.equal(controls.found, true);
+  assert.equal(controls.error ?? null, null);
+  const ids = new Set(controls.controls.map((c) => c.id));
+  for (const id of ['BCK-02', 'BCK-03', 'BCK-04', 'BCK-08', 'PRI-01', 'PRI-02', 'PRI-03', 'PRV-07']) assert.ok(ids.has(id), id);
+  for (const c of controls.controls) assert.ok(['implemented', 'partial', 'planned'].includes(c.status), `${c.id} status ${c.status}`);
+  const tm = readFileSync(new URL('docs/security/threat-model.md', root), 'utf8');
+  for (const id of ['TM-R1-01', 'TM-R1-02', 'TM-R1-03', 'TM-R1-04']) assert.match(tm, new RegExp(`^\\| ${id} \\|`, 'm'), id);
 });
 
 test('environments: parsed from env, fetched with a timeout, failures reported', async () => {
