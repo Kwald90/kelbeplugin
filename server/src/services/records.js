@@ -86,7 +86,7 @@ export async function recordRejection(q, tenantId, { actor, deviceId = null, col
 }
 
 /** Codes from the Release 1 guards: a REST or system write refused with one of these is recorded too. */
-const GUARD_CODES = new Set(['period_locked', 'payroll_locked', 'signature_invalid', 'document_signed', 'exemption_required', 'closeout_required', 'duplicate_code', 'duplicate_rule']);
+const GUARD_CODES = new Set(['period_locked', 'payroll_locked', 'signature_invalid', 'document_signed', 'exemption_required', 'holdback_invalid', 'tax_off_invalid', 'closeout_required', 'duplicate_code', 'duplicate_rule']);
 
 function rowTime(row) {
   if (row.deleted_at) return new Date(row.deleted_at).getTime();

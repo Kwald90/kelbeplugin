@@ -6,10 +6,12 @@ import { mergeTask, taskWriteProblem } from '../../../electrical-app/js/lib/work
 // Drawings: object-level merge (two people editing different parts both keep their work).
 import { mergeDrawing } from '../../../electrical-app/js/lib/drawing-collab.js';
 import { canSeeMoney } from '../../../electrical-app/js/lib/drawing-costs.js';
-// Release 1 (docs/releases/r1-get-paid.md 2.5, 2.6, 2.9, 2.10): posted collections, the exemption
-// send block, money-free signature snapshots and company rule checks.
+// Release 1 (docs/releases/r1-get-paid.md 2.5, 2.6, 2.9, 2.10, 7.3): posted collections, the
+// exemption and holdback send blocks, where a line may turn tax off, money-free signature snapshots
+// and company rule checks.
 import { POSTED_COLLECTIONS } from '../../../electrical-app/js/lib/closing.js';
-import { exemptionProblem } from '../../../electrical-app/js/lib/exemption.js';
+import { exemptionProblem, lineTaxOffProblem } from '../../../electrical-app/js/lib/exemption.js';
+import { holdbackProblem } from '../../../electrical-app/js/lib/money.js';
 import { snapshotWithoutMoney } from '../../../electrical-app/js/lib/signing.js';
 import { ruleRecordProblem } from '../../../electrical-app/js/lib/rules.js';
 
@@ -416,7 +418,8 @@ const fullSession = (p) => isSystem(p) || (p?.kind === 'session' && !p.crew);
 /**
  * Rules for every writer: payroll runs only from the closing route, company rules typed per their
  * definition, signatures append-only, a job set invoiced only after its final-billing checklist,
- * and a Manitoba invoice without its exemption evidence never leaving draft.
+ * PST/RST turned off line by line only on out-of-pocket lines, and an invoice never leaving draft
+ * without its Manitoba exemption evidence or with a holdback that does not fit it.
  * Returns a message (403), a refusal object { status, code, message } or null.
  */
 function releaseOneRule(p, coll, existing, next) {
@@ -444,10 +447,22 @@ function releaseOneRule(p, coll, existing, next) {
   if (coll === 'invoices' && next && !isSystem(p)) {
     const was = existing ? existing.status || 'draft' : null;
     const now = next.status || 'draft';
-    if (now !== 'draft' && now !== 'void' && (was === null || was === 'draft')) {
+    const leavingDraft = now !== 'draft' && now !== 'void' && (was === null || was === 'draft');
+    // Checked when the lines change and again when the invoice leaves draft.
+    if (leavingDraft || !existing || !same(existing.lines, next.lines)) {
+      const t = lineTaxOffProblem(next);
+      if (t) return refusal(422, 'tax_off_invalid', t.message, { line: t.index });
+    }
+    if (leavingDraft) {
       const x = exemptionProblem(next, { docType: 'invoices' });
       if (x?.level === 'block') return refusal(422, 'exemption_required', x.message, { missing: x.missing });
+      const h = holdbackProblem(next);
+      if (h) return refusal(422, 'holdback_invalid', h.message, { reason: h.code, ...(h.taxId ? { taxId: h.taxId } : {}) });
     }
+  }
+  if (coll === 'estimates' && next && !isSystem(p) && (!existing || !same(existing.lines, next.lines))) {
+    const t = lineTaxOffProblem(next);
+    if (t) return refusal(422, 'tax_off_invalid', t.message, { line: t.index });
   }
   return null;
 }

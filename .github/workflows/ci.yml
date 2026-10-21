@@ -89,7 +89,7 @@ jobs:
       - name: Shared deploy scripts are identical in staging and production
         run: |
           status=0
-          for f in backup.sh restore-test.sh init-env.sh host-status.sh initdb/10-bootstrap.sh; do
+          for f in backup.sh restore-test.sh offsite-drill.sh init-env.sh host-status.sh initdb/10-bootstrap.sh; do
             if ! cmp -s "deploy/staging/$f" "deploy/production/$f"; then
               echo "::error file=deploy/production/$f::differs from deploy/staging/$f (keep the copies identical)"
               status=1

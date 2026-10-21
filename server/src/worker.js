@@ -26,9 +26,10 @@ import { registerAmountDueAdjuster } from './integrations/payments.js';
 import { createQboHandlers, scheduleQboJobs } from './qbo/jobs.js';
 import { createQboPlatformHandlers, scheduleQboPlatformJobs } from './qbo/platform-jobs.js';
 import { QBO_ALERT_HANDLERS, scheduleQboAlerts } from './qbo/alerts.js';
+import { BACKUP_ALERT_HANDLERS, scheduleBackupAlerts } from './services/backup-alerts.js';
 import { amountDueAdjustment, markShutdown } from './qbo/engine.js';
 
-Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS, PLATFORM_EMAIL_HANDLERS, SIGNUP_HANDLERS, FINANCE_HANDLERS, STATUS_HANDLERS, LOCATION_HANDLERS);
+Object.assign(HANDLERS, INTEGRATION_HANDLERS, HQ_HANDLERS, PLATFORM_EMAIL_HANDLERS, SIGNUP_HANDLERS, FINANCE_HANDLERS, STATUS_HANDLERS, LOCATION_HANDLERS, BACKUP_ALERT_HANDLERS);
 
 const HOUR = 3600_000;
 const QBO_KINDS = [QBO_KIND_PATTERN];
@@ -39,7 +40,8 @@ async function main() {
   const db = createDb({ app: createPool(config.databaseUrl, { max: config.worker.concurrency + config.worker.qboConcurrency + 1, applicationName: 'fishtape-worker' }) });
   const workerId = `${hostname()}:${process.pid}`;
   const sealer = createSealer(config.secretsMasterKey);
-  const records = createRecords({ validator: createValidator(), config });
+  // With db, refused system writes are recorded in sync_rejections (r1-get-paid.md 2.6).
+  const records = createRecords({ validator: createValidator(), config, db });
   // The QuickBooks alerts run in the general pool: they watch the QuickBooks pool and must not wait in it.
   const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }), ...createMaterialHandlers({ config }), ...QBO_ALERT_HANDLERS };
   const qboHandlers = {
@@ -70,6 +72,7 @@ async function main() {
     await scheduleQboJobs(db, { config });
     await scheduleQboPlatformJobs(db);
     await scheduleQboAlerts(db);
+    await scheduleBackupAlerts(db);
   }
 
   /** @param {'general'|'qbo'} pool */

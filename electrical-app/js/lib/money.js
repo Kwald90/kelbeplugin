@@ -183,7 +183,7 @@ export const MONEY_POLICY_DEFAULTS = {
 
 /**
  * A policy rule's value. `rules` is what the caller has: the Map from rules.js resolveRules, the
- * rows of GET /api/v1/rules ([{ key, province, value, status, origin, effectiveFrom }]), or a
+ * rows of GET /api/v1/rules/effective ([{ key, province, value, status, origin, effectiveFrom }]), or a
  * plain { key: value } object. A policy applies on any status while its value is set (rules.js
  * ruleValue); unset -> MONEY_POLICY_DEFAULTS. Returns { value, status } (status null: the default).
  */

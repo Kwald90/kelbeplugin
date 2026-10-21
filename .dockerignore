@@ -8,7 +8,6 @@
 !electrical-app/js/lib/cec/
 !electrical-app/js/lib/money.js
 !electrical-app/js/lib/tax.js
-!electrical-app/js/lib/exemption.js
 !electrical-app/js/lib/qbo-export.js
 !electrical-app/js/lib/workplan.js
 !electrical-app/js/lib/kpis.js

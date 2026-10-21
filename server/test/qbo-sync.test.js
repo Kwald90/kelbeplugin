@@ -253,7 +253,9 @@ describe('push and pull', { skip }, () => {
   test('a document with a no-tax line and no reason waits; a mapped 8% code is refused before anything is sent', async () => {
     const T = await setupTenant('Hold Electric');
     await create(T, 'clients', { id: 'c-h', name: 'Hold Client' });
-    await create(T, 'invoices', invoice({ id: 'inv-none', number: 'INV-3002', clientId: 'c-h', taxes: [], taxPct: 0, taxTreatment: 'none' }));
+    // The exemption evidence lets a sent Manitoba invoice with RST off be written (r1-get-paid.md 2.9);
+    // the missing taxNoneReason is what holds the link.
+    await create(T, 'invoices', invoice({ id: 'inv-none', number: 'INV-3002', clientId: 'c-h', taxes: [], taxPct: 0, taxTreatment: 'none', taxExemptBasis: 'resale', taxExemptNumber: '1234567' }));
     await pass(T);
     let l = await link(T, 'invoices', 'inv-none');
     assert.equal(l.state, 'blocked');

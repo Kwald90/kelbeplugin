@@ -69,6 +69,33 @@ export function provincialTaxOff(doc) {
   return lines.every((l) => !provincialOn(l, taxes));
 }
 
+/**
+ * Where a line may turn tax off (the server's write rule; r1-get-paid.md 2.9, 3.4). A line with a
+ * lineType (deposit, holdback release, interest) may carry any taxOff, '*' included: those are set
+ * by money.js. An out-of-pocket pass-through (kind 'other', passThrough) may turn off PST and RST
+ * only. Any other line may not turn off PST, RST or every tax ('*'): provincial tax comes off a
+ * whole document through its treatment and exemption, never line by line. Returns null, or
+ * { index, message } for the first line that breaks it.
+ */
+export function lineTaxOffProblem(doc) {
+  const lines = Array.isArray(doc?.lines) ? doc.lines : [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const off = offIds(l);
+    if (!off.length || l.lineType) continue;
+    const n = i + 1;
+    if (l.passThrough && l.kind === 'other') {
+      if (off.some((x) => !PROVINCIAL.has(x))) return { index: i, message: `Line ${n} is an out-of-pocket disbursement: only PST or RST comes off it.` };
+      continue;
+    }
+    if (off.includes('*')) return { index: i, message: `Line ${n} turns every tax off. Only deposit, holdback and interest lines do that.` };
+    if (off.some((x) => PROVINCIAL.has(x))) {
+      return { index: i, message: `Line ${n} turns ${off.includes('RST') ? 'RST' : 'PST'} off. Only an out-of-pocket disbursement line does that; for exempt work, record the exemption on the job or document.` };
+    }
+  }
+  return null;
+}
+
 /** The evidence a document still lacks for its basis (field keys), [] when complete. */
 export function missingEvidence(doc) {
   const basis = doc?.taxExemptBasis;
@@ -85,14 +112,22 @@ export function missingEvidence(doc) {
 const taxName = (province) => (province === 'MB' ? 'RST' : 'PST');
 
 /**
- * The exemption check before a document is sent (docType 'estimates' for an estimate; anything
- * else is treated as an invoice): null, or
+ * 'No tax' reasons that are about the supply, not the customer: a zero-rated, exempt or
+ * out-of-scope supply needs no customer exemption. 'relief' (Indian Act) is the customer's, so it
+ * still needs the First Nations evidence.
+ */
+export const SUPPLY_NONE_REASONS = ['zero', 'exempt', 'out_of_scope'];
+
+/**
+ * The exemption check before a document is sent (docType or collection 'estimates' for an
+ * estimate; anything else is treated as an invoice): null, or
  * { level: 'block'|'warn', code: 'exemption_required', message, missing: [] }.
  * MB invoices block; MB estimates and BC and SK documents warn. Skipped: interest and credit
  * notes (a credit follows its original), holdback release invoices, security deposits, documents
- * with no work lines, BC real-property contracts (not an exemption) and provinces without PST.
+ * with no work lines, BC real-property contracts (not an exemption), treatment 'none' for a
+ * zero-rated, exempt or out-of-scope supply, and provinces without PST.
  */
-export function exemptionProblem(doc, { docType } = {}) {
+export function exemptionProblem(doc, { docType, collection } = {}) {
   if (!doc) return null;
   const province = doc.taxProvince;
   if (!PST_PROVINCES.includes(province)) return null;
@@ -100,10 +135,12 @@ export function exemptionProblem(doc, { docType } = {}) {
   if (['interest', 'credit', 'holdback-release'].includes(kind)) return null;
   if (kind === 'deposit' && doc.depositModel === 'security') return null;
   if (doc.taxTreatment === 'real-property') return null;
+  if (doc.taxTreatment === 'none' && SUPPLY_NONE_REASONS.includes(doc.taxNoneReason)) return null;
   if (!provincialTaxOff(doc)) return null;
   const missing = missingEvidence(doc);
   if (!missing.length) return null;
-  const isEstimate = docType === 'estimates' || docType === 'estimate';
+  const type = docType || collection;
+  const isEstimate = type === 'estimates' || type === 'estimate';
   const level = province === 'MB' && !isEstimate ? 'block' : 'warn';
   const t = taxName(province);
   const what = missing.map((k) => FIELD_LABEL[k] || k).join(', ');

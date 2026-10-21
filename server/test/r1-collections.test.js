@@ -269,6 +269,52 @@ describe('change orders, closeout, exemption, move cost', { skip }, () => {
     assert.equal((await post(office.token, 'estimates', { id: 'est-ex', ...inv, status: 'sent' })).status, 201);
   });
 
+  test('an invoice cannot leave draft with a holdback that does not fit it; drafts may hold one', async () => {
+    const ALL = { material: true, labour: true, other: true };
+    const inv = { status: 'draft', issueDate: '2026-10-20', kind: 'progress', taxProvince: 'MB', taxTreatment: 'pst-all', taxes: [{ id: 'GST', pct: 5, applies: ALL }, { id: 'RST', pct: 7, applies: ALL }], lines: [{ kind: 'labour', qty: 8, unitCents: 9500 }] };
+    // More than the work it is held on: a draft is kept, leaving draft is refused.
+    assert.equal((await post(office.token, 'invoices', { id: 'inv-hb', ...inv, holdback: { cents: 100000, deferTaxIds: [] } })).status, 201);
+    let r = await patch(office.token, 'invoices', 'inv-hb', { status: 'sent' });
+    assert.equal(r.status, 422);
+    assert.equal(r.body.error.code, 'holdback_invalid');
+    assert.equal(r.body.error.details.reason, 'holdback_exceeds_base');
+    assert.equal((await post(office.token, 'invoices', { id: 'inv-hb2', ...inv, kind: 'interest', status: 'sent', holdback: { pct: 10 } })).body.error.details.reason, 'holdback_kind');
+    const push1 = await pushOne(office.token, { collection: 'invoices', id: 'inv-hb3', op: 'upsert', data: { ...inv, kind: 'deposit', status: 'sent', holdback: { pct: 10 } } });
+    assert.equal(push1.status, 'rejected');
+    assert.equal(push1.error.code, 'holdback_invalid', 'sync is refused too');
+    r = await patch(office.token, 'invoices', 'inv-hb', { status: 'sent', holdback: { pct: 10, cents: 7600, deferTaxIds: ['GST', 'RST'] } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    // A system writer (the QuickBooks pull) is not blocked: R1-F sends such a document to review.
+    const sys = systemPrincipal(A.tenantId, 'qbo', 'QuickBooks');
+    const recs = createRecords({ validator: createValidator(), config: null });
+    const made = await t.db.withTenant({ tenantId: A.tenantId }, (tx) => recs.createRecord(tx, sys, 'invoices', { id: 'inv-hb4', ...inv, status: 'sent', holdback: { cents: 100000 } }, systemWho(sys)));
+    assert.equal(made.id, 'inv-hb4');
+  });
+
+  test('PST/RST come off a line only on an out-of-pocket line; every tax only on deposit, holdback and interest lines', async () => {
+    const ALL = { material: true, labour: true, other: true };
+    const inv = { status: 'draft', issueDate: '2026-10-20', taxProvince: 'MB', taxTreatment: 'pst-all', taxes: [{ id: 'GST', pct: 5, applies: ALL }, { id: 'RST', pct: 7, applies: ALL }] };
+    const labour = { kind: 'labour', qty: 8, unitCents: 9500 };
+    // Labour with RST switched off line by line would charge no RST without the exemption check.
+    let r = await post(office.token, 'invoices', { id: 'inv-to1', ...inv, lines: [{ ...labour, taxOff: ['RST'] }] });
+    assert.equal(r.status, 422);
+    assert.equal(r.body.error.code, 'tax_off_invalid');
+    assert.equal(r.body.error.details.line, 0);
+    assert.equal((await post(office.token, 'invoices', { id: 'inv-to2', ...inv, lines: [labour, { ...labour, kind: 'other', taxOff: ['*'] }] })).body.error.details.line, 1);
+    assert.equal((await post(office.token, 'estimates', { id: 'est-to1', ...inv, lines: [{ ...labour, taxOff: ['PST'] }] })).body.error.code, 'tax_off_invalid');
+    const res = await pushOne(office.token, { collection: 'invoices', id: 'inv-to3', op: 'upsert', data: { ...inv, lines: [{ ...labour, passThrough: true, taxOff: ['RST'] }] } });
+    assert.equal(res.status, 'rejected', 'a labour line is never a pass-through');
+    assert.equal(res.error.code, 'tax_off_invalid');
+    // Allowed: an out-of-pocket line without PST/RST (GST stays), a security deposit and a release line.
+    const hotel = { kind: 'other', passThrough: true, taxOff: ['PST', 'RST'], qty: 1, unitCents: 18000, description: 'Hotel' };
+    assert.equal((await post(office.token, 'invoices', { id: 'inv-to4', ...inv, lines: [labour, hotel] })).status, 201);
+    assert.equal((await post(office.token, 'invoices', { id: 'inv-to5', ...inv, lines: [labour, { ...hotel, taxOff: ['GST', 'RST'] }] })).body.error.code, 'tax_off_invalid', 'GST stays on a disbursement');
+    assert.equal((await post(office.token, 'invoices', { id: 'inv-to6', ...inv, kind: 'deposit', depositModel: 'security', lines: [{ kind: 'other', lineType: 'deposit', qty: 1, unitCents: 50000, taxOff: ['*'] }] })).status, 201);
+    assert.equal((await post(office.token, 'invoices', { id: 'inv-to7', ...inv, kind: 'holdback-release', lines: [{ kind: 'other', lineType: 'holdback', qty: 1, unitCents: 7600, taxOff: ['RST'] }] })).status, 201);
+    r = await patch(office.token, 'invoices', 'inv-to4', { status: 'sent' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  });
+
   test('stock moves are stamped with the item cost on create; devices cannot set it', async () => {
     const item = (await get(A.token, 'items', 'item-avg')).body;
     assert.equal(item.avgCostCents, undefined, 'only the receiving route writes the average');

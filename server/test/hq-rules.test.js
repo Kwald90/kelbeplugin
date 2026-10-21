@@ -17,7 +17,8 @@ import { fakeStripe } from './support/fake-stripe.js';
 import { buildApp } from '../src/app.js';
 import hqRulesRoutes, { platformRuleProblems, ruleGaps } from '../src/routes/hq-rules.js';
 
-const RULES_LIB = fileURLToPath(new URL('../../electrical-app/js/lib/rules.js', import.meta.url));
+const RULES_URL = new URL('../../electrical-app/js/lib/rules.js', import.meta.url);
+const RULES_LIB = fileURLToPath(RULES_URL);
 
 /** The contract's shape of lib/rules.js, for the checks this route makes. */
 const STAND_IN = {
@@ -65,7 +66,8 @@ INSERT INTO platform_rules (key, province, effective_from, value, status, source
 VALUES ('pp.MB.paymentDays', 'MB', '2025-04-01', '28', 'sourced', 'MHCA, MLT Aikins', 'migration:0160');
 `;
 
-const lib = existsSync(RULES_LIB) ? await import(RULES_LIB) : STAND_IN;
+// import() takes a URL: a bare Windows path (F:\...) is read as a URL scheme and refused.
+const lib = existsSync(RULES_LIB) ? await import(RULES_URL.href) : STAND_IN;
 const YEAR = new Date().getUTCFullYear();
 
 describe('platform rule checks (no database)', () => {

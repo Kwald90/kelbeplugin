@@ -232,7 +232,7 @@ if (has('osv-scanner')) {
 
 // ---- 8. server logs ----
 // Bundle names carry the environment: deploy-log-staging.jsonl, last-backup-production.json, ...
-const SERVER_FILES = ['deploy-log.jsonl', 'backup-log.jsonl', 'restore-tests.jsonl', 'last-exposure-check.txt', 'status/last-backup.json', 'status/last-deploy.json', 'status/host-status.json'];
+const SERVER_FILES = ['deploy-log.jsonl', 'backup-log.jsonl', 'restore-tests.jsonl', 'drills/restore-tests.jsonl', 'last-exposure-check.txt', 'status/last-backup.json', 'status/last-deploy.json', 'status/host-status.json'];
 const bundleName = (f, env) => f.replace('status/', '').replace(/^(.*?)(\.[a-z]+)$/, `$1-${env}$2`);
 for (const env of ['staging', 'production']) {
   const base = `/var/lib/fishtape-${env}`;

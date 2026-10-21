@@ -14,7 +14,8 @@ import { STANDARD_COST_CODES, COST_CODE_GROUPS, activeCostCodes, costCodeLabel, 
 import { entryMinutes, fmtH, isCorrection, entryDay } from '../lib/timesheet.js';
 
 export const PENDING_RUNS_META = 'pendingPayrollRuns';
-const RULES_META = 'rulesTable';
+// The same key lib/doc-view.js ruleRows() reads, so documents use the table this screen loaded.
+const RULES_META = 'rules';
 
 /** The module's stylesheet (loaded by the module, so index.html does not change). */
 export function ensureStyles() {

@@ -2,7 +2,9 @@
 // Run: node --test electrical-app/tests/*.test.mjs
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { EXEMPT_BASES, EXEMPT_EVIDENCE, provincialTaxOff, exemptionProblem, exemptionFor, exemptionPrintLines, missingEvidence } from '../js/lib/exemption.js';
+import { EXEMPT_BASES, EXEMPT_EVIDENCE, provincialTaxOff, exemptionProblem, exemptionFor, exemptionPrintLines, missingEvidence, lineTaxOffProblem } from '../js/lib/exemption.js';
+import { TAX_OFF_PRESETS } from '../js/lib/tax.js';
+import { holdbackReleaseLine, depositInvoiceLine, depositApplicationLine } from '../js/lib/money.js';
 
 const NONE = { material: false, labour: false, other: false };
 const ALL = { material: true, labour: true, other: true };
@@ -63,12 +65,46 @@ describe('exemptionProblem', () => {
     for (const b of EXEMPT_BASES) assert.ok(EXEMPT_EVIDENCE[b.id], b.id);
   });
 
+  test("'No tax' for a zero-rated, exempt or out-of-scope supply needs no exemption; Indian Act relief does", () => {
+    const none = (o) => mbInvoice({ taxTreatment: 'none', taxes: [], ...o });
+    for (const taxNoneReason of ['zero', 'exempt', 'out_of_scope']) assert.equal(exemptionProblem(none({ taxNoneReason })), null, taxNoneReason);
+    const relief = exemptionProblem(none({ taxNoneReason: 'relief' }));
+    assert.equal(relief.level, 'block', 'relief without the First Nations evidence blocks');
+    assert.deepEqual(relief.missing, ['basis']);
+    assert.equal(exemptionProblem(none({ taxNoneReason: null })).level, 'block', "'none' with no reason still needs the evidence");
+    assert.equal(exemptionProblem(none({ taxNoneReason: 'out_of_scope' }), { collection: 'estimates' }), null);
+    assert.equal(exemptionProblem(none({ taxNoneReason: 'relief' }), { collection: 'estimates' }).level, 'warn', 'collection names the document type too');
+  });
+
   test('interest, credit notes, release invoices and security deposits are skipped', () => {
     for (const kind of ['interest', 'credit', 'holdback-release']) assert.equal(exemptionProblem(mbInvoice({ kind })), null, kind);
     assert.equal(exemptionProblem(mbInvoice({ kind: 'deposit', depositModel: 'security' })), null);
     assert.equal(exemptionProblem(mbInvoice({ kind: 'deposit', depositModel: 'prepayment' })).level, 'block');
     assert.equal(exemptionProblem(mbInvoice({ lines: [] })), null);
     assert.equal(exemptionProblem(null), null);
+  });
+});
+
+describe('lineTaxOffProblem (the server write rule)', () => {
+  const doc = (...lines) => ({ lines });
+  const labour = { kind: 'labour', qty: 8, unitCents: 9500 };
+  test('PST/RST off only on an out-of-pocket line, and nothing else comes off it', () => {
+    const preset = TAX_OFF_PRESETS.find((x) => x.id === 'pass-through');
+    assert.equal(lineTaxOffProblem(doc(labour, { kind: preset.kind, passThrough: preset.passThrough, taxOff: [...preset.taxOff], qty: 1, unitCents: 18000 })), null, 'the preset is allowed');
+    assert.equal(lineTaxOffProblem(doc({ ...labour, taxOff: ['RST'] })).index, 0);
+    assert.equal(lineTaxOffProblem(doc(labour, { ...labour, kind: 'material', taxOff: ['pst'] })).index, 1, 'case does not matter');
+    assert.equal(lineTaxOffProblem(doc({ ...labour, passThrough: true, taxOff: ['RST'] })).index, 0, 'a labour line is not a pass-through');
+    assert.match(lineTaxOffProblem(doc({ kind: 'other', passThrough: true, taxOff: ['GST', 'RST'] })).message, /only PST or RST/);
+    assert.equal(lineTaxOffProblem(doc({ ...labour, taxOff: ['GST'] })), null, 'GST off is not about the exemption');
+    assert.equal(lineTaxOffProblem(doc({ ...labour, taxOff: [] })), null);
+  });
+  test("'*' and the release taxOff only on deposit, holdback and interest lines", () => {
+    assert.match(lineTaxOffProblem(doc({ kind: 'other', taxOff: ['*'] })).message, /every tax/);
+    const taxes = [{ id: 'GST' }, { id: 'RST' }];
+    assert.equal(lineTaxOffProblem(doc(holdbackReleaseLine(7600, { taxes, deferTaxIds: ['GST'] }))), null);
+    assert.equal(lineTaxOffProblem(doc(depositInvoiceLine({ cents: 50000, model: 'security' }))), null);
+    assert.equal(lineTaxOffProblem(doc(depositApplicationLine({ id: 'd', depositModel: 'security' }, 50000))), null);
+    assert.equal(lineTaxOffProblem({}), null);
   });
 });
 

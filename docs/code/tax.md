@@ -110,10 +110,12 @@ the server refuses the email-document and pay-link routes and the change from dr
 `exemption_required`). Manitoba estimates, and BC and SK documents, get a warning. One rule
 decides, `exemptionProblem(doc, { docType })` in `lib/exemption.js`, for the PWA and the server.
 Not checked: interest invoices, credit notes (they follow their original), holdback release
-invoices, security-deposit invoices, documents with no work lines, and BC `real-property` (not an
-exemption). `none` for a zero-rated, exempt or out-of-scope supply: open (the Lead's call, 2.9 of
-the release contract). The recommended rule skips it; until `exemptionProblem` does, the exemption
-editor shows for it so the evidence can be entered. Number formats are a
+invoices, security-deposit invoices, documents with no work lines, BC `real-property` (not an
+exemption), and `none` with reason `zero`, `exempt` or `out_of_scope` (the supply is untaxed, so no
+customer exemption is needed). `none` with reason `relief` still needs the First Nations evidence,
+and `none` with no reason needs the evidence of a basis. The server also refuses PST or RST
+turned off line by line except on an out-of-pocket line, and every tax (`*`) except on deposit,
+holdback and interest lines (422 `tax_off_invalid`). Number formats are a
 warning only (Registration numbers, below). A QuickBooks pull with the evidence missing is created
 and goes to review (`exemption_missing`).
 

@@ -1,6 +1,7 @@
 # Release 1, "Get paid and know the margin": the build contract
 
-Revision 2, 2026-10-20. Base commit `7f31af3` on `claude/electrical-concept-app-h4qz12`.
+Revision 3, 2026-10-20 (revision 2 plus the wave 1 merge changes below). Base commit `7f31af3` on
+`claude/electrical-concept-app-h4qz12`.
 Approved by Kelvin: gap items 1 to 6 of [the gap analysis](gap-analysis-2026-10.md) (section A has the
 verified Manitoba RST rules from Bulletin 031).
 
@@ -54,6 +55,18 @@ Contents:
 14. Open questions for Kelvin and Travis (with defaults)
 15. Kelvin's checklist outside the code
 16. Considered and rejected
+
+**What changed in revision 3** (the Lead, after merging wave 1: R1-A, R1-B, R1-C):
+
+- The rules table route is `GET /api/v1/rules/effective` (2.7). `GET /api/v1/rules` is the REST list of
+  the `rules` collection (the company overrides). The PWA keeps the last answer in store meta `rules`.
+- `LOCK_SAFE_FIELDS.timeEntries` lets late hours be approved after the books close (2.6).
+- `stockCounts` is readable and writable with `today` as well as `inventory`, so van owners count their
+  own van (2.2); posting stays with inventory managers.
+- The pre-close checklist lists bills still in draft (`draftBills`), not unpaid bills (2.6).
+- Re-dating into a closed period, change orders and restores (2.6); work lines with `taxOff`, 'No
+  tax' for an untaxed supply, and where a line may turn tax off (2.9); the holdback send block (2.9).
+- Platform rules are changed by HQ admins; HQ staff read them (2.7).
 
 ---
 
@@ -239,7 +252,7 @@ Appended in this order to `COLLECTIONS` in both `electrical-app/js/store.js` and
 | `fieldTickets` | `field_tickets` | `job_id`, `employee_id`, `status`, `number`, `day` (date) | jobs, today, invoices, estimates | jobs, today | `ownRows` | 1.5 MB | `tickets` | `tickets` |
 | `equipment` | `equipment` | none | jobs, time, today, inventory | inventory | `managerWrite` | 16 KB | none | `reports`, `inventory`, `time` |
 | `equipmentUse` | `equipment_use` | `job_id`, `employee_id`, `equipment_id` (equipmentId), `day` (date) | jobs, inventory, today | jobs, today, inventory | `ownRows` | 8 KB | none | `reports`, `tickets` |
-| `stockCounts` | `stock_counts` | `location_id` (locationId), `status`, `day` (date) | inventory | inventory | van owners write their van's counts (2.6 rules) | 512 KB | `inventory` | `inventory` |
+| `stockCounts` | `stock_counts` | `location_id` (locationId), `status`, `day` (date) | inventory, today | inventory, today | van owners write their own van's draft and counted sheets (2.6 rules); posting needs `inventory` | 512 KB | `inventory` | `inventory` |
 
 Record shapes (every record also has `id`, `createdAt`, `updatedAt`; "?" means optional, nullable):
 
@@ -449,7 +462,10 @@ export const POSTED_COLLECTIONS // ['payments', 'bills', 'stockMoves', 'timeEntr
 export const LOCK_SAFE_FIELDS  // { invoices: ['status', 'payLink', 'sentAt', 'promptPayment', 'disputes',
                                //   'holdback.retainedByCustomerCents', 'holdback.retainedRecordedAt',
                                //   'holdback.retainedRecordedBy', 'updatedAt'],
-                               //   payments: ['stripe', 'updatedAt'], bills: ['status', 'varianceAck', 'updatedAt'] }
+                               //   payments: ['stripe', 'updatedAt'], bills: ['status', 'varianceAck', 'updatedAt'],
+                               //   timeEntries: ['approved', 'approvedAt', 'approvedBy', 'flag', 'updatedAt'] }
+                               // (timeEntries: late hours stay approvable after the close; the hours
+                               //  themselves change only by correction)
                                // plus, for the actor system:qbo only: invoices 'number' (the push writes DocNumber)
 /** The day a record falls in for the lock: postedOn for POSTED_COLLECTIONS (old records without it: the document day). */
 export function lockDay(coll, record, { zone }) -> 'YYYY-MM-DD' | null
@@ -489,6 +505,9 @@ Rules:
   payroll export includes it (8.2).
 - **Change orders** approved on or before `booksThrough` (`approvedOn`) are frozen; they change through a
   new change order with a negative amount.
+- An open invoice may not be re-dated into the closed period; a change order may not be approved or
+  back-dated into it; a record restored into a closed `postedOn` is re-posted on the first open day,
+  late.
 - Message: "This is in a closed period (through 2026-09-30). Record a reversal dated today instead." The
   payroll one: "These hours were exported to payroll on 2026-10-06. Add a correction instead."
 
@@ -536,7 +555,7 @@ company's zone.
 
 **Pre-close checklist.** `preflight(through)` returns counts and short lists (ids, numbers, names; no
 money) of: open or unapproved time entries dated on or before `through`; devices whose `last_seen_at` is
-before `through` + 1 day (from the `devices` table); draft invoices and open bills dated in the period;
+before `through` + 1 day (from the `devices` table); draft invoices and bills still in draft dated in the period;
 `counted` stock counts not posted; signed or refused tickets not priced or billed; open disputes. The
 Books screen shows it before "Close"; closing with anything open needs a reason, and the counts are stored
 on the `period_locks` row.
@@ -589,12 +608,13 @@ Statuses: **verified** (a lawyer, accountant or the official text confirmed it; 
 (a yes/no or list Kelvin chose: it applies on any status and every screen using it shows "unconfirmed"
 until it is `verified`, with a one-click company override on Books → Rules).
 
-**Where values live.** Platform rows in `platform_rules` (seeded by 0160, edited by Fishtape HQ staff on
-the HQ "Rules" page, R1-C). Company overrides in the `rules` collection, edited by owners, admins and office
+**Where values live.** Platform rows in `platform_rules` (seeded by 0160, read by Fishtape HQ staff and
+changed by HQ admins on the HQ "Rules" page, R1-C). Company overrides in the `rules` collection, edited by owners, admins and office
 on Books → Rules (R1-A). An override must name its source; marking it `verified` needs who confirmed it.
 Every change is audited (HQ audit for platform rows, record audit for company rows).
 
-**Reading them.** `GET /api/v1/rules?province=MB&on=2026-10-20` (R1-A, any signed-in member):
+**Reading them.** `GET /api/v1/rules/effective?province=MB&on=2026-10-20` (R1-A, any signed-in member;
+`GET /api/v1/rules` is the REST list of the `rules` collection, the company overrides):
 
 ```json
 {
@@ -607,7 +627,7 @@ Every change is audited (HQ audit for platform rows, record audit for company ro
 }
 ```
 
-The PWA keeps the last response in store meta for offline use. Demo mode has no rules; screens that need
+The PWA keeps the last response in store meta `rules` for offline use (`doc-view.js ruleRows` reads it). Demo mode has no rules; screens that need
 one say "The rules table loads when you're signed in."
 
 **Seed rows in 0160** (platform, province MB unless noted; `updated_by` = `migration:0160`):
@@ -687,12 +707,18 @@ export const EXEMPT_BASES  // [{ id: 'resale', label }, { id: 'subtrade', label:
 /** What each basis needs: subtrade, resale → number; pass-on → number (the end customer's) and endCustomer;
     first-nations → registryNo and band or reserve; farm → farmCertNo; federal → department and number. */
 export const EXEMPT_EVIDENCE
-/** PST/RST not charged on any work line. Lines with a lineType or taxOff are not counted. */
+/** PST/RST not charged on any work line. Lines with a lineType and pass-through lines are not counted;
+    a work line whose taxOff includes *, PST or RST counts as not charged. */
 export function provincialTaxOff(doc) -> boolean
 /** MB invoices: block when RST is off and the basis's evidence is missing. MB estimates, BC and SK: warn.
     Skipped: kind interest, credit (follows its original), holdback-release, deposit with depositModel security,
-    and documents with no work lines. Real-property (BC) is not an exemption. */
-export function exemptionProblem(doc) -> null | { level: 'block'|'warn', code: 'exemption_required', message, missing: [] }
+    documents with no work lines, and taxTreatment 'none' with taxNoneReason 'zero', 'exempt' or
+    'out_of_scope' (an untaxed supply; 'relief' still needs the First Nations evidence). Real-property (BC)
+    is not an exemption. opts.docType or opts.collection 'estimates' gives warn only. */
+export function exemptionProblem(doc, { docType, collection } = {}) -> null | { level: 'block'|'warn', code: 'exemption_required', message, missing: [] }
+/** Where a line may turn tax off: PST/RST only on a pass-through line (kind 'other', passThrough);
+    '*' and the holdback-release taxOff only on lines with a lineType. */
+export function lineTaxOffProblem(doc) -> null | { index, message }
 /** The exemption for a new document: the job's taxExempt, else nothing. The client's evidence prefills the
     editor when the office ticks "This work is exempt" (exemptionConfirmed). */
 export function exemptionFor({ job, client, province }) -> { taxExemptNumber, taxExemptBasis, taxExemptDetails } | {}
@@ -700,8 +726,10 @@ export function exemptionPrintLines(doc) -> string[]   // e.g. ['RST exemption: 
 ```
 
 Server enforcement (pure, in `checkWriteRules`, R1-A): an invoice moving from `draft` (or created) to any
-other status is refused with 422 `exemption_required` when `exemptionProblem` says `block`. Estimates are
-never blocked. System actors (the QuickBooks pull) are not blocked; R1-F sends such a pulled document to
+other status is refused with 422 `exemption_required` when `exemptionProblem` says `block`, and with 422
+`holdback_invalid` (`details.reason` is the code) when `money.js holdbackProblem` is non-null. An invoice
+or estimate whose lines change (or an invoice leaving draft) is refused with 422 `tax_off_invalid`
+(`details.line`) when `lineTaxOffProblem` finds a line. Estimates are never blocked for the exemption. System actors (the QuickBooks pull) are not blocked; R1-F sends such a pulled document to
 review (9.7). The email-document and pay-link routes run the same check (R1-B).
 
 ### 2.10 Signatures and their digests

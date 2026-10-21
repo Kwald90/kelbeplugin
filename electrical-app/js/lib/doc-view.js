@@ -25,7 +25,7 @@ const docKind = (coll) => ({ docType: coll, collection: coll });
 
 // ---- the rules table (r1-get-paid.md 2.7) ----------------------------------------------
 
-/** The rule rows the PWA keeps from GET /api/v1/rules (store meta 'rules'); [] in demo mode. */
+/** The rule rows the PWA keeps from GET /api/v1/rules/effective (store meta 'rules', written by Books); [] in demo mode. */
 export function ruleRows(store = appStore) {
   try {
     const m = store?.meta?.('rules');

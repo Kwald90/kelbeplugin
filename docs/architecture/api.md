@@ -140,6 +140,9 @@ Collections (same names as `electrical-app/js/store.js`): `clients, leads, seque
 enrolments, outbox, jobs, schedule, estimates, invoices, payments, items, locations,
 stockMoves, employees, timeEntries, drawings, sops, permits, inspections, certifications,
 checklists, panels, settings, wireRuns, bends, benderProfiles`, plus read-only `auditLog`.
+Release 1 adds `costCodes, rules, payrollRuns, signatures, fieldTickets, equipment, equipmentUse,
+stockCounts` ([r1-get-paid.md](../releases/r1-get-paid.md) 2.2). They sync like the others; the
+full list is `server/src/collections.js`.
 
 | method and path | notes |
 | --- | --- |
@@ -175,6 +178,13 @@ Filters per collection (all exact match on the record field):
 | certifications | `employeeId` |
 | wireRuns | `jobId`, `drawingId` |
 | auditLog | `collection`, `recordId`, `action` |
+| costCodes | `code` |
+| rules | `key` (the rule key) |
+| payrollRuns | `to`, `status` |
+| signatures | `jobId`, `docId`, `docType`, `status` |
+| fieldTickets | `jobId`, `employeeId`, `status`, `number`, `date` |
+| equipmentUse | `jobId`, `employeeId`, `equipmentId`, `date` |
+| stockCounts | `locationId`, `status`, `date` |
 
 ### Who can read and write what
 
@@ -192,6 +202,16 @@ readable by every member. The full table is `server/src/collections.js`. Extra r
 - **Employees:** `pin` is never stored (crew PINs go through `/members/{id}/pin`, hashed);
   `rateCents` is hidden from members without the `employees` permission.
 - **Crew sessions** (PIN on a shared device) act with their role capped at `foreman`.
+- **Release 1 write guards** (r1-get-paid.md 2.6, `server/src/services/write-guards.js`), for every
+  actor on REST, sync and system writes: 409 `period_locked` (a record on or before the books
+  closing date; invoices also on leaving draft), 409 `payroll_locked` (a time entry in an exported
+  payroll run), 422 `signature_invalid`, 409 `document_signed` (a signed document's frozen fields),
+  422 `exemption_required` (a Manitoba invoice leaving draft without RST and without the exemption
+  evidence), 422 `holdback_invalid` (an invoice leaving draft with a holdback that does not fit it),
+  422 `tax_off_invalid` (a line turning tax off where it may not), 409 `duplicate_code` (cost codes),
+  409 `duplicate_rule` (rules). Creates in posted collections (payments, bills, stockMoves,
+  timeEntries, equipmentUse, stockCounts) are never refused for their date: the server stamps
+  `postedOn` and `late`. Refused writes are listed on Books (`GET /api/v1/closing/rejections`).
 
 ## Sync: `/api/v1/sync/*`
 
@@ -212,6 +232,26 @@ GET /api/v1/sync/pull?since=<changeSeq>&limit=500        (limit 1–1000)
 `more` is true. Pages also stop at about 8 MB of record data, so a page with big drawings may
 hold fewer than `limit` changes.
 
+## Books, closing and rules (Release 1)
+
+Contract: [r1-get-paid.md](../releases/r1-get-paid.md) 2.6 and 2.7. Routes:
+`server/src/routes/v1/closing.js`, `server/src/routes/v1/rules.js`. None takes an API key.
+
+| method and path | auth | notes |
+| --- | --- | --- |
+| `GET /api/v1/closing` | `invoices` or `employees` permission | `{ zone, today, books: { through, at, by }, payroll: { through, at, by }, history[] (last 50 lock changes), latePostings: { count, items[] }, rejections: { open, thisWeek }, quickbooks: { connected, bookCloseDate?, taxFiledThrough?, timeLockedThrough? }, booksBehindQuickBooks }` |
+| `GET /api/v1/closing/preflight?through=YYYY-MM-DD` | owner or admin, full session | the pre-close checklist: counts and short lists (ids, numbers, names; no money) of open or unapproved time, devices not seen since, draft invoices, draft bills, counted stock counts not posted, unpriced tickets, open disputes |
+| `PUT /api/v1/closing/books` | owner or admin with `settings`, full session with recent two-step sign-in | `{ through (YYYY-MM-DD or null), reason? }` → `{ books: { through, previous } }`. Moving it earlier, clearing it, or closing with anything open (409 `preflight_open`, `details.counts`) needs a reason of at least 10 characters. Audited `closing.books`; notifies owners and admins |
+| `GET /api/v1/closing/rejections` | owner, admin, office | `{ data: [{ id, at, actor, deviceId, collection, recordId, code, message, resolvedAt, resolvedBy }] }`: open ones first, then the last week's resolved ones; never the data |
+| `POST /api/v1/closing/rejections/{id}/resolve` | owner, admin, office | `{ ok: true }` |
+| `POST /api/v1/closing/payroll-runs` | `employees` permission | `{ id?, from, to, format, entryIds[], lateEntryIds?, employeeIds?, totals?, lockThrough?, leftOutAck? }`. Every entry must exist, be approved and closed, fall in `from..to` (late entries: before `from`) and be in no other exported run (409 `already_exported`). With `lockThrough`, entries in the period left out of the run answer 409 `unexported_entries` (`details.entries`) unless `leftOutAck: true`; `payrollThrough` then moves to `to` |
+| `POST /api/v1/closing/payroll-runs/{id}/reopen` | owner or admin, full session with recent two-step sign-in | `{ reason }` (at least 10 characters); the run's entries unlock and `payrollThrough` moves back when it covered the run; 409 `not_exported` when already reopened |
+| `GET /api/v1/rules/effective?province=&on=` | any member | `{ province, on, defs: { <key>: { label, unit, kind, scope, province, yearly, usedBy, description } }, rules: [{ key, province, value, status, origin, source, sourceUrl, effectiveFrom, confirmedBy, confirmedAt, staleOverride?, missingYear? }] }`: Fishtape's rows with the company's overrides applied. `province` defaults to the company's, `on` to today in its zone. The company overrides themselves are the `rules` collection (`/api/v1/rules`) |
+
+Email and pay links: `POST /api/v1/integrations/email/document` and
+`POST /api/v1/integrations/stripe/pay-link` answer 422 `exemption_required` (`details.missing`) for a
+Manitoba invoice that leaves RST off without the exemption evidence (r1-get-paid.md 2.9).
+
 ## Health
 
 | path | auth | answer |
@@ -222,6 +262,11 @@ hold fewer than `limit` changes.
 | `GET /api/hq/health` | HQ staff | DB latency, pool, migration state, queue depth/failures/lag, 5xx counts by route, memory, uptime, git SHA, last backup (`BACKUP_STATUS_FILE`), cert expiry (`TLS_CERT_FILE`), disk |
 | `GET /api/hq/tenants` | HQ staff | companies with member counts |
 | `GET /api/hq/tenants/{id}/audit/verify` | HQ staff | checks that company's audit hash chain; writes an `hq.audit_verify` event into it |
+| `GET /api/hq/dev-health` | HQ staff | also returns `restoreTest` (the last restore drills, local and offsite) and `backup.offsite` (the offsite copy's status, target label and last good copy) |
+| `POST /api/hq/restore-tests` | HQ staff | `{ line }`: one result line from `restore-test.sh` or `offsite-drill.sh` → `{ recorded, duplicate?, result }`; 409 `not_configured` (no `RESTORE_TESTS_FILE`), 400 `validation_failed`, 422 `wrong_environment`; audited `hq.restore_test_recorded` |
+| `GET /api/hq/rules` | HQ staff | the rules table's platform rows: `{ defs, statuses, rows, gaps }` |
+| `PUT /api/hq/rules` | HQ admin | `{ key, province, effectiveFrom, value, status, source, sourceUrl, note, confirmedBy, confirmedAt }`, checked against `RULE_DEFS`: 400 `validation_failed` with `details.errors` per field; `verified` needs who and when; audited `hq.rule_set` |
+| `DELETE /api/hq/rules?key=&province=&effectiveFrom=` | HQ admin | 404 when there is no such row; audited `hq.rule_delete` |
 
 None of the public endpoints say anything about tenants or users.
 

@@ -343,8 +343,10 @@ describe('module switch, plan and registry', () => {
     assert.equal(P.purchasingAllowed({ canInvoices: true, settings: { modules: { purchasing: true } }, entitlements: { plan: 'starter', features: [] } }), false);
   });
 
-  test('the three collections close the list, in contract order, each with a schema', () => {
-    assert.deepEqual(COLLECTIONS.slice(-3), ['vendors', 'bills', 'purchaseOrders']);
+  test('the three collections are together, in contract order, each with a schema', () => {
+    // Release 1 (contract 2.2) appends its collections after these three.
+    const at = COLLECTIONS.indexOf('vendors');
+    assert.deepEqual(COLLECTIONS.slice(at, at + 3), ['vendors', 'bills', 'purchaseOrders']);
     const index = JSON.parse(readFileSync(new URL('../js/schema/index.json', import.meta.url), 'utf8'));
     for (const c of ['vendors', 'bills', 'purchaseOrders']) {
       const s = schema(c);

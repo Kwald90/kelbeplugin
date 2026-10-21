@@ -169,8 +169,9 @@ describe('public endpoints and URLs', { skip }, () => {
       // HQ Mail: "Show images" for one message (0|1), not data.
       'images',
       // Release 1: list filters on cost codes, company rules, signatures, equipment use and counts (codes and
-      // record ids), and the closing and rules routes (YYYY-MM-DD dates and a province code).
-      'code', 'key', 'docId', 'docType', 'equipmentId', 'locationId', 'through', 'province', 'on']);
+      // record ids), and the closing and rules routes (YYYY-MM-DD dates and a province code). HQ Rules:
+      // DELETE /api/hq/rules?key=&province=&effectiveFrom= (a rule key, a province code, a YYYY-MM-DD day).
+      'code', 'key', 'docId', 'docType', 'equipmentId', 'locationId', 'through', 'province', 'on', 'effectiveFrom']);
     for (const [path, ops] of Object.entries(spec.paths)) {
       for (const op of Object.values(ops)) {
         for (const p of op.parameters || []) {

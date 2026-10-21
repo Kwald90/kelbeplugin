@@ -7,7 +7,7 @@ schedules and code checklists change with it.
 
 - [adoption.md](adoption.md): edition in force, effective date, inspection authority and amendments per province.
 - [tax.md](tax.md): GST/HST/PST/RST by province and how they apply to contractors.
-- [verify.md](verify.md): values still to check against the printed code.
+- [verify.md](verify.md): Release 1 tax, legal and payroll values and CEC values still to verify.
 
 **Copyright.** CSA's text is copyrighted. The code and docs hold numbers, rule and table
 references and our own one-line summaries only, never quoted rule text. Every value has a

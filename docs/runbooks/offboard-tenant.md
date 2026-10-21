@@ -120,8 +120,9 @@ COMMIT;
 SQL
 ```
 
-Backups: deleted data stays in encrypted backups until they age out (14 days daily, 8 weeks weekly,
-plus the offsite copy's own retention). Tell the company that date; don't edit backups.
+Backups: deleted data stays in encrypted backups until they age out (14 days daily and 8 weeks weekly
+on the server, and about 13 months in the offsite weekly copies (400-day lifecycle)). Tell the company
+that date; don't edit backups.
 
 ## 4. Deleting one person's data (on the tenant's instruction)
 

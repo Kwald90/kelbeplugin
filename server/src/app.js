@@ -29,6 +29,7 @@ import hqDeveloperRoutes from './routes/hq-developer.js';
 import hqAiRoutes from './routes/hq-ai.js';
 import hqFinanceRoutes from './routes/hq-finance.js';
 import hqSettingsRoutes from './routes/hq-settings.js';
+import hqRulesRoutes from './routes/hq-rules.js';
 import hqUserRoutes from './routes/hq-users.js';
 import hqAnnouncementRoutes from './routes/hq-announcements.js';
 import hqHelpRoutes from './routes/hq-help.js';
@@ -53,6 +54,8 @@ import locationRoutes from './routes/v1/location.js';
 import qboConnectRoutes from './routes/v1/qbo-connect.js';
 import qboWebhookRoutes from './routes/v1/qbo-webhook.js';
 import qboRoutes from './routes/v1/qbo.js';
+import closingRoutes from './routes/v1/closing.js';
+import rulesRoutes from './routes/v1/rules.js';
 import { registerAmountDueAdjuster } from './integrations/payments.js';
 import { amountDueAdjustment } from './qbo/engine.js';
 
@@ -91,7 +94,8 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   });
 
   const providers = oidcProviders ?? createOidcProviders(config);
-  const records = createRecords({ validator, config });
+  // With db, refused REST and system writes are recorded in sync_rejections (r1-get-paid.md 2.6).
+  const records = createRecords({ validator, config, db });
   // The QuickBooks amount-due adjustment (docs/integrations/quickbooks.md 4.9): an invoice whose QuickBooks
   // tax differs by a cent is owed at the QuickBooks total. Registered once per process.
   if (config.qbo?.enabled) registerQboAdjuster();
@@ -232,6 +236,8 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(qboConnectRoutes, deps);
   await app.register(qboWebhookRoutes, deps);
   await app.register(qboRoutes, deps);
+  await app.register(closingRoutes, deps);
+  await app.register(rulesRoutes, deps);
   await app.register(hqTenantRoutes, deps);
   await app.register(hqComplianceRoutes, deps);
   await app.register(hqBillingRoutes, deps);
@@ -239,6 +245,7 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(publicSignupRoutes, deps);
   await app.register(hqFinanceRoutes, deps);
   await app.register(hqSettingsRoutes, deps);
+  await app.register(hqRulesRoutes, deps);
   await app.register(hqUserRoutes, deps);
   await app.register(hqAnnouncementRoutes, deps);
   await app.register(hqHelpRoutes, deps);
