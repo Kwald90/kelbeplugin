@@ -15,6 +15,12 @@ what) and the [backlog](BACKLOG.md) (what's open, and what needs Kelvin).
 | [compliance/](compliance/) | SOC 2-aligned policies (no formal audit) | [compliance README](compliance/README.md) |
 | [runbooks/](runbooks/) | step-by-step operations | [runbooks README](runbooks/README.md) |
 
+## Releases
+
+- [Release 1 "Get paid and know the margin": the build contract](releases/r1-get-paid.md) (RST fixes,
+  signed tickets, deposits, collections, offsite backups, job costing, prompt payment, period lock) ·
+  [Gap analysis 2026-10](releases/gap-analysis-2026-10.md)
+
 ## Architecture
 
 - [13 layers](architecture/13-layers.md): each layer's goal, what's built, what's next
