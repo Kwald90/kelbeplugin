@@ -52,6 +52,18 @@ describe('exemptionProblem', () => {
     assert.equal(exemptionProblem({ ...bc, taxProvince: 'ON', taxes: [{ id: 'HST', pct: 13, applies: ALL }] }), null);
   });
 
+  test("'real-property' is skipped only where the province offers it; a Manitoba real-property doc still needs evidence", () => {
+    // Manitoba does not offer 'real-property' (electrical work is goods): a direct API or sync write
+    // carrying it must not slip past the RST block.
+    const mb = exemptionProblem(mbInvoice({ taxTreatment: 'real-property', taxes: mbTaxes(NONE) }));
+    assert.ok(mb, 'the Manitoba real-property treatment is not skipped');
+    assert.equal(mb.level, 'block');
+    assert.equal(mb.code, 'exemption_required');
+    // BC (and any province whose treatments offer real-property) is still skipped.
+    const bc = { taxProvince: 'BC', taxTreatment: 'real-property', taxes: [{ id: 'GST', pct: 5, applies: ALL }, { id: 'PST', pct: 7, applies: NONE }], lines: [{ kind: 'material', qty: 1, unitCents: 1 }] };
+    assert.equal(exemptionProblem(bc), null, 'BC offers real-property, so it is not an exemption to evidence');
+  });
+
   test('evidence per basis, First Nations registry number included', () => {
     const fn = (d) => exemptionProblem(mbInvoice({ taxTreatment: 'none', taxes: [], taxNoneReason: 'relief', taxExemptBasis: 'first-nations', taxExemptDetails: d }));
     assert.deepEqual(fn({}).missing, ['registryNo', 'band']);

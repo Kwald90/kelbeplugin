@@ -342,6 +342,22 @@ describe('Release 1 access rules (docs/releases/r1-get-paid.md 2.5-2.10, 4.1, 4.
     assert.equal(checkWriteRules(p('office'), 'invoices', inv, { ...inv, status: 'sent', taxExemptBasis: 'resale', taxExemptNumber: '1234567' }), null);
   });
 
+  test('an already-sent invoice that drops RST is re-validated, not only on draft→sent', () => {
+    const all = { material: true, labour: true, other: true };
+    const off = { material: false, labour: false, other: false };
+    // Sent, charging GST+RST on the whole contract (the exemption block passed on draft→sent).
+    const sent = { status: 'sent', taxProvince: 'MB', taxTreatment: 'pst-all',
+      taxes: [{ id: 'GST', pct: 5, applies: all }, { id: 'RST', pct: 7, applies: all }], lines: [{ kind: 'labour', qty: 1, unitCents: 1 }] };
+    assert.equal(checkWriteRules(p('office'), 'invoices', sent, { ...sent }), null, 'a no-op resave of a sent invoice is fine');
+    // Switching the sent invoice to gst-only (RST off) with no evidence must still block.
+    const dropped = { ...sent, taxTreatment: 'gst-only', taxes: [{ id: 'GST', pct: 5, applies: all }, { id: 'RST', pct: 7, applies: off }] };
+    assert.equal(checkWriteRules(p('office'), 'invoices', sent, dropped).code, 'exemption_required');
+    // With the evidence it is accepted.
+    assert.equal(checkWriteRules(p('office'), 'invoices', sent, { ...dropped, taxExemptBasis: 'resale', taxExemptNumber: '1234567' }), null);
+    // Voiding keeps the treatment editable without the check.
+    assert.equal(checkWriteRules(p('office'), 'invoices', sent, { ...dropped, status: 'void' }), null);
+  });
+
   test('server-written fields keep their stored values for devices', () => {
     const s = { closing: { booksThrough: '2026-09-30' }, company: {} };
     assert.deepEqual(restoreHiddenFields(p('owner'), 'settings', s, { ...s, closing: { booksThrough: '2000-01-01' } }).closing, s.closing);
@@ -357,10 +373,27 @@ describe('Release 1 access rules (docs/releases/r1-get-paid.md 2.5-2.10, 4.1, 4.
     assert.equal(restoreHiddenFields(sys('receiving'), 'items', { avgCostCents: 5 }, { avgCostCents: 9 }).avgCostCents, 9);
   });
 
+  test('a writer without money cannot introduce prices on a brand-new record, not only on edits', () => {
+    const fore = p('foreman', { seesMoney: false });
+    // A new price-book item: the price and cost the field user sent are dropped.
+    const item = restoreHiddenFields(fore, 'items', null, { sku: 'x', priceCents: 1, costCents: 999999 });
+    assert.equal('priceCents' in item, false, 'a new item keeps no price from a non-money writer');
+    assert.equal('costCents' in item, false);
+    assert.equal(item.sku, 'x');
+    // A new job's contract value and costing block are dropped.
+    const job = restoreHiddenFields(fore, 'jobs', null, { title: 'J', contract: { role: 'prime', valueCents: 5 }, costing: { estCostOverrideCents: 1 } });
+    assert.deepEqual(job.contract, { role: 'prime' });
+    assert.equal('costing' in job, false);
+    // An office writer (who sees money) keeps what they set.
+    assert.equal(restoreHiddenFields(p('office'), 'items', null, { sku: 'x', priceCents: 1 }).priceCents, 1);
+  });
+
   test('money: signature snapshots, wages and burden stay with the office', () => {
-    const sig = { docType: 'changeOrder', snapshot: { v: 1, amountCents: 45000, lines: [{ description: 'x', qty: 1 }], nested: { totalCents: 3 } } };
+    const sig = { docType: 'changeOrder', digest: 'a'.repeat(64), snapshot: { v: 1, amountCents: 45000, lines: [{ description: 'x', qty: 1 }], nested: { totalCents: 3 } } };
     const seen = redactForReader(p('electrician'), 'signatures', sig);
     assert.deepEqual(seen.snapshot, { v: 1, lines: [{ description: 'x', qty: 1 }], nested: {} });
+    assert.equal(seen.digest, undefined, 'the money-bearing digest is not handed to a field role (it would brute-force the stripped amount)');
+    assert.equal(redactForReader(p('office'), 'signatures', sig).digest, 'a'.repeat(64), 'the office keeps the digest');
     assert.equal(redactForReader(p('office'), 'signatures', sig).snapshot.amountCents, 45000);
     const emp = { name: 'a', rateCents: 1, rateHistory: [{ from: 'x', rateCents: 2 }], burden: { vacationPct: 4 } };
     const fore = redactForReader(p('foreman', { seesMoney: true }), 'employees', emp);

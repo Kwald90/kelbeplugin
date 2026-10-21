@@ -71,9 +71,17 @@ export function billProvincialTaxCents(bill) {
 export function billLineCosts(bill, { vendor = null } = {}) {
   const lines = bill?.lines || [];
   const amounts = lines.map(lineAmount);
-  const shares = spread(billProvincialTaxCents(bill), amounts);
+  const uses = lines.map((l) => billLineTaxUse(l, { vendor }));
+  // Charged PST/RST falls only on the lines it could apply to. Resale material is bought RST-exempt
+  // (the contractor gives its RST number), so the tax lands on the own-use lines; only when the bill
+  // has no own-use line to absorb it does it sit on the resale lines — a supplier that wrongly
+  // charged RST on resale (a credit to claim). Spreading it over resale lines by amount would both
+  // flag phantom supplier credits and under-cost the own-use line that actually bore the RST.
+  const anyOwnUse = uses.includes('own-use');
+  const weights = amounts.map((a, i) => (!anyOwnUse || uses[i] === 'own-use' ? a : 0));
+  const shares = spread(billProvincialTaxCents(bill), weights);
   return lines.map((l, index) => {
-    const taxUse = billLineTaxUse(l, { vendor });
+    const taxUse = uses[index];
     const rstCents = shares[index];
     const writtenOff = Boolean(l?.resaleCreditWrittenOff);
     const inCost = taxUse === 'own-use' || writtenOff;
@@ -175,11 +183,12 @@ export function rstSelfAssessment({ stockMoves = [], materialRequests = [], bill
     if (!inRange(d, from, to)) continue;
     const vendor = vendorById.get(b.vendorId) || null;
     const costs = billLineCosts(b, { vendor });
-    const chargedProv = billProvincialTaxCents(b) !== 0;
     for (const c of costs) {
       const l = b.lines[c.index];
       if (c.flagged) resaleCredits.push({ billId: b.id, lineIndex: c.index, vendorId: b.vendorId || null, date: d, description: l?.description || '', rstCents: c.rstCents });
-      if (c.taxUse !== 'own-use' || chargedProv || !hasProvTax(d) || !c.amountCents) continue;
+      // Self-assess an own-use line only when it bore no RST of its own (the seller charged none,
+      // e.g. out of province); a line that already took an RST share carries it in cost.
+      if (c.taxUse !== 'own-use' || c.rstCents > 0 || !hasProvTax(d) || !c.amountCents) continue;
       selfAssess.push({ source: 'bill', id: b.id, lineIndex: c.index, date: d, jobId: l?.jobId || b.jobId || null, description: l?.description || 'Bill line',
         costCents: c.amountCents, rstCents: pctOfCents(c.amountCents, rateOf(d)), reason: l?.equipmentId ? 'truck' : 'other' });
     }

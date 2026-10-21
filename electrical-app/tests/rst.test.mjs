@@ -19,17 +19,27 @@ describe('tax use per bill line', () => {
     assert.equal(R.billLineTaxUse({ costType: 'material', taxUse: 'own-use' }), 'own-use');
   });
 
-  test('each line carries its share of the RST; resale lines are flagged, own-use lines carry it in cost', () => {
+  test('charged RST lands on own-use lines, never spread onto resale material bought RST-exempt', () => {
     const bill = { lines: [{ costType: 'material', amountCents: 10000 }, { costType: 'other', amountCents: 5000 }, { costType: 'material', amountCents: 1 }],
       taxes: [{ id: 'GST', cents: 750 }, { id: 'RST', cents: 1051 }] };
     const c = R.billLineCosts(bill);
     assert.equal(c.reduce((s, x) => s + x.rstCents, 0), 1051, 'shares add up to the printed RST');
-    assert.deepEqual(c.map((x) => [x.taxUse, x.flagged]), [['resale', true], ['own-use', false], ['resale', false]]);
+    assert.deepEqual(c.map((x) => [x.taxUse, x.flagged]), [['resale', false], ['own-use', false], ['resale', false]], 'resale lines are not flagged for RST they never carried');
+    assert.equal(c[0].rstCents, 0, 'no RST share on a resale line while an own-use line can absorb it');
     assert.equal(c[0].costCents, 10000, 'resale RST is recoverable, never cost');
-    assert.equal(c[1].costCents, 5000 + c[1].rstCents);
-    const off = R.billLineCosts({ ...bill, lines: [{ ...bill.lines[0], resaleCreditWrittenOff: { by: 'Dana', at: '2026-10-01' } }, ...bill.lines.slice(1)] });
+    assert.equal(c[1].rstCents, 1051, 'the own-use line bears all the RST the supplier charged');
+    assert.equal(c[1].costCents, 5000 + 1051);
+  });
+
+  test('a supplier charging RST on an all-resale bill is flagged for a credit; a write-off absorbs it into cost', () => {
+    const bill = { lines: [{ costType: 'material', amountCents: 30000 }], taxes: [{ id: 'GST', cents: 1500 }, { id: 'RST', cents: 2100 }] };
+    const c = R.billLineCosts(bill);
+    assert.deepEqual(c.map((x) => [x.taxUse, x.flagged]), [['resale', true]], 'no own-use line to absorb it: the resale line carried the RST');
+    assert.equal(c[0].rstCents, 2100);
+    assert.equal(c[0].costCents, 30000, 'a flagged resale credit is claimed from the supplier, never cost');
+    const off = R.billLineCosts({ lines: [{ ...bill.lines[0], resaleCreditWrittenOff: { by: 'Dana', at: '2026-10-01' } }], taxes: bill.taxes });
     assert.equal(off[0].flagged, false);
-    assert.equal(off[0].costCents, 10000 + off[0].rstCents);
+    assert.equal(off[0].costCents, 30000 + 2100);
   });
 
   test('spread keeps every cent', () => {
@@ -73,6 +83,17 @@ describe('the RST self-assessment worksheet', () => {
     assert.ok(!r.selfAssess.some((x) => x.id === 'b-mb'));
     assert.deepEqual(r.resaleCredits.map((x) => [x.billId, x.lineIndex, x.rstCents]), [['b-resale', 0, 2100]]);
     assert.equal(r.totals.creditCents, 2100);
+  });
+
+  test('a mixed Manitoba bill: RST on an own-use line is not spread onto the resale line (no phantom credit, full own-use cost)', () => {
+    const bills2 = [{ id: 'b-mix', vendorId: 'v-mb', status: 'open', date: '2026-09-15',
+      lines: [{ costType: 'material', description: 'Wire for resale', amountCents: 100000 }, { costType: 'other', description: 'Shop tools', amountCents: 10000 }],
+      taxes: [{ id: 'GST', cents: 5500 }, { id: 'RST', cents: 700 }] }];
+    const r2 = R.rstSelfAssessment({ bills: bills2, from: '2026-09-01', to: '2026-09-30', province: 'MB' });
+    assert.deepEqual(r2.resaleCredits, [], 'the resale line carried no RST, so no phantom supplier credit');
+    assert.ok(!r2.selfAssess.some((x) => x.id === 'b-mix'), 'the own-use line already took the RST into cost, so it is not self-assessed');
+    const costs = R.billLineCosts(bills2[0]);
+    assert.equal(costs[1].costCents, 10000 + 700, 'the own-use line is costed with the full RST');
   });
 
   test('a province without a provincial sales tax self-assesses nothing; the CSV lists both sections', () => {

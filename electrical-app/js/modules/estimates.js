@@ -310,14 +310,14 @@ function renderDetail(root, ctx, id) {
       cur.revisionOf ? h('div', { class: 'muted' }, 'Revises ', h('a', { href: '#/estimates/' + cur.revisionOf }, store.get('estimates', cur.revisionOf)?.number || 'an earlier estimate')) : null,
       st === 'superseded' ? h('p', { class: 'muted' }, 'A later revision replaced this estimate.') : null,
       st === 'draft' ? lookupAction(ctx, { entity: 'estimates', clientId: cur.clientId }) : null,
-      !signed && st !== 'superseded' ? h('div', { class: 'row money-actions' },
+      !readOnly && st !== 'superseded' ? h('div', { class: 'row money-actions' },
         st !== 'accepted' ? ui.button('Sign on this device', { size: 'sm', variant: 'primary', icon: 'pen', onClick: signHere }) : null,
         st !== 'sent' && st !== 'accepted' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: markSent }) : null,
         st !== 'accepted' ? ui.button('Accepted', { size: 'sm', icon: 'check', onClick: () => accept() }) : null,
         st !== 'accepted' ? ui.button('Customer accepted by email', { size: 'sm', variant: 'ghost', onClick: byEmail }) : null,
         st !== 'declined' ? ui.button('Declined', { size: 'sm', variant: 'ghost danger', icon: 'x', onClick: () => setStatus('declined') }) : null,
         st !== 'draft' ? ui.button('Back to draft', { size: 'sm', variant: 'ghost', onClick: () => setStatus('draft') }) : null) : null,
-      (signed || st === 'accepted') && st !== 'superseded' ? h('div', { class: 'row' }, ui.button('Revise', { size: 'sm', icon: 'copy', onClick: revise })) : null,
+      !readOnly && (signed || st === 'accepted') && st !== 'superseded' ? h('div', { class: 'row' }, ui.button('Revise', { size: 'sm', icon: 'copy', onClick: revise })) : null,
       st === 'accepted' ? h('div', { class: 'row' },
         cur.jobId ? ui.button('Open job', { size: 'sm', icon: 'briefcase', href: '#/jobs/' + cur.jobId }) : ui.button('Create job', { size: 'sm', icon: 'briefcase', onClick: createJob }),
         on('invoices') ? ui.button('Create invoice', { size: 'sm', icon: 'receipt', onClick: () => { save.flush(); nav('#/invoices/new?estimateId=' + id); } }) : null,
@@ -325,10 +325,11 @@ function renderDetail(root, ctx, id) {
   };
   const setStatus = (st, extra = {}) => { save.write({ status: st, ...extra }, { summary: `${doc.number} → ${st}` }); drawStatus(); ui.toast(`${doc.number} marked ${st}`, 'success'); };
   // Sending runs the exemption check (Manitoba estimates warn, 2.9).
-  const markSent = async () => { save.flush(); if (!(await confirmSend(store.get('estimates', id) || doc, { collection: 'estimates' }))) return; setStatus('sent'); };
+  const markSent = async () => { if (readOnly) return; save.flush(); if (!(await confirmSend(store.get('estimates', id) || doc, { collection: 'estimates' }))) return; setStatus('sent'); };
   const job = () => (doc.jobId ? store.get('jobs', doc.jobId) : null);
   // "Sign on this device" (4.2): the customer sees number, title, scope, total with tax, valid-until and notes.
   const signHere = () => {
+    if (readOnly) return;
     save.flush();
     const cur = store.get('estimates', id) || doc;
     const t = docTotals(cur);
@@ -353,6 +354,7 @@ function renderDetail(root, ctx, id) {
     });
   };
   const byEmail = async () => {
+    if (readOnly) return;
     save.flush();
     const r = await emailAcceptanceSheet(ui, { title: `${doc.number}: accepted by email` });
     if (!r) return;
@@ -367,6 +369,7 @@ function renderDetail(root, ctx, id) {
   };
   // A signed or accepted estimate changes by a revision: a copy with revisionOf; accepting it supersedes this one.
   const revise = () => {
+    if (readOnly) return;
     save.flush();
     const cur = store.get('estimates', id) || doc;
     const copy = { ...pick(cur), number: store.nextNumber('estimate'), status: 'draft', revisionOf: id, validUntil: ui.today(30), title: cur.title || '' };

@@ -11,6 +11,7 @@
 // Enforcement: a Manitoba invoice with RST off and the basis's evidence missing cannot leave draft
 // (the server refuses with 422 exemption_required); Manitoba estimates and BC and SK documents warn.
 // Pure (no DOM): the PWA, the server's write rules and the send routes import it.
+import { treatmentsFor } from './tax.js';
 
 export const EXEMPT_BASES = [
   { id: 'resale', label: 'Reseller buying for resale' },
@@ -134,7 +135,10 @@ export function exemptionProblem(doc, { docType, collection } = {}) {
   const kind = doc.kind || 'standard';
   if (['interest', 'credit', 'holdback-release'].includes(kind)) return null;
   if (kind === 'deposit' && doc.depositModel === 'security') return null;
-  if (doc.taxTreatment === 'real-property') return null;
+  // 'real-property' is a valid, RST-exempt-by-design treatment only where the province offers it
+  // (BC services to real property). In Manitoba electrical work is goods, so an unexpected
+  // 'real-property' treatment (a direct API or sync write) still needs evidence or is blocked.
+  if (doc.taxTreatment === 'real-property' && treatmentsFor(province).includes('real-property')) return null;
   if (doc.taxTreatment === 'none' && SUPPLY_NONE_REASONS.includes(doc.taxNoneReason)) return null;
   if (!provincialTaxOff(doc)) return null;
   const missing = missingEvidence(doc);

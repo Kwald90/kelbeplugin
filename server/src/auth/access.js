@@ -246,7 +246,11 @@ function stripMoney(coll, data) {
   if (!data) return data;
   if (coll === 'signatures') {
     if (!isObj(data.snapshot) || !/Cents"/.test(JSON.stringify(data.snapshot))) return data;
-    return { ...data, snapshot: snapshotWithoutMoney(data.snapshot), pricesHidden: true };
+    // The digest is SHA-256 of the money-bearing snapshot; handing it to a non-money reader lets
+    // them brute-force the stripped *Cents amounts, so drop it with the money it protects.
+    const { digest, ...rest } = data;
+    void digest;
+    return { ...rest, snapshot: snapshotWithoutMoney(data.snapshot), pricesHidden: true };
   }
   const found = (MONEY_FIELDS[coll] || []).filter((k) => hasField(data, k));
   const cos = coll === 'jobs' && Array.isArray(data.changeOrders) && data.changeOrders.length > 0;
@@ -264,8 +268,10 @@ function restoreMoney(coll, existing, next) {
   delete out.pricesHidden; // a read marker, never stored
   if (MONEY_FIELDS[coll]) {
     for (const k of MONEY_FIELDS[coll]) {
-      // A new record from a reader without money carries none either (a crew member's material request).
-      if (hasField(existing, k)) putField(out, k, getField(existing, k)); else if (existing || coll === 'materialRequests') putField(out, k, undefined);
+      // A new record from a reader without money carries none either (a crew member's material
+      // request), so strip the field whenever the stored record does not have it — on edits and
+      // on brand-new records alike, for every money collection.
+      if (hasField(existing, k)) putField(out, k, getField(existing, k)); else putField(out, k, undefined);
     }
   }
   if (coll === 'jobs' && Array.isArray(out.changeOrders)) {
@@ -453,7 +459,12 @@ function releaseOneRule(p, coll, existing, next) {
       const t = lineTaxOffProblem(next);
       if (t) return refusal(422, 'tax_off_invalid', t.message, { line: t.index });
     }
-    if (leavingDraft) {
+    // Once an invoice has left draft its tax treatment can still be edited (a sent invoice is not
+    // locked). Changing it to drop RST — gst-only, none, a different exemption or holdback — must be
+    // re-validated, not only on the draft→sent transition, or RST is silently dropped end to end.
+    const TAX_SHAPE = ['taxTreatment', 'taxes', 'taxProvince', 'taxNoneReason', 'taxExemptBasis', 'taxExemptNumber', 'taxExemptDetails', 'holdback'];
+    const taxShapeChanged = existing && TAX_SHAPE.some((k) => !same(existing[k], next[k]));
+    if (leavingDraft || (now !== 'draft' && now !== 'void' && taxShapeChanged)) {
       const x = exemptionProblem(next, { docType: 'invoices' });
       if (x?.level === 'block') return refusal(422, 'exemption_required', x.message, { missing: x.missing });
       const h = holdbackProblem(next);
