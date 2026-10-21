@@ -1,15 +1,16 @@
 // Canadian sales tax between Fishtape and QuickBooks (docs/integrations/quickbooks.md 4.8). Pure.
 //
-// Fishtape taxes a document per line kind with `taxes[]` components (electrical-app/js/lib/tax.js);
-// QuickBooks puts a TaxCode on each line and rounds per rate. A line's tax key comes from the CSV
-// export (qbo-export.js lineTaxIds/taxKey: 'GST+RST|MB', 'GST', 'HST|ON', the legacy 'TAX'), refined
-// here with the document's taxNoneReason ('NONE|ZERO', 'NONE|EXEMPT', 'NONE|OOS', 'NONE|RELIEF').
+// Fishtape taxes a document per line kind with `taxes[]` components (electrical-app/js/lib/tax.js),
+// less each line's taxOff (money.js lineTaxed); QuickBooks puts a TaxCode on each line and rounds per
+// rate. A line's tax key is the taxes charged on that line (r1-get-paid.md 9.1; the CSV export's
+// qbo-export.js taxKey: 'GST+RST|MB', 'GST', 'HST|ON', the legacy 'TAX'), or a no-tax key from the
+// document's taxNoneReason ('NONE|ZERO', 'NONE|EXEMPT', 'NONE|OOS', 'NONE|RELIEF') or the line's type.
 // Mapping taxCode.<key> holds the QBO TaxCode id; lines are compared by that id, never by key.
 //
 // `ref` arguments are the qbo_reference lists: { codes: [TaxCode], rates: [TaxRate], agencies: [TaxAgency] }
 // with the allow-listed fields of 3.8 (a code's rate lists may be QBO's { TaxRateDetail: [...] } or
 // plain arrays of rate ids).
-import { pctOfCents, docTotals, combinedPct, KINDS } from '../../../../electrical-app/js/lib/money.js';
+import { pctOfCents, docTotals, docTaxes, combinedPct, lineTaxed, lineCents, KINDS } from '../../../../electrical-app/js/lib/money.js';
 import { ratesOn, taxComponents, treatmentsFor, TREATMENTS } from '../../../../electrical-app/js/lib/tax.js';
 import { lineTaxIds, taxKey, DEFAULT_TAX_CODES } from '../../../../electrical-app/js/lib/qbo-export.js';
 
@@ -25,28 +26,88 @@ const dollars = (c) => Number(((Number(c) || 0) / 100).toFixed(2));
 const idOf = (r) => (r && typeof r === 'object' ? String(r.value ?? r.Id ?? '') : String(r ?? ''));
 const ISO = (d) => (d instanceof Date ? d.toISOString() : String(d || new Date().toISOString())).slice(0, 10);
 
-/** The tax key of one line kind on a document; a no-tax line carries the document's reason. */
-export function lineTaxKey(doc, kind) {
-  const key = taxKey(lineTaxIds(doc, kind), doc?.taxProvince);
-  if (key !== 'NONE') return key;
-  const r = NONE_REASON_KEYS[doc?.taxNoneReason];
-  return r ? `NONE|${r}` : 'NONE';
+const kindOfLine = (l) => (KINDS.includes(l?.kind) ? l.kind : 'material');
+
+/**
+ * The taxes charged on one line (r1-get-paid.md 9.1): the document's taxes that apply to the line's
+ * kind, less the line's taxOff (money.js lineTaxed, the rule docTotals uses). Sorted upper-case ids.
+ */
+export function lineTaxIdsOf(doc, line) {
+  return docTaxes(doc || {}).filter((t) => (Number(t.pct) || 0) > 0 && lineTaxed(line || {}, t)).map((t) => String(t.id).toUpperCase()).sort();
 }
+
+/**
+ * The no-tax key of a line: the document's reason, else what the line is. An interest line is an
+ * exempt supply (NONE|EXEMPT); a security-deposit line (taxOff '*') and a holdback release with
+ * nothing deferred are out of scope (NONE|OOS). A work line with no reason stays 'NONE' (tax_reason).
+ */
+function noneKeyOf(doc, line) {
+  const r = NONE_REASON_KEYS[doc?.taxNoneReason];
+  if (r) return `NONE|${r}`;
+  if (line?.lineType === 'interest') return 'NONE|EXEMPT';
+  if (line?.lineType === 'deposit' || line?.lineType === 'holdback') return 'NONE|OOS';
+  return 'NONE';
+}
+
+/**
+ * The tax key of one line (r1-get-paid.md 9.1): the taxes charged on it ('GST+RST|MB', 'GST', the
+ * legacy 'TAX'), or a no-tax key. A pass-through line on a Manitoba invoice gets 'GST'; a
+ * security-deposit line 'NONE|OOS'. Given a kind name instead of a line, the key of a plain line of
+ * that kind (the per-kind key of 4.8, still used for the markup line and by older callers).
+ */
+export function lineTaxKey(doc, lineOrKind) {
+  const line = typeof lineOrKind === 'string' ? { kind: lineOrKind } : (lineOrKind || {});
+  const key = taxKey(lineTaxIdsOf(doc, line), doc?.taxProvince);
+  return key === 'NONE' ? noneKeyOf(doc, line) : key;
+}
+
+/**
+ * The tax key of a document's holdback line (9.2): the taxes the holdback is deferred from
+ * (docTotals taxes[].deferredCents), else out of scope (nothing deferred: the tax was charged on
+ * the progress bill, so the negative line carries none).
+ */
+export function holdbackTaxKey(doc, totals = docTotals(doc || {})) {
+  const ids = totals.taxes.filter((t) => t.deferredCents && (Number(t.pct) || 0) > 0).map((t) => String(t.id).toUpperCase()).sort();
+  return ids.length ? taxKey(ids, doc?.taxProvince) : 'NONE|OOS';
+}
+
+/** A line with no item, no quantity and no price: text only, never taxed. */
+export const descriptionOnly = (l) => !l?.itemId && (Number(l?.qty) || 0) === 0 && Math.round(Number(l?.unitCents) || 0) === 0;
+
+/**
+ * Every priced line of a document as QuickBooks gets it, with its tax key (9.1, 9.2): the
+ * document's own lines (description-only lines are left out), the markup line and the negative
+ * holdback line. [{ key, kind, cents, index?, markup?, holdback? }]
+ */
+export function docTaxLines(doc) {
+  const t = docTotals(doc || {});
+  const out = [];
+  (doc?.lines || []).forEach((l, index) => {
+    if (descriptionOnly(l)) return;
+    out.push({ key: lineTaxKey(doc, l), kind: kindOfLine(l), cents: lineCents(l), index });
+  });
+  if (t.markupCents) out.push({ key: lineTaxKey(doc, 'material'), kind: 'material', cents: t.markupCents, markup: true });
+  if (t.holdbackCents) out.push({ key: holdbackTaxKey(doc, t), kind: 'other', cents: -t.holdbackCents, holdback: true });
+  return out;
+}
+
+/** The tax keys a document uses, each once. */
+export const docTaxKeys = (doc) => [...new Set(docTaxLines(doc).map((x) => x.key))];
 
 /** The kinds a document's lines use (a markup only exists on material, so it adds none). */
 export function kindsUsed(doc) {
-  const used = new Set((doc?.lines || []).map((l) => (KINDS.includes(l.kind) ? l.kind : 'material')));
+  const used = new Set((doc?.lines || []).map(kindOfLine));
   return KINDS.filter((k) => used.has(k));
 }
 
-/** { kind: key } for every kind the document uses. */
+/** { kind: key } for every kind the document uses (the key of a plain line of that kind). */
 export function docKeysByKind(doc) {
   return Object.fromEntries(kindsUsed(doc).map((k) => [k, lineTaxKey(doc, k)]));
 }
 
-/** True when a document has no-tax lines and no taxNoneReason: it is not pushed (blocked/tax_reason). */
+/** True when a line has no tax and the document no taxNoneReason: it is not pushed (blocked/tax_reason). */
 export function needsTaxReason(doc) {
-  return Object.values(docKeysByKind(doc)).includes('NONE');
+  return docTaxLines(doc).some((x) => x.key === 'NONE');
 }
 
 /** 'GST+RST|MB' -> { ids: ['GST', 'RST'], province: 'MB', none: false, reason: null }. */
@@ -192,34 +253,37 @@ export function taxesFromCodes(keysByKind, { province = null, date = new Date(),
 // ---------------------------------------------------------------------------------------------
 // Push: the pre-push check, the totals check and the override
 
-/** The document's tax base per kind (markup is material), as docTotals computes it. */
-function basesByKind(doc) {
-  const t = docTotals(doc);
-  return { material: t.materialCents + t.markupCents, labour: t.labourCents, other: t.otherCents };
-}
-
 /**
  * QBO's expected tax per rate for a document (4.8, before a create or a tax-changing update):
- * from the mapped codes' TaxRate percentages in force on `date`. `mismatch` is set when a code's
- * rates differ from what the document charges on that kind (an old 8% PST code, for example).
+ * from the mapped codes' TaxRate percentages in force on `date`, line by line (r1-get-paid.md 9.1).
+ * `codes` maps a tax key to its QBO code id (the taxCode mappings); a map by line kind
+ * ({ material, labour, other }) is still read for lines whose key it does not hold. `mismatch` is
+ * set when a code's rates differ from what the document charges on its lines (an old 8% PST code).
  * @returns {{ ok, perRate: [{ rateId, name, pct, baseCents, cents }], mismatch: { codeName, codePcts, docPcts } | null }}
  */
-export function expectedTax(doc, codeIdsByKind, ref, date = doc?.issueDate || new Date()) {
-  const bases = basesByKind(doc);
+export function expectedTax(doc, codes, ref, date = doc?.issueDate || new Date()) {
+  const groups = new Map();
+  for (const x of docTaxLines(doc)) {
+    const codeId = codes?.[x.key] ?? codes?.[x.kind] ?? null;
+    const k = `${x.key}\u0000${codeId ?? ''}`;
+    const g = groups.get(k) || { key: x.key, codeId, baseCents: 0 };
+    g.baseCents += x.cents;
+    groups.set(k, g);
+  }
   const per = new Map();
   let mismatch = null;
   let ok = true;
-  for (const kind of kindsUsed(doc)) {
-    const code = findCode(ref, codeIdsByKind?.[kind]);
-    if (!code) { ok = false; mismatch = mismatch || { codeName: null, codePcts: [], docPcts: docPctsFor(doc, kind) }; continue; }
+  for (const g of groups.values()) {
+    const code = findCode(ref, g.codeId);
+    const docPcts = docPctsFor(doc, g.key);
+    if (!code) { ok = false; mismatch = mismatch || { codeName: null, codePcts: [], docPcts }; continue; }
     const rates = salesRateIds(code).map((id) => ({ id, rate: findRate(ref, id) }));
     const codePcts = sortNum(rates.map((r) => ratePct(r.rate, date)).filter((p) => p != null && p > 0));
-    const docPcts = docPctsFor(doc, kind);
     if (!samePcts(codePcts, docPcts) || rates.some((r) => !r.rate)) { ok = false; mismatch = mismatch || { codeName: code.Name, codePcts, docPcts }; }
     for (const r of rates) {
       const pct = ratePct(r.rate, date) ?? 0;
       const row = per.get(r.id) || { rateId: r.id, name: r.rate?.Name || null, pct, baseCents: 0, cents: 0 };
-      row.baseCents += bases[kind];
+      row.baseCents += g.baseCents;
       per.set(r.id, row);
     }
   }
@@ -227,8 +291,11 @@ export function expectedTax(doc, codeIdsByKind, ref, date = doc?.issueDate || ne
   return { ok: ok && !mismatch, perRate, mismatch };
 }
 
-function docPctsFor(doc, kind) {
-  return sortNum((doc?.taxes || []).filter((t) => (Number(t.pct) || 0) > 0 && (t.applies || { material: true, labour: true, other: true })[kind]).map((t) => Number(t.pct)));
+/** The percentages the document charges for a key's taxes (none for a no-tax key). */
+function docPctsFor(doc, key) {
+  const ids = new Set(parseTaxKey(key).ids);
+  if (ids.has('TAX')) return sortNum(docTaxes(doc || {}).filter((t) => (Number(t.pct) || 0) > 0).map((t) => Number(t.pct)));
+  return sortNum(docTaxes(doc || {}).filter((t) => (Number(t.pct) || 0) > 0 && ids.has(String(t.id).toUpperCase())).map((t) => Number(t.pct)));
 }
 
 const pctLabel = (pcts) => (pcts.length ? pcts.map((p) => `${Math.round(p * 1000) / 1000}%`).join(' + ') : 'no tax');
@@ -335,19 +402,46 @@ function share(total, amounts) {
 }
 
 /**
- * PST/RST paid on a purchase is not recoverable, so it goes into the cost of the lines (4.8):
- * the printed non-recoverable cents are added to the line amounts pro rata, the rounding
- * remainder on the largest line. Returns the new lines and only the recoverable taxes.
+ * PST/RST paid on a purchase is not an input credit (4.8). Its printed cents are shared over the
+ * lines pro rata by amount (rounding remainder on the largest line). Without `taxUse` every share
+ * goes into its line's cost. With it (r1-get-paid.md 9.3; rst.js billLineTaxUse, 'resale' or
+ * 'own-use' per line), only own-use lines take their share into cost; the shares of resale lines
+ * (RST charged on materials TG resells, which the supplier credits back) are returned as
+ * `resaleCents` for one line on account.rstRecoverable, never cost, unless the line's resale credit
+ * was written off (resaleCreditWrittenOff: then it is cost after all). Returns the new lines, only
+ * the recoverable taxes, and resaleCents.
  * @param {{ amountCents }[]} lines
  * @param {{ id, cents }[]} taxes
+ * @param {string[]} [recoverableIds]
+ * @param {{ taxUse?: (line: object, index: number) => 'resale'|'own-use' }} [opts]
  */
-export function spreadPurchaseTax(lines, taxes, recoverableIds = RECOVERABLE) {
+export function spreadPurchaseTax(lines, taxes, recoverableIds = RECOVERABLE, { taxUse = null } = {}) {
   const rec = new Set((recoverableIds || []).map((x) => String(x).toUpperCase()));
   const keep = (taxes || []).filter((t) => rec.has(String(t.id).toUpperCase()));
   const spread = (taxes || []).filter((t) => !rec.has(String(t.id).toUpperCase())).reduce((s, t) => s + (Math.round(Number(t.cents)) || 0), 0);
   const amounts = (lines || []).map((l) => Math.round(Number(l.amountCents)) || 0);
   const shares = share(spread, amounts);
-  return { lines: (lines || []).map((l, i) => ({ ...l, amountCents: amounts[i] + shares[i] })), taxes: keep.map((t) => ({ ...t })) };
+  let resaleCents = 0;
+  const out = (lines || []).map((l, i) => {
+    const resale = typeof taxUse === 'function' && taxUse(l, i) === 'resale' && !l.resaleCreditWrittenOff;
+    if (resale) { resaleCents += shares[i]; return { ...l, amountCents: amounts[i] }; }
+    return { ...l, amountCents: amounts[i] + shares[i] };
+  });
+  return { lines: out, taxes: keep.map((t) => ({ ...t })), resaleCents };
+}
+
+/**
+ * Resale or own use for a bill line when rst.js (R1-E, r1-get-paid.md 3.5) is not loaded: the
+ * line's own taxUse, else material is resale, a subcontract is resale only from a vendor marked
+ * meSubtrade, and equipment and other lines are own use. The engine uses rst.js billLineTaxUse
+ * when it is present; this mirrors its stated default and is used only without it.
+ */
+export function fallbackBillLineTaxUse(line, { vendor = null } = {}) {
+  if (line?.taxUse === 'resale' || line?.taxUse === 'own-use') return line.taxUse;
+  const costType = ['material', 'subcontract', 'equipment', 'other'].includes(line?.costType) ? line.costType : 'material';
+  if (costType === 'material') return 'resale';
+  if (costType === 'subcontract') return vendor?.meSubtrade === true ? 'resale' : 'own-use';
+  return 'own-use';
 }
 
 /**

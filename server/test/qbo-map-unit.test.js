@@ -740,9 +740,11 @@ test('Stripe payments: gross into the clearing account, fee as a Purchase, settl
 // ---------------------------------------------------------------------------------------------
 // Bills, receipts, purchase orders, time, Stripe payouts
 
-test('a Manitoba bill: GST-only code, RST spread into job cost, equal both ways', () => {
+test('a Manitoba bill of own-use lines: GST-only code, RST spread into job cost, equal both ways', () => {
   const c = ctx('bills', { meta: { marker: 'Fishtape ref 89abcdef0123', lineIds: { 0: '1', 1: '2' } } });
-  const bill = byId(F.bills, 'bill-1');
+  // Own use (r1-get-paid.md 3.5): the RST is cost. Resale lines are in the Release 1 tests (qbo-r1.test.js).
+  const src = byId(F.bills, 'bill-1');
+  const bill = { ...src, lines: src.lines.map((l) => ({ ...l, taxUse: 'own-use' })) };
   assert.equal(purchaseTaxKey(bill), 'GST+RST|MB');
   const L = fishtapeToCanon('bills', bill, c);
   // RST $105.00 spread $84.00 / $21.00 over $1,200 / $300 of lines
@@ -895,7 +897,15 @@ test('Stripe payouts: a Transfer from the clearing account, payout-level fees as
 });
 
 test('sparse entities and the entity of each collection', () => {
-  assert.deepEqual([...SPARSE_ENTITIES].sort(), ['Customer', 'Deposit', 'Estimate', 'Invoice']);
+  assert.deepEqual([...SPARSE_ENTITIES].sort(), ['CreditMemo', 'Customer', 'Deposit', 'Estimate', 'Invoice']);
+  // Release 1 (r1-get-paid.md 9.2): a credit note is a CreditMemo, a bill below zero a VendorCredit,
+  // a credit-note application a Payment.
+  assert.equal(entityFor('invoices', { kind: 'credit' }), 'CreditMemo');
+  assert.equal(entityFor('invoices', { extra: { kind: 'credit' } }), 'CreditMemo');
+  assert.equal(entityFor('invoices', { kind: 'progress' }), 'Invoice');
+  assert.equal(entityFor('bills', { kind: 'bill', lines: [{ qty: 1, unitCents: -5000 }] }), 'VendorCredit');
+  assert.equal(entityFor('bills', { kind: 'receipt', lines: [{ qty: 1, unitCents: -5000 }] }), 'Purchase');
+  assert.equal(entityFor('payments', {}, 'apply'), 'Payment');
   assert.equal(entityFor('bills', { kind: 'receipt' }), 'Purchase');
   assert.equal(entityFor('bills', { kind: 'bill' }), 'Bill');
   assert.equal(entityFor('payments', {}, 'fee'), 'Purchase');

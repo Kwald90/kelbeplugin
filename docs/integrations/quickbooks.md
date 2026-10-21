@@ -1,6 +1,8 @@
 # QuickBooks Online two-way sync: the contract
 
-Status: revision 3, 2026-10-20: **built**. Six workstreams built it from revision 2 and an integrator
+Status: revision 5, 2026-10-20: section 17 adds Release 1 (holdback, deposits, interest, credit memos,
+per-line tax, resale RST, vendor credits, the period lock, the exemption review); it overrides the sections
+it names. Revision 3, 2026-10-20: **built**. Six workstreams built it from revision 2 and an integrator
 merged them; the code runs against the fake QuickBooks server (11.1) until Intuit keys exist. Revision 3
 makes this file say what the code does: where the code differed from revision 2 and the code was right,
 the text here was changed, and section 15 lists every such change by section with its reason. Kelvin's
@@ -3191,6 +3193,11 @@ Run against the Canadian sandbox (Plus, then Essentials) and record results in t
     `CUSTOMER_MEMO_MAX = 1000`.
 26. "Deposited in QuickBooks" for a payment is detected from `DepositToAccountRef` not being a
     `depositTo` mapping or the Stripe clearing account (4.9): check against a real bank deposit.
+27. Release 1 (17): the negative holdback line on `item.holdback` with the deferred taxes' code; whether a
+    CreditMemo takes `operation=void` (Fishtape deletes an unapplied one); the $0 Payment applying a
+    CreditMemo to an invoice (until confirmed, option `creditApplyConfirmed` stays off and each one waits
+    in review); separate Payments for one cheque grouped in one bank deposit; the VendorCredit body (positive
+    amounts, no DueDate) and its tax override; booking bad debt as a credit memo (accountant).
 
 ### 11.5 End to end
 
@@ -4104,3 +4111,161 @@ and the files named). Read the sections above with these in mind; migration `015
   on; the activity filter has plural names and an "Information" outcome; a bill's Mark paid is hidden
   while QuickBooks owns its paid status (connected, paused, waiting to reconnect, or linked), and the
   QuickBooks sentence shows only then.
+
+---
+
+## 17. Release 1 (revision 5)
+
+What Release 1 ("Get paid and know the margin", [docs/releases/r1-get-paid.md](../releases/r1-get-paid.md)
+section 9) changes in the sync. It overrides the sections it names. Migration `0162_r1_qbo.sql`; tests
+`server/test/qbo-r1.test.js` (the fake QuickBooks and the mapping without a database),
+`electrical-app/tests/qbo-ui.test.mjs` (the Release 1 block) and the Release 1 part of
+`electrical-app/tests/e2e/quickbooks.e2e.mjs`.
+
+### 17.1 Tax per line (replaces the per-kind key of 4.8)
+
+- A line's key is the taxes charged on **that line**: its kind's taxes less its `taxOff`
+  (`money.js lineTaxed`, the rule `docTotals` uses). `server/src/qbo/map/tax.js lineTaxKey(doc, line)`
+  takes a line (a kind name still answers for a plain line of that kind). A pass-through line on a
+  Manitoba invoice (`taxOff ['RST']`) gets `GST`.
+- A line with no tax takes the document's `taxNoneReason`; without one, an interest line is
+  `NONE|EXEMPT`, a deposit line with `taxOff ['*']` (a security deposit) and a holdback release with
+  nothing deferred `NONE|OOS`. A work line with no tax and no reason is still `blocked/tax_reason`.
+- `docTaxLines(doc)` lists every priced line with its key (the markup line on the material key, the
+  holdback line on the key of its deferred taxes). The pre-push check (`expectedTax`), the totals
+  check and the wizard's `tax_unmapped` count read it.
+- Pull: per kind, the kind's key is the document's own key when every line of the kind fits under it,
+  else the widest key among the kind's work lines. A labour or other line whose key has fewer taxes
+  of the same province gets `taxOff` for the rest (a no-tax deposit, holdback or interest line gets
+  `taxOff ['*']`), instead of the whole document going to `tax_shape`. A material line, a taxed line on
+  an untaxed kind, or a mix of provinces still goes to `tax_shape`. The treatment is worked out from the
+  kinds' keys as before, so a pass-through edit in QuickBooks keeps `pst-all`.
+- The CSV export (`electrical-app/js/lib/qbo-export.js`) uses the same rule: `lineTaxIds(doc, line)`,
+  `taxCodeFor(doc, line)`, `taxKeysUsed` per line; the holdback line's code from `holdbackTaxIds`.
+
+### 17.2 Holdback, deposits, interest (4.7)
+
+| Fishtape | QuickBooks |
+| --- | --- |
+| `holdback` on an invoice (`docTotals.holdbackCents`) | the last line: a negative line on `item.holdback`, amount −holdbackCents, the code of the deferred taxes (`holdbackTaxKey`; `NONE|OOS` when nothing is deferred). Text "Holdback retained (10%)". |
+| `holdback.retainedByCustomerCents` | nothing (Fishtape-only; the amount stays open on the invoice in QuickBooks too) |
+| release line (`lineType: 'holdback'`) | a positive line on `item.holdback` |
+| deposit and application lines (`lineType: 'deposit'`) | `item.deposit`. Security-deposit lines `NONE|OOS`. |
+| interest line (`lineType: 'interest'`) | `item.interest`, `NONE|EXEMPT` |
+
+- A document with any of these waits as `blocked/mapping_missing` until its product is mapped
+  ("Pick the QuickBooks product for Holdback / Deposits / Interest"), on create and on a line change.
+  `item.deposit` must be mapped explicitly: the old fallback for negative lines (the `other` item, an
+  income account) is never used for a deposit line.
+- Pull: a line on `item.holdback` against the document's sign is the document's holdback: its amount
+  becomes `holdback.cents`, its code `deferTaxIds` (the existing ones kept while the key is the same),
+  and `pct`, `excludePassThrough` and the customer-retained fields are kept. Unchanged, nothing is
+  written; removed in QuickBooks, `cents` becomes 0. Lines on the special items get their `lineType`.
+- VERIFY (11.4 item 3): QuickBooks accepts the negative holdback line; the accountant points
+  `item.holdback` at a Holdback receivable account.
+
+### 17.3 Credit notes, applications and payments (4.7, 4.9)
+
+- A credit note (`kind: 'credit'`) is a **CreditMemo** (`entityFor`; link entity `CreditMemo`). Its
+  canonical form keeps Fishtape's sign (negative lines on both sides); the body negates every amount, and
+  `qboToCanon('CreditMemo')` negates them back. It has no due date and no estimate link. A `bad_debt`
+  note's PrivateNote ends "Bad debt write-off" (VERIFY with the accountant). A void or delete of a credit
+  note deletes the CreditMemo while nothing is applied (VERIFY whether CreditMemo takes `operation=void`);
+  applied, it opens the `has_payments` conflict.
+- A payment `{ method: 'credit-note', creditNoteId, invoiceId }` is a **$0 Payment** with two lines, the
+  invoice and the CreditMemo, link **role `apply`** (`qbo_links.role`, migration 0162), owner `fishtape`,
+  `qbo_line` = the invoice. Both documents go first. It waits in `needs_review/credit_apply` until the
+  office approves it (resolve `'fishtape'`) or the option `creditApplyConfirmed` is true (set once the
+  sandbox confirms it, VERIFY). Later changes are pushed like a push-only record; a delete voids it.
+- A **pulled** $0 payment that applies exactly one CreditMemo to one linked invoice: the memo becomes a
+  Fishtape credit note (`kind: 'credit'`, `creditsInvoiceId`, the invoice's client and job) and the
+  application a Fishtape payment (`method: 'credit-note'`, `source: 'quickbooks'`) with a role `apply`
+  link owned by QuickBooks. Any other shape stays in the settlement payment (4.9). `settlementCents`
+  subtracts the applied amounts of the invoice's `apply` links, so a memo is never counted twice.
+- Receipt allocations (`receiptId`) are separate Fishtape payments and each goes as its own Payment
+  (VERIFY with the accountant that the bank deposit groups them).
+- Never sent in R1, each in review until the office records it in QuickBooks: money on account
+  (`invoiceId: null`) and its application (`appliedFromId`) `needs_review/on_account`, `method: 'refund'`
+  `needs_review/refund`, a reversal (`reversesId`) `needs_review/reversal`. "Approve" is refused (409
+  `qbo_not_sent`); "I've recorded it in QuickBooks" (`'quickbooks'`) unlinks the record for good.
+- The QuickBooks payment pull calls R1-D's `services/receivables.js queueClientRecheck(tx, clientId)`
+  after it creates a payment (loaded when present; a no-op until R1-D merges).
+
+### 17.4 Purchases: resale RST and supplier credits (4.8, 4.10)
+
+- `spreadPurchaseTax(lines, taxes, recoverableIds, { taxUse })`: the PST/RST is shared over the lines pro
+  rata by amount; own-use lines take their share into cost (as before); resale lines' shares (unless
+  `resaleCreditWrittenOff`) are `resaleCents`, one line on **`account.rstRecoverable`** ("RST on resale
+  materials, recoverable from the supplier", the `NONE` purchase code), never cost. `taxUse` is R1-E's
+  `rst.js billLineTaxUse(line, { vendor })` (the engine loads it; `tax.js fallbackBillLineTaxUse`, the
+  same stated default, is used only while rst.js is missing). Vendors' `meSubtrade` flags are read with
+  the run (`refs.vendor`).
+- A bill with resale RST waits as `blocked/mapping_missing` until `account.rstRecoverable` is mapped.
+- Pull: a line on `account.rstRecoverable` comes back as RST on the bill, not a cost line, so the round
+  trip is stable. A bill that mixes resale and own-use lines with RST and is changed in QuickBooks comes
+  back with the own-use share inside its line amounts and only the resale share as RST; the next push
+  rewrites the split once (known R1 limit).
+- A bill whose lines add up below zero (a supplier credit) is a **VendorCredit** with positive amounts,
+  no due date and no PO links (`isSupplierCredit`, `purchaseSign`). A bill that turns into a supplier
+  credit (or back) after it was sent opens a `kind_change` conflict. VendorCredits are read by CDC once
+  the company has one linked (QuickBooks-entered supplier credits are not pulled in R1). VERIFY the
+  VendorCredit shape in the sandbox; the fake QuickBooks has no VendorCredit yet, so its engine path is
+  tested at the mapping level only.
+
+### 17.5 Locks (5.5, 4.11; r1-get-paid.md 2.6, 9.6)
+
+- Creates in posted collections are never refused: a late pulled bill or payment keeps its date and gets
+  `postedOn` (the first open day) and `late: true` from the write guards.
+- A pulled change the records service refuses because the record is locked (409 `period_locked`; also
+  `payroll_locked` and `document_signed` for a signed estimate) puts the link in `needs_review` with that
+  reason ("Changed in QuickBooks in a period closed in Fishtape (through 2026-09-30).") and leaves
+  Fishtape's copy as it is. The refusal is listed in `sync_rejections` (the jobs' records service is built
+  with `db`). Fishtape's copy is never pushed over it: resolve `'fishtape'` is refused (409 `qbo_locked`).
+  - **Reopen the period and accept QuickBooks** (`'quickbooks'`, after an owner reopens on Books): the
+    base takes Fishtape's value for every differing field and the merge writes QuickBooks' copy into
+    Fishtape. While the period is still closed it answers 409 `period_locked` and the review stays.
+  - **Keep the difference noted** (`'note'`, body `{ choice: 'note', note }`, at most 500 characters):
+    the note is kept on the link (`meta.noted`), the base becomes Fishtape's copy and QuickBooks' current
+    values count as equal to it (`meta.remoteAlias`), so nothing is written either way until a side
+    changes again.
+- A sent invoice created in QuickBooks dated in the closed period, after QuickBooks' own `bookCloseDate`,
+  is refused: its link waits in `needs_review/period_locked` with no Fishtape record yet
+  (`meta.pendingCreate`). `'quickbooks'` after reopening creates it under the link's record id; `'note'`
+  leaves it out of Fishtape (link `unlinked`). The wizard's creates on or before `bookCloseDate` stay
+  allowed (2.6).
+- The push may write `number` after the lock (`closing.js ACTOR_SAFE_FIELDS` for `system:qbo`).
+- The effective `timeLockedThrough` is the later of the mapping option and `settings.closing.payrollThrough`
+  (written by payroll runs); an entry in an exported payroll run is payroll-locked for updates and deletes
+  whatever its date (existing `payroll_locked` review).
+
+### 17.6 Exemption (r1-get-paid.md 9.7)
+
+A pulled or pull-changed invoice is checked with `engine.js pulledInvoiceProblem` (the job's exemption
+counts, as it would for a new document): Manitoba RST left off without the basis's evidence
+`needs_review/exemption_missing` ("Add the customer's RST number on the job"), an invalid holdback
+`holdback_invalid`, a line turning tax off where it may not `tax_off_invalid` (the write rules do not
+block the system actor). "Check again" (`'fishtape'`) runs the check: still missing, 422
+`exemption_required` with `details.missing`; fixed, the job's exemption is copied onto the invoice
+(Fishtape-only fields) and the link is synced.
+
+### 17.7 Fields kept through merges, mappings, routes
+
+- A changed line keeps its Fishtape-only fields (`labourHours`, `changeOrderId`, `costCodeId`,
+  `passThrough`, `lineType`, `depositInvoiceId`; bill lines `taxUse`, `costCodeId`, `equipmentId`,
+  `resaleCreditWrittenOff`). Invoice and payment fields QuickBooks never holds (`kind`, `depositModel`,
+  `forfeitedOn`, `holdback.*` but `cents`, `promptPayment`, `termsText`, `interestDisclosed`,
+  `properInvoice`, `ticketIds`, `ticketReconciliation`, `disputes`, `creditReason`, `creditTaxSnapshot`,
+  `postedOn`, `late`, `receiptId`) are never in a pull's patch. `holdback` joins the invoice's `lines`
+  money keys (a stale device holdback edit is held like a line edit).
+- Mapping rows: `item.holdback`, `item.interest`, `account.rstRecoverable` (Other Current Asset, Other
+  Current Liability or Accounts Receivable); option `creditApplyConfirmed`. Setup requires `item.holdback`
+  only when the company has an invoice with a holdback.
+- `POST /api/v1/qbo/conflicts/:id/resolve` takes `choice: 'note'` and `note` (≤ 500). New review reasons:
+  `period_locked`, `document_signed`, `exemption_missing`, `holdback_invalid`, `tax_off_invalid`,
+  `credit_apply`, `on_account`, `refund`, `reversal` (texts in the routes' REASON_TEXT and
+  `lib/qbo-ui.js REVIEW_REASON`; choices in `reviewChoices`). New errors: 409 `qbo_locked`, 409
+  `qbo_not_sent`, 422 `exemption_required` (resolve).
+- CDC asks for `CreditMemo` too (rank 3). `qbo_links.qbo_entity` allows `CreditMemo` and `VendorCredit`.
+
+VERIFY (added to 11.4): negative holdback line; CreditMemo void; the $0 apply Payment; grouped receipts in
+one bank deposit; VendorCredit shape and tax override; bad debt booked as a credit memo.

@@ -4,12 +4,17 @@
 // of the fields asked for; without, the body of a new record (the engine adds the id). Lines that
 // did not change keep everything Fishtape has on them (qty, unit price, kind, labour hours, change
 // order) through their QBO Line.Id pairing (meta.lineIds). Push-only collections return {}.
-import { lineCents, KINDS } from '../../../../electrical-app/js/lib/money.js';
+//
+// Release 1 (r1-get-paid.md 9): a changed line keeps Fishtape's own line fields (cost code,
+// pass-through, line type, deposit invoice); lines of one kind whose tax key is the kind's key less
+// some taxes get `taxOff` instead of a tax_shape review; the holdback line becomes the invoice's
+// `holdback` (its Fishtape-only parts kept); a bill line on account.rstRecoverable becomes RST on the bill.
+import { lineCents, docTotals, KINDS } from '../../../../electrical-app/js/lib/money.js';
 import {
   fishtapeToCanon, qboToCanon, linkInfo, normMethod, toCents, str, cut, lossySuffix, isGenericItem, canonEqual, LINE_DESC_MAX, LOSSY_ROOM,
 } from './canon.js';
 import { FIELD_RULES } from './merge.js';
-import { lineTaxKey, reverseTaxKey, taxesFromCodes } from './tax.js';
+import { lineTaxKey, holdbackTaxKey, reverseTaxKey, taxesFromCodes, parseTaxKey } from './tax.js';
 
 export { taxInclusiveToNet } from './tax.js';
 
@@ -119,27 +124,40 @@ function docPatch(collection, c, ctx, existing, has, report) {
     } else if (EST_STATUS[c.status] && existing?.status !== EST_STATUS[c.status]) p.status = EST_STATUS[c.status];
   }
   if (has('lines')) Object.assign(p, linesPatch(collection, c, ctx, existing, report));
+  // A CreditMemo pulled from QuickBooks is a Fishtape credit note (r1-get-paid.md 9.2).
+  if (inv && !existing && c.extra?.kind === 'credit') {
+    Object.assign(p, { kind: 'credit', creditReason: c.extra.badDebt ? 'bad_debt' : 'other' });
+    if (has('dueDate')) p.dueDate = c.date || null;
+  }
   return p;
 }
 
-/** Fishtape lines, markup and tax fields from canonical lines (4.7, 4.8). */
+/** A line's own Fishtape fields that QuickBooks never holds: a changed line keeps them through its pairing. */
+const LINE_OWN_FIELDS = ['labourHours', 'changeOrderId', 'costCodeId', 'passThrough', 'lineType', 'depositInvoiceId'];
+
+/** Fishtape lines, markup, holdback and tax fields from canonical lines (4.7, 4.8; r1-get-paid.md 9.1, 9.2). */
 function linesPatch(collection, c, ctx, existing, report) {
   const { meta } = linkInfo(ctx);
   const date = c.date || existing?.issueDate || null;
   const exLines = existing?.lines || [];
   const exIds = meta.lineIds && typeof meta.lineIds === 'object' ? meta.lineIds : {};
-  const exIndexById = new Map(Object.entries(exIds).filter(([k]) => k !== 'markup').map(([i, id]) => [String(id), Number(i)]));
+  const exIndexById = new Map(Object.entries(exIds).filter(([k]) => k !== 'markup' && k !== 'holdback').map(([i, id]) => [String(id), Number(i)]));
   const exCanon = existing ? fishtapeToCanon(collection, existing, ctx).lines : [];
-  const plain = (c.lines || []).filter((l) => !l.markup);
+  const plain = (c.lines || []).filter((l) => !l.markup && !l.holdback);
   const markups = (c.lines || []).filter((l) => l.markup);
+  const holdbacks = (c.lines || []).filter((l) => l.holdback);
   const lines = [];
   const lossy = [];
+  const prevOf = [];
+  const kept = [];
   plain.forEach((l, i) => {
     const j = l.lineId != null ? exIndexById.get(String(l.lineId)) : undefined;
     const prev = j != null ? exLines[j] : null;
     const prevCanon = j != null ? exCanon[j] : null;
+    prevOf[i] = prev;
     if (prev && prevCanon && canonEqual(collection, 'lines', [l], [prevCanon])) {
       lines.push({ ...prev });
+      kept[i] = true;
       if (l.lossy || prevCanon.lossy) lossy.push(i);
       return;
     }
@@ -154,7 +172,8 @@ function linesPatch(collection, c, ctx, existing, report) {
     description = description.slice(0, LINE_DESC_MAX);
     const line = { description, qty: l.qty, unitCents: l.unitCents, kind };
     if (itemId) line.itemId = itemId;
-    if (prev) for (const k of ['labourHours', 'changeOrderId']) if (prev[k] != null) line[k] = prev[k];
+    if (prev) { for (const k of LINE_OWN_FIELDS) if (prev[k] != null) line[k] = prev[k]; }
+    else if (l.lineType) line.lineType = l.lineType;
     lines.push(line);
   });
   const out = { lines };
@@ -179,25 +198,93 @@ function linesPatch(collection, c, ctx, existing, report) {
     return { ...out, taxes: [], taxPct: 0, taxTreatment: 'none', taxNoneReason: null };
   }
   const codes = maps(ctx, 'taxCode');
-  const keysByKind = {};
-  const codesByKind = {};
-  const add = (kind, l) => { if (l.itemRef != null || l.amountCents) (codesByKind[kind] ||= new Set()).add(l.taxCodeId ?? null); };
-  plain.forEach((l, i) => add(lines[i].kind || 'material', l)); // description-only lines carry no tax
-  markups.forEach((l) => add('material', l));
+  const province = ctx?.company?.province;
+  // Each priced line's key, read back from its code (the key the line had in Fishtape first).
+  const entries = [];
+  plain.forEach((l, i) => {
+    if (l.itemRef == null && !l.amountCents) return; // description-only lines carry no tax
+    const ln = lines[i];
+    const prevKey = existing ? lineTaxKey(existing, prevOf[i] || { kind: ln.kind, lineType: ln.lineType }) : null;
+    entries.push({ i, kind: KINDS.includes(ln.kind) ? ln.kind : 'material', lineType: ln.lineType || null, codeId: l.taxCodeId ?? null, prevKey, kept: Boolean(kept[i]) });
+  });
+  markups.forEach((l) => entries.push({ i: null, kind: 'material', lineType: null, codeId: l.taxCodeId ?? null, prevKey: existing ? lineTaxKey(existing, 'material') : null, kept: false }));
   let shapeOk = true;
-  for (const [kind, set] of Object.entries(codesByKind)) {
-    const ids = [...set].filter((x) => x != null);
-    if (ids.length !== 1 || set.size !== 1) { shapeOk = false; continue; }
-    const key = reverseTaxKey(ids[0], codes, { preferred: existing ? lineTaxKey(existing, kind) : null, province: ctx?.company?.province });
-    if (!key) { shapeOk = false; continue; }
-    keysByKind[kind] = key;
+  for (const e of entries) {
+    e.key = e.codeId == null ? null : reverseTaxKey(e.codeId, codes, { preferred: e.prevKey, province });
+    if (!e.key) shapeOk = false;
   }
-  const t = taxesFromCodes(keysByKind, { province: ctx?.company?.province, date: date || undefined, existingTreatment: existing?.taxTreatment, legacyPct: existing?.taxPct });
+  // Per kind (9.1): the key of the kind is the document's own when every line of the kind fits
+  // under it, else the widest key among the kind's work lines. A line with fewer taxes than its kind
+  // gets taxOff for the rest (labour and other lines only); a no-tax deposit, holdback or interest
+  // line gets taxOff ['*'].
+  const keysByKind = {};
+  const widest = (keys) => [...keys].sort((a, b) => parseTaxKey(b).ids.length - parseTaxKey(a).ids.length || a.localeCompare(b));
+  for (const kind of KINDS) {
+    const of = entries.filter((e) => e.kind === kind && e.key);
+    if (!of.length) continue;
+    const pool = of.some((e) => !e.lineType) ? of.filter((e) => !e.lineType) : of;
+    const candidates = [...new Set([existing ? lineTaxKey(existing, kind) : null, ...widest(new Set(pool.map((e) => e.key)))].filter(Boolean))];
+    const chosen = candidates.find((cand) => of.every((e) => keyFits(e, cand, kind)));
+    if (!chosen) { shapeOk = false; continue; }
+    keysByKind[kind] = chosen;
+    for (const e of of) e.off = taxOffFor(e.key, chosen);
+  }
+  for (const e of entries) {
+    if (e.i == null || e.kept || !('off' in e)) continue;
+    if (e.off) lines[e.i].taxOff = e.off; else delete lines[e.i].taxOff;
+  }
+  Object.assign(out, holdbackPatch(holdbacks, existing, codes, province, report));
+  const t = taxesFromCodes(keysByKind, { province, date: date || undefined, existingTreatment: existing?.taxTreatment, legacyPct: existing?.taxPct });
   if (!shapeOk || !t.ok) {
     report.taxShape = true;
     if (existing) return out; // keep the record's own tax; the link goes to needs_review (tax_shape)
   }
   return { ...out, taxes: t.taxes, taxPct: t.taxPct, taxProvince: t.taxProvince ?? null, taxTreatment: t.taxTreatment, taxNoneReason: t.taxNoneReason };
+}
+
+/** The no-tax key a line of this type gets on a taxed document (tax.js noneKeyOf without a reason). */
+const NONE_KEY_OF_TYPE = { interest: 'NONE|EXEMPT', deposit: 'NONE|OOS', holdback: 'NONE|OOS' };
+
+/** Whether a line's key fits under its kind's key: the same, or fewer taxes of the same province. */
+function keyFits(e, kindKey, kind) {
+  if (e.key === kindKey) return true;
+  const k = parseTaxKey(kindKey);
+  const p = parseTaxKey(e.key);
+  if (k.none) return false; // a taxed line on a kind charged nothing cannot be shown
+  if (p.none) return kind !== 'material' && NONE_KEY_OF_TYPE[e.lineType] === e.key;
+  if (kind === 'material') return false; // taxOff is honoured on labour and other lines only
+  if (p.province && k.province && p.province !== k.province) return false;
+  return p.ids.length < k.ids.length && p.ids.every((id) => k.ids.includes(id));
+}
+
+/** The taxOff that turns a kind's key into a line's: null when the same; ['*'] for no tax. */
+function taxOffFor(lineKey, kindKey) {
+  if (lineKey === kindKey) return null;
+  const p = parseTaxKey(lineKey);
+  if (p.none) return ['*'];
+  const off = parseTaxKey(kindKey).ids.filter((id) => !p.ids.includes(id));
+  return off.length ? off : null;
+}
+
+/**
+ * The invoice's holdback from its holdback line (9.2): the amount (cents, against the document's
+ * sign) and the taxes it is deferred from (the line's code), keeping the Fishtape-only parts
+ * (pct, retainedByCustomerCents, excludePassThrough). Unchanged, nothing is written; a holdback line
+ * removed in QuickBooks sets the amount to 0.
+ */
+function holdbackPatch(holdbacks, existing, codes, province, report) {
+  const exHb = existing?.holdback || null;
+  const exTotals = existing ? docTotals(existing) : null;
+  if (!holdbacks.length) return exTotals?.holdbackCents ? { holdback: { ...exHb, cents: 0 } } : {};
+  const cents = -holdbacks.reduce((s, l) => s + (Number(l.amountCents) || 0), 0);
+  const codeIds = [...new Set(holdbacks.map((l) => l.taxCodeId ?? null))];
+  const exKey = existing && exTotals?.holdbackCents ? holdbackTaxKey(existing, exTotals) : null;
+  const key = codeIds.length === 1 && codeIds[0] != null ? reverseTaxKey(codeIds[0], codes, { preferred: exKey, province }) : null;
+  if (!key) report.taxShape = true;
+  report.holdback = true;
+  if (exTotals && exTotals.holdbackCents === cents && key === exKey) return {};
+  const deferTaxIds = exHb && key && key === exKey ? (exHb.deferTaxIds || []) : (key ? parseTaxKey(key).ids : []);
+  return { holdback: { ...(exHb || { pct: null, excludePassThrough: true }), cents, deferTaxIds } };
 }
 
 function billPatch(c, ctx, existing, has) {
@@ -217,12 +304,17 @@ function billPatch(c, ctx, existing, has) {
     if (!(mineRef && c.paidWith?.ref && String(mineRef) === String(c.paidWith.ref))) p.paidWith = c.paidWith?.key || (c.paidWith?.paymentType === 'CreditCard' ? 'card' : c.paidWith?.paymentType === 'Check' ? 'cheque' : 'cash');
   }
   const acc = maps(ctx, 'account');
+  // A line on account.rstRecoverable is RST charged on resale lines (r1-get-paid.md 9.3): it comes
+  // back as RST on the bill, not as a cost line, so the round trip is stable.
+  const rstAcc = str(acc.rstRecoverable);
+  const isRst = (l) => Boolean(rstAcc) && !l.itemRef && String(l.accountRef ?? '') === rstAcc;
+  const rstCents = (c.lines || []).filter(isRst).reduce((s, l) => s + (Number(l.amountCents) || 0), 0);
   if (has('lines')) {
     const { meta } = linkInfo(ctx);
     const exIds = meta.lineIds && typeof meta.lineIds === 'object' ? meta.lineIds : {};
     const exIndexById = new Map(Object.entries(exIds).map(([i, id]) => [String(id), Number(i)]));
     const exCanon = existing ? fishtapeToCanon('bills', existing, ctx).lines : [];
-    p.lines = (c.lines || []).map((l) => {
+    p.lines = (c.lines || []).filter((l) => !isRst(l)).map((l) => {
       const j = l.lineId != null ? exIndexById.get(String(l.lineId)) : undefined;
       const prev = j != null ? existing?.lines?.[j] : null;
       const costType = (['material', 'subcontract', 'equipment', 'other'].find((t) => l.accountRef && String(acc[`jobCost.${t}`]) === String(l.accountRef))) || prev?.costType || 'material';
@@ -234,11 +326,19 @@ function billPatch(c, ctx, existing, has) {
       if (itemId) line.itemId = itemId;
       if (jobId) line.jobId = jobId;
       if (prev?.poLine) line.poLine = prev.poLine;
+      for (const k of ['taxUse', 'costCodeId', 'equipmentId', 'resaleCreditWrittenOff']) if (prev && prev[k] != null) line[k] = prev[k];
       return line;
     });
   }
   if (has('taxes') || has('lines')) {
     p.taxes = (c.taxes || []).map((t) => ({ id: t.id, label: t.id, cents: t.cents }));
+    if (rstCents) {
+      const province = existing?.taxProvince || ctx?.company?.province || null;
+      const id = province === 'MB' || !province ? 'RST' : 'PST';
+      const at = p.taxes.findIndex((t) => String(t.id).toUpperCase() === id);
+      if (at >= 0) p.taxes[at] = { ...p.taxes[at], cents: p.taxes[at].cents + rstCents };
+      else p.taxes.push({ id, label: id, cents: rstCents });
+    }
     if (p.lines) p.totalCents = p.lines.reduce((s, l) => s + l.amountCents, 0) + p.taxes.reduce((s, t) => s + t.cents, 0);
   }
   return p;
@@ -258,13 +358,14 @@ export function billStatusFromQbo(qboBill, existingStatus) {
 /**
  * What QBO settled on an invoice outside Fishtape's payments (4.9): (TotalAmt − Balance) minus the
  * invoice's own Deposit (it has its own Fishtape payment, depositRecord) minus the QBO payment lines
- * on this invoice that are linked to Fishtape payments. Never below 0. Pass payment lines only in
- * `linkedPaymentLineCents`, never the deposit.
+ * on this invoice that are linked to Fishtape payments, minus the credit memos applied to it that
+ * have a Fishtape credit-note application (link role apply, r1-get-paid.md 9.2), so a memo is never
+ * counted twice. Never below 0. Pass payment lines only in `linkedPaymentLineCents`, never the deposit.
  */
-export function settlementCents(qboInvoice, linkedPaymentLineCents) {
+export function settlementCents(qboInvoice, linkedPaymentLineCents, appliedMemoCents = []) {
   const settled = toCents(qboInvoice?.TotalAmt) - toCents(qboInvoice?.Balance) - toCents(qboInvoice?.Deposit ?? 0);
-  const linked = (linkedPaymentLineCents || []).reduce((s, x) => s + (Math.round(Number(x)) || 0), 0);
-  return Math.max(0, settled - linked);
+  const sumOf = (list) => (Array.isArray(list) ? list : [list]).reduce((s, x) => s + (Math.round(Number(x)) || 0), 0);
+  return Math.max(0, settled - sumOf(linkedPaymentLineCents || []) - sumOf(appliedMemoCents || []));
 }
 
 /** The pull-only settlement payment for an invoice (method credit, source quickbooks, 4.9). */
@@ -294,29 +395,34 @@ export function linkMetaFromQbo(entity, object, ctx = {}, { pushed = null } = {}
   const meta = {};
   if (entity === 'Customer' || entity === 'Vendor') meta.displayName = str(o.DisplayName);
   if (entity === 'Item') { meta.displayName = str(o.Name); meta.qboType = str(o.Type); }
-  if (['Invoice', 'Estimate', 'Bill', 'Purchase'].includes(entity)) {
+  if (['Invoice', 'Estimate', 'Bill', 'Purchase', 'CreditMemo', 'VendorCredit'].includes(entity)) {
     if (o.GlobalTaxCalculation) meta.globalTax = o.GlobalTaxCalculation;
     if (o.TotalAmt != null) meta.qboTotalCents = toCents(o.TotalAmt);
     if (o.Balance != null) meta.qboBalanceCents = toCents(o.Balance);
+    else if (entity === 'CreditMemo' && o.RemainingCredit != null) meta.qboBalanceCents = toCents(o.RemainingCredit);
   }
-  if (entity === 'Invoice' || entity === 'Estimate') {
-    const coll = entity === 'Invoice' ? 'invoices' : 'estimates';
+  if (entity === 'Invoice' || entity === 'Estimate' || entity === 'CreditMemo') {
+    const coll = entity === 'Estimate' ? 'estimates' : 'invoices';
     const lines = qboToCanon(entity, o, { ...ctx, collection: coll }).lines;
     const ids = {};
     const lossy = new Set(pushed?.lossyLines || []);
-    lines.filter((l) => !l.markup).forEach((l, i) => { if (l.lineId) ids[String(i)] = l.lineId; if (l.lossy) lossy.add(i); });
+    lines.filter((l) => !l.markup && !l.holdback).forEach((l, i) => { if (l.lineId) ids[String(i)] = l.lineId; if (l.lossy) lossy.add(i); });
     const mk = lines.find((l) => l.markup);
     if (mk?.lineId) ids.markup = mk.lineId;
+    const hb = lines.find((l) => l.holdback);
+    if (hb?.lineId) ids.holdback = hb.lineId;
     meta.lineIds = ids;
     meta.lossyLines = [...lossy].sort((a, b) => a - b);
   }
-  if (entity === 'Bill' || (entity === 'Purchase' && linkInfo(ctx).role !== 'fee')) {
+  if (entity === 'Bill' || entity === 'VendorCredit' || (entity === 'Purchase' && linkInfo(ctx).role !== 'fee')) {
     const ids = {};
     (o.Line || []).filter((l) => l.DetailType === 'AccountBasedExpenseLineDetail' || l.DetailType === 'ItemBasedExpenseLineDetail')
       .forEach((l, i) => { if (l.Id != null) ids[String(i)] = String(l.Id); });
     meta.lineIds = ids;
   }
-  if (entity === 'Payment') {
+  if (entity === 'Payment' && linkInfo(ctx).role === 'apply') {
+    meta.applyTotalCents = toCents(o.TotalAmt);
+  } else if (entity === 'Payment') {
     const own = (inv) => Boolean(ctx?.refs?.fishtapeIdFor?.('invoices', inv));
     const foreign = [];
     let unapplied = toCents(o.TotalAmt);
@@ -332,7 +438,7 @@ export function linkMetaFromQbo(entity, object, ctx = {}, { pushed = null } = {}
     const excess = pushed && pushed.ownExcessCents != null ? pushed.ownExcessCents : linkInfo(ctx).meta.ownExcessCents;
     meta.ownExcessCents = Math.min(Math.max(0, meta.unappliedCents), Math.max(0, Math.round(Number(excess) || 0)));
   }
-  if (entity === 'Estimate' || entity === 'Invoice') meta.docNumber = str(o.DocNumber);
+  if (entity === 'Estimate' || entity === 'Invoice' || entity === 'CreditMemo') meta.docNumber = str(o.DocNumber);
   return meta;
 }
 

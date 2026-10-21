@@ -43,8 +43,9 @@ Answer the questions in plain words:
 Each Fishtape tax situation gets a QuickBooks tax code: "GST + Manitoba RST", "GST only" (a customer who quotes their RST number still pays GST), and the four no-tax reasons. Fishtape suggests codes by their rates and refuses a code whose rates differ from what Fishtape charges.
 
 - **No-tax reasons.** A document with no tax needs a reason: **zero-rated**, **exempt**, **out of scope** or **Indian Act relief**. Each lands on a different line of the GST return, so each has its own code. Pick the reason under **Why no tax?** on the estimate or invoice. A no-tax document without a reason waits.
-- **Purchase tax codes.** PST and RST you pay on supplier bills are not recoverable: Fishtape adds them to the cost of each line and claims only GST (or HST/QST). Your accountant confirms this.
+- **Purchase tax codes.** PST and RST you pay on things you use yourself (tools, supplies) are not recoverable: Fishtape adds them to the cost of the line and claims only GST (or HST/QST). RST a supplier charged on materials you resell to your customer goes to an **RST recoverable** account until the supplier credits it, never into job cost. Your accountant confirms both.
 - **Products and services, accounts, payment methods**: what lines without a price-book item use, where income and job costs go, where each payment method is deposited.
+- **Holdback, Deposits, Interest, RST recoverable.** Pick a QuickBooks product for **Holdback** (your accountant points it at a holdback receivable account), **Deposits** and **Overdue interest**, and an account for **RST recoverable**. An invoice with a holdback, a deposit invoice, an interest invoice or a bill with RST on resale materials waits until its product or account is picked.
 
 ## 4. Match your records
 
@@ -64,7 +65,20 @@ For each linked record where the two sides differ (a phone number, an address), 
 - **Approve and send**: invoices and payments made by an API key or the assistant wait for an office user before they reach your books.
 - **Doesn't match**: a daily check compares what's owing in Fishtape and QuickBooks and lists any difference.
 - **Look up in QuickBooks**: search QuickBooks customers, invoices and estimates from Fishtape and import one.
-- Credit memos and journal entries applied in QuickBooks show on the invoice as **Credited or paid in QuickBooks**. Change those in QuickBooks.
+- Credit memos and journal entries applied in QuickBooks show on the invoice as **Credited or paid in QuickBooks**. Change those in QuickBooks. A credit memo applied to one invoice comes into Fishtape as a credit note and its application instead, so it is never counted twice.
+
+## Holdback, deposits and credit notes
+
+- **Holdback**: the amount held back shows as a negative "Holdback retained" line on the invoice in QuickBooks, so the invoice total matches Fishtape's. The release invoice adds it back. Holdback a general contractor kept on its own stays only in Fishtape (the amount stays open in QuickBooks too).
+- **Credit notes** go to QuickBooks as credit memos (a bad-debt write-off carries "Bad debt write-off"). Applying a credit note to an invoice waits under **Conflicts** for you to **Approve and send** it.
+- **Not sent**: money paid on account, refunds and returned cheques. They wait under **Conflicts** until you enter them in QuickBooks and press **I've recorded it in QuickBooks**.
+- **Supplier credits** (a bill below zero) go to QuickBooks as vendor credits.
+
+## After you close a month
+
+When an owner closes the books in Fishtape (Books), a change made in QuickBooks to something in the closed month is not copied into Fishtape. It waits under **Conflicts**: **Reopen the period and accept QuickBooks** (reopen the month on Books first), or **Keep the difference noted** with a short note. Fishtape never writes its own copy over QuickBooks. Bills and payments that arrive late are kept and posted on the first open day. Hours exported to payroll are never changed in QuickBooks from Fishtape.
+
+A Manitoba invoice made in QuickBooks without RST and without the customer's exemption also waits there: add the customer's RST number on the job, then press **I've added it: check again**.
 
 ## Good to know
 

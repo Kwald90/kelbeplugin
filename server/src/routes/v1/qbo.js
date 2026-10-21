@@ -33,24 +33,28 @@ const LEASE_WAIT_MS = 10_000;
 const MAPPING_KINDS = ['item', 'taxCode', 'purchaseTaxCode', 'account', 'paymentMethod', 'depositTo', 'paidFrom', 'class', 'department', 'term', 'option'];
 const KEY_RE = /^[A-Za-z0-9+|._:-]{1,64}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ACCOUNT_KEYS = ['income.default', 'expense.default', 'jobCost.material', 'jobCost.subcontract', 'jobCost.equipment', 'jobCost.other', 'stripeClearing', 'stripeFees', 'stripePayoutBank'];
+const ACCOUNT_KEYS = ['income.default', 'expense.default', 'jobCost.material', 'jobCost.subcontract', 'jobCost.equipment', 'jobCost.other', 'stripeClearing', 'stripeFees', 'stripePayoutBank', 'rstRecoverable'];
 const METHOD_KEYS = ['cash', 'check', 'card', 'transfer', 'e-transfer', 'other'];
 const PAID_FROM_KEYS = ['card', 'cash', 'cheque', 'debit', 'transfer'];
-const ITEM_KEYS = ['material', 'labour', 'other', 'markup', 'travel', 'deposit'];
+const ITEM_KEYS = ['material', 'labour', 'other', 'markup', 'travel', 'deposit', 'holdback', 'interest'];
 const DATE = { type: 'date' };
 const OPTIONS = {
   syncFrom: DATE, stripeCutover: DATE, timeLockedThrough: DATE, taxFiledThrough: DATE,
   importCustomers: { enum: ['active', 'all'] }, numbering: { enum: ['fishtape', 'quickbooks'] }, jobsAsSubCustomers: { type: 'boolean' },
   items: { enum: ['on_use', 'all'] }, pushDrafts: { type: 'boolean' }, syncTime: { type: 'boolean' }, timeOwner: { enum: ['fishtape', 'quickbooks'] },
   pullJobCosts: { type: 'boolean' }, recordStripeFees: { type: 'boolean' }, recordStripePayouts: { type: 'boolean' }, writeMode: { enum: ['live', 'shadow'] },
+  // The sandbox confirmed a credit note's $0 apply payment (r1-get-paid.md 9.2): applications go without review.
+  creditApplyConfirmed: { type: 'boolean' },
 };
 const ACCOUNT_TYPES = {
   'income.default': ['Income'], 'expense.default': ['Expense', 'Other Expense', 'Cost of Goods Sold'], stripeClearing: ['Bank'], stripePayoutBank: ['Bank'], stripeFees: ['Expense'],
+  // RST charged on resale materials until the supplier credits it (9.3): an asset (or a payable it reduces).
+  rstRecoverable: ['Other Current Asset', 'Other Current Liability', 'Accounts Receivable'],
 };
 const WEB_PATH = {
   Invoice: 'invoice?txnId=', Estimate: 'estimate?txnId=', Payment: 'recvpayment?txnId=', Bill: 'bill?txnId=', Purchase: 'expense?txnId=',
   PurchaseOrder: 'purchaseorder?txnId=', TimeActivity: 'timeactivity?txnId=', Transfer: 'transfer?txnId=', Customer: 'customerdetail?nameId=',
-  Vendor: 'vendordetail?nameId=', Employee: 'employeedetail?nameId=', Item: 'items?itemId=',
+  Vendor: 'vendordetail?nameId=', Employee: 'employeedetail?nameId=', Item: 'items?itemId=', CreditMemo: 'creditmemo?txnId=', VendorCredit: 'vendorcredit?txnId=',
 };
 const REASON_TEXT = {
   dependency: 'Waiting for a record it needs.', employee_not_linked: 'The employee is not linked to QuickBooks.', mapping_missing: 'A QuickBooks mapping is missing or does not match.',
@@ -61,6 +65,9 @@ const REASON_TEXT = {
   filed_period: 'This changes a GST period already filed.', payroll_locked: 'Hours already paid.', origin: 'Waiting for an office user to approve it.',
   payout_items: 'The payout holds items to enter in QuickBooks.', wizard_differs: 'Differs from QuickBooks; choose which to keep.', name_taken: 'The name is taken in QuickBooks.',
   tax_mismatch: 'QuickBooks tax differs from Fishtape.', duplicate_number: 'QuickBooks already has this number. Renumber it.', open_balance: 'Customer has an open balance in QuickBooks.',
+  period_locked: 'Changed in QuickBooks in a period closed in Fishtape.', document_signed: 'Changed in QuickBooks after the customer signed it in Fishtape.',
+  exemption_missing: "Add the customer's RST number on the job.", holdback_invalid: 'The holdback from QuickBooks cannot stand as it is.', tax_off_invalid: 'A line from QuickBooks turns tax off where it may not.',
+  credit_apply: 'A credit note applied to an invoice; approve to send it.', on_account: 'Money on account; record it in QuickBooks.', refund: 'A refund; record it in QuickBooks.', reversal: 'A returned payment; record it in QuickBooks.',
 };
 
 /** QuickBooks failures as API errors (7.1). */
@@ -578,7 +585,7 @@ export default async function qboRoutes(app, { config, db, records }) {
     schema: {
       tags, summary: 'Resolve a conflict: fishtape, quickbooks, per field, restore, delete, unlink',
       params: uuidParams,
-      body: { type: 'object', additionalProperties: false, required: ['choice'], properties: { choice: { type: 'string', maxLength: 20 }, fields: { type: 'object' }, recordId: { type: 'string', maxLength: 128 } } },
+      body: { type: 'object', additionalProperties: false, required: ['choice'], properties: { choice: { type: 'string', maxLength: 20 }, fields: { type: 'object' }, recordId: { type: 'string', maxLength: 128 }, note: { type: 'string', maxLength: 500 } } },
       response: errorResponses,
     },
   }, wrap(async (req) => {

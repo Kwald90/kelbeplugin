@@ -25,7 +25,7 @@ import { linkMetaFromQbo } from './map/to-fishtape.js';
 import { fieldLabel } from './map/merge.js';
 import { wizardBaseline } from './map/baseline.js';
 import { matchCustomers, matchJobs, matchItems, matchEmployees, matchVendors, matchDocs, matchPayments } from './map/match.js';
-import { companyTaxKeys, NONE_REASON_KEYS, lineTaxKey, kindsUsed, needsTaxReason } from './map/tax.js';
+import { companyTaxKeys, NONE_REASON_KEYS, docTaxKeys, needsTaxReason } from './map/tax.js';
 
 export const CANDIDATE_KINDS = ['customers', 'jobs', 'items', 'employees', 'vendors', 'estimates', 'invoices', 'payments'];
 const COLLECTION_OF = { customers: 'clients', jobs: 'jobs', items: 'items', employees: 'employees', vendors: 'vendors', estimates: 'estimates', invoices: 'invoices', payments: 'payments' };
@@ -62,6 +62,9 @@ export async function requiredMappings(tx, conn, mappings) {
   }
   if (optionOf(mappings, 'syncTime', true) !== false && !['fishtape', 'quickbooks'].includes(optionOf(mappings, 'timeOwner', null))) need('option', 'timeOwner');
   for (const k of ['material', 'labour', 'other']) need('item', k);
+  // The holdback product, only for a company that takes holdback on its invoices (r1-get-paid.md 9.8).
+  const holdback = (await tx.query("SELECT 1 FROM invoices WHERE tenant_id = $1 AND deleted_at IS NULL AND ((data->'holdback'->>'cents')::numeric <> 0 OR (data->'holdback'->>'pct')::numeric > 0) LIMIT 1", [tx.tenantId])).rows.length > 0;
+  if (holdback) need('item', 'holdback');
   need('account', 'income.default');
   need('account', 'expense.default');
   const methods = (await tx.query("SELECT DISTINCT lower(data->>'method') AS m FROM payments WHERE tenant_id = $1 AND deleted_at IS NULL AND data->>'method' IS NOT NULL AND coalesce(data->>'source', '') <> 'quickbooks'", [tx.tenantId])).rows.map((r) => r.m);
@@ -369,7 +372,7 @@ export async function plan(deps, tenantId) {
       `SELECT c.kind, d.data FROM qbo_candidates c JOIN (SELECT id, data, 'invoices' AS k FROM invoices WHERE tenant_id = $1 UNION ALL SELECT id, data, 'estimates' FROM estimates WHERE tenant_id = $1) d ON d.id = c.fishtape_id AND d.k = c.kind
         WHERE c.tenant_id = $1 AND c.choice IN ('create_in_qbo', 'link')`, [tx.tenantId])).rows.map((r) => r.data);
     const codes = mappings.taxCode || {};
-    add('tax_unmapped', 'Documents using a tax situation with no QuickBooks code', docs.filter((d) => kindsUsed(d).some((k) => !codes[lineTaxKey(d, k)] && !lineTaxKey(d, k).startsWith('NONE') )).length);
+    add('tax_unmapped', 'Documents using a tax situation with no QuickBooks code', docs.filter((d) => docTaxKeys(d).some((k) => !codes[k] && !k.startsWith('NONE'))).length);
     add('tax_reason', 'Documents with no tax and no reason', docs.filter((d) => needsTaxReason(d)).length);
     add('employees_unlinked', 'Crew not linked to QuickBooks employees', (await tx.query("SELECT count(*)::int AS n FROM qbo_candidates WHERE tenant_id = $1 AND kind = 'employees' AND choice <> 'link'", [tx.tenantId])).rows[0].n);
     add('possible_duplicates', 'Possible duplicates to check', (await tx.query("SELECT count(*)::int AS n FROM qbo_candidates WHERE tenant_id = $1 AND 'possible_duplicate' = ANY(reasons) AND applied_at IS NULL", [tx.tenantId])).rows[0].n);

@@ -251,7 +251,7 @@ describe('payments', { skip }, () => {
     fake.company(T.realmId).objects.TaxRate.get(String(T.seed.taxRates.pst.Id)).RateValue = 7;
   });
 
-  test('an invoice settled in QuickBooks by a credit memo shows paid through the settlement payment', async () => {
+  test('a credit memo applied to one invoice in QuickBooks becomes a credit note and its application, never a settlement too', async () => {
     const T = await setupTenant('Settle');
     await create(T, 'clients', { id: 'c-s', name: 'Settle Client' });
     await create(T, 'invoices', invoice({ id: 'inv-s', number: 'INV-30', clientId: 'c-s' }));
@@ -261,13 +261,19 @@ describe('payments', { skip }, () => {
     const memo = fake.create(T.realmId, 'CreditMemo', { CustomerRef: { value: cust }, Line: [{ DetailType: 'SalesItemLineDetail', Amount: 1120, SalesItemLineDetail: { ItemRef: { value: T.seed.items.labour.Id }, Qty: 1, UnitPrice: 1120 } }], GlobalTaxCalculation: 'NotApplicable' });
     fake.create(T.realmId, 'Payment', { CustomerRef: { value: cust }, TotalAmt: 0, Line: [{ Amount: 1120, LinkedTxn: [{ TxnId: l.qbo_id, TxnType: 'Invoice' }] }, { Amount: 1120, LinkedTxn: [{ TxnId: memo.Id, TxnType: 'CreditMemo' }] }] });
     await pass(T);
+    // Release 1 (r1-get-paid.md 9.2): the memo is a Fishtape credit note, the $0 payment its application.
     const s = await rec(T, 'payments', 'credit-inv-s');
-    assert.ok(s && !s.deleted, 'settlement payment');
-    assert.equal(s.method, 'credit');
-    assert.equal(s.source, 'quickbooks');
-    assert.equal(s.amountCents, 112000);
+    assert.ok(!s || s.deleted, 'no settlement payment: the memo is counted once, as the application');
+    const note = (await t.superPool.query("SELECT id, data FROM invoices WHERE tenant_id = $1 AND data->>'kind' = 'credit' AND data->>'creditsInvoiceId' = 'inv-s' AND deleted_at IS NULL", [T.tenantId])).rows[0];
+    assert.ok(note, 'the credit note');
+    assert.equal((await link(T, 'invoices', note.id)).qbo_entity, 'CreditMemo');
+    const apps = (await t.superPool.query("SELECT id, data FROM payments WHERE tenant_id = $1 AND data->>'invoiceId' = 'inv-s' AND deleted_at IS NULL", [T.tenantId])).rows;
+    assert.equal(apps.length, 1, 'one payment on the invoice: the credit-note application, no cash');
+    assert.equal(apps[0].data.method, 'credit-note');
+    assert.equal(apps[0].data.creditNoteId, note.id);
+    assert.equal(apps[0].data.amountCents, 112000);
+    assert.equal((await link(T, 'payments', apps[0].id, 'apply')).owner, 'quickbooks');
     assert.equal((await rec(T, 'invoices', 'inv-s')).status, 'paid');
-    assert.equal((await t.superPool.query("SELECT count(*)::int AS n FROM payments WHERE tenant_id = $1 AND data->>'invoiceId' = 'inv-s' AND deleted_at IS NULL", [T.tenantId])).rows[0].n, 1, 'no cash payment for the credit application');
   });
 
   test('a QuickBooks delete of a Stripe payment opens a conflict and never reopens the invoice', async () => {
@@ -338,12 +344,13 @@ describe('voids and deletes', { skip }, () => {
 });
 
 describe('purchases and tax', { skip }, () => {
-  test('a Manitoba bill with GST and RST: GST-only code, RST in the line cost, the printed GST kept', async () => {
+  test('a Manitoba bill with GST and RST on an own-use line: GST-only code, RST in the line cost, the printed GST kept', async () => {
     const T = await setupTenant('Bill Tax');
     await create(T, 'vendors', { id: 'v-1', name: 'Westburne' });
+    // Own use (r1-get-paid.md 3.5): the RST is cost. Resale RST goes to account.rstRecoverable (qbo-r1.test.js).
     await create(T, 'bills', {
       id: 'b-1', kind: 'bill', vendorId: 'v-1', number: 'W-1001', date: TODAY, status: 'open', taxProvince: 'MB',
-      lines: [{ description: 'Wire', qty: 1, unitCents: 10000, amountCents: 10000, costType: 'material' }],
+      lines: [{ description: 'Wire', qty: 1, unitCents: 10000, amountCents: 10000, costType: 'material', taxUse: 'own-use' }],
       taxes: [{ id: 'GST', label: 'GST', cents: 500 }, { id: 'RST', label: 'RST', cents: 700 }], totalCents: 11200,
     });
     await pass(T);

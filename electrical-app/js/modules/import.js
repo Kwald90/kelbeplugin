@@ -369,7 +369,7 @@ function exportTab(ctx, host) {
   const { ui, store, auth } = ctx;
   const { h } = ui;
   const saved = store.settings().accounting?.qbo || {};
-  const opts = { ...lastMonth(), dateFormat: saved.dateFormat || 'DD/MM/YYYY', includeDrafts: false, depositTo: saved.depositTo || 'Undeposited Funds', items: { material: 'Materials', labour: 'Labour', other: 'Other', ...(saved.items || {}) }, codes: { ...(saved.codes || {}) } };
+  const opts = { ...lastMonth(), dateFormat: saved.dateFormat || 'DD/MM/YYYY', includeDrafts: false, depositTo: saved.depositTo || 'Undeposited Funds', items: { material: 'Materials', labour: 'Labour', other: 'Other', deposit: 'Deposits', interest: 'Interest', ...(saved.items || {}) }, codes: { ...(saved.codes || {}) } };
   const canInvoices = auth.can('invoices');
   const out = h('div', { class: 'stack' });
 
@@ -440,6 +440,9 @@ function exportTab(ctx, host) {
         field('Product/service for material lines', inp('material', 'text', opts.items), 'Must match an item in QuickBooks exactly'),
         field('Product/service for labour lines', inp('labour', 'text', opts.items)),
         field('Product/service for other lines', inp('other', 'text', opts.items)),
+        // Deposit and interest lines on their own products (r1-get-paid.md 9.2); the import refuses negative lines.
+        field('Product/service for deposit lines', inp('deposit', 'text', opts.items)),
+        field('Product/service for interest lines', inp('interest', 'text', opts.items)),
         h('label', { class: 'field check' }, h('input', { type: 'checkbox', onChange: (e) => { opts.includeDrafts = e.target.checked; drawCodes(); } }), h('span', null, 'Include draft invoices'))),
       codesHost,
       h('div', { class: 'row imp-export-buttons' },

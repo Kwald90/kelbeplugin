@@ -25,12 +25,13 @@ import { assertEpoch, FencedError } from './lease.js';
 import { recordLabel, errorText, writeLog, writeShadowLog, writesLastHour } from './log.js';
 import { QBO_RANK, upsertOutbox } from './hooks.js';
 import { fishtapeToCanon, qboToCanon, isVoidedInvoice, canonEqual, str, toCents } from './map/canon.js';
-import { canonToQbo, entityFor, purchaseSign } from './map/to-qbo.js';
+import { canonToQbo, entityFor, purchaseSign, isCreditNote } from './map/to-qbo.js';
 import { canonToFishtape, linkMetaFromQbo } from './map/to-fishtape.js';
 import { threeWayMerge, canonCollection, fieldsOf, conflictRows, MONEY_RECORD_KEYS, PUSH_ONLY_COLLECTIONS } from './map/merge.js';
-import { expectedTax, lineTaxKey, kindsUsed, taxMismatchMessage, compareTax, taxOverride, needsTaxReason } from './map/tax.js';
+import { expectedTax, docTaxKeys, taxMismatchMessage, compareTax, taxOverride, needsTaxReason, fallbackBillLineTaxUse } from './map/tax.js';
 import { requestIdFor } from './map/requestid.js';
-import { docTotals } from '../../../electrical-app/js/lib/money.js';
+import { docTotals, holdbackProblem } from '../../../electrical-app/js/lib/money.js';
+import { exemptionProblem, exemptionFor, lineTaxOffProblem } from '../../../electrical-app/js/lib/exemption.js';
 import { runPush, processRecord } from './push.js';
 import { runPull } from './pull.js';
 import { openConflict, closeConflict, openReview } from './conflicts.js';
@@ -152,7 +153,27 @@ function refsFor(run) {
     employeeEntity: (employeeId) => main('employees', employeeId)?.qbo_entity || 'Employee',
     poLineId: (poId, index) => { const l = main('purchaseOrders', poId); return l?.meta?.lineIds?.[String(index)] ?? null; },
     parentOf: (qboCustomerId) => run.index.parents.get(String(qboCustomerId)) || null,
+    vendor: (vendorId) => run.vendorFlags?.get(vendorId) || null,
   };
+}
+
+/**
+ * Resale or own use of a bill line (r1-get-paid.md 3.5, 9.3): rst.js billLineTaxUse, the one place
+ * the default lives (R1-E). Loaded once; tax.js fallbackBillLineTaxUse (the same stated default) is
+ * used only while rst.js is not there.
+ */
+let taxUseLoad = null;
+export function billLineTaxUseFn() {
+  taxUseLoad ||= import('../../../electrical-app/js/lib/rst.js')
+    .then((m) => (typeof m.billLineTaxUse === 'function' ? m.billLineTaxUse : fallbackBillLineTaxUse))
+    .catch(() => fallbackBillLineTaxUse);
+  return taxUseLoad;
+}
+
+/** Vendors' meSubtrade flags, for a subcontract line's resale or own use (3.5). */
+async function loadVendorFlags(tx) {
+  const { rows } = await tx.query("SELECT id, data->'meSubtrade' AS me FROM vendors WHERE tenant_id = $1 AND deleted_at IS NULL", [tx.tenantId]);
+  return new Map(rows.map((r) => [r.id, { meSubtrade: r.me === true }]));
 }
 
 /** Reference lists the mappers and the tax checks need (3.8): tax codes, rates, agencies, item types. */
@@ -185,7 +206,8 @@ export async function makeRun(deps, tenantId, o) {
     const settings = (await tx.query("SELECT data FROM settings WHERE tenant_id = $1 AND id = 'settings' AND deleted_at IS NULL", [tenantId])).rows[0]?.data || {};
     const reference = await loadReference(tx, conn.realm_hash);
     const brakeCount = await writesLastHour(tx);
-    return { conn, mappings, foreign, settings, reference, brakeCount };
+    const vendorFlags = await loadVendorFlags(tx);
+    return { conn, mappings, foreign, settings, reference, brakeCount, vendorFlags };
   });
   if (!loaded) return null;
   const { conn, mappings } = loaded;
@@ -199,6 +221,7 @@ export async function makeRun(deps, tenantId, o) {
     brake: { count: loaded.brakeCount, limit: brakeLimit(conn, deps.brakeLimit ?? BRAKE_LIMIT) },
     itemTypes: loaded.reference.itemTypes,
     settings: loaded.settings,
+    vendorFlags: loaded.vendorFlags,
     customerCache: new Map(),
   };
   run.client = deps.client || createQboClient({ db: deps.db, sealer: deps.sealer, config: deps.config, tenantId, purpose: o.purpose || 'sync', log: deps.log });
@@ -206,7 +229,7 @@ export async function makeRun(deps, tenantId, o) {
   const province = loaded.settings?.company?.province || conn.features?.province || null;
   run.ctx = {
     mappings, features: conn.features || {}, company: { province, zone: zoneOf(province) }, rates: loaded.reference.rates,
-    refs: refsFor(run), now: deps.now ? deps.now() : new Date(),
+    refs: refsFor(run), now: deps.now ? deps.now() : new Date(), taxUse: await billLineTaxUseFn(),
   };
   if (loaded.foreign || run.index.foreign) await realmMismatch(run);
   return run;
@@ -402,6 +425,22 @@ export const system = {
   },
 };
 
+/**
+ * A pulled change the records service refused because the record is locked in Fishtape
+ * (r1-get-paid.md 9.6): a closed period (409 period_locked), an exported pay run (payroll_locked) or
+ * a signed estimate (document_signed). { reason, message, through } for the review, else null.
+ */
+export function lockedReview(e) {
+  if (!(e instanceof ApiError)) return null;
+  const through = str(e.details?.through);
+  if (e.code === 'period_locked') {
+    return { reason: 'period_locked', through, message: `Changed in QuickBooks in a period closed in Fishtape${through ? ` (through ${through})` : ''}.` };
+  }
+  if (e.code === 'payroll_locked') return { reason: 'payroll_locked', through, message: 'Changed in QuickBooks, but these hours were already exported to payroll in Fishtape.' };
+  if (e.code === 'document_signed') return { reason: 'document_signed', through: null, message: 'Changed in QuickBooks, but the customer signed this in Fishtape. Make a revision in Fishtape, or keep the difference noted.' };
+  return null;
+}
+
 /** A Fishtape write refused by the plan or a module switch (5.7): blocked/module_off or paused/plan. */
 export function moduleRefusal(e) {
   if (e instanceof ApiError && e.code === 'module_turned_off') return 'module_off';
@@ -434,7 +473,7 @@ export async function linkFailure(run, link, row, e, { action = 'update', collec
       const rec = await loadRecord(tx, collection, recordId);
       if (rec && !rec.deleted && !(await getLink(tx, collection, recordId))) {
         await insertLink(tx, run, {
-          collection, record_id: recordId, qbo_entity: entityFor(collection, { kind: rec.data?.kind }), state: permanent ? permanent[0] : 'error',
+          collection, record_id: recordId, qbo_entity: entityFor(collection, rec.data || {}), state: permanent ? permanent[0] : 'error',
           reason: permanent ? permanent[1] : (kind === 'other' ? 'error' : kind), owner: ['jobs', 'purchaseOrders', 'timeEntries', 'stripePayouts'].includes(collection) ? 'fishtape' : 'both',
         });
         const l = await getLink(tx, collection, recordId);
@@ -547,18 +586,65 @@ export function linkMeta(entity, obj, ctx, opts = {}) {
   return meta;
 }
 
-/** The QuickBooks codes of a document's kinds (4.8). */
-export function codeIdsByKind(run, doc) {
+/** The QuickBooks codes of the tax keys a document's lines use (4.8; per line, r1-get-paid.md 9.1). */
+export function codeIdsOf(run, doc) {
   const codes = run.ctx.mappings.taxCode || {};
-  return Object.fromEntries(kindsUsed(doc).map((k) => [k, codes[lineTaxKey(doc, k)] || null]));
+  return [...new Set(docTaxKeys(doc).map((k) => codes[k]).filter(Boolean))];
 }
 
 /** The pre-push tax check (4.8): null when fine, else the message. */
 export function taxCheck(run, doc, docWord) {
   if (!run.ctx.features?.salesTax) return null;
   const date = doc.issueDate || String(doc.createdAt || '').slice(0, 10) || undefined;
-  const r = expectedTax(doc, codeIdsByKind(run, doc), run.ctx.rates, date);
+  const r = expectedTax(doc, run.ctx.mappings.taxCode || {}, run.ctx.rates, date);
   return r.ok ? null : taxMismatchMessage(r.mismatch, docWord);
+}
+
+/** A document's totals in QuickBooks' sign: a credit note's CreditMemo holds them positive (9.2). */
+export function qboSignedTotals(doc) {
+  const t = docTotals(doc);
+  if (!isCreditNote(doc)) return t;
+  return { ...t, totalCents: -t.totalCents, taxCents: -t.taxCents, taxes: t.taxes.map((x) => ({ ...x, cents: -x.cents, baseCents: -x.baseCents })) };
+}
+
+/**
+ * Generic items a document's special lines need (r1-get-paid.md 9.2, 9.8): item.holdback for a
+ * holdback or a release line, item.deposit (mapped explicitly: its old fallback, `other`, is an
+ * income account) for deposit lines, item.interest for interest lines. Null when all are mapped.
+ */
+export function specialItemsMissing(run, doc) {
+  const items = run.ctx.mappings.item || {};
+  const has = (k) => items[k] != null && items[k] !== '';
+  const types = new Set((doc?.lines || []).map((l) => l?.lineType).filter(Boolean));
+  if (docTotals(doc || {}).holdbackCents) types.add('holdback');
+  const label = { holdback: 'Holdback', deposit: 'Deposits', interest: 'Interest' };
+  const missing = ['holdback', 'deposit', 'interest'].filter((t) => types.has(t) && !has(t));
+  return missing.length ? `Pick the QuickBooks product for ${missing.map((m) => label[m]).join(' and ')} in QuickBooks settings.` : null;
+}
+
+/** RST on resale bill lines needs account.rstRecoverable (9.3). Null when fine, else the message. */
+export function rstAccountMissing(run, L) {
+  if (!(Number(L?.extra?.resaleRstCents) || 0)) return null;
+  return run.ctx.mappings.account?.rstRecoverable ? null : 'Pick the QuickBooks account for RST on materials you resell (RST recoverable) in QuickBooks settings.';
+}
+
+/**
+ * The effective payroll lock date (9.6): the later of the mapping option timeLockedThrough and the
+ * company's "payroll exported through" (settings.closing.payrollThrough, written by payroll runs).
+ */
+export function timeLockedThrough(run) {
+  const a = str(optionOf(run.ctx.mappings, 'timeLockedThrough', null));
+  const b = str(run.settings?.closing?.payrollThrough);
+  if (a && b) return a > b ? a : b;
+  return a || b || null;
+}
+
+/** True when a time entry is in an exported payroll run: payroll-locked for updates and deletes (2.6, 9.6). */
+export async function inPayrollRun(run, entryId) {
+  if (!entryId) return false;
+  return run.db.withTenant({ tenantId: run.tenantId }, async (tx) => (await tx.query(
+    `SELECT 1 FROM payroll_runs WHERE tenant_id = $1 AND deleted_at IS NULL AND data->>'status' = 'exported'
+        AND (data->'entryIds' ? $2 OR data->'lateEntryIds' ? $2) LIMIT 1`, [tx.tenantId, String(entryId)])).rows.length > 0);
 }
 
 /**
@@ -569,10 +655,10 @@ export async function taxAfterWrite(run, link, collection, record, obj, { reques
   if (!run.ctx.features?.salesTax || !obj?.TxnTaxDetail) return { obj, outcome: 'equal' };
   let totals, codeIds, date, purchase = false, entity;
   if (DOCS.has(collection)) {
-    totals = docTotals(record);
-    codeIds = Object.values(codeIdsByKind(run, record));
+    totals = qboSignedTotals(record);
+    codeIds = codeIdsOf(run, record);
     date = record.issueDate || undefined;
-    entity = collection === 'invoices' ? 'Invoice' : 'Estimate';
+    entity = collection === 'invoices' ? (isCreditNote(record) ? 'CreditMemo' : 'Invoice') : 'Estimate';
   } else if (collection === 'bills' && L) {
     // Purchases: QuickBooks must hold the recoverable tax printed on the bill (4.8). A supplier refund
     // is a Credit purchase with positive amounts (billBody): its tax is compared and sent the same way.
@@ -752,6 +838,11 @@ export async function reconcile(run, link, o = {}) {
     toRemote = [];
   }
 
+  // A superseded estimate goes Closed in QuickBooks, even one already Accepted there (r1-get-paid.md 9.5):
+  // both count as accepted when compared, so the status is sent by name.
+  if (collection === 'estimates' && direction === 'push' && L.extra?.superseded && !['Closed', 'Converted'].includes(obj?.TxnStatus)
+    && !toRemote.includes('status') && link.owner !== 'quickbooks' && link.owner !== 'none') toRemote = [...toRemote, 'status'];
+
   // Holds before anything is sent (4.7, 4.8, 4.11), unless a person approved (force).
   if (toRemote.length && !o.force) {
     const hold = await remoteHolds(run, link, collection, record.data, L, R, B, toRemote, obj);
@@ -849,6 +940,16 @@ export async function reconcile(run, link, o = {}) {
         patchedVersion = v.version;
         countWrite(run);
       } catch (e) {
+        // A QuickBooks change to a record Fishtape locked (a closed period, an exported pay run, a
+        // signed document) goes to a person (r1-get-paid.md 9.6); Fishtape's copy is never pushed over it.
+        const locked = lockedReview(e);
+        if (locked) {
+          const l = await updateLink(tx, run, link.id, { state: 'needs_review', reason: locked.reason, meta: { ...meta, lockedAt: new Date().toISOString(), ...(locked.through ? { lockedThrough: locked.through } : {}) } });
+          await openReview(tx, run, l, { reason: locked.reason, label, message: locked.message });
+          await finishOutbox(tx, run, row);
+          await writeLog(tx, { direction, outcome: 'warning', action: 'review', collection, recordId: link.record_id, qboEntity: link.qbo_entity, label, message: locked.message, errorCode: locked.reason });
+          return { state: 'needs_review' };
+        }
         const why = moduleRefusal(e);
         if (!why) throw e;
         await updateLink(tx, run, link.id, { state: 'blocked', reason: why === 'plan' ? 'module_off' : why });
@@ -898,11 +999,57 @@ export async function reconcile(run, link, o = {}) {
     return { state };
   });
   if (final.planDrop) await setPaused(run.db, run.tenantId, true, 'plan').catch(() => {});
+  // A pulled invoice change that leaves RST off without the exemption, or an invalid holdback or
+  // taxOff, goes to a person (r1-get-paid.md 9.7; system actors are not blocked by the write rules).
+  if (direction === 'pull' && final.state === 'synced' && collection === 'invoices' && patchedVersion != null) {
+    const review = await reviewPulledInvoice(run, link.id, link.record_id, label);
+    if (review) return 'needs_review';
+  }
   // The tax check compares like with like: not while Fishtape holds lines QuickBooks has not got yet.
   if (direction === 'pull' && final.state === 'synced' && DOCS.has(collection) && link.owner !== 'quickbooks' && !toRemote.length && !deferred.length) {
     return pullTaxCheck(run, link, written, label);
   }
   return final.state;
+}
+
+/**
+ * Why a pulled invoice needs a person (r1-get-paid.md 9.7, 2.9), or null: RST left off in Manitoba
+ * without the basis's evidence (the job's exemption counts, as it would for a new document), a
+ * holdback that cannot stand (money.js holdbackProblem), or a line turning tax off where it may not
+ * (exemption.js lineTaxOffProblem). Pure.
+ */
+export function pulledInvoiceProblem(doc, { job = null } = {}) {
+  if (!doc || doc.status === 'void' || doc.status === 'draft') return null;
+  const withJob = doc.taxExemptBasis ? doc : { ...doc, ...exemptionFor({ job, province: doc.taxProvince }) };
+  const ex = exemptionProblem(withJob, { collection: 'invoices' });
+  if (ex?.level === 'block') return { reason: 'exemption_missing', message: "RST is not charged on this invoice. Add the customer's RST number on the job.", missing: ex.missing };
+  const hb = holdbackProblem(doc);
+  if (hb) return { reason: 'holdback_invalid', message: hb.message };
+  const off = lineTaxOffProblem(doc);
+  if (off) return { reason: 'tax_off_invalid', message: off.message };
+  return null;
+}
+
+/** The invoice and its job, for pulledInvoiceProblem. */
+export async function invoiceWithJob(tx, invoiceId) {
+  const rec = await loadRecord(tx, 'invoices', invoiceId);
+  if (!rec || rec.deleted) return { rec: null, job: null };
+  const job = rec.data.jobId ? await loadRecord(tx, 'jobs', rec.data.jobId) : null;
+  return { rec, job: job && !job.deleted ? job.data : null };
+}
+
+/** After a pull wrote an invoice: open the 9.7 review when it needs one. Returns the problem or null. */
+export async function reviewPulledInvoice(run, linkId, invoiceId, label) {
+  if (run.shadow) return null;
+  return txWrite(run, async (tx) => {
+    const { rec, job } = await invoiceWithJob(tx, invoiceId);
+    const problem = rec ? pulledInvoiceProblem(rec.data, { job }) : null;
+    if (!problem) return null;
+    const l = await updateLink(tx, run, linkId, { state: 'needs_review', reason: problem.reason });
+    await openReview(tx, run, l, { reason: problem.reason, label, message: problem.message });
+    await writeLog(tx, { direction: 'pull', outcome: 'warning', action: 'review', collection: 'invoices', recordId: invoiceId, qboEntity: l?.qbo_entity, label, message: problem.message, errorCode: problem.reason });
+    return problem;
+  });
 }
 
 /**
@@ -915,7 +1062,7 @@ async function pullTaxCheck(run, link, obj, label) {
   if (!run.ctx.features?.salesTax || !obj?.TxnTaxDetail || obj.GlobalTaxCalculation === 'TaxInclusive' || isVoidedInvoice(obj)) return 'synced';
   const rec = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => loadRecord(tx, link.collection, link.record_id));
   if (!rec || rec.deleted || rec.data.status === 'void') return 'synced';
-  const totals = docTotals(rec.data);
+  const totals = qboSignedTotals(rec.data);
   const cmp = compareTax(totals, obj.TxnTaxDetail, run.ctx.rates, rec.data.issueDate || undefined);
   const fresh = await run.db.withTenant({ tenantId: run.tenantId }, (tx) => getLinkById(tx, link.id));
   const meta = { ...(fresh?.meta || {}) };
@@ -935,7 +1082,7 @@ async function pullTaxCheck(run, link, obj, label) {
     });
     return 'needs_review';
   }
-  const hasPayments = link.collection === 'invoices' && toCents(obj.Balance) < toCents(obj.TotalAmt);
+  const hasPayments = link.collection === 'invoices' && toCents(obj.Balance ?? obj.RemainingCredit) < toCents(obj.TotalAmt);
   if (hasPayments || meta.taxDeltaCents === delta || run.shadow) {
     if (!run.shadow && meta.taxDeltaCents !== delta) await txWrite(run, (tx) => updateLink(tx, run, link.id, { meta: { ...meta, taxDeltaCents: delta } }));
     return 'synced';
@@ -972,14 +1119,30 @@ async function remoteHolds(run, link, collection, doc, L, R, B, toRemote, obj) {
     }
   }
   if (collection === 'timeEntries') {
-    const locked = str(optionOf(run.ctx.mappings, 'timeLockedThrough', null));
-    if (locked && [L.date, B?.date].some((d) => d && d <= locked)) return { state: 'needs_review', reason: 'payroll_locked', message: 'Hours already paid; change them in QuickBooks Payroll if needed.' };
+    // The later of the option and Fishtape's payroll runs (9.6); an entry in an exported run is locked whatever its date.
+    const locked = timeLockedThrough(run);
+    if ((locked && [L.date, B?.date].some((d) => d && d <= locked)) || await inPayrollRun(run, doc?.id || link.record_id)) {
+      return { state: 'needs_review', reason: 'payroll_locked', message: 'Hours already paid; change them in QuickBooks Payroll if needed.' };
+    }
+  }
+  if (DOCS.has(collection) && toRemote.includes('lines')) {
+    const missing = specialItemsMissing(run, doc);
+    if (missing) return { state: 'blocked', reason: 'mapping_missing', message: missing };
+  }
+  if (collection === 'bills' && toRemote.includes('lines')) {
+    const missing = rstAccountMissing(run, L);
+    if (missing) return { state: 'blocked', reason: 'mapping_missing', message: missing };
   }
   if (collection === 'invoices') {
-    const hasPayments = R.extra?.balanceCents != null && R.extra.totalCents != null && R.extra.balanceCents < R.extra.totalCents;
+    // Applied in QuickBooks: an invoice's balance below its total; a credit memo's remaining credit below its own (9.2).
+    const hasPayments = R.extra?.balanceCents != null && R.extra.totalCents != null && Math.abs(R.extra.balanceCents) < Math.abs(R.extra.totalCents);
     if (hasPayments && (toRemote.includes('clientRef') || toRemote.includes('jobRef'))) {
       return { conflict: 'fields', reason: 'customer_change', message: "QuickBooks can't move an invoice with payments to another customer.", fields: [{ field: 'clientRef', label: 'Customer', base: 'Same customer', fishtape: 'Another customer', quickbooks: "QuickBooks can't move an invoice with payments to another customer" }] };
     }
+  }
+  if (collection === 'bills' && link.role === 'main' && toRemote.includes('lines') && !toRemote.includes('kind') && entityFor('bills', L) !== link.qbo_entity) {
+    // A bill turned into a supplier credit (or back) is a different QuickBooks object (r1-get-paid.md 9.2).
+    return { conflict: 'fields', reason: 'kind_change', message: 'A bill and a supplier credit are different records in QuickBooks; change it there.', fields: [{ field: 'lines', label: 'Lines', base: '', fishtape: entityFor('bills', L) === 'VendorCredit' ? 'A supplier credit' : 'A bill', quickbooks: `${link.qbo_entity === 'VendorCredit' ? 'A supplier credit' : 'A bill'} (change it in QuickBooks)` }] };
   }
   if (collection === 'bills' && toRemote.includes('kind')) {
     // A bill turned into a receipt (or back) is a different QuickBooks object (4.10): changed there.
@@ -1032,13 +1195,16 @@ async function voidedRemote(run, link, record, obj, { row, label, B }) {
 
 /** A Fishtape void (or delete) of a linked invoice (4.7): QuickBooks void only while nothing is applied. */
 export async function voidLocalInvoice(run, link, record, obj, { row, label, deleting = false }) {
-  const unpaid = toCents(obj.Balance) === toCents(obj.TotalAmt);
+  // A credit memo's open amount is its remaining credit; one not applied anywhere is deleted, since
+  // the API voids invoices and payments (VERIFY whether CreditMemo takes operation=void, 9.2).
+  const memo = link.qbo_entity === 'CreditMemo';
+  const unpaid = toCents(obj.Balance ?? obj.RemainingCredit ?? obj.TotalAmt) === toCents(obj.TotalAmt);
   if (!unpaid) {
     if (run.shadow) return 'conflict';
     await txWrite(run, async (tx) => {
       if (deleting) await system.restore(tx, run, 'invoices', link.record_id);
       await updateLink(tx, run, link.id, { state: 'conflict' });
-      await openConflict(tx, run, link, { kind: 'deleted', label, reason: 'has_payments', fields: [{ field: 'status', label: 'Status', base: 'Open', fishtape: deleting ? 'Deleted' : 'Void', quickbooks: 'This invoice has payments in QuickBooks. Remove them there first, or keep it open.' }] });
+      await openConflict(tx, run, link, { kind: 'deleted', label, reason: 'has_payments', fields: [{ field: 'status', label: 'Status', base: 'Open', fishtape: deleting ? 'Deleted' : 'Void', quickbooks: memo ? 'This credit memo is applied in QuickBooks. Remove the application there first, or keep it.' : 'This invoice has payments in QuickBooks. Remove them there first, or keep it open.' }] });
       await finishOutbox(tx, run, row);
       await writeLog(tx, { direction: 'push', outcome: 'conflict', action: 'void', collection: 'invoices', recordId: link.record_id, qboEntity: 'Invoice', label, message: 'Has payments in QuickBooks; not voided' });
     });
@@ -1049,7 +1215,9 @@ export async function voidLocalInvoice(run, link, record, obj, { row, label, del
   checkBrake(run);
   let voided;
   try {
-    voided = await run.client.voidTxn('Invoice', { Id: obj.Id, SyncToken: obj.SyncToken }, { requestId: requestIdFor([run.tenantId, link.id, 'void', record.version, obj.SyncToken]) });
+    voided = memo
+      ? await run.client.remove('CreditMemo', { Id: obj.Id, SyncToken: obj.SyncToken }, { requestId: requestIdFor([run.tenantId, link.id, 'delete', record.version, obj.SyncToken]) })
+      : await run.client.voidTxn('Invoice', { Id: obj.Id, SyncToken: obj.SyncToken }, { requestId: requestIdFor([run.tenantId, link.id, 'void', record.version, obj.SyncToken]) });
     countWrite(run);
   } catch (e) {
     if (e instanceof QboError && !e.retry && passStopFor(e) == null) {
@@ -1067,13 +1235,13 @@ export async function voidLocalInvoice(run, link, record, obj, { row, label, del
   }
   await txWrite(run, async (tx) => {
     await updateLink(tx, run, link.id, {
-      state: deleting ? 'deleted_local' : 'synced', reason: null, sync_token: voided?.SyncToken ?? obj.SyncToken, qbo_updated_at: lastUpdated(voided),
+      state: deleting || memo ? 'deleted_local' : 'synced', reason: null, sync_token: memo ? link.sync_token : (voided?.SyncToken ?? obj.SyncToken), qbo_updated_at: memo ? link.qbo_updated_at : lastUpdated(voided),
       snapshot: { ...(link.snapshot || {}), status: 'void' }, fishtape_version: record.version,
     });
     await finishOutbox(tx, run, row);
-    await writeLog(tx, { direction: 'push', outcome: 'ok', action: 'void', collection: 'invoices', recordId: link.record_id, qboEntity: 'Invoice', label, message: 'Voided in QuickBooks' });
+    await writeLog(tx, { direction: 'push', outcome: 'ok', action: memo ? 'delete' : 'void', collection: 'invoices', recordId: link.record_id, qboEntity: link.qbo_entity, label, message: memo ? 'Credit memo deleted in QuickBooks' : 'Voided in QuickBooks' });
   });
-  return deleting ? 'deleted_local' : 'synced';
+  return deleting || memo ? 'deleted_local' : 'synced';
 }
 
 /** A pulled document Fishtape cannot represent exactly: QuickBooks is the truth until a person decides. */

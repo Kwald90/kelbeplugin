@@ -384,7 +384,7 @@ describe('purchases and time', { skip }, () => {
     const T = await setupTenant('Refund');
     await create(T, 'vendors', { id: 'v-7', name: 'Refund Supply' });
     await create(T, 'bills', { id: 'b-7', kind: 'receipt', vendorId: 'v-7', date: TODAY, status: 'paid', paidWith: 'card', taxProvince: 'MB', number: 'RF-1',
-      lines: [{ description: 'Returned breakers', qty: 1, unitCents: -10000, amountCents: -10000, costType: 'material' }],
+      lines: [{ description: 'Returned breakers', qty: 1, unitCents: -10000, amountCents: -10000, costType: 'material', taxUse: 'own-use' }],
       taxes: [{ id: 'GST', label: 'GST', cents: -500 }, { id: 'RST', label: 'RST', cents: -700 }], totalCents: -11200 });
     await pass(T);
     const l = await link(T, 'bills', 'b-7');
@@ -458,11 +458,11 @@ describe('pulls that stop part way', { skip }, () => {
     await pass(T);
     assert.equal((await link(T, 'clients', 'c-big-54')).state, 'synced');
     await t.superPool.query("UPDATE qbo_connections SET cdc_cursor = now() - interval '35 days', last_pull_at = '2020-01-01T00:00:00Z' WHERE tenant_id = $1", [T.tenantId]);
-    // The pass "runs out of time" after its tenth query: phase 1 (9 entities) and the first 50 ids of phase 2.
+    // The pass "runs out of time" after its eleventh query: phase 1 (10 entities, CreditMemo included) and the first 50 ids of phase 2.
     const queries = [];
     const client = createQboClient({ db: t.db, sealer, config, tenantId: T.tenantId, purpose: 'sync' });
     const query = client.query.bind(client);
-    let stopAfter = 10;
+    let stopAfter = 11;
     client.query = async (text, o) => { const r = await query(text, o); queries.push(String(text)); if (queries.length === stopAfter) markShutdown(true); return r; };
     try { await pass(T, { deps: { client } }); } finally { markShutdown(false); }
     let c = await connRow(T);

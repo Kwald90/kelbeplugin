@@ -88,7 +88,8 @@ export function createQboHandlers(deps = {}) {
   const ready = (db) => {
     config ??= readConfig();
     sealer ??= createSealer(config.secretsMasterKey);
-    records ??= createRecords({ validator: createValidator(), config });
+    // With db, refused writes of the QuickBooks pull are listed in sync_rejections (r1-get-paid.md 2.6).
+    records ??= createRecords({ validator: createValidator(), config, db });
     return { db, sealer, config, records, log: deps.log, brakeLimit: deps.brakeLimit, client: deps.client };
   };
   const workerId = deps.workerId || 'qbo-worker';

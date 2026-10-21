@@ -546,10 +546,11 @@ function mappingsView(ctx, host, { wizard = false, onReady = null } = {}) {
     const sections = [
       section('Tax codes', 'Each Fishtape tax situation goes to the QuickBooks code with the same rates. A code whose rates differ (for example an old 8% PST rate) is refused.',
         taxKeys.map((key) => select('taxCode', key, codeOpts(false), { label: Q.taxKeyLabel(key, prov), fit: (code) => Q.taxCodeFit(key, code, { province: prov, date }) }))),
-      section('Purchase tax codes', 'PST and RST you pay on purchases are added to the cost; only GST/HST/QST is claimed.',
+      section('Purchase tax codes', 'PST and RST you pay on what you use yourself are added to the cost; RST on materials you resell goes to RST recoverable; only GST/HST/QST is claimed.',
         purchaseKeys.map((key) => select('purchaseTaxCode', key, codeOpts(true), { label: Q.purchaseKeyLabel(key, prov), fit: (code) => Q.purchaseCodeFit(key, code) }))),
       section('Products and services', 'Lines without a linked price-book item use these QuickBooks items.',
-        Q.ITEM_KEYS.map((k) => select('item', k.key, itemOpts, { label: k.label }))),
+        Q.ITEM_KEYS.map((k) => select('item', k.key, itemOpts, { label: k.label })),
+        h('ul', { class: 'muted qbo-notes' }, Q.FEATURE_NOTES.map((n) => h('li', null, n)))),
       section('Accounts', null,
         Q.ACCOUNT_KEYS.map((k) => select('account', k.key, accountOpts(k.types), { label: k.label })),
         Q.PAID_FROM_KEYS.map((k) => select('paidFrom', k.key, accountOpts(['Bank', 'Credit Card']), { label: `Receipts paid by ${k.label.toLowerCase()} come from` }))),
@@ -977,8 +978,10 @@ function renderConflict(root, ctx, id) {
   root.append(frame(ctx, 'conflicts', { title: 'Decide', subtitle: h('a', { href: '#/quickbooks/conflicts' }, '← All conflicts') }, host));
   let alive = true;
   const picks = {};
+  // The note of a noted difference outlives a redraw of the conflict (r1-get-paid.md 9.6).
+  let noteText = '';
   const resolve = async (body, btn) => {
-    const r = await write(ctx, () => qboApi.resolve(id, body), { ok: 'Decided', btn });
+    const r = await write(ctx, () => Q.resolveConflict(id, body), { ok: 'Decided', btn });
     if (r !== undefined) nav('#/quickbooks/conflicts');
   };
   // Choices that delete, void or unlink in the books are confirmed first.
@@ -1015,7 +1018,19 @@ function renderConflict(root, ctx, id) {
         h('p', { style: { margin: 0 } }, c.message || Q.REVIEW_REASON[c.reason] || CONFLICT_KIND[c.kind] || ''),
         (c.fields || []).length ? h('div', { class: 'qbo-conflict-grid' }, gridHead(),
           c.fields.map((f) => [h('strong', null, f.label || f.field), h('span', { class: 'muted', dataset: { label: 'Before' } }, fmtVal(f.base)), h('span', { dataset: { label: 'Fishtape' } }, fmtVal(f.fishtape)), h('span', { dataset: { label: 'QuickBooks' } }, fmtVal(f.quickbooks))])) : null));
-      if (c.kind === 'review') {
+      const r1 = c.kind === 'review' ? Q.reviewChoices(c.reason) : null;
+      if (r1) {
+        // Release 1 reviews (r1-get-paid.md 9.2, 9.6, 9.7): their own choices; a noted difference carries a note.
+        const note = r1.choices.some((x) => x.note) ? h('textarea', { rows: 2, maxlength: 500, 'aria-label': 'Note', placeholder: 'Why the difference stays (kept with the record)', value: noteText, onInput: (e) => { noteText = e.target.value; }, onChange: (e) => { noteText = e.target.value; } }) : null;
+        if (r1.hint) host.append(h('p', { class: 'muted', dataset: { r1Hint: '1' }, style: { margin: 0 } }, r1.hint));
+        if (note) host.append(h('label', { class: 'field' }, h('span', null, 'Note'), note));
+        for (const x of r1.choices) {
+          const body = () => { const text = (noteText || note?.value || '').trim(); return { choice: x.choice, ...(x.note && text ? { note: text.slice(0, 500) } : {}) }; };
+          actions.push(x.choice === 'unlink'
+            ? ui.button(x.label, { variant: 'ghost danger', onClick: (e) => confirmThen(e, `Unlink ${c.label || 'this record'} from QuickBooks? Both records are kept; nothing is sent for it until it is linked again or sent as new.`, 'Unlink', body()) })
+            : ui.button(x.label, { variant: x.primary ? 'primary' : 'secondary', onClick: (e) => resolve(body(), e.currentTarget) }));
+        }
+      } else if (c.kind === 'review') {
         if (c.reason === 'name_taken') actions.push(ui.button('Link to the QuickBooks customer', { variant: 'primary', onClick: (e) => resolve({ choice: 'link' }, e.currentTarget) }), ui.button('Create with a new name', { onClick: (e) => resolve({ choice: 'create' }, e.currentTarget) }));
         else {
           const approve = { origin: 'Approve and send', filed_period: 'Send it anyway', payroll_locked: 'Send it anyway', payout_items: 'I entered these in QuickBooks' }[c.reason] || "Use Fishtape's version";

@@ -9,6 +9,7 @@
 // 30 seconds, is never written to localStorage, IndexedDB or the store, and badges hide offline.
 // The word "QBO" never reaches a screen; screens say "QuickBooks" (Intuit's branding rules).
 import { qboApi, QBO_COLLECTIONS } from './qbo-api.js';
+import { request } from '../session.js';
 import { lineTaxIds, taxKey } from './qbo-export.js';
 import { KINDS, keepsServerPaid, taxRoundingCents } from './money.js';
 
@@ -77,7 +78,62 @@ export const REVIEW_REASON = {
   payout_items: 'This Stripe payout has items Fishtape cannot book',
   wizard_differs: 'Fishtape and QuickBooks differ; decide which is right',
   name_taken: 'The name is already used in QuickBooks',
+  // Release 1 (r1-get-paid.md 9.2, 9.6, 9.7)
+  period_locked: 'Changed in QuickBooks in a period closed in Fishtape',
+  document_signed: 'Changed in QuickBooks after the customer signed it in Fishtape',
+  exemption_missing: "RST is not charged: add the customer's RST number on the job",
+  holdback_invalid: "The holdback from QuickBooks can't stand as it is",
+  tax_off_invalid: 'A line from QuickBooks turns tax off where it may not',
+  credit_apply: 'A credit note applied to an invoice; approve to send it',
+  on_account: 'Money on account: record it in QuickBooks',
+  refund: 'A refund: record it in QuickBooks',
+  reversal: 'A returned payment: record it in QuickBooks',
 };
+
+/**
+ * The choices of a Release 1 review (r1-get-paid.md 9.2, 9.6, 9.7), or null for the older reviews.
+ * { hint, choices: [{ choice, label, primary?, note? }] }. A change to a locked record is accepted
+ * after reopening the period, or kept as a noted difference (never pushed over QuickBooks); payments
+ * R1 never sends are recorded in QuickBooks; a pulled invoice is fixed in Fishtape and checked again.
+ */
+export function reviewChoices(reason) {
+  return reviewChoicesOf(reason);
+}
+
+/**
+ * Resolve a conflict (7.7). qboApi.resolve sends choice, fields and recordId; a noted difference
+ * (r1-get-paid.md 9.6) also carries its note, which goes out here until qbo-api.js forwards it.
+ */
+export function resolveConflict(id, body = {}, { api = qboApi, post = request } = {}) {
+  if (body.choice === 'note' && body.note) return post('POST', `/api/v1/qbo/conflicts/${encodeURIComponent(id)}/resolve`, { choice: 'note', note: String(body.note).slice(0, 500) });
+  return api.resolve(id, body);
+}
+
+function reviewChoicesOf(reason) {
+  const unlink = { choice: 'unlink', label: 'Unlink' };
+  switch (reason) {
+    case 'period_locked':
+      return {
+        hint: 'QuickBooks is the book of record. Reopen the period on Books, then accept QuickBooks; or keep Fishtape as it is and note why.',
+        choices: [{ choice: 'quickbooks', label: 'Reopen the period and accept QuickBooks', primary: true }, { choice: 'note', label: 'Keep the difference noted', note: true }],
+      };
+    case 'document_signed':
+      return { hint: 'A signed document keeps what was signed. Make a revision in Fishtape, or note why the two differ.', choices: [{ choice: 'note', label: 'Keep the difference noted', note: true, primary: true }, unlink] };
+    case 'exemption_missing':
+      return { hint: "Add the customer's exemption number on the job (or this invoice), then check again.", choices: [{ choice: 'fishtape', label: "I've added it: check again", primary: true }, unlink] };
+    case 'holdback_invalid':
+    case 'tax_off_invalid':
+      return { hint: 'Fix the invoice in QuickBooks or in Fishtape, then check again.', choices: [{ choice: 'fishtape', label: 'Check again', primary: true }, unlink] };
+    case 'credit_apply':
+      return { hint: 'QuickBooks records the application as a $0 payment linking the invoice and the credit memo.', choices: [{ choice: 'fishtape', label: 'Approve and send', primary: true }, { choice: 'quickbooks', label: "Don't send it" }] };
+    case 'on_account':
+    case 'refund':
+    case 'reversal':
+      return { hint: 'Fishtape does not send this to QuickBooks. Enter it there, then mark it recorded.', choices: [{ choice: 'quickbooks', label: "I've recorded it in QuickBooks", primary: true }] };
+    default:
+      return null;
+  }
+}
 
 /** Why a link failed (state `error`). Unknown reasons fall back to the server's message. */
 export const ERROR_REASON = {
@@ -861,7 +917,19 @@ export function sideSummary(side, money = (c) => String(c)) {
 
 export const ITEM_KEYS = [
   { key: 'material', label: 'Materials' }, { key: 'labour', label: 'Labour' }, { key: 'other', label: 'Other' },
-  { key: 'markup', label: 'Markup' }, { key: 'travel', label: 'Travel' }, { key: 'deposit', label: 'Deposits' },
+  { key: 'markup', label: 'Markup' }, { key: 'travel', label: 'Travel' },
+  // Release 1 (r1-get-paid.md 9.2, 9.8): deposit invoices wait until Deposits is picked (its old
+  // fallback, Other, is an income account); holdback and interest lines go on their own products.
+  { key: 'deposit', label: 'Deposits (needed before deposit invoices are sent)' },
+  { key: 'holdback', label: 'Holdback (point it at a Holdback receivable account)' },
+  { key: 'interest', label: 'Overdue interest' },
+];
+/** What Release 1 sends that QuickBooks shows differently (the mappings screen's notes, 9.2). */
+export const FEATURE_NOTES = [
+  'Credit notes go to QuickBooks as credit memos; a bad-debt write-off carries the memo "Bad debt write-off".',
+  'A credit note applied to an invoice goes as a $0 payment, after you approve it.',
+  'Supplier credits (bills below zero) go as vendor credits.',
+  'Money on account, refunds and returned payments are not sent: record them in QuickBooks.',
 ];
 export const ACCOUNT_KEYS = [
   { key: 'income.default', label: 'Income for new products and services', types: ['Income'] },
@@ -873,6 +941,8 @@ export const ACCOUNT_KEYS = [
   { key: 'stripeClearing', label: 'Stripe clearing (a bank account named "Stripe")', types: ['Bank'] },
   { key: 'stripeFees', label: 'Stripe fees', types: ['Expense'] },
   { key: 'stripePayoutBank', label: 'Bank that Stripe pays out to', types: ['Bank'] },
+  // RST charged on materials TG resells, held until the supplier credits it (r1-get-paid.md 9.3).
+  { key: 'rstRecoverable', label: 'RST recoverable from suppliers (RST charged on materials you resell)', types: ['Other Current Asset', 'Other Current Liability', 'Accounts Receivable'] },
 ];
 export const METHOD_KEYS = [
   { key: 'cash', label: 'Cash' }, { key: 'check', label: 'Cheque' }, { key: 'card', label: 'Card' },
