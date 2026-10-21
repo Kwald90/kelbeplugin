@@ -10,6 +10,7 @@ commands, how to check it worked, and what to record. Policies (the "why" and "h
 | [deploy-production.md](deploy-production.md) | releasing a `v*` tag to app.fishtapehq.com |
 | [rollback.md](rollback.md) | a deploy went wrong and the automatic rollback didn't cover it |
 | [restore-from-backup.md](restore-from-backup.md) | testing a backup, recovering lost or corrupted data, or rebuilding a host |
+| [offsite-backups.md](offsite-backups.md) | setting up the offsite bucket, the quarterly offsite drill from your computer, or an HQ backup alert |
 | [incident-response.md](incident-response.md) | anything that might be an outage, a breach or a compromise |
 | [rotate-secrets.md](rotate-secrets.md) | scheduled rotation, a leaked secret, or someone leaving |
 | [onboard-tenant.md](onboard-tenant.md) | a new electrical company signs up |
@@ -24,5 +25,6 @@ Conventions:
   API ports 3410/3411. Production: checkout `/srv/fishtape/repo`, API ports 3420/3421.
   `<env>` is `staging` or `production`.
 - `dc` below means `sudo docker compose` run from `deploy/<env>/` in that checkout.
-- Every deploy, backup and restore test writes a JSON line under `/var/lib/fishtape-<env>/`.
+- Every deploy, backup and restore test writes a JSON line under `/var/lib/fishtape-<env>/`
+  (offsite drills, run on your computer, are recorded through HQ > Developer health).
   Incidents and reviews go in the encrypted evidence store, never in git (this repo is public).

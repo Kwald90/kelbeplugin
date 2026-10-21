@@ -17,6 +17,7 @@ const PAGES = [
   { id: 'mail', title: 'Mail', icon: 'mail', load: () => import('./pages/mail.js') },
   { id: 'promotions', title: 'Promotions', icon: 'play', load: () => import('./pages/promotions.js') },
   { id: 'flags', title: 'Feature flags', icon: 'sliders', load: () => import('./pages/flags.js') },
+  { id: 'rules', title: 'Rules', icon: 'ruler', load: () => import('./pages/rules.js') },
   { id: 'finance', title: 'Finance', icon: 'briefcase', load: () => import('./pages/finance.js') },
   { id: 'invoices', title: 'Invoices', icon: 'receipt', load: () => import('./pages/invoices.js') },
   { id: 'users', title: 'Users', icon: 'id-card', load: () => import('./pages/users.js') },

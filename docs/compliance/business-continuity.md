@@ -28,6 +28,11 @@ DNS, keys and secrets, and the key person.
 | Staging | 24 hours | 2 business days |
 
 Pre-deploy backups mean a bad release can usually be undone with far less loss than the RPO.
+What is lost is server data only: changes still waiting on phones and iPads (offline field
+tickets, time, counts) are pushed when the devices reach the restored server. If the host itself is
+lost, the restore comes from the offsite copy, which the quarterly offsite drill proves
+([docs/runbooks/offsite-backups.md](../runbooks/offsite-backups.md)); Kelvin accepts this recovery
+point when the offsite bucket is set up (contract `docs/releases/r1-get-paid.md` section 15, item 9).
 
 The PWA is offline-first. Field tools (time clock, drawings, calculators, bending, wire runs, today's
 jobs) keep working on devices during an outage, and queued changes sync when the API is back.

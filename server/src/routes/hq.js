@@ -4,10 +4,11 @@
 // This file: who am I, overview, feature flags, HQ activity and audit-chain checks.
 // Companies are in hq-tenants.js, health in hq-health.js, compliance in hq-compliance.js,
 // billing in hq-billing.js and sales leads in hq-leads.js.
+import { appendFileSync, chmodSync } from 'node:fs';
 import { ApiError, notFound } from '../errors.js';
 import { appendAudit, requestFacts } from '../services/audit.js';
 import { estimateMrrCents } from '../services/billing.js';
-import { devHealth, healthLevel } from '../services/hq-health.js';
+import { RESTORE_LINE_MAX, devHealth, healthLevel, normalizeRestoreResult, parseRestoreTests, tailFile } from '../services/hq-health.js';
 import { createMetrics } from '../services/hq-metrics.js';
 import { hqAudit, hqSettings, iso, requireHqAdmin, uuidParams } from '../services/hq-common.js';
 
@@ -108,6 +109,53 @@ export default async function hqRoutes(app, { config, db }) {
       });
       return { key, tenantId, enabled: req.body.enabled };
     });
+  });
+
+  // ---- restore drills ------------------------------------------------------------
+
+  // The offsite drill runs on Kelvin's PC (deploy/<env>/offsite-drill.sh), never on the server, so
+  // its JSON line reaches the server here and is appended to RESTORE_TESTS_FILE, where HQ health
+  // and the hourly backup alerts read it (docs/runbooks/offsite-backups.md).
+  app.post('/api/hq/restore-tests', {
+    config: { auth: 'hq' },
+    schema: {
+      tags: ['hq'], summary: 'Record a restore-drill result (the JSON line offsite-drill.sh wrote; audited)',
+      body: { type: 'object', required: ['line'], additionalProperties: false, properties: { line: { type: 'string', minLength: 2, maxLength: RESTORE_LINE_MAX } } },
+    },
+  }, async (req, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!config.restoreTestsFile) throw new ApiError(409, 'not_configured', 'RESTORE_TESTS_FILE is not set on this server, so drill results cannot be kept.');
+    // The last non-empty line, so a whole restore-tests.jsonl can be pasted.
+    const text = req.body.line.trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1) || '';
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { throw new ApiError(400, 'validation_failed', 'That is not a JSON line from the drill.'); }
+    const result = normalizeRestoreResult(parsed);
+    if (!result) throw new ApiError(400, 'validation_failed', 'The line needs at least "ts" (a time) and "ok" (true or false).');
+    const ts = Date.parse(result.ts);
+    if (ts > Date.now() + 86_400_000 || ts < Date.now() - 400 * 86_400_000) throw new ApiError(400, 'validation_failed', 'The drill time is in the future or more than 400 days ago.');
+    if (result.environment && result.environment !== config.appEnv) {
+      throw new ApiError(422, 'wrong_environment', `This drill was for ${result.environment}; record it on that environment's HQ (this is ${config.appEnv}).`);
+    }
+    let existing = [];
+    try { existing = parseRestoreTests(tailFile(config.restoreTestsFile, 256 * 1024)); } catch (e) {
+      if (e?.code !== 'ENOENT') throw new ApiError(500, 'internal', 'Could not read RESTORE_TESTS_FILE.');
+    }
+    if (existing.some((r) => r.ts === result.ts && r.source === result.source && r.file === result.file && r.ok === result.ok)) {
+      return { recorded: false, duplicate: true, result };
+    }
+    const line = { ...result, recordedBy: String(req.principal.actor?.label || 'HQ').slice(0, 200), recordedAt: new Date().toISOString() };
+    try {
+      appendFileSync(config.restoreTestsFile, `${JSON.stringify(line)}\n`, { mode: 0o600 });
+      chmodSync(config.restoreTestsFile, 0o600);
+    } catch {
+      throw new ApiError(500, 'internal', 'Could not write RESTORE_TESTS_FILE (check the drills mount is writable by the HQ API).');
+    }
+    await db.withHq((c) => hqAudit(c, req, null, {
+      action: 'hq.restore_test_recorded', collection: 'restore_tests', recordId: result.file || result.ts,
+      summary: `Restore ${result.source === 'offsite' ? 'drill (offsite)' : 'test'} ${result.ok ? 'passed' : 'FAILED'} on ${result.ts.slice(0, 10)}${result.secretsChecked ? ', secrets checked' : ''}`,
+      meta: { ok: result.ok, source: result.source, host: result.host, environment: result.environment, file: result.file, secretsChecked: result.secretsChecked, secretsOk: result.secretsOk },
+    }));
+    return { recorded: true, result: line };
   });
 
   // ---- HQ activity and audit chains -------------------------------------------

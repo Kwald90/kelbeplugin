@@ -6,8 +6,8 @@ production). The server can't read them: every restore needs the private key fro
 manager or the encrypted USB stick. Targets: production RPO 24 hours, RTO 8 hours
 ([business-continuity.md](../compliance/business-continuity.md)).
 
-Three cases: A, prove a backup restores (quarterly); B, put data back on a running host; C, rebuild
-a lost host.
+Three cases: A, prove a backup restores (quarterly, on the server copy and on the offsite copy);
+B, put data back on a running host; C, rebuild a lost host.
 
 ## A. Restore test (quarterly, and after any change to backup.sh)
 
@@ -28,8 +28,28 @@ scp <admin>@<host>:/var/backups/fishtape-<env>/daily/<file>.dump.age* .
 It restores into a throwaway container with no network and checks tables, migrations, tenants, the
 newest audit row, and that every tenant table still has ENABLE and FORCE row-level security.
 `PASS` is the result; the JSON line goes to `restore-tests.jsonl` on the server (or `--log`) and
-into the monthly evidence bundle. A `FAIL` is a SEV3 incident: no backup made the same way can be
-trusted until the cause is found.
+into the monthly evidence bundle. On the server it also goes to
+`/var/lib/fishtape-<env>/drills/restore-tests.jsonl`, which HQ > Developer health reads. A `FAIL`
+is a SEV3 incident: no backup made the same way can be trusted until the cause is found.
+
+### A2. Offsite drill (quarterly, from your computer)
+
+The test above proves the copy on the server. The offsite drill proves the copy that survives
+losing the server: it fetches the newest offsite daily with a read-only key, checks its checksum,
+restores it with `restore-test.sh`, and with `--verify-secrets` checks that encrypted values
+(integration secrets, QuickBooks tokens, MFA secrets) decrypt with `SECRETS_MASTER_KEY`. It never
+runs on the server. Steps, keys and exit codes: [offsite-backups.md](offsite-backups.md) section 5.
+
+```bash
+{ cat fishtape-<env>-backup.key; printf 'SECRETS_MASTER_KEY=%s\n' "<from the password manager>"; } \
+  | deploy/<env>/offsite-drill.sh --rclone-config ~/.config/rclone/drill.conf \
+      --remote drill-ro:<bucket>/<env> --identity - --verify-secrets
+```
+
+Record its JSON line on HQ > Developer health ("Record a drill result"). HQ emails a reminder when
+the last passing test is over 92 days old, and in production until an offsite drill has passed.
+An exit code 5 (secrets did not decrypt) is a SEV2: the backup can't be fully used with the key you
+hold.
 
 ## B. Restore onto a running host (data loss or corruption)
 
@@ -88,9 +108,13 @@ curl -fsS http://127.0.0.1:3420/api/readyz && curl -fsS http://127.0.0.1:3421/ap
    same `SECRETS_MASTER_KEY`), `backup.conf`, and `backup-recipients.txt`.
 3. Bring up only Postgres (`sudo docker compose up -d postgres`); its first start runs
    `bootstrap.sql` with the role passwords from `.env`.
-4. Fetch the newest backup from offsite (`rclone copy` or `rsync` from the target in `backup.conf`),
-   check its `.sha256`, then follow B from step 3 (drop the empty `fishtape` database created by
+4. Fetch the newest backup from offsite with the read-only drill key, on your computer
+   (`rclone --config ~/.config/rclone/drill.conf lsf drill-ro:<bucket>/<env>/daily/ | sort | tail -1`,
+   then `rclone copy` that file and its `.sha256`), check it (`sha256sum -c <file>.sha256`), copy both
+   to the new host (`scp`), then follow B from step 3 (drop the empty `fishtape` database created by
    bootstrap first: `DROP DATABASE fishtape`), and in step 4 use a large margin for `change_seq`.
+   The quarterly offsite drill ([offsite-backups.md](offsite-backups.md)) rehearses exactly this
+   fetch and restore.
 5. Deploy the release that was running (`update.sh --tag <tag>` / `--sha <commit>`), point DNS at
    the new host, run `check-host.sh` and `check-exposure.sh`.
 6. Rotate anything the old host held if it may be in someone else's hands

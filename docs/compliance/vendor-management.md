@@ -53,7 +53,7 @@ or data is exposed if the vendor fails), medium (a feature stops), low.
 | Docker Hub | Base images (`node`, `postgres`), pinned by digest | None | Public | Not applicable | Medium (supply chain) | Official image provenance; Dependabot updates | Required if an account is used | 2027-06 |
 | npm registry | Server dependencies via lockfile | None | Public | Not applicable | Medium (supply chain) | osv-scanner, `npm audit`, dependency review | Required if an account is used | 2027-06 |
 | Cloudflare (cdnjs) | pdf.js loaded by browsers at a pinned path | End users' IP addresses and request metadata | Internal | To confirm | Low | None; plan is to self-host pdf.js and remove this vendor | No account | When self-hosted |
-| Offsite backup storage (optional, required for production) | Encrypted backup copies | Encrypted dumps only | Restricted (encrypted) | Must be in Canada | High | SOC 2 or ISO 27001, object lock or retention feature, DPA | Required | When chosen |
+| Offsite backup storage (required for production): **provider to choose**; recommended an S3-compatible bucket, default AWS S3 `ca-central-1` (see "Offsite backup storage" below) | Encrypted backup copies (`daily/`, `weekly/`, `predeploy/`) | `age`-encrypted dumps only; the bucket never sees a key that can decrypt them | Restricted (encrypted) | Must be in Canada: record the region | High | SOC 2 or ISO 27001, object lock (compliance mode) and versioning, DPA, data-location statement | Required (root account with a hardware key; no root access keys) | When chosen, then 2027-06 |
 | Uptime and heartbeat monitor (optional) | External checks, dead-man's switch | Public URLs, ping times | Public | To confirm | Medium | Terms | Required | When chosen |
 | Password manager | Holds all credentials and keys | Restricted (encrypted on the client side) | Restricted | To confirm | High | Security whitepaper, independent audit report | Required (hardware key preferred) | 2027-06 |
 | DNS registrar and DNS host | `fishtapehq.com`, `truecollarbuilt.com` | DNS records | Public | To confirm | High | Registrar lock, account recovery options | Required | 2027-06 |
@@ -116,6 +116,27 @@ can disconnect it from either side at any time.
 - **Offboarding Intuit**: disconnect every tenant (revokes their grants), delete the app's keys in
   the portal, delete the app.
 
+### Offsite backup storage
+
+Placeholder until Kelvin chooses (contract `docs/releases/r1-get-paid.md` question 17 and section
+15; setup in [docs/runbooks/offsite-backups.md](../runbooks/offsite-backups.md)). Fill in when
+chosen:
+
+| | |
+| --- | --- |
+| Provider | to choose (default AWS S3; alternatives Wasabi or another provider with a Canadian region) |
+| Region | to choose (default `ca-central-1`, Montréal; `ca-west-1`, Calgary) |
+| Bucket(s) | to record (production; staging separate or under its own prefix) |
+| Object lock | compliance mode, 35 days default retention; versioning on |
+| Lifecycle | `daily/` 35 days, `weekly/` 400 days, `predeploy/` 30 days; noncurrent versions 1 day |
+| Keys | server key (write and read, no delete) on the server only; drill key (read-only) on Kelvin's computer only; both in the password manager; rotated yearly |
+| Evidence to collect | the provider's SOC 2 or ISO 27001 report, DPA, data-location statement, a screenshot of the bucket's lock, versioning and lifecycle settings at each June review |
+| Exit | the files are already encrypted: download what is needed with the drill key, delete the bucket, revoke both keys |
+
+The provider sees only `age`-encrypted files and their checksums, never `SECRETS_MASTER_KEY` or an
+`age` private key, so a breach at the provider exposes no readable tenant data (threat model
+TM-R1-04).
+
 ## Tenant-supplied keys: shared responsibility
 
 Each tenant signs up with Stripe, Twilio, Resend, Meta or Anthropic itself and enters its own keys in
@@ -149,3 +170,4 @@ until the onboarding checks for a host are done, or Kelvin records a risk accept
 | --- | --- | --- | --- |
 | 2026-10-19 | Kelvin Waldner | First version | Drafted with an AI agent; adopted when Kelvin merges it. |
 | 2026-10-20 | Kelvin Waldner | Intuit added | QuickBooks Online sync; hosting regions to confirm before production keys. |
+| 2026-10-20 | Kelvin Waldner | Offsite storage placeholder | The offsite backup bucket: recommended setup, keys and what to record once the provider is chosen (Release 1, section 5). |

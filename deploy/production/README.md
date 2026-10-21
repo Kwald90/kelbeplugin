@@ -127,6 +127,9 @@ sudo nano backup.conf          # OFFSITE_* target (in Canada, another provider) 
 ```
 
 Backups run without the offsite target and heartbeat, but report `degraded` until both are set.
+The offsite bucket (S3-compatible, Canadian region, object lock, a write-but-not-delete key for the
+server and a read-only key for the drill) is set up with `docs/runbooks/offsite-backups.md`; HQ
+health and the hourly `hq_backup_alerts` email say "offsite backup not configured" until it is.
 
 ### 4. nginx, ACME bootstrap
 
@@ -226,6 +229,13 @@ The backup runs nightly at 02:47 (staging's at 03:17). Then prove a restore from
 ssh -i ~/.ssh/kelvindale_vps ubuntu@208.113.210.97 \
   'sudo /srv/fishtape/repo/deploy/production/restore-test.sh --identity -' < fishtape-production-backup.key
 ```
+
+Once the offsite copy works, prove that one too, from your own computer (never this box), every
+quarter: `deploy/production/offsite-drill.sh --remote <read-only remote>:<bucket>/production
+--identity - --verify-secrets`, then record its JSON line on HQ > Developer health ("Record a drill
+result"). Steps: `docs/runbooks/offsite-backups.md`. Restore tests and drills are kept in
+`/var/lib/fishtape-production/drills/restore-tests.jsonl` (owned by uid 1000; `update.sh` creates
+the folder; hq-api appends uploads, the worker reads it).
 
 ### 9. Exposure checks
 

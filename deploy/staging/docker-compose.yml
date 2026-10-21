@@ -40,6 +40,9 @@ x-server: &server
     FISHTAPE_HQ_PASSWORD: ""
     # Written by backup.sh / host-status.sh, read by /api/hq/health.
     BACKUP_STATUS_FILE: /run/fishtape/status/last-backup.json
+    # Restore tests and offsite drill results (docs/runbooks/offsite-backups.md): hq-api appends
+    # drills recorded on the HQ health page, the worker reads it for the hourly backup alerts.
+    RESTORE_TESTS_FILE: /var/lib/fishtape/drills/restore-tests.jsonl
     DEPLOY_LOG_FILE: /run/fishtape/status/recent-deploys.jsonl
     COMPLIANCE_CONTROLS_FILE: /app/compliance/controls.yaml
     # Public certificate chain copied by host-status.sh (never the key), for HQ health.
@@ -161,6 +164,12 @@ services:
     environment:
       <<: *server-environment
       HQ_DATABASE_URL: postgres://fishtape_hq:${FISHTAPE_HQ_PASSWORD:?set in .env}@postgres:5432/fishtape
+    # The shared volumes plus the drill results, which only hq-api writes (HQ health upload).
+    volumes:
+      - /var/lib/fishtape-staging/status:/run/fishtape/status:ro
+      - /var/lib/fishtape-staging/mail:/var/lib/fishtape/mail
+      - /var/lib/fishtape-staging/media:/var/lib/fishtape/media
+      - /var/lib/fishtape-staging/drills:/var/lib/fishtape/drills
     ports:
       - "127.0.0.1:3411:3410"
     cpus: 1
@@ -170,6 +179,12 @@ services:
   worker:
     <<: *server
     command: ["node", "src/worker.js"]
+    # The shared volumes plus the drill results, read-only (the hourly backup alerts read them).
+    volumes:
+      - /var/lib/fishtape-staging/status:/run/fishtape/status:ro
+      - /var/lib/fishtape-staging/mail:/var/lib/fishtape/mail
+      - /var/lib/fishtape-staging/media:/var/lib/fishtape/media
+      - /var/lib/fishtape-staging/drills:/var/lib/fishtape/drills:ro
     # A deploy stops the worker with SIGTERM: QuickBooks passes then end at their next step (up to a
     # few seconds) and a long one is never killed half way, which would keep its job "running".
     stop_grace_period: 5m

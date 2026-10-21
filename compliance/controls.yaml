@@ -16,7 +16,7 @@
 version: 1
 framework: "AICPA Trust Services Criteria (2017, revised points of focus 2022)"
 owner: Kelvin Waldner
-last_reviewed: "2026-10-19"
+last_reviewed: "2026-10-20"
 
 scope:
   system: "Fishtape, a multi-tenant SaaS for Canadian electrical contractors: the PWA, the iOS wrapper, the API and worker, PostgreSQL, the HQ console, the status endpoint, the staging and production hosts, and the GitHub repository with its CI/CD."
@@ -733,6 +733,54 @@ controls:
       - electrical-app/tests/units.test.mjs
       - docs/BUILD-PLAN.md
 
+  # ---------------------------------------------------------------- processing integrity of money records (PI1, CC6.1)
+  # Release 1 (docs/releases/r1-get-paid.md); threat model TM-R1-01 to TM-R1-03.
+
+  - id: PRI-01
+    title: Closed periods and payroll exports cannot be changed
+    description: "Each company has a books closing date and payroll runs. The server checks every write path (REST, sync, restore and the QuickBooks pull) before writing: records dated on or before the closing date are read-only and changed by reversal, late creates are posted to the first open day and flagged, hours in an exported payroll run are locked by entry, refused writes are recorded and shown, and moving the lock needs an owner or admin with recent MFA and a reason."
+    tsc: [PI1.2, PI1.3, CC6.1, CC8.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Evidence bundle: ci-runs.json (server/test/period-lock.test.js, payroll-runs.test.js)"
+      - "audit_events: closing.books, closing.payroll"
+      - "period_locks history per company"
+    status: planned
+    notes: "Being built in Release 1 (workstream R1-A)."
+    links:
+      - docs/releases/r1-get-paid.md
+      - docs/security/threat-model.md
+
+  - id: PRI-02
+    title: Signed tickets and documents cannot be altered
+    description: "A signature keeps a snapshot of what was signed and its SHA-256 digest, recomputed by the server; a mismatch is stored unverified and the office told. Signed content is frozen and changed only by a revision; signatures are append-only and voided only with a reason by an office user in a full session, audited."
+    tsc: [PI1.3, PI1.5, CC6.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Evidence bundle: ci-runs.json (electrical-app/tests/signing.test.mjs, server/test/r1-collections.test.js)"
+      - "audit_events: signature.void"
+    status: planned
+    notes: "Being built in Release 1 (workstreams R1-A and R1-D). Counsel to confirm the evidence value for GCs (contract question 19)."
+    links:
+      - docs/releases/r1-get-paid.md
+      - docs/security/threat-model.md
+
+  - id: PRI-03
+    title: Field roles never receive money
+    description: "Electricians and apprentices (and foremen unless the company allows it) never receive prices, costs, rates, limits or totals: the server strips every money field of the new collections and every Cents key inside signature snapshots, reports need the invoices permission, the field receiving route returns quantities only, and notifications to field roles carry no amounts."
+    tsc: [C1.1, CC6.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "Evidence bundle: ci-runs.json (server/test/leaks.test.js, isolation.test.js)"
+    status: planned
+    notes: "Being built in Release 1 (workstream R1-A, MONEY_FIELDS)."
+    links:
+      - docs/releases/r1-get-paid.md
+      - docs/security/threat-model.md
+
   # ---------------------------------------------------------------- operations and monitoring (CC6.6, CC7.1, CC7.2, A1.1)
 
   - id: OPS-01
@@ -904,23 +952,24 @@ controls:
 
   - id: BCK-02
     title: Offsite backup copy in Canada
-    description: "Each production backup is copied, already encrypted, to storage in Canada with a different provider, using credentials that cannot delete, with provider-side retention or object lock of at least 8 weeks."
+    description: "Each production backup is copied, already encrypted, to an S3-compatible bucket in Canada with a different provider (daily, weekly and pre-deploy prefixes), using a key that can write but not delete, with versioning, object lock (compliance mode, 35 days) and lifecycle rules (dailies 35 days, weeklies 400 days, pre-deploy 30 days). last-backup.json records the offsite result, the target by provider and remote name only, and the last good offsite copy."
     tsc: [A1.2, CC9.1]
     owner: Kelvin Waldner
     frequency: daily
     evidence:
-      - "Evidence bundle: last-backup-production.json (offsite field ok)"
-      - "Offsite retention settings (screenshot at the vendor review)"
+      - "Evidence bundle: last-backup-production.json (offsite ok, lastOffsiteOkAt)"
+      - "Offsite bucket lock, versioning and lifecycle settings (screenshot at the vendor review)"
     status: planned
-    notes: "backup.sh supports rsync and rclone targets; no provider chosen yet. On production, backup.sh reports degraded and check-host.sh fails while no offsite target or heartbeat is set."
+    notes: "backup.sh supports rclone and rsync targets and records offsite status; the setup is written (docs/runbooks/offsite-backups.md) but no provider is chosen yet. On production, backup.sh reports degraded, HQ health shows 'offsite backup not configured' and hq_backup_alerts emails HQ while no offsite target is set."
     links:
       - deploy/production/backup.conf.example
+      - docs/runbooks/offsite-backups.md
       - docs/compliance/backup-retention.md
       - docs/compliance/vendor-management.md
 
   - id: BCK-03
     title: Backup monitoring
-    description: "last-backup.json feeds the HQ health page, backup-log.jsonl keeps every run, a heartbeat ping (or its fail URL) goes to the dead-man's switch, and check-host.sh fails if the last production backup is not ok or is older than 26 hours."
+    description: "last-backup.json feeds the HQ health page (backup, offsite copy, restore drill), backup-log.jsonl keeps every run, a heartbeat ping (or its fail URL) goes to the dead-man's switch, check-host.sh fails if the last production backup is not ok or is older than 26 hours, and the hourly hq_backup_alerts job emails HQ once a day per problem: backup stale or failed, offsite failed, stale or not configured (production), restore drill overdue (92 days), no offsite drill yet."
     tsc: [A1.2, CC7.2]
     owner: Kelvin Waldner
     frequency: daily
@@ -928,11 +977,14 @@ controls:
       - "Evidence bundle: last-backup-<env>.json"
       - "Evidence bundle: backup-log-<env>.jsonl"
       - "Heartbeat monitor history"
+      - "email_outbox rows with template hq_backup_alerts:* (HQ > Settings > email outbox)"
     status: partial
-    notes: "Status files and log are implemented; heartbeat monitor and HQ page are not set up."
+    notes: "Status files, log, HQ health lines and alerts are built (server/test/backup-alerts.test.js, hq-unit.test.js); the heartbeat monitor and HQ_NOTIFY_EMAIL on each server are not set up."
     links:
       - deploy/staging/backup.sh
       - deploy/production/check-host.sh
+      - server/src/services/backup-alerts.js
+      - docs/runbooks/offsite-backups.md
       - docs/compliance/backup-retention.md
 
   - id: BCK-04
@@ -944,12 +996,30 @@ controls:
     evidence:
       - "Evidence bundle: restore-tests-<env>.jsonl"
       - "Saved output when the test is run on Kelvin's computer"
+      - "HQ > Developer health: last restore test and drill (RESTORE_TESTS_FILE)"
     status: partial
-    notes: "Script implemented; first tests due October 2026."
+    notes: "Script implemented; first tests due October 2026. Once an offsite copy exists, the quarterly test is the offsite drill (BCK-08)."
     links:
       - deploy/staging/restore-test.sh
       - docs/runbooks/restore-from-backup.md
       - docs/compliance/backup-retention.md
+
+  - id: BCK-08
+    title: Quarterly offsite restore drill with a secrets check
+    description: "Every quarter, from Kelvin's computer and never the server, offsite-drill.sh fetches the newest offsite daily with a read-only bucket key, checks its checksum, restores it into a scratch Postgres with restore-test.sh, and checks a sample of every kind of encrypted value decrypts with SECRETS_MASTER_KEY (verify-restore.mjs). The age key and master key are passed only on stdin and through pipes. The result line is recorded on HQ health (audited) and alerts fire when the last pass is over 92 days old."
+    tsc: [A1.3, CC9.1, C1.1]
+    owner: Kelvin Waldner
+    frequency: quarterly
+    evidence:
+      - "The drill's JSON line (source offsite, host off-box) in drills/restore-tests.jsonl and the evidence bundle"
+      - "audit_events: hq.restore_test_recorded"
+    status: planned
+    notes: "Scripts, HQ upload and alerts are built (server/test/deploy-scripts.test.js); the first drill needs the offsite bucket (BCK-02)."
+    links:
+      - deploy/production/offsite-drill.sh
+      - server/scripts/verify-restore.mjs
+      - docs/runbooks/offsite-backups.md
+      - docs/security/threat-model.md
 
   - id: BCK-05
     title: Continuity plan and annual DR rebuild drill
@@ -1097,7 +1167,7 @@ controls:
 
   - id: DAT-04
     title: Tenant offboarding, export and deletion
-    description: "When a tenant leaves, Fishtape exports its data through an encrypted or expiring link, deletes its records and secrets, keeps audit events for 1 year unless on legal hold, and tells the tenant that backups age out within about 8 weeks."
+    description: "When a tenant leaves, Fishtape exports its data through an encrypted or expiring link, deletes its records and secrets, keeps audit events for 1 year unless on legal hold, and tells the tenant that backups age out within about 8 weeks on the server and about 13 months offsite."
     tsc: [C1.2, P4.3, P5.1]
     owner: Kelvin Waldner
     frequency: on-event
@@ -1197,3 +1267,18 @@ controls:
     links:
       - docs/compliance/privacy.md
       - docs/compliance/vendor-management.md
+
+  - id: PRV-07
+    title: Location, photos and signatures on field tickets
+    description: "A signed field ticket or document keeps the signer's name, signature, the device time and, when the company leaves it on, one location fix taken at signing (never continuous). The signer is told before signing and can get a copy; crews are told; the records are office-only, never deleted (voided with a reason), not readable by the AI assistant, and kept with the tenant's business records."
+    tsc: [P1.1, P2.1, P3.1, P4.1]
+    owner: Kelvin Waldner
+    frequency: continuous
+    evidence:
+      - "docs/compliance/privacy.md (field tickets section) and its git history"
+      - "The signing-screen notice text (screenshot at the annual privacy review)"
+    status: planned
+    notes: "Being built in Release 1 (workstream R1-D). Counsel to confirm the notice wording before TG uses it (contract question 15)."
+    links:
+      - docs/compliance/privacy.md
+      - docs/releases/r1-get-paid.md

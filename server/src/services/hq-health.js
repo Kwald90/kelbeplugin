@@ -61,24 +61,170 @@ export function parseDeployLog(text, limit = 10) {
   return out.reverse().slice(0, limit);
 }
 
-/** BACKUP_STATUS_FILE: JSON from the backup script. Adds its age and a staleness flag. */
+/** A backup (or its offsite copy) older than this many hours is stale: one nightly run plus slack. */
+export const BACKUP_STALE_HOURS = 26;
+/** A restore drill older than this many days is overdue (quarterly, plus two days). */
+export const DRILL_STALE_DAYS = 92;
+
+/** Hours since a time in ms, one decimal, or null. */
+const hoursSince = (t, now) => (Number.isFinite(t) ? Math.round(((now - t) / 3_600_000) * 10) / 10 : null);
+const isoOrNull = (v) => {
+  const t = typeof v === 'string' && v ? Date.parse(v) : NaN;
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+};
+
+/**
+ * BACKUP_STATUS_FILE: JSON from the backup script. Adds its age and a staleness flag, and the
+ * offsite copy: { status ('ok'|'failed'|'skipped'|null), configured, lastOkAt, ageHours, stale, target }.
+ * `target` is what backup.sh records: the provider kind and a host or region, never keys or full URLs.
+ */
 export function readBackupStatus(file, now = Date.now()) {
   if (!file) return { configured: false };
   let j;
   try { j = JSON.parse(readFileSync(file, 'utf8')); } catch { return { configured: true, error: 'unreadable' }; }
   const at = j.at || j.finishedAt || j.finished_at || j.time || j.timestamp || null;
   const t = at ? Date.parse(at) : NaN;
-  const ageHours = Number.isFinite(t) ? Math.round(((now - t) / 3_600_000) * 10) / 10 : null;
+  const ageHours = hoursSince(t, now);
+  const size = j.sizeBytes ?? j.size_bytes ?? j.size ?? j.bytes;
+  const offsiteStatus = ['ok', 'failed', 'skipped'].includes(j.offsite) ? j.offsite : null;
+  const offsiteTarget = clip(j.offsiteTarget || null, 120);
+  const lastOffsiteOkAt = isoOrNull(j.lastOffsiteOkAt);
+  const offsiteAge = hoursSince(lastOffsiteOkAt ? Date.parse(lastOffsiteOkAt) : NaN, now);
   return {
     configured: true,
+    environment: clip(j.environment, 20),
     at: Number.isFinite(t) ? new Date(t).toISOString() : null,
     ok: j.ok ?? (j.status ? ['ok', 'success'].includes(j.status) : null),
+    status: clip(j.status, 20),
     ageHours,
-    stale: ageHours == null || ageHours > 26,
-    sizeBytes: Number.isFinite(j.sizeBytes ?? j.size_bytes ?? j.size) ? Number(j.sizeBytes ?? j.size_bytes ?? j.size) : null,
-    target: clip(j.target || j.destination || j.location, 120),
+    stale: ageHours == null || ageHours > BACKUP_STALE_HOURS,
+    sizeBytes: Number.isFinite(size) ? Number(size) : null,
+    target: clip(offsiteTarget || j.target || j.destination || j.location, 120),
     message: clip(j.message || j.error, 200),
+    offsite: {
+      // A status file from before offsite tracking says nothing either way (null).
+      status: offsiteStatus,
+      configured: offsiteStatus === 'ok' || offsiteStatus === 'failed' || Boolean(offsiteTarget) || Boolean(lastOffsiteOkAt),
+      lastOkAt: lastOffsiteOkAt,
+      ageHours: offsiteAge,
+      stale: offsiteAge == null || offsiteAge > BACKUP_STALE_HOURS,
+      target: offsiteTarget,
+    },
   };
+}
+
+/** The longest restore-test line accepted (the drill's lines are well under 2 KB). */
+export const RESTORE_LINE_MAX = 16 * 1024;
+
+/**
+ * One restore-test result: a line from restore-test.sh (on a server or a PC), from
+ * offsite-drill.sh, or an HQ upload. Only the fields HQ shows are kept, each type-checked and
+ * clipped; anything else in the line is dropped. null for something that is not a result.
+ */
+export function normalizeRestoreResult(j) {
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return null;
+  const ts = isoOrNull(j.ts || j.at);
+  if (!ts || typeof j.ok !== 'boolean') return null;
+  const int = (v) => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null);
+  const str = (v, n, re) => (typeof v === 'string' && v && v.length <= n && (!re || re.test(v)) ? v : null);
+  return {
+    ts,
+    ok: j.ok,
+    source: j.source === 'offsite' ? 'offsite' : 'local',
+    host: str(j.host, 64, /^[A-Za-z0-9._-]+$/),
+    environment: str(j.environment, 20, /^[a-z][a-z0-9-]*$/),
+    file: str(j.file, 120, /^[A-Za-z0-9._-]+$/),
+    sha256: str(j.sha256, 64, /^[0-9a-f]{64}$/),
+    secretsChecked: j.secretsChecked === true,
+    secretsOk: typeof j.secretsOk === 'boolean' ? j.secretsOk : null,
+    migrations: int(j.migrations),
+    migration: str(j.migration, 12, /^[0-9]{1,12}$/),
+    tenants: int(j.tenants),
+    durationSeconds: int(j.durationSeconds),
+    failures: typeof j.failures === 'string' && j.failures ? j.failures.slice(0, 500) : null,
+    recordedBy: str(j.recordedBy, 200),
+    recordedAt: isoOrNull(j.recordedAt),
+  };
+}
+
+/** restore-tests.jsonl text -> normalized results, oldest first. Lines that are not results are skipped. */
+export function parseRestoreTests(text) {
+  const out = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const l = line.trim();
+    if (!l.startsWith('{') || l.length > RESTORE_LINE_MAX) continue;
+    let j;
+    try { j = JSON.parse(l); } catch { continue; }
+    const r = normalizeRestoreResult(j);
+    if (r) out.push(r);
+  }
+  return out.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+}
+
+/**
+ * RESTORE_TESTS_FILE: restore tests and offsite drills (JSON lines). The newest passing test, its age
+ * and a staleness flag (over DRILL_STALE_DAYS), the newest passing offsite drill and the newest run.
+ */
+export function readRestoreTests(file, now = Date.now()) {
+  if (!file) return { configured: false };
+  let items;
+  try {
+    items = parseRestoreTests(tailFile(file, 256 * 1024));
+  } catch (e) {
+    // No file yet means no test recorded yet, not a broken setup.
+    if (e?.code !== 'ENOENT') return { configured: true, error: 'unreadable' };
+    items = [];
+  }
+  const passes = items.filter((r) => r.ok);
+  const last = passes.at(-1) || null;
+  const lastRun = items.at(-1) || null;
+  const lastOffsite = passes.filter((r) => r.source === 'offsite').at(-1) || null;
+  const ageDays = last ? Math.floor((now - Date.parse(last.ts)) / DAY) : null;
+  return {
+    configured: true,
+    count: items.length,
+    lastPassAt: last?.ts ?? null,
+    lastSource: last?.source ?? null,
+    lastHost: last?.host ?? null,
+    lastEnvironment: last?.environment ?? null,
+    secretsChecked: Boolean(last?.secretsChecked && last.secretsOk === true),
+    ageDays,
+    stale: ageDays == null || ageDays > DRILL_STALE_DAYS,
+    lastOffsitePassAt: lastOffsite?.ts ?? null,
+    lastOffsiteSecretsChecked: Boolean(lastOffsite?.secretsChecked && lastOffsite.secretsOk === true),
+    lastRun: lastRun ? { at: lastRun.ts, ok: lastRun.ok, source: lastRun.source, host: lastRun.host, failures: lastRun.failures } : null,
+    recent: items.slice(-10).reverse(),
+  };
+}
+
+/**
+ * Backup and restore-drill problems, each with a stable code (the HQ alert key) and the text the
+ * health page shows. `h` needs { environment, backup, restoreTest } (devHealth's shape).
+ * @returns {{ code: string, text: string }[]}
+ */
+export function backupProblems(h) {
+  const out = [];
+  const b = h.backup;
+  const production = h.environment === 'production';
+  if (b?.configured && b.error) {
+    if (production) out.push({ code: 'backup_unreadable', text: 'backup status unreadable' });
+  } else if (b?.configured) {
+    if (b.stale) out.push({ code: 'backup_stale', text: 'backup is stale' });
+    else if (b.status === 'failed') out.push({ code: 'backup_failed', text: 'last backup failed' });
+    const o = b.offsite;
+    if (o?.status === 'failed') out.push({ code: 'offsite_failed', text: 'offsite backup failed' });
+    else if (o?.configured && o.stale) out.push({ code: 'offsite_stale', text: 'offsite backup stale' });
+    else if (o && !o.configured && production) out.push({ code: 'offsite_missing', text: 'offsite backup not configured' });
+  }
+  const r = h.restoreTest;
+  if (r?.configured && !r.error) {
+    if (r.stale) out.push({ code: 'drill_overdue', text: r.lastPassAt ? 'restore drill overdue' : 'restore drill overdue (none recorded yet)' });
+    // Offsite is required in production; elsewhere a drill is expected once an offsite copy exists.
+    if (!r.lastOffsitePassAt && (production || b?.offsite?.configured)) out.push({ code: 'no_offsite_drill', text: 'no offsite restore drill yet' });
+  } else if (r?.configured && r.error && production) {
+    out.push({ code: 'drill_unreadable', text: 'restore test log unreadable' });
+  }
+  return out;
 }
 
 let tlsCache = { at: 0, key: '', value: null };
@@ -223,6 +369,7 @@ export async function devHealth({ config, db, settings, metrics }) {
     migrations,
     queue,
     backup: readBackupStatus(config.backupStatusFile),
+    restoreTest: readRestoreTests(config.restoreTestsFile),
     deploys,
     errors: metrics.snapshot(),
     tls,
@@ -245,7 +392,7 @@ export function healthLevel(h) {
   if (h.queue?.failed24h) problems.push(`${h.queue.failed24h} failed job(s) in 24 h`);
   if (h.queue?.lagSeconds > 900) problems.push('queue lagging');
   if (h.errors?.lastHour?.errors5xx) problems.push(`${h.errors.lastHour.errors5xx} server error(s) in the last hour`);
-  if (h.backup?.configured && h.backup.stale) problems.push('backup is stale');
+  for (const p of backupProblems(h)) problems.push(p.text);
   if (h.tls?.checked && h.tls.daysLeft != null && h.tls.daysLeft < 14) problems.push(`TLS certificate expires in ${h.tls.daysLeft} days`);
   for (const d of h.disk || []) if (d.usedPct > 90) problems.push(`disk ${d.usedPct}% full`);
   return { level: !h.database?.ok ? 'down' : problems.length ? 'degraded' : 'ok', problems };
