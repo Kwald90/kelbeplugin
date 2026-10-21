@@ -1,0 +1,146 @@
+// Provincial sales tax exemptions on documents (docs/releases/r1-get-paid.md 2.9 and 3.2).
+//
+// Manitoba (RST Bulletin 031, Mechanical and Electrical Trades): an electrical contractor charges
+// RST on the whole selling price of its work unless the customer is exempt FOR THIS CONTRACT: another
+// electrical or mechanical contractor subcontracting the work, a reseller, a general contractor
+// passing on its exempt customer's exemption, the federal government (its RST number), a Status
+// Indian or band on reserve, or farm use (certificate). A general contractor on an ordinary building
+// job pays RST. The exemption is per contract, not per customer: the client card holds the evidence
+// on file; the job (or a document with no job) says the exemption applies.
+//
+// Enforcement: a Manitoba invoice with RST off and the basis's evidence missing cannot leave draft
+// (the server refuses with 422 exemption_required); Manitoba estimates and BC and SK documents warn.
+// Pure (no DOM): the PWA, the server's write rules and the send routes import it.
+
+export const EXEMPT_BASES = [
+  { id: 'resale', label: 'Reseller buying for resale' },
+  { id: 'subtrade', label: 'Electrical or mechanical subtrade' },
+  { id: 'pass-on', label: "General contractor passing on its customer's exemption" },
+  { id: 'federal', label: 'Federal government' },
+  { id: 'first-nations', label: 'Status Indian or band, on reserve' },
+  { id: 'farm', label: 'Farm use (certificate)' },
+];
+export const EXEMPT_BASIS_LABEL = Object.fromEntries(EXEMPT_BASES.map((b) => [b.id, b.label]));
+
+/**
+ * What each basis needs on the document. Keys: 'number' (taxExemptNumber), the rest are
+ * taxExemptDetails fields; an array is "any one of these".
+ */
+export const EXEMPT_EVIDENCE = {
+  resale: ['number'],
+  subtrade: ['number'],
+  'pass-on': ['number', 'endCustomer'],
+  federal: ['department', 'number'],
+  'first-nations': ['registryNo', ['band', 'reserve']],
+  farm: ['farmCertNo'],
+};
+const FIELD_LABEL = {
+  number: 'their RST or PST number', endCustomer: 'the end customer', department: 'the federal department',
+  registryNo: 'the registry number', band: 'the band', reserve: 'the reserve', farmCertNo: 'the farm certificate number', basis: 'why the work is exempt',
+};
+
+/** Provinces with a separate provincial sales tax on this work. */
+export const PST_PROVINCES = ['MB', 'SK', 'BC'];
+const PROVINCIAL = new Set(['PST', 'RST']);
+const KINDS = ['material', 'labour', 'other'];
+const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
+
+/** Lines that count for the exemption: no lineType (deposit, holdback, interest) and no taxOff. */
+const workLines = (doc) => (doc?.lines || []).filter((l) => l && !l.lineType && !(Array.isArray(l.taxOff) && l.taxOff.length) && !l.passThrough);
+
+/** Does a provincial tax component charge this line? */
+function provincialOn(line, taxes) {
+  const kind = KINDS.includes(line.kind) ? line.kind : 'material';
+  return (taxes || []).some((t) => PROVINCIAL.has(String(t?.id || '').toUpperCase()) && Number(t.pct) > 0 && (t.applies ? Boolean(t.applies[kind]) : true));
+}
+
+/** PST/RST not charged on any work line (lines with a lineType or taxOff are not counted). */
+export function provincialTaxOff(doc) {
+  const lines = workLines(doc);
+  if (!lines.length) return false;
+  const taxes = Array.isArray(doc.taxes) ? doc.taxes : [];
+  return lines.every((l) => !provincialOn(l, taxes));
+}
+
+/** The evidence a document still lacks for its basis (field keys), [] when complete. */
+export function missingEvidence(doc) {
+  const basis = doc?.taxExemptBasis;
+  if (!basis || !EXEMPT_EVIDENCE[basis]) return ['basis'];
+  const details = doc.taxExemptDetails || {};
+  const has = (k) => (k === 'number' ? str(doc.taxExemptNumber) : str(details[k]));
+  const out = [];
+  for (const need of EXEMPT_EVIDENCE[basis]) {
+    if (Array.isArray(need)) { if (!need.some(has)) out.push(need[0]); } else if (!has(need)) out.push(need);
+  }
+  return out;
+}
+
+const taxName = (province) => (province === 'MB' ? 'RST' : 'PST');
+
+/**
+ * The exemption check before a document is sent (docType 'estimates' for an estimate; anything
+ * else is treated as an invoice): null, or
+ * { level: 'block'|'warn', code: 'exemption_required', message, missing: [] }.
+ * MB invoices block; MB estimates and BC and SK documents warn. Skipped: interest and credit
+ * notes (a credit follows its original), holdback release invoices, security deposits, documents
+ * with no work lines, BC real-property contracts (not an exemption) and provinces without PST.
+ */
+export function exemptionProblem(doc, { docType } = {}) {
+  if (!doc) return null;
+  const province = doc.taxProvince;
+  if (!PST_PROVINCES.includes(province)) return null;
+  const kind = doc.kind || 'standard';
+  if (['interest', 'credit', 'holdback-release'].includes(kind)) return null;
+  if (kind === 'deposit' && doc.depositModel === 'security') return null;
+  if (doc.taxTreatment === 'real-property') return null;
+  if (!provincialTaxOff(doc)) return null;
+  const missing = missingEvidence(doc);
+  if (!missing.length) return null;
+  const isEstimate = docType === 'estimates' || docType === 'estimate';
+  const level = province === 'MB' && !isEstimate ? 'block' : 'warn';
+  const t = taxName(province);
+  const what = missing.map((k) => FIELD_LABEL[k] || k).join(', ');
+  const message = province === 'MB'
+    ? `${t} is not charged on this work. Record why on the job (or this document): ${what}. A general contractor on an ordinary building job pays RST (Bulletin 031).`
+    : `${t} is not charged on this work. Keep the customer's exemption on file: ${what}.`;
+  return { level, code: 'exemption_required', message, missing };
+}
+
+/**
+ * The exemption a new document starts with: the job's taxExempt, else nothing. The client's
+ * evidence on file never applies by itself; it prefills the editor when the office ticks "This work
+ * is exempt" (exemptionConfirmed).
+ */
+export function exemptionFor({ job, client, province } = {}) {
+  void client;
+  const x = job?.taxExempt;
+  if (!x || !x.basis) return {};
+  if (province && x.province && x.province !== province) return {};
+  const details = { ...(x.details || {}) };
+  if (x.endCustomer) details.endCustomer = x.endCustomer;
+  return { taxExemptNumber: x.number || null, taxExemptBasis: x.basis, taxExemptDetails: details };
+}
+
+/** The client's evidence on file as document fields (the editor's prefill after the tick). */
+export function exemptionFromClient(client) {
+  if (!client?.taxExemptBasis) return {};
+  return { taxExemptNumber: client.taxExemptNumber || null, taxExemptBasis: client.taxExemptBasis, taxExemptDetails: { ...(client.taxExemptDetails || {}) } };
+}
+
+/** Lines printed on the document, e.g. ['RST exemption: Electrical or mechanical subtrade, RST no. 1234567']. */
+export function exemptionPrintLines(doc) {
+  const basis = doc?.taxExemptBasis;
+  if (!basis) return [];
+  const t = taxName(doc.taxProvince);
+  const d = doc.taxExemptDetails || {};
+  const head = `${t} exemption: ${EXEMPT_BASIS_LABEL[basis] || basis}`;
+  const lines = [str(doc.taxExemptNumber) ? `${head}, ${basis === 'federal' ? 'federal RST' : t} no. ${str(doc.taxExemptNumber)}` : head];
+  if (basis === 'pass-on' && str(d.endCustomer)) lines.push(`End customer: ${str(d.endCustomer)}`);
+  if (basis === 'federal' && str(d.department)) lines.push(`Department: ${str(d.department)}`);
+  if (basis === 'first-nations') {
+    const parts = [str(d.name) && `Name: ${str(d.name)}`, str(d.registryNo) && `registry no. ${str(d.registryNo)}`, str(d.band) && `band: ${str(d.band)}`, str(d.reserve) && `reserve: ${str(d.reserve)}`].filter(Boolean);
+    if (parts.length) lines.push(parts.join(', '));
+  }
+  if (basis === 'farm' && str(d.farmCertNo)) lines.push(`Farm certificate no. ${str(d.farmCertNo)}`);
+  return lines;
+}
