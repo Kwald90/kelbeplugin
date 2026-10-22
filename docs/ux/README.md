@@ -17,6 +17,7 @@ controls, progressive disclosure, and accurate feedback, applied to a web ERP.
 - [Sprint 01](SPRINT-01.md): current implementation scope, agent ownership, and verification.
 - [Sprint 02](SPRINT-02.md): job overview, field guidance, progressive onboarding and R1 estimate guidance.
 - [CI remediation](CI-REMEDIATION.md): dependency, deployment-check and secret-scan fixes supporting Sprint 02 review.
+- [iPhone and iPad release](../mobile/UX-TESTFLIGHT.md): TestFlight preparation, device checks and current build status.
 
 The [build plan](../BUILD-PLAN.md) remains the source for domain and API contracts.
 This programme does not replace the existing [backlog](../BACKLOG.md).

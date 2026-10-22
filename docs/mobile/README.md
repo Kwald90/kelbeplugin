@@ -6,9 +6,12 @@ measure (Safari on iPhone and iPad has no WebXR AR), `FishtapeKeychain`, which k
 token in the iOS Keychain, `FishtapePrint`, which makes every Print button work, and `FishtapeGeofence`, which notices job-site arrivals and departures while someone is clocked in (see [FishtapeGeofence](#fishtapegeofence)). It is built on
 Kelvin's Mac over SSH.
 
+For the current UX update, see [Sprint 02 TestFlight preparation](UX-TESTFLIGHT.md).
+That record distinguishes locally prepared assets from a completed native upload.
+
 | | |
 | --- | --- |
-| Bundle ID | `com.fishtapehq.app` (registration still to do, see [Signing and TestFlight](#signing-and-testflight)) |
+| Bundle ID | `com.fishtapehq.app`; signing team `9C68LPL6JA` is configured. Verify current Apple account state before uploading |
 | API | `https://tgelectrical.truecollarbuilt.com` (staging) by default; see [API origin](#api-origin) |
 | Name on the home screen | Fishtape |
 | Capacitor | 8.5.3 (`@capacitor/core`, `cli`, `ios`), Filesystem 8.1.5, Share 8.0.3, Browser 8.0.5, Geolocation 8.2.3, all pinned exactly |
@@ -127,7 +130,7 @@ that cookie can't work there. In the app (and only there; the web path is unchan
 | `npm run sync` with | the app calls |
 | --- | --- |
 | nothing, or `FISHTAPE_ENV=staging` | `https://tgelectrical.truecollarbuilt.com` |
-| `FISHTAPE_ENV=production` | `https://app.fishtapehq.com` (not live yet) |
+| `FISHTAPE_ENV=production` | `https://app.fishtapehq.com` (public readiness and API status returned HTTP 200 on 2026-10-22) |
 | `FISHTAPE_API_ORIGIN=https://…` | that origin (https only, no path), for testing |
 
 The table lives in `mobile/scripts/web-config.mjs`. The sync output names the API it used, so check
@@ -279,7 +282,8 @@ simulator (`xcrun simctl create`, then `delete`) so Kelvin's own simulators stay
 
 ## Run on an iPhone or iPad
 
-AR only works on a real device. Signing is not set up yet (no team in the project), so for now:
+AR only works on a real device. The project has team `9C68LPL6JA` configured;
+local device runs still need the appropriate development signing setup:
 
 1. Open `mobile/ios/App/App.xcodeproj` in Xcode on the Mac (`npm run open`).
 2. App target > Signing & Capabilities: tick **Automatically manage signing** and pick the team.
@@ -298,10 +302,13 @@ cd ~/dev/fishtape/repo && mobile/scripts/testflight.sh
 ```
 
 It syncs against production (`https://app.fishtapehq.com`), archives with build number
-`YYYYMMDDHHMM` (UTC) and marketing version 1.0, signs and uploads with `mobile/ios/ExportOptions.plist`
+`YYYYMMDD.HHMM` (UTC, with leading zeroes removed from the second component) and marketing version 1.0, signs and uploads with `mobile/ios/ExportOptions.plist`
 and the API key in `~/.appstoreconnect/api_key.json` (read inside the script, never printed), waits
 for processing (`mobile/scripts/asc.mjs wait-build`) and puts the build in the internal TestFlight
 group "TG Electrical" (`asc.mjs testflight`, created if missing). Logs go to `~/dev/fishtape/build/`.
+
+The helper rejects a same-name group unless Apple confirms it is internal. It creates
+a uniquely named distribution profile without deleting existing signing profiles.
 
 - The archive is unsigned on purpose: automatic signing at archive time wants a development profile,
   which needs a registered device. The export signs for App Store distribution instead.
