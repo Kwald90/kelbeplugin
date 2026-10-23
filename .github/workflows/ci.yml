@@ -55,6 +55,8 @@ jobs:
         run: node --test electrical-app/tests/*.test.mjs
       - name: CSP guard
         run: node .github/scripts/check-csp.mjs
+      - name: Offline precache manifest is up to date
+        run: node tools/gen-precache.mjs --check
 
   infra:
     name: Deploy config checks
