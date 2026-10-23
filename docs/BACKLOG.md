@@ -5,7 +5,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 
 ## Needs Kelvin
 
-- **K** App Store Connect: create the app record for bundle ID `com.fishtapehq.app` (registered 2026-10-19, team 9C68LPL6JA) in the web UI (Apple has no API for that), then TestFlight. Steps: `docs/mobile/README.md`.
+- **K** iOS device acceptance and public App Store release: the FishTapeHQ app record exists, and `1.0 (20261023.25)` is available to the internal TG Electrical TestFlight group (verified 2026-10-22). Complete the device checks and public-release review in [the release record](mobile/UX-TESTFLIGHT.md).
 - **K** Production VPS at dotmoose: host, SSH access, OS, data-centre country, disk encryption.
 - **K** Domain: confirm the spelling registered (fishtapehq.com vs fishtapewq.com) and point DNS (`app.`, `hq.`, `status.`).
 - **K** Real tier prices (placeholders in `electrical-app/js/plans.js`), the failed-payment grace period (7 days now), the trial length (14 days now, `TRIAL_DAYS`) and the deleted-company grace (30 days now).

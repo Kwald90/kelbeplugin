@@ -29,6 +29,13 @@ in `Info.plist`; those permission prompts are separate from this declaration.
 and verifies that the App target copies the manifest from its App directory.
 These checks run on Windows; they do not validate an Apple archive.
 
+On 2026-10-22, the Mac simulator build and signed release build `20261023.25`
+succeeded. The archived app's manifest passed `plutil` validation and an explicit
+CA92.1 check before upload. Apple processed the build as VALID and made it
+available for internal testing. This confirms packaging and processing, not a
+complete privacy report or App Privacy questionnaire review; see the
+[release record](UX-TESTFLIGHT.md).
+
 On the build Mac, archive the intended release, check that
 `Products/Applications/App.app/PrivacyInfo.xcprivacy` exists inside the archive,
 generate Xcode's Privacy Report and validate the archive with Apple before upload.
