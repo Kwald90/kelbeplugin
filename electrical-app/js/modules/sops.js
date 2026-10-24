@@ -152,7 +152,7 @@ function standardSections(ctx, sop) {
   }
   if ((sop.specs || []).length) {
     out.push(...ui.section('Specs', h('div', { class: 'list' }, sop.specs.filter((s) => s.label || s.value).map((s) => h('div', { class: 'list-row' },
-      h('div', { class: 'grow' }, h('div', { class: 'title' }, s.label || ''), h('div', { class: 'meta muted' }, s.value || ''))))));
+      h('div', { class: 'grow' }, h('div', { class: 'title' }, s.label || ''), h('div', { class: 'meta muted' }, s.value || '')))))));
   }
   if ((sop.breakers || []).length || sop.panelTemplateId) {
     const preset = sop.panelTemplateId ? listPanelTemplates(store.settings()).find((p) => p.id === sop.panelTemplateId) : null;
