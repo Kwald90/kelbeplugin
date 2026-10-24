@@ -228,10 +228,16 @@ export function placement(circuits, { slot, poles = 1, half = null }, total) {
       const next = slot + 2;
       if (next > total) return { ok: false, reason: `A quad at space ${slot} needs space ${next}, past the end of the panel.` };
       const o = occ.get(slot), o2 = occ.get(next);
+      // A quad is one device laid out as three breakers filling ALL FOUR half-positions across the
+      // two spaces: an outer single in this space's 'A', the inner 2-pole in this space's 'B' + the
+      // next space's 'A', and an outer single in the next space's 'B'. Every one of those must be
+      // free, or placing the quad would overwrite an existing breaker and silently lose it.
       if (o && o.full) return { ok: false, reason: `Space ${slot} has a full-size breaker, so a quad can't share it.` };
+      if (o && o.A) return { ok: false, reason: `Space ${slot}A is taken, so a quad's top breaker can't go there.` };
       if (o && o.B) return { ok: false, reason: `Space ${slot}B is taken, so a quad's inner breaker can't go there.` };
       if (o2 && o2.full) return { ok: false, reason: `Space ${next} has a full-size breaker, so a quad can't share it.` };
       if (o2 && o2.A) return { ok: false, reason: `Space ${next}A is taken, so a quad's inner breaker can't go there.` };
+      if (o2 && o2.B) return { ok: false, reason: `Space ${next}B is taken, so a quad's bottom breaker can't go there.` };
       return { ok: true };
     }
     const o = occ.get(slot);

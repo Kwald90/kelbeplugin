@@ -335,11 +335,17 @@ test('slotCount / span: a quad inner reaches the next space down', () => {
 
 test('placement: a quad goes in free inner halves and refuses every collision', () => {
   const total = 24;
-  // empty: a quad at 5 is fine (needs 5B + 7A)
+  // empty: a quad at 5 is fine (needs all four halves: 5A + 5B/7A + 7B)
   assert.equal(placement([], { slot: 5, half: 'B', poles: 2 }, total).ok, true);
-  // a quad whose inner halves are free coexists with outer singles already placed
-  const outers = [{ slot: 5, half: 'A', poles: 1 }, { slot: 7, half: 'B', poles: 1 }];
-  assert.equal(placement(outers, { slot: 5, half: 'B', poles: 2 }, total).ok, true);
+  // a quad now creates its own outer singles too, so it owns all four halves: refuse if an outer is taken
+  const outerA = [{ slot: 5, half: 'A', poles: 1 }];
+  const rOuterA = placement(outerA, { slot: 5, half: 'B', poles: 2 }, total);
+  assert.equal(rOuterA.ok, false);
+  assert.match(rOuterA.reason, /5A|quad/i);
+  const outerB = [{ slot: 7, half: 'B', poles: 1 }];
+  const rOuterB = placement(outerB, { slot: 5, half: 'B', poles: 2 }, total);
+  assert.equal(rOuterB.ok, false);
+  assert.match(rOuterB.reason, /7B|quad/i);
   // refuse when this space's B half is taken
   const bTaken = [{ slot: 5, half: 'B', poles: 1 }];
   assert.equal(placement(bTaken, { slot: 5, half: 'B', poles: 2 }, total).ok, false);
@@ -471,6 +477,28 @@ test('a placed quad occupies the four half-positions and refuses collisions', ()
   assert.equal(placement(q, { slot: 5, poles: 1 }, total).ok, false);
   assert.equal(placement(q, { slot: 7, poles: 1 }, total).ok, false);
   assert.equal(placement(q, { slot: 5, poles: 2 }, total).ok, false);
+});
+
+test('a NEW quad is refused over an occupied outer half (no silent overwrite)', () => {
+  // Regression: a quad now creates THREE breakers filling all four halves (top single 5A, inner
+  // 2-pole 5B/7A, bottom single 7B). If any outer half is already taken, placing the quad there
+  // would push a blank single onto the same half and occupancy() would keep only the last — the
+  // pre-existing breaker would vanish from the grid/print while still living in the saved data.
+  // placement() must refuse so addQuad()/placeTemplate() never overwrite it.
+  const total = 24;
+  // (1) a tandem already in the TOP outer half (5A): a quad at 5 is refused
+  const topTaken = [{ slot: 5, half: 'A', poles: 1, description: 'Hall lights', breakerType: 'tandem' }];
+  const r1 = placement(topTaken, { slot: 5, half: 'B', poles: 2 }, total);
+  assert.equal(r1.ok, false);
+  assert.match(r1.reason, /5A|quad/i);
+  // (2) a tandem already in the BOTTOM outer half (7B): a quad at 5 is refused
+  const bottomTaken = [{ slot: 7, half: 'B', poles: 1, description: 'Existing bathroom', breakerType: 'tandem' }];
+  const r2 = placement(bottomTaken, { slot: 5, half: 'B', poles: 2 }, total);
+  assert.equal(r2.ok, false);
+  assert.match(r2.reason, /7B|quad/i);
+  // the pre-existing breaker is untouched (placement is pure — it never mutates)
+  assert.equal(topTaken.length, 1);
+  assert.equal(bottomTaken.length, 1);
 });
 
 test('a placed quad splits phases: each outer single on its space phase, inner across both (240 V)', () => {

@@ -206,8 +206,9 @@ export default {
       ui.clear(circuitNamesHost);
       const names = panelCircuitNames(store.settings());
       const saveNames = (next) => {
-        // Store the working list only when it differs from the shipped default, so an untouched
-        // company keeps getting default updates; any edit pins the company's own list.
+        // Persist the edited list. saveNames only runs on an explicit add/remove, so an untouched
+        // company never stores anything and keeps falling back to the shipped default (via
+        // panelCircuitNames); the first edit pins the company's own list.
         store.saveSettings({ panelCircuitNames: next });
         drawCircuitNames();
       };
