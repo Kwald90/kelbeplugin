@@ -106,6 +106,7 @@
   "./js/lib/navigation.js",
   "./js/lib/nec.js",
   "./js/lib/notify.js",
+  "./js/lib/panel-templates.js",
   "./js/lib/pdf.js",
   "./js/lib/placement-check.js",
   "./js/lib/placement-rules.js",
