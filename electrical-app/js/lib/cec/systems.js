@@ -97,3 +97,100 @@ export function totalAmps(totalVA, system) {
   const sys = systemOf(system);
   return sys.three ? totalVA / (R3 * sys.llVolts) : totalVA / sys.llVolts;
 }
+
+// ---------------------------------------------------------------------------
+// Conductor / phase colour codes (research 2026-10-23; see docs note below).
+//
+// Only two colours are code-MANDATED: the identified (neutral) conductor is white or
+// natural grey, and the bonding/grounding conductor is green (or green with a yellow
+// stripe). Phase (ungrounded) colours are CONVENTION in Canada — the CEC prescribes
+// red(A)/black(B)/blue(C) only where colour-coded circuits are required (Rule 4-036);
+// otherwise the phase colours shown are industry convention (e.g. brown/orange/yellow
+// for 347/600 V). US/NEC is the same except the orange high-leg marking, which is
+// mandated (110.15). Rule numbers are secondary-sourced — VERIFY against CSA C22.1:24.
+// ---------------------------------------------------------------------------
+
+const BLACK = '#1a1a1a', RED = '#d32f2f', BLUE = '#1565c0';
+const BROWN = '#6d4c41', ORANGE = '#ef6c00', YELLOW = '#fbc02d';
+const WHITE = '#e8e8e8', GREEN = '#2e7d32';
+
+/** Built-in default colours per code book. `systems[key]` is a map of phase -> { name, hex }. */
+export const WIRE_COLOURS = {
+  'CEC-2024': {
+    neutral: { name: 'White / natural grey', hex: WHITE, mandated: true, ref: 'Rule 4-024 / 4-026' },
+    bond: { name: 'Green (or green/yellow)', hex: GREEN, mandated: true, ref: 'Rule 4-032' },
+    systems: {
+      '120/240 1ph': { A: { name: 'Black', hex: BLACK }, B: { name: 'Red', hex: RED } },
+      '208/120 3ph': { A: { name: 'Red', hex: RED }, B: { name: 'Black', hex: BLACK }, C: { name: 'Blue', hex: BLUE } },
+      '347/600 3ph': { A: { name: 'Red', hex: RED }, B: { name: 'Black', hex: BLACK }, C: { name: 'Blue', hex: BLUE } },
+      '600 3ph 3w': { A: { name: 'Red', hex: RED }, B: { name: 'Black', hex: BLACK }, C: { name: 'Blue', hex: BLUE } },
+      '480/277 3ph': { A: { name: 'Brown', hex: BROWN }, B: { name: 'Orange', hex: ORANGE }, C: { name: 'Yellow', hex: YELLOW } },
+    },
+  },
+  'NEC-2023': {
+    neutral: { name: 'White / grey', hex: WHITE, mandated: true, ref: 'NEC 200.6' },
+    bond: { name: 'Green / green-yellow / bare', hex: GREEN, mandated: true, ref: 'NEC 250.119' },
+    systems: {
+      '120/240 1ph': { A: { name: 'Black', hex: BLACK }, B: { name: 'Red', hex: RED } },
+      '208/120 3ph': { A: { name: 'Black', hex: BLACK }, B: { name: 'Red', hex: RED }, C: { name: 'Blue', hex: BLUE } },
+      '347/600 3ph': { A: { name: 'Brown', hex: BROWN }, B: { name: 'Orange', hex: ORANGE }, C: { name: 'Yellow', hex: YELLOW } },
+      '600 3ph 3w': { A: { name: 'Brown', hex: BROWN }, B: { name: 'Orange', hex: ORANGE }, C: { name: 'Yellow', hex: YELLOW } },
+      '480/277 3ph': { A: { name: 'Brown', hex: BROWN }, B: { name: 'Orange', hex: ORANGE }, C: { name: 'Yellow', hex: YELLOW } },
+    },
+  },
+};
+
+/** Named phase-colour presets the colour editor can apply to A/B/C in one tap. */
+export const COLOUR_PRESETS = {
+  rbb: { label: 'Red / Black / Blue (CEC Rule 4-036)', A: RED, B: BLACK, C: BLUE },
+  boy: { label: 'Brown / Orange / Yellow (347/600 V trade practice)', A: BROWN, B: ORANGE, C: YELLOW },
+  brb: { label: 'Black / Red / Blue (NEC convention)', A: BLACK, B: RED, C: BLUE },
+};
+
+/** The identification-vs-convention disclaimer shown with the colour legend. */
+export const COLOUR_LEGEND_NOTE =
+  'Under the Canadian Electrical Code (CSA C22.1), only two conductor colours are mandated: the '
+  + 'identified (neutral) conductor is white or natural grey, and the bonding/grounding conductor '
+  + 'is green or green-with-yellow-stripe. Phase (ungrounded) colours are not generally mandated — '
+  + 'red (A) / black (B) / blue (C) are prescribed only where colour-coded circuits are required '
+  + '(Rule 4-036); otherwise the phase colours shown are industry convention (brown/orange/yellow is '
+  + 'common for 347/600 V). NEC colours are convention except the orange high-leg marking, which NEC '
+  + 'mandates (110.15); Canadian high-leg practice differs (red / phase-A plus barriering) — confirm '
+  + 'with your authority having jurisdiction and the governing code edition. Rule numbers are for '
+  + 'reference, not legal citation.';
+
+const colourBook = (book) => (WIRE_COLOURS[book] ? book : 'CEC-2024');
+
+/** The mandated neutral and bond colours for a code book. */
+export function mandatedColours(book) {
+  const set = WIRE_COLOURS[colourBook(book)];
+  return { neutral: { ...set.neutral }, bond: { ...set.bond } };
+}
+
+/**
+ * systemColours(book, systemKey, overrides) -> { phases: { A: {name,hex,mandated,convention}, ... },
+ *   neutral, bond, book }. `overrides` is settings.panelColours: { [book]: { [systemKey]: {A,B,C},
+ *   neutral, bond } }, each value a hex string. Phase colours are convention; neutral and bond mandated.
+ */
+export function systemColours(book, systemKey, overrides) {
+  const bk = colourBook(book);
+  const set = WIRE_COLOURS[bk];
+  const sys = systemOf(systemKey);
+  const base = set.systems[systemKey] || set.systems[DEFAULT] || {};
+  const ov = (overrides && overrides[bk]) || {};
+  const sysOv = ov[systemKey] || {};
+  const phases = {};
+  for (const p of sys.phases) {
+    const def = base[p] || { name: '—', hex: '#999999' };
+    const hex = sysOv[p];
+    phases[p] = hex ? { name: 'Custom', hex, mandated: false, convention: true } : { ...def, mandated: false, convention: true };
+  }
+  const neutral = ov.neutral ? { ...set.neutral, name: 'Custom', hex: ov.neutral } : { ...set.neutral };
+  const bond = ov.bond ? { ...set.bond, name: 'Custom', hex: ov.bond } : { ...set.bond };
+  return { phases, neutral, bond, book: bk };
+}
+
+/** One phase's colour for a book + system, honouring overrides. */
+export function phaseColour(book, systemKey, phase, overrides) {
+  return systemColours(book, systemKey, overrides).phases[phase] || null;
+}

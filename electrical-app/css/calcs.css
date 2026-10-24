@@ -104,7 +104,42 @@
 .panel-print-table { width: 100%; border-collapse: collapse; font-size: 9pt; }
 .panel-print-table td { border: 1px solid #000; padding: 3pt 5pt; }
 .panel-print-table td.num { width: 1%; white-space: nowrap; text-align: center; }
+/* ---------- breaker / panel templates ---------- */
+.slot-empty-actions { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.slot-add.tpl { color: var(--accent); font-size: var(--fs-xs); min-height: 28px; }
+.slot-type { max-width: 7.5em; }
+.slot.subfeed { border-left: 3px solid var(--accent); }
+.subfeed-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 700; background: var(--accent-soft); color: var(--text); }
+
+.tpl-list, .tpl-groups { display: flex; flex-direction: column; gap: var(--s3); }
+.tpl-group { display: flex; flex-direction: column; gap: 4px; }
+.tpl-group-head { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.tpl-row { display: flex; align-items: center; gap: var(--s2); }
+.tpl-item { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); color: var(--text); cursor: pointer; }
+.tpl-item:hover { background: var(--accent-soft); border-color: var(--accent); }
+.tpl-item .muted { font-size: var(--fs-xs); color: var(--text-muted); }
+.tpl-save-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-top: var(--s2); }
+.tpl-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: var(--s2); }
+
+/* ---------- wire-colour codes ---------- */
+.wire-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--border); vertical-align: -2px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .25); }
+.wire-swatch.lg { width: 18px; height: 18px; border-radius: 5px; }
+.wire-swatches { display: inline-flex; gap: 3px; margin-right: 2px; vertical-align: -2px; }
+.panel-colours { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--s2); }
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.legend-row { display: flex; align-items: center; gap: var(--s2); font-size: var(--fs-sm); }
+.legend-name { flex: 1; min-width: 0; }
+.legend-tag { font-size: var(--fs-xs); font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+.legend-tag.mand { background: var(--success-soft, var(--accent-soft)); color: var(--success); }
+.legend-tag.conv { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+
+/* printed colour swatches and legend (force colour in print) */
+.print-swatches .wire-swatch, .print-legend .wire-swatch { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.print-legend { display: flex; flex-wrap: wrap; gap: 10pt; margin-top: 6pt; font-size: 8pt; }
+.print-legend-chip { display: inline-flex; align-items: center; gap: 4pt; }
+
 @media print {
   .panel-page .page-head, .panel-summary, .calc-disclaimer { display: none !important; }
+  .print-swatches .wire-swatch, .print-legend .wire-swatch { border: 1px solid #000; }
 }
 @media print { .panel-print { width: 7.5in; } }

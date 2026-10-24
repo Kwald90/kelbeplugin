@@ -69,6 +69,30 @@
         "null"
       ]
     },
+    "mainType": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "MLO",
+        "MB",
+        null
+      ]
+    },
+    "feedThrough": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "templateId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
     "circuits": {
       "type": [
         "array",
@@ -115,6 +139,35 @@
               "null"
             ],
             "maxLength": 10
+          },
+          "breakerType": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "standard",
+              "gfci",
+              "afci",
+              "dual",
+              "hacr",
+              "tandem",
+              "lock-on",
+              null
+            ]
+          },
+          "colorOverride": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 10
+          },
+          "subFeed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         }
       }
