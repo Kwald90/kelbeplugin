@@ -49,6 +49,10 @@ export const BUILT_IN_BREAKERS = [
   // Feeders
   { id: 'subfeed-100', label: '100 A sub-feed (2-pole)', poles: 2, amps: 100, loadVA: null, breakerType: 'standard', descriptionDefault: 'Sub-panel feed', group: 'Feeders', subFeed: true },
   { id: 'subfeed-60', label: '60 A sub-feed (2-pole)', poles: 2, amps: 60, loadVA: null, breakerType: 'standard', descriptionDefault: 'Sub-panel feed', group: 'Feeders', subFeed: true },
+  // Tandem / space-saver (half-height: two single-pole breakers share one full space, A over B)
+  { id: 'tandem-15', label: '15 A tandem (half-space)', poles: 1, amps: 15, loadVA: 1440, breakerType: 'tandem', descriptionDefault: 'Receptacles', group: 'Tandem / space-saver' },
+  { id: 'tandem-20', label: '20 A tandem (half-space)', poles: 1, amps: 20, loadVA: 1920, breakerType: 'tandem', descriptionDefault: 'Receptacles', group: 'Tandem / space-saver' },
+  { id: 'tandem-15-light', label: '15 A tandem lighting (half-space)', poles: 1, amps: 15, loadVA: 1200, breakerType: 'tandem', descriptionDefault: 'Lighting', group: 'Tandem / space-saver' },
   // Other
   { id: 'spare', label: 'Spare', poles: 1, amps: 20, loadVA: 0, breakerType: 'standard', descriptionDefault: 'Spare', group: 'Other' },
   { id: 'space', label: 'Space (blank)', poles: 1, amps: null, loadVA: 0, breakerType: 'standard', descriptionDefault: 'Space', group: 'Other' },

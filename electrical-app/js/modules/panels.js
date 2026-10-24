@@ -13,27 +13,83 @@ const SLOT_COUNTS = [12, 16, 20, 24, 30, 32, 40, 42, 54, 60, 66, 72, 84];
 let ui, h, store;
 const bookOf = () => (store.settings().codeBook === 'NEC-2023' ? 'NEC-2023' : 'CEC-2024');
 
+/** The half of a space a circuit sits in: 'A' (upper) or 'B' (lower) for a tandem, else null (full space). */
+export const halfOf = (c) => (c && (c.half === 'A' || c.half === 'B') ? c.half : null);
+
+/** Slots a circuit spans past its first: a half takes only its own space, a full breaker 2×(poles−1) more. */
+const spanTo = (c) => (halfOf(c) ? Number(c.slot) : Number(c.slot) + 2 * ((Number(c.poles) || 1) - 1));
+
+/** Identity of a circuit within a panel: same space and same half (full breakers share the null half). */
+const sameCircuit = (a, b) => Number(a.slot) === Number(b.slot) && (halfOf(a) || '') === (halfOf(b) || '');
+
 /** Number of slots: stored value, else the smallest standard count that fits the circuits. */
-function slotCount(panel) {
+export function slotCount(panel) {
   if (panel.slots) return panel.slots;
-  const used = Math.max(0, ...(panel.circuits || []).map((c) => Number(c.slot) + 2 * ((Number(c.poles) || 1) - 1)));
+  const used = Math.max(0, ...(panel.circuits || []).map(spanTo));
   return SLOT_COUNTS.find((s) => s >= Math.max(used, 24)) || 84;
 }
 
 const circuitAmps = S.circuitAmps;
 const sysLabel = (key) => S.PANEL_SYSTEMS[key]?.label || key;
 
-/** Map slot -> { circuit, start } for every slot a circuit occupies. */
-function occupancy(circuits) {
+/**
+ * Occupancy of every space a circuit touches. Returns a Map slot ->
+ *   { full, start, A, B }
+ * where `full` is a whole-space breaker occupying the slot (null if none), `start`
+ * is true on that breaker's first slot, and `A`/`B` are the half-space (tandem)
+ * circuits sitting in the upper/lower half of the slot (null if empty). A full
+ * breaker and a half can never share a space; two halves (A and B) may.
+ */
+export function occupancy(circuits) {
   const map = new Map();
+  const at = (slot) => {
+    let o = map.get(slot);
+    if (!o) { o = { full: null, start: false, A: null, B: null }; map.set(slot, o); }
+    return o;
+  };
   for (const c of circuits) {
-    for (let k = 0; k < (Number(c.poles) || 1); k++) map.set(Number(c.slot) + 2 * k, { circuit: c, start: k === 0 });
+    const half = halfOf(c);
+    if (half) { at(Number(c.slot))[half] = c; continue; }
+    const poles = Number(c.poles) || 1;
+    for (let k = 0; k < poles; k++) {
+      const o = at(Number(c.slot) + 2 * k);
+      o.full = c;
+      if (k === 0) o.start = true;
+    }
   }
   return map;
 }
 
+/** True if a space holds any breaker (a full one or either half). */
+const spaceTaken = (o) => !!(o && (o.full || o.A || o.B));
+
+/**
+ * Pure placement check: can a breaker go at `slot` in `circuits` on a panel of
+ * `total` spaces? `half` 'A'/'B' means a tandem (half space); otherwise a full
+ * breaker of `poles` poles. Returns { ok } or { ok:false, reason } with a
+ * ready-to-toast message. Pole/system rules (neutral, three-phase) are checked
+ * by the caller; this only enforces physical collisions.
+ */
+export function placement(circuits, { slot, poles = 1, half = null }, total) {
+  slot = Number(slot);
+  const occ = occupancy(circuits);
+  if (half === 'A' || half === 'B') {
+    const o = occ.get(slot);
+    if (o && o.full) return { ok: false, reason: `Space ${slot} has a full-size breaker, so a tandem can't share it.` };
+    if (o && o[half]) return { ok: false, reason: `Space ${slot}${half} already has a tandem.` };
+    return { ok: true };
+  }
+  for (let k = 0; k < (Number(poles) || 1); k++) {
+    const s = slot + 2 * k;
+    if (s > total) return { ok: false, reason: `A ${poles}-pole breaker at space ${slot} needs space ${s}, past the end of the panel.` };
+    const o = occ.get(s);
+    if (spaceTaken(o)) return { ok: false, reason: `A ${poles}-pole breaker at space ${slot} needs space ${s}, which is taken.` };
+  }
+  return { ok: true };
+}
+
 function withPhases(circuits, system) {
-  return circuits.map((c) => ({ ...c, phase: S.circuitPhases(c.slot, c.poles, system) }));
+  return circuits.map((c) => ({ ...c, phase: S.circuitPhases(c.slot, halfOf(c) ? 1 : c.poles, system) }));
 }
 
 function summary(panel) {
@@ -121,10 +177,17 @@ function editorView(root, ctx, id) {
   // focus back on the same control so tabbing through a row keeps working.
   const redrawKeepFocus = () => setTimeout(() => {
     const a = document.activeElement;
-    const slot = a?.closest?.('[data-slot]')?.dataset.slot;
+    const cell = a?.closest?.('[data-slot]');
+    const slot = cell?.dataset.slot;
+    const half = cell?.dataset.half || '';
     const name = a?.getAttribute?.('name');
     redraw();
-    if (slot && name) gridEl.querySelector(`[data-slot="${slot}"] [name="${name}"]`)?.focus();
+    if (slot && name) {
+      const sel = half
+        ? `[data-slot="${slot}"][data-half="${half}"] [name="${name}"]`
+        : `[data-slot="${slot}"]:not([data-half]) [name="${name}"]`;
+      gridEl.querySelector(sel)?.focus();
+    }
   }, 0);
   const save = (patch, opts) => {
     panel = store.update('panels', panel.id, patch, opts);
@@ -146,7 +209,7 @@ function editorView(root, ctx, id) {
   head.addEventListener('change', () => {
     const v = ui.readForm(head);
     const slots = Number(v.slots);
-    const tooFar = (panel.circuits || []).some((c) => Number(c.slot) + 2 * ((Number(c.poles) || 1) - 1) > slots);
+    const tooFar = (panel.circuits || []).some((c) => spanTo(c) > slots);
     if (tooFar) {
       ui.toast('Some breakers sit past that space count. Move them first.', 'error');
       head.querySelector('[name=slots]').value = String(slotCount(panel));
@@ -173,70 +236,102 @@ function editorView(root, ctx, id) {
   const gridEl = h('div', { class: 'panel-grid no-print' });
   const printEl = h('div', { class: 'print-only panel-print' });
 
+  /** True if the current system allows tandems (single-pole half breakers need a neutral). */
+  const tandemsAllowed = () => S.minPoles(panel.voltage) === 1;
+
   function addCircuit(slot) {
     const circuits = panel.circuits || [];
     const poles = S.minPoles(panel.voltage);
-    const occ = occupancy(circuits);
-    if (poles > 1 && (occ.has(slot + 2) || slot + 2 > slotCount(panel))) {
-      ui.toast('This system has no neutral: breakers need 2 or 3 poles, and the space below is taken.', 'error', 3600);
-      return;
-    }
+    if (!fits(slot, poles)) return;
     circuits.push({ slot, description: '', amps: 20, poles, loadVA: 0, phase: '' });
     setCircuits(circuits);
     setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"] input[name=description]`)?.focus(), 0);
   }
 
-  /** True if a breaker of `poles` poles can sit at `slot` (room below, not past the end, pole rules). Toasts why not. */
-  function fits(slot, poles, occ) {
-    const total = slotCount(panel);
-    const three = S.systemOf(panel.voltage).three;
-    if (poles === 3 && !three) { ui.toast('3-pole breakers need a three-phase panel.', 'error'); return false; }
-    if (poles < S.minPoles(panel.voltage)) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: use a 2- or 3-pole breaker.`, 'error'); return false; }
-    for (let k = 0; k < poles; k++) {
-      const s = slot + 2 * k;
-      if (s > total || (occ && occ.has(s))) {
-        ui.toast(`A ${poles}-pole breaker at space ${slot} needs space ${s}${s > total ? ', past the end of the panel' : ', which is taken'}.`, 'error');
-        return false;
-      }
-    }
+  /** Add a tandem (half-space, single-pole) breaker to space `slot`; picks the first free half if `half` is omitted. */
+  function addTandem(slot, half) {
+    if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: tandems are single-pole and can't be used.`, 'error', 3600); return; }
+    const circuits = (panel.circuits || []).map((x) => ({ ...x }));
+    const occ = occupancy(circuits);
+    const o = occ.get(slot);
+    const letter = half || (o && o.A ? 'B' : 'A');
+    const r = placement(circuits, { slot, half: letter }, slotCount(panel));
+    if (!r.ok) { ui.toast(r.reason, 'error'); return; }
+    circuits.push({ slot, half: letter, description: '', amps: 20, poles: 1, loadVA: 0, breakerType: 'tandem', phase: '' });
+    setCircuits(circuits);
+    setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"][data-half="${letter}"] input[name=description]`)?.focus(), 0);
+  }
+
+  /** Turn a full single-pole breaker into a half tandem in place; returns true on success, else toasts. */
+  function makeTandem(cur, circuits) {
+    if (halfOf(cur)) { cur.breakerType = 'tandem'; return true; } // already a half
+    if ((Number(cur.poles) || 1) > 1) { ui.toast("Multi-pole breakers fill a full space and can't be tandems.", 'error'); return false; }
+    if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: tandems are single-pole and can't be used.`, 'error'); return false; }
+    const occ = occupancy(circuits.filter((x) => x !== cur));
+    const o = occ.get(Number(cur.slot));
+    const letter = !(o && o.A) ? 'A' : (!o.B ? 'B' : null);
+    if (!letter) { ui.toast(`Space ${cur.slot} already has two tandems.`, 'error'); return false; }
+    cur.half = letter; cur.poles = 1; cur.breakerType = 'tandem';
     return true;
   }
 
-  /** Place a breaker template at an empty slot, filling poles/amps/loadVA/description/type in one tap. */
-  function placeTemplate(slot, tpl) {
+  /** True if a full breaker of `poles` poles can sit at `slot` (room below, not past the end, pole rules). Toasts why not. */
+  function fits(slot, poles) {
+    const three = S.systemOf(panel.voltage).three;
+    if (poles === 3 && !three) { ui.toast('3-pole breakers need a three-phase panel.', 'error'); return false; }
+    if (poles < S.minPoles(panel.voltage)) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: use a 2- or 3-pole breaker.`, 'error'); return false; }
+    const r = placement(panel.circuits || [], { slot, poles }, slotCount(panel));
+    if (!r.ok) { ui.toast(r.reason, 'error'); return false; }
+    return true;
+  }
+
+  /** Place a breaker template at a slot, filling poles/amps/loadVA/description/type in one tap. A tandem
+   * template (breakerType 'tandem') lands in a half space, taking `preferHalf` or the first free half. */
+  function placeTemplate(slot, tpl, preferHalf) {
     const circuits = (panel.circuits || []).map((x) => ({ ...x }));
-    const occ = occupancy(circuits);
+    if (tpl.breakerType === 'tandem' || tpl.half) {
+      if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: tandems are single-pole and can't be used.`, 'error', 3600); return; }
+      const o = occupancy(circuits).get(slot);
+      const letter = preferHalf && !(o && o[preferHalf]) ? preferHalf : (!(o && o.A) ? 'A' : (!o.B ? 'B' : null));
+      if (!letter) { ui.toast(`Space ${slot} already has two tandems.`, 'error'); return; }
+      const r = placement(circuits, { slot, half: letter }, slotCount(panel));
+      if (!r.ok) { ui.toast(r.reason, 'error'); return; }
+      const base = PT.applyBreakerTemplate(tpl, { slot, poles: 1, amps: 20, loadVA: 0 });
+      circuits.push({ ...base, slot, half: letter, poles: 1, breakerType: 'tandem', phase: '' });
+      setCircuits(circuits);
+      return;
+    }
     let poles = Number(tpl.poles) || S.minPoles(panel.voltage);
     if (poles < S.minPoles(panel.voltage)) poles = S.minPoles(panel.voltage); // honour a no-neutral system
-    if (!fits(slot, poles, occ)) return;
+    if (!fits(slot, poles)) return;
     const base = PT.applyBreakerTemplate(tpl, { slot, poles, amps: 20, loadVA: 0 });
     circuits.push({ ...base, slot, poles, phase: '' });
     setCircuits(circuits);
   }
 
-  function openTemplatePicker(slot) {
+  function openTemplatePicker(slot, preferHalf) {
     const templates = PT.listBreakerTemplates(store.settings());
     const groups = [...new Set(templates.map((t) => t.group || 'Other'))];
     const sheet = ui.openSheet({
-      title: `Breaker template · space ${slot}`,
+      title: `Breaker template · space ${slot}${preferHalf ? ' ' + preferHalf : ''}`,
       body: h('div', { class: 'tpl-groups' }, groups.map((g) => h('div', { class: 'tpl-group' },
         h('div', { class: 'tpl-group-head' }, g),
         templates.filter((t) => (t.group || 'Other') === g).map((t) => h('div', { class: 'tpl-row' },
-          h('button', { class: 'tpl-item', type: 'button', onClick: () => { sheet.close(); placeTemplate(slot, t); } },
+          h('button', { class: 'tpl-item', type: 'button', onClick: () => { sheet.close(); placeTemplate(slot, t, preferHalf); } },
             h('strong', null, t.label),
-            h('span', { class: 'muted' }, `${t.poles}P · ${t.amps == null ? '—' : t.amps + ' A'} · ${PT.breakerTypeLabel(t.breakerType)}${t.loadVA == null ? '' : ' · ' + ui.fmtNum(t.loadVA) + ' VA'}`)),
-          t.custom ? ui.button('', { variant: 'ghost danger', size: 'sm', icon: 'trash', title: 'Delete template', onClick: () => { PT.removeBreakerTemplate(store, t.id); sheet.close(); openTemplatePicker(slot); } }) : null))))),
+            h('span', { class: 'muted' }, `${t.breakerType === 'tandem' ? 'half · 1P' : t.poles + 'P'} · ${t.amps == null ? '—' : t.amps + ' A'} · ${PT.breakerTypeLabel(t.breakerType)}${t.loadVA == null ? '' : ' · ' + ui.fmtNum(t.loadVA) + ' VA'}`)),
+          t.custom ? ui.button('', { variant: 'ghost danger', size: 'sm', icon: 'trash', title: 'Delete template', onClick: () => { PT.removeBreakerTemplate(store, t.id); sheet.close(); openTemplatePicker(slot, preferHalf); } }) : null))))),
     });
   }
 
   /** Per-circuit options sheet: save as template, sub-feed, breaker type, colour override. */
   function openCircuitOptions(c) {
     const colours = coloursNow();
-    const phaseKeys = (c.phase || S.circuitPhases(c.slot, c.poles, panel.voltage)).split('-');
+    const phaseKeys = (c.phase || S.circuitPhases(c.slot, halfOf(c) ? 1 : c.poles, panel.voltage)).split('-');
     const typeOptions = PT.BREAKER_TYPE_KEYS.map((k) => ({ value: k, label: PT.BREAKER_TYPES[k] }));
     const colourOptions = [{ value: '', label: 'By phase (default)' }, ...Object.keys(colours.phases).map((p) => ({ value: p, label: `Phase ${p} · ${colours.phases[p].name}` }))];
     const sheet = ui.formSheet({
-      title: `Breaker ${c.slot}${c.description ? ' · ' + c.description : ''}`,
+      title: `Breaker ${c.slot}${halfOf(c) || ''}${c.description ? ' · ' + c.description : ''}`,
       fields: [
         { label: 'Breaker type', name: 'breakerType', type: 'select', value: c.breakerType || 'standard', options: typeOptions },
         { label: 'Colour shown', name: 'colorOverride', type: 'select', value: c.colorOverride || '', options: colourOptions },
@@ -253,9 +348,11 @@ function editorView(root, ctx, id) {
         } })),
       onSubmit: (v) => {
         const circuits = panel.circuits.map((x) => ({ ...x }));
-        const cur = circuits.find((x) => Number(x.slot) === Number(c.slot));
+        const cur = circuits.find((x) => sameCircuit(x, c));
         if (!cur) return;
-        cur.breakerType = v.breakerType || 'standard';
+        const bt = v.breakerType || 'standard';
+        if (bt === 'tandem') { if (!makeTandem(cur, circuits)) return; }
+        else cur.breakerType = bt;
         cur.colorOverride = v.colorOverride || null;
         cur.subFeed = !!v.subFeed;
         setCircuits(circuits);
@@ -268,7 +365,7 @@ function editorView(root, ctx, id) {
 
   /** Colour swatches for a circuit's phase(s); a colorOverride forces one phase's colour. */
   function circuitSwatches(c, colours) {
-    const keys = c.colorOverride ? [c.colorOverride] : (c.phase || S.circuitPhases(c.slot, c.poles, panel.voltage)).split('-');
+    const keys = c.colorOverride ? [c.colorOverride] : (c.phase || S.circuitPhases(c.slot, halfOf(c) ? 1 : c.poles, panel.voltage)).split('-');
     return keys.map((p) => {
       const col = colours.phases[p];
       return col ? h('span', { class: 'wire-swatch', style: { background: col.hex }, title: `Phase ${p} · ${col.name}` }) : null;
@@ -277,31 +374,19 @@ function editorView(root, ctx, id) {
 
   function changeCircuit(c, field, value) {
     const circuits = panel.circuits.map((x) => ({ ...x }));
-    const cur = circuits.find((x) => Number(x.slot) === Number(c.slot));
+    const cur = circuits.find((x) => sameCircuit(x, c));
     if (!cur) return;
     if (field === 'poles') {
+      // Halves are always single-pole and don't show this control; full breakers resize here.
       const poles = Number(value);
-      const occ = occupancy(circuits.filter((x) => x !== cur));
-      const total = slotCount(panel);
-      for (let k = 0; k < poles; k++) {
-        const s = Number(cur.slot) + 2 * k;
-        if (s > total || occ.has(s)) {
-          ui.toast(`A ${poles}-pole breaker at space ${cur.slot} needs space ${s}${s > total ? ', past the end of the panel' : ', which is taken'}.`, 'error');
-          redraw();
-          return;
-        }
-      }
-      if (poles === 3 && !S.systemOf(panel.voltage).three) {
-        ui.toast('3-pole breakers need a three-phase panel.', 'error');
-        redraw();
-        return;
-      }
-      if (poles < S.minPoles(panel.voltage)) {
-        ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: use a 2- or 3-pole breaker.`, 'error');
-        redraw();
-        return;
-      }
+      if (poles === 3 && !S.systemOf(panel.voltage).three) { ui.toast('3-pole breakers need a three-phase panel.', 'error'); redraw(); return; }
+      if (poles < S.minPoles(panel.voltage)) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: use a 2- or 3-pole breaker.`, 'error'); redraw(); return; }
+      const r = placement(circuits.filter((x) => x !== cur), { slot: cur.slot, poles }, slotCount(panel));
+      if (!r.ok) { ui.toast(r.reason, 'error'); redraw(); return; }
       cur.poles = poles;
+    } else if (field === 'breakerType') {
+      if ((value || 'standard') === 'tandem') { if (!makeTandem(cur, circuits)) { redraw(); return; } }
+      else cur.breakerType = value || 'standard';
     } else if (field === 'amps' || field === 'loadVA') {
       cur[field] = Number(value) || 0;
     } else {
@@ -311,8 +396,39 @@ function editorView(root, ctx, id) {
   }
 
   async function removeCircuit(c) {
-    if (!(await ui.confirmDialog(`Remove breaker ${c.slot}${c.description ? ` (${c.description})` : ''}?`, { okLabel: 'Remove' }))) return;
-    setCircuits(panel.circuits.filter((x) => Number(x.slot) !== Number(c.slot)));
+    if (!(await ui.confirmDialog(`Remove breaker ${c.slot}${halfOf(c) || ''}${c.description ? ` (${c.description})` : ''}?`, { okLabel: 'Remove' }))) return;
+    setCircuits(panel.circuits.filter((x) => !sameCircuit(x, c)));
+  }
+
+  /** Editable fields for one breaker (full or half). Returns { over, node }. A half shows a locked 1P and no pole select. */
+  function breakerFields(c, slot, colours) {
+    const amps = circuitAmps(c, panel.voltage);
+    const over = c.amps && amps > 0.8 * Number(c.amps);
+    const onChange = (field) => (e) => changeCircuit(c, field, e.target.value);
+    const bType = c.breakerType || 'standard';
+    const half = halfOf(c);
+    const label = `Space ${slot}${half || ''}`;
+    const polesCtl = half
+      ? h('span', { class: 'slot-poles-fixed', title: 'A tandem is a single-pole half-space breaker' }, '1P')
+      : h('select', { class: 'input', name: 'poles', 'aria-label': `${label} poles`, onChange: onChange('poles') },
+          [1, 2, 3].filter((p) => p >= S.minPoles(panel.voltage) && (p < 3 || S.systemOf(panel.voltage).three)).map((p) => h('option', { value: p, selected: Number(c.poles) === p }, `${p}P`)));
+    const node = h('div', { class: 'slot-fields' },
+      h('input', { class: 'input slot-desc', name: 'description', value: c.description || '', placeholder: 'Circuit description', 'aria-label': `${label} description`, onChange: onChange('description') }),
+      h('div', { class: 'slot-row' },
+        h('select', { class: 'input', name: 'amps', 'aria-label': `${label} breaker amps`, onChange: onChange('amps') },
+          BREAKERS.map((a) => h('option', { value: a, selected: Number(c.amps) === a }, `${a} A`))),
+        polesCtl,
+        h('select', { class: 'input slot-type', name: 'breakerType', 'aria-label': `${label} breaker type`, onChange: onChange('breakerType') },
+          PT.BREAKER_TYPE_KEYS.map((k) => h('option', { value: k, selected: bType === k }, PT.BREAKER_TYPES[k]))),
+        h('label', { class: 'slot-va' }, h('input', { class: 'input', name: 'loadVA', type: 'number', min: 0, step: 'any', inputmode: 'decimal', value: c.loadVA || '', placeholder: '0', 'aria-label': `${label} load VA`, onChange: onChange('loadVA') }), h('span', null, 'VA')),
+        ui.button('', { variant: 'ghost', size: 'sm', icon: 'sliders', title: `Options for breaker ${slot}${half || ''}`, onClick: () => openCircuitOptions(c) }),
+        ui.button('', { variant: 'ghost', size: 'sm', icon: 'trash', title: `Remove breaker ${slot}${half || ''}`, onClick: () => removeCircuit(c) })),
+      h('div', { class: ['slot-meta', over ? 'warn' : null] },
+        h('span', { class: 'wire-swatches' }, circuitSwatches(c, colours)),
+        ` ${c.phase || S.circuitPhases(c.slot, half ? 1 : c.poles, panel.voltage)} · ${ui.fmtNum(amps, 1)} A`,
+        c.subFeed ? h('span', { class: 'subfeed-tag' }, 'sub-feed') : null,
+        over ? ` · over 80% of ${c.amps} A` : ''));
+    return { over, node };
   }
 
   function slotCell(slot, occ, side, colours) {
@@ -320,39 +436,34 @@ function editorView(root, ctx, id) {
     const o = occ.get(slot);
     const num = h('span', { class: 'slot-num num' }, slot);
     const ph = h('span', { class: ['slot-phase', 'ph-' + phase] }, phase);
-    if (!o) {
+    if (!spaceTaken(o)) {
       return h('div', { class: ['slot', 'empty', side], dataset: { slot } }, num, ph,
         h('div', { class: 'slot-empty-actions' },
           h('button', { class: 'slot-add', type: 'button', onClick: () => addCircuit(slot), 'aria-label': `Add breaker at space ${slot}` }, ui.icon('plus', 16), 'Add breaker'),
+          tandemsAllowed() ? h('button', { class: 'slot-add tandem', type: 'button', onClick: () => addTandem(slot), 'aria-label': `Add a tandem (half-space) breaker at space ${slot}` }, ui.icon('plus', 16), 'Tandem') : null,
           h('button', { class: 'slot-add tpl', type: 'button', onClick: () => openTemplatePicker(slot), 'aria-label': `Add breaker from a template at space ${slot}` }, ui.icon('copy', 16), 'Template')));
     }
-    if (!o.start) {
-      return h('div', { class: ['slot', 'cont', side], dataset: { slot } }, num, ph, h('span', { class: 'slot-cont muted' }, `↳ ${o.circuit.poles}-pole from ${o.circuit.slot}`));
+    if (o.full && !o.start) {
+      return h('div', { class: ['slot', 'cont', side], dataset: { slot } }, num, ph, h('span', { class: 'slot-cont muted' }, `↳ ${o.full.poles}-pole from ${o.full.slot}`));
     }
-    const c = o.circuit;
-    const amps = circuitAmps(c, panel.voltage);
-    const over = c.amps && amps > 0.8 * Number(c.amps);
-    const onChange = (field) => (e) => changeCircuit(c, field, e.target.value);
-    const bType = c.breakerType || 'standard';
-    return h('div', { class: ['slot', 'used', side, over ? 'over' : null, c.subFeed ? 'subfeed' : null], dataset: { slot } },
-      num, ph,
-      h('div', { class: 'slot-fields' },
-        h('input', { class: 'input slot-desc', name: 'description', value: c.description || '', placeholder: 'Circuit description', 'aria-label': `Space ${slot} description`, onChange: onChange('description') }),
-        h('div', { class: 'slot-row' },
-          h('select', { class: 'input', name: 'amps', 'aria-label': `Space ${slot} breaker amps`, onChange: onChange('amps') },
-            BREAKERS.map((a) => h('option', { value: a, selected: Number(c.amps) === a }, `${a} A`))),
-          h('select', { class: 'input', name: 'poles', 'aria-label': `Space ${slot} poles`, onChange: onChange('poles') },
-            [1, 2, 3].filter((p) => p >= S.minPoles(panel.voltage) && (p < 3 || S.systemOf(panel.voltage).three)).map((p) => h('option', { value: p, selected: Number(c.poles) === p }, `${p}P`))),
-          h('select', { class: 'input slot-type', name: 'breakerType', 'aria-label': `Space ${slot} breaker type`, onChange: onChange('breakerType') },
-            PT.BREAKER_TYPE_KEYS.map((k) => h('option', { value: k, selected: bType === k }, PT.BREAKER_TYPES[k]))),
-          h('label', { class: 'slot-va' }, h('input', { class: 'input', name: 'loadVA', type: 'number', min: 0, step: 'any', inputmode: 'decimal', value: c.loadVA || '', placeholder: '0', 'aria-label': `Space ${slot} load VA`, onChange: onChange('loadVA') }), h('span', null, 'VA')),
-          ui.button('', { variant: 'ghost', size: 'sm', icon: 'sliders', title: `Options for breaker ${slot}`, onClick: () => openCircuitOptions(c) }),
-          ui.button('', { variant: 'ghost', size: 'sm', icon: 'trash', title: `Remove breaker ${slot}`, onClick: () => removeCircuit(c) })),
-        h('div', { class: ['slot-meta', over ? 'warn' : null] },
-          h('span', { class: 'wire-swatches' }, circuitSwatches(c, colours)),
-          ` ${c.phase || S.circuitPhases(c.slot, c.poles, panel.voltage)} · ${ui.fmtNum(amps, 1)} A`,
-          c.subFeed ? h('span', { class: 'subfeed-tag' }, 'sub-feed') : null,
-          over ? ` · over 80% of ${c.amps} A` : '')));
+    if (o.full) {
+      const f = breakerFields(o.full, slot, colours);
+      return h('div', { class: ['slot', 'used', side, f.over ? 'over' : null, o.full.subFeed ? 'subfeed' : null], dataset: { slot } }, num, ph, f.node);
+    }
+    // Tandem space: an A row over a B row; an empty half offers to add one.
+    const halfBlock = (letter) => {
+      const hc = o[letter];
+      if (!hc) {
+        return h('div', { class: ['slot-half', 'empty'], dataset: { slot, half: letter } },
+          h('button', { class: 'slot-add tandem', type: 'button', onClick: () => addTandem(slot, letter), 'aria-label': `Add tandem ${letter} at space ${slot}` }, ui.icon('plus', 16), `Tandem ${letter}`),
+          h('button', { class: 'slot-add tpl', type: 'button', onClick: () => openTemplatePicker(slot, letter), 'aria-label': `Add tandem ${letter} from a template at space ${slot}` }, ui.icon('copy', 16), 'Template'));
+      }
+      const f = breakerFields(hc, slot, colours);
+      return h('div', { class: ['slot-half', f.over ? 'over' : null, hc.subFeed ? 'subfeed' : null], dataset: { slot, half: letter } },
+        h('span', { class: 'slot-half-tag', title: `Half ${letter}` }, letter), f.node);
+    };
+    return h('div', { class: ['slot', 'used', 'tandem', side] }, num, ph,
+      h('div', { class: 'slot-halves' }, halfBlock('A'), halfBlock('B')));
   }
 
   function drawGrid() {
@@ -500,14 +611,26 @@ function editorView(root, ctx, id) {
     const total = slotCount(panel);
     const occ = occupancy(panel.circuits || []);
     const colours = coloursNow();
+    const typeTag = (c) => (c.breakerType && c.breakerType !== 'standard' ? ' ' + PT.breakerTypeLabel(c.breakerType) : '');
     const descCell = (c) => h('td', null, h('span', { class: 'print-swatches' }, circuitSwatches(c, colours)),
       ` ${c.description || '—'}${c.subFeed ? ' (sub-feed)' : ''}`);
+    // A half line inside a tandem space: the letter, its swatch, description and rating, each on its own line.
+    const halfDescLine = (c, letter) => c
+      ? h('div', { class: 'print-half' }, h('strong', null, letter + ': '), h('span', { class: 'print-swatches' }, circuitSwatches(c, colours)), ` ${c.description || '—'}${c.subFeed ? ' (sub-feed)' : ''}`)
+      : h('div', { class: 'print-half muted' }, `${letter}: —`);
+    const halfRateLine = (c) => c ? h('div', { class: 'print-half' }, `${c.amps}A 1P${typeTag(c)}`) : h('div', { class: 'print-half' }, '');
     const cell = (slot) => {
       const o = occ.get(slot);
-      if (!o) return [h('td', { class: 'num' }, slot), h('td', null, 'Spare / space'), h('td', null, '')];
-      if (!o.start) return [h('td', { class: 'num' }, slot), h('td', null, `↳ ${o.circuit.slot}`), h('td', null, '')];
-      const tLabel = o.circuit.breakerType && o.circuit.breakerType !== 'standard' ? ' ' + PT.breakerTypeLabel(o.circuit.breakerType) : '';
-      return [h('td', { class: 'num' }, slot), descCell(o.circuit), h('td', { class: 'num' }, `${o.circuit.amps}A ${o.circuit.poles}P${tLabel}`)];
+      if (!spaceTaken(o)) return [h('td', { class: 'num' }, slot), h('td', null, 'Spare / space'), h('td', null, '')];
+      if (o.full && !o.start) return [h('td', { class: 'num' }, slot), h('td', null, `↳ ${o.full.slot}`), h('td', null, '')];
+      if (o.full) {
+        const c = o.full;
+        return [h('td', { class: 'num' }, slot), descCell(c), h('td', { class: 'num' }, `${c.amps}A ${c.poles}P${typeTag(c)}`)];
+      }
+      // tandem space: both halves, each its own line with its phase colour.
+      return [h('td', { class: 'num' }, slot),
+        h('td', null, halfDescLine(o.A, 'A'), halfDescLine(o.B, 'B')),
+        h('td', { class: 'num' }, halfRateLine(o.A), halfRateLine(o.B))];
     };
     const rows = [];
     for (let r = 1; r <= total / 2; r++) rows.push(h('tr', null, cell(2 * r - 1), cell(2 * r)));

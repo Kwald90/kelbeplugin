@@ -39,14 +39,17 @@ export function phaseVolts(system) {
   return sys.lnVolts || sys.llVolts / R3;
 }
 
-/** Phase of a breaker slot: slots 1&2 are row 1, 3&4 row 2... phases repeat by row. */
+/** Phase of a breaker slot: slots 1&2 are row 1, 3&4 row 2... phases repeat by row.
+ * Both halves of a space (a tandem 1A/1B) share the space's phase, so a half circuit
+ * takes the phase of its slot exactly as a full 1-pole breaker there would. */
 export function slotPhase(slot, system) {
   const sys = systemOf(system);
   const row = Math.ceil(Number(slot) / 2);
   return sys.phases[(row - 1) % sys.phases.length];
 }
 
-/** Phases a circuit occupies: slot, slot+2, ... for each pole. Returns e.g. 'A-B'. */
+/** Phases a circuit occupies: slot, slot+2, ... for each pole. Returns e.g. 'A-B'.
+ * A half-space (tandem) circuit is always a single pole, so it returns its space's phase. */
 export function circuitPhases(slot, poles, system) {
   const out = [];
   for (let k = 0; k < (Number(poles) || 1); k++) out.push(slotPhase(Number(slot) + 2 * k, system));
@@ -70,7 +73,8 @@ export const minPoles = (system) => (systemOf(system).neutral ? 1 : 2);
  * phaseBalance(circuits, system) -> { perPhase: { A: va, ... }, amps: { A: a, ... }, totalVA, imbalancePct, maxAmps }
  * A multi-pole load is split equally across the phases it occupies; per-phase
  * current uses phaseVolts(). Imbalance is max deviation from the average phase
- * load (NEMA definition).
+ * load (NEMA definition). A half-space (tandem) circuit is a single pole on its
+ * space's phase, so both halves of a space count on that one phase.
  */
 export function phaseBalance(circuits, system) {
   const sys = systemOf(system);
@@ -79,7 +83,8 @@ export function phaseBalance(circuits, system) {
   for (const c of circuits) {
     const va = Number(c.loadVA) || 0;
     if (!va) continue;
-    const phases = (c.phase || circuitPhases(c.slot, c.poles, system)).split('-').filter((p) => p in perPhase);
+    const poles = c.half === 'A' || c.half === 'B' ? 1 : c.poles; // a tandem is one pole on its space's phase
+    const phases = (c.phase || circuitPhases(c.slot, poles, system)).split('-').filter((p) => p in perPhase);
     if (!phases.length) continue;
     for (const p of phases) perPhase[p] += va / phases.length;
     totalVA += va;

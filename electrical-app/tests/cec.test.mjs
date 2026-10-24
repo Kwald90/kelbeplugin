@@ -277,6 +277,28 @@ test('Systems: 347/600 V and 600 V 3-wire panels, phase balance', () => {
   assert.ok(C.systemsFor('NEC-2023').some((s) => s.value === '480/277 3ph'));
 });
 
+test('Tandem (half-space) breakers: both halves on the space phase, counted in balance', () => {
+  // On 120/240, space 1 is phase A and space 3 is phase B. A half circuit is always
+  // single-pole and takes its space's phase, so two tandems in space 1 both land on A.
+  assert.equal(C.slotPhase(1, '120/240 1ph'), 'A');
+  assert.equal(C.slotPhase(3, '120/240 1ph'), 'B');
+  const circuits = [
+    { slot: 1, half: 'A', poles: 1, loadVA: 1200 },
+    { slot: 1, half: 'B', poles: 1, loadVA: 600 },
+    { slot: 3, half: 'A', poles: 1, loadVA: 1000 },
+  ];
+  const b = C.phaseBalance(circuits, '120/240 1ph');
+  assert.equal(b.perPhase.A, 1800); // 1200 + 600, both halves of space 1
+  assert.equal(b.perPhase.B, 1000);
+  assert.equal(b.totalVA, 2800);
+  // a half circuit draws line-to-neutral like any 1-pole: 1200 VA / 120 V = 10 A
+  near(C.circuitAmps({ loadVA: 1200, poles: 1, half: 'A' }, '120/240 1ph'), 10, 1e-9);
+  // even if a stray poles value were stored on a half, balance treats it as one pole on its space phase
+  const strayPoles = C.phaseBalance([{ slot: 1, half: 'A', poles: 2, loadVA: 1000 }], '120/240 1ph');
+  assert.equal(strayPoles.perPhase.A, 1000);
+  assert.equal(strayPoles.perPhase.B, 0);
+});
+
 test('Checklists: CEC rule references plus provincial amendments', () => {
   const plain = C.cecTemplates(null);
   for (const t of plain) for (const [text, ref] of t.items) assert.ok(text && ref, `${t.title}: ${text}`);

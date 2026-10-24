@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as PT from '../js/lib/panel-templates.js';
 import * as S from '../js/lib/cec/systems.js';
+import { occupancy, slotCount, placement, halfOf } from '../js/modules/panels.js';
 
 // A tiny in-memory store standing in for js/store.js (settings() / saveSettings()).
 function fakeStore(initial = {}) {
@@ -175,4 +176,126 @@ test('phase maths and balance unchanged by the template helpers', () => {
   // minPoles still enforced for a no-neutral system
   assert.equal(S.minPoles('600 3ph 3w'), 2);
   assert.equal(S.minPoles('120/240 1ph'), 1);
+});
+
+// ---------------------------------------------------------------------------
+// Tandem / space-saver (half-space) breakers (js/modules/panels.js pure helpers).
+// A space can hold two single-pole tandems (upper A, lower B) instead of one full breaker.
+// ---------------------------------------------------------------------------
+
+test('halfOf reads the half field, defaulting full breakers to null', () => {
+  assert.equal(halfOf({ slot: 1, half: 'A' }), 'A');
+  assert.equal(halfOf({ slot: 1, half: 'B' }), 'B');
+  assert.equal(halfOf({ slot: 1 }), null);
+  assert.equal(halfOf({ slot: 1, half: 'C' }), null); // only A/B are halves
+  assert.equal(halfOf({ slot: 1, half: null }), null);
+});
+
+test('occupancy tracks two halves in one space, and a full breaker beside them', () => {
+  const circuits = [
+    { slot: 1, half: 'A', poles: 1, loadVA: 1000, breakerType: 'tandem' },
+    { slot: 1, half: 'B', poles: 1, loadVA: 500, breakerType: 'tandem' },
+    { slot: 2, poles: 1, loadVA: 0 },
+  ];
+  const occ = occupancy(circuits);
+  const s1 = occ.get(1);
+  assert.equal(s1.full, null);
+  assert.equal(s1.A.loadVA, 1000);
+  assert.equal(s1.B.loadVA, 500);
+  const s2 = occ.get(2);
+  assert.ok(s2.full && s2.start && !s2.A && !s2.B);
+});
+
+test('occupancy: an existing panel with no half field is unchanged (backward compatible)', () => {
+  // A legacy panel: one 1-pole full and one 2-pole full. No halves anywhere.
+  const legacy = [{ slot: 1, poles: 1, loadVA: 1000 }, { slot: 2, poles: 2, loadVA: 4000 }];
+  const occ = occupancy(legacy);
+  assert.equal(halfOf(legacy[0]), null);
+  const s1 = occ.get(1);
+  assert.ok(s1.full && s1.start && !s1.A && !s1.B);
+  const s2 = occ.get(2);
+  assert.ok(s2.full && s2.start);
+  const s4 = occ.get(4); // the 2-pole's second leg (continuation, not a start)
+  assert.ok(s4.full && !s4.start);
+});
+
+test('placement: half/full collisions and two-tandem spaces', () => {
+  const total = 24;
+  // an empty space takes a first tandem (A), then the second (B)
+  assert.equal(placement([], { slot: 1, half: 'A' }, total).ok, true);
+  const oneHalf = [{ slot: 1, half: 'A', poles: 1 }];
+  assert.equal(placement(oneHalf, { slot: 1, half: 'B' }, total).ok, true);
+  // a second A in the same space clashes
+  const clashA = placement(oneHalf, { slot: 1, half: 'A' }, total);
+  assert.equal(clashA.ok, false);
+  assert.match(clashA.reason, /tandem/i);
+  // a full single where a half already sits is refused
+  const fullOnHalf = placement(oneHalf, { slot: 1, poles: 1 }, total);
+  assert.equal(fullOnHalf.ok, false);
+  assert.match(fullOnHalf.reason, /taken/i);
+  // a tandem where a full breaker sits is refused
+  const occFull = [{ slot: 3, poles: 1 }];
+  const tandemOnFull = placement(occFull, { slot: 3, half: 'A' }, total);
+  assert.equal(tandemOnFull.ok, false);
+  assert.match(tandemOnFull.reason, /full-size/i);
+  // a tandem can sit in a free space
+  assert.equal(placement(occFull, { slot: 5, half: 'A' }, total).ok, true);
+  // a 2-pole can't land on a leg a half occupies (needs 1 & 3; 3 has a half)
+  const halfAt3 = [{ slot: 3, half: 'A', poles: 1 }];
+  assert.equal(placement(halfAt3, { slot: 1, poles: 2 }, total).ok, false);
+  // a 2-pole past the end is refused
+  assert.equal(placement([], { slot: 23, poles: 2 }, total).ok, false);
+});
+
+test('slotCount: a half takes only its own space; a full breaker still spans its poles', () => {
+  // two tandems in space 1 don't push the panel past the 24-space default minimum
+  assert.equal(slotCount({ circuits: [{ slot: 1, half: 'A', poles: 1 }, { slot: 1, half: 'B', poles: 1 }] }), 24);
+  // a 2-pole at space 40 forces a 42-space panel, as before
+  assert.equal(slotCount({ circuits: [{ slot: 40, poles: 2 }] }), 42);
+  // a stored slot count is honoured verbatim
+  assert.equal(slotCount({ slots: 30, circuits: [] }), 30);
+});
+
+test('both halves of a space land on the space phase and both count in phase balance', () => {
+  // On 120/240, space 1 is phase A. Two tandems there are both on A.
+  const circuits = [
+    { slot: 1, half: 'A', poles: 1, loadVA: 1200, breakerType: 'tandem' },
+    { slot: 1, half: 'B', poles: 1, loadVA: 800, breakerType: 'tandem' },
+  ];
+  for (const c of circuits) assert.equal(S.circuitPhases(c.slot, 1, '120/240 1ph'), 'A');
+  const b = S.phaseBalance(circuits, '120/240 1ph');
+  assert.equal(b.perPhase.A, 2000); // 1200 + 800
+  assert.equal(b.perPhase.B, 0);
+  assert.equal(b.totalVA, 2000);
+});
+
+test('a 2-pole breaker is never a half: phaseBalance splits it across both phases as before', () => {
+  // A 2-pole 8000 VA at slot 1 occupies A and B (full spaces), split 4000/4000 — unaffected by tandems.
+  const b = S.phaseBalance([{ slot: 1, poles: 2, loadVA: 8000 }], '120/240 1ph');
+  assert.equal(b.perPhase.A, 4000);
+  assert.equal(b.perPhase.B, 4000);
+});
+
+test('print cell derives both halves from occupancy (each half rendered on its own line)', () => {
+  // The print table draws a line per half from occupancy; assert the data it reads is both halves.
+  const occ = occupancy([
+    { slot: 1, half: 'A', poles: 1, amps: 15, loadVA: 1000, description: 'Plugs', breakerType: 'tandem' },
+    { slot: 1, half: 'B', poles: 1, amps: 20, loadVA: 1200, description: 'Lights', breakerType: 'tandem' },
+  ]);
+  const s1 = occ.get(1);
+  assert.equal(s1.full, null);
+  assert.equal(s1.A.description, 'Plugs');
+  assert.equal(s1.A.amps, 15);
+  assert.equal(s1.B.description, 'Lights');
+  assert.equal(s1.B.amps, 20);
+});
+
+test('tandem templates in the built-in library carry breakerType tandem and apply as single-pole', () => {
+  const t = PT.BUILT_IN_BREAKERS.find((x) => x.id === 'tandem-15');
+  assert.ok(t);
+  assert.equal(t.breakerType, 'tandem');
+  assert.equal(t.poles, 1);
+  const c = PT.applyBreakerTemplate(t, { slot: 1, poles: 1, amps: 20, loadVA: 0 });
+  assert.equal(c.breakerType, 'tandem');
+  assert.equal(c.amps, 15);
 });
