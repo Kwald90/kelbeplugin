@@ -8,7 +8,11 @@
 // whole-panel preset: { id, label, voltage, mainType, mainAmps, busAmps, slots,
 // feedThrough, region }. voltage is a PANEL_SYSTEMS key (js/lib/cec/systems.js).
 
-/** Breaker construction types, with labels for the picker. Stored on a circuit as `breakerType`. */
+/** Breaker construction types, with labels for the picker. Stored on a circuit as `breakerType`.
+ * 'tandem' and 'quad' are form-factors, not construction types: 'tandem' is a single half-space
+ * breaker (1-pole, half A or B); 'quad' is the inner handle-tied 2-pole of a space-saver quad. Both
+ * are set by the Tandem/Quad actions and the grid's fixed labels, not chosen from the type dropdown
+ * (CONSTRUCTION_TYPE_KEYS is the list the dropdown offers). */
 export const BREAKER_TYPES = {
   standard: 'Standard',
   gfci: 'GFCI',
@@ -16,11 +20,48 @@ export const BREAKER_TYPES = {
   dual: 'Dual-function (AFCI/GFCI)',
   hacr: 'HACR',
   tandem: 'Tandem (half-space)',
+  quad: 'Quad 2-pole (space-saver)',
   'lock-on': 'Lock-on',
 };
 
 export const BREAKER_TYPE_KEYS = Object.keys(BREAKER_TYPES);
+/** The keys the breaker-type dropdown offers: construction types plus the tandem half-space form.
+ * 'quad' is excluded — a quad's inner 2-pole is created by the Quad action, never picked here. */
+export const CONSTRUCTION_TYPE_KEYS = BREAKER_TYPE_KEYS.filter((k) => k !== 'quad');
 export const breakerTypeLabel = (t) => BREAKER_TYPES[t] || BREAKER_TYPES.standard;
+
+// Company-managed circuit-name suggestions for the panel description type-ahead (a native
+// <datalist>). Shipped as a sensible default list when the company has not set its own; editable in
+// Settings (settings.panelCircuitNames). Offline, CSP-safe — just strings bound to each input.
+export const DEFAULT_CIRCUIT_NAMES = [
+  'Kitchen plugs', 'Bedroom plugs', 'Bathroom plugs (GFCI)', 'Living room plugs', 'Dining room',
+  'Counter plugs', 'Fridge', 'Dishwasher', 'Microwave', 'Range', 'Dryer', 'Washer', 'Furnace',
+  'A/C condenser', 'Heat pump', 'Water heater', 'HRV/ERV', 'Sump pump', 'Garage plugs', 'Garage door',
+  'Outside plugs', 'Exterior lights', 'Lighting', 'Pot lights', 'Smoke/CO alarms', 'Sub panel',
+  'EV charger', 'Hot tub', 'Pool', 'Well pump', 'Septic alarm', 'Air compressor', 'Shop plugs',
+  'Spare', 'Space',
+];
+
+/**
+ * The circuit-name suggestions to show in the description type-ahead: the company's
+ * settings.panelCircuitNames when it has any, otherwise DEFAULT_CIRCUIT_NAMES. Trimmed and
+ * de-duplicated (case-insensitively, first spelling kept). Pure.
+ */
+export function panelCircuitNames(settings) {
+  const raw = settings && Array.isArray(settings.panelCircuitNames) ? settings.panelCircuitNames : null;
+  const src = raw && raw.length ? raw : DEFAULT_CIRCUIT_NAMES;
+  const seen = new Set();
+  const out = [];
+  for (const n of src) {
+    const name = String(n ?? '').trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
 
 // Built-in breaker library. Canadian residential and light-commercial defaults. loadVA values
 // are typical estimates (nameplate/trade rules of thumb), good enough for phase balancing; they

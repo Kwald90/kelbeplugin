@@ -139,6 +139,22 @@ export const halfOf = (c) => (c && (c.half === 'A' || c.half === 'B') ? c.half :
  */
 export const isQuadInner = (c) => halfOf(c) === 'B' && (Number(c && c.poles) || 1) === 2;
 
+/**
+ * The three circuits of a space-saver quad placed at `slot`, in top-to-bottom order: an outer
+ * single (this space's upper half 'A'), the inner handle-tied 2-pole (this space's lower half 'B',
+ * reaching the next space's upper half 'A'), and an outer single (the next space's lower half 'B').
+ * The inner is a real 2-pole typed 'quad' — never a tandem. Pure; the editor stamps phases on save.
+ */
+export function quadCircuits(slot) {
+  slot = Number(slot);
+  const next = slot + 2;
+  return [
+    { slot, half: 'A', poles: 1, description: '', amps: 20, loadVA: 0, breakerType: 'tandem', phase: '' },
+    { slot, half: 'B', poles: 2, description: '', amps: 20, loadVA: 0, breakerType: 'quad', phase: '' },
+    { slot: next, half: 'B', poles: 1, description: '', amps: 20, loadVA: 0, breakerType: 'tandem', phase: '' },
+  ];
+}
+
 /** Poles used for phase assignment: a normal tandem is 1 pole; a quad inner crosses 2; a full breaker uses its own count. */
 const phasePolesOf = (c) => (halfOf(c) ? (isQuadInner(c) ? 2 : 1) : (Number(c.poles) || 1));
 
@@ -425,16 +441,18 @@ function editorView(root, ctx, id) {
     setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"][data-half="${letter}"] input[name=description]`)?.focus(), 0);
   }
 
-  /** Add a quad (space-saver): the inner handle-tied 2-pole in the inner halves (this space's lower
-   *  half + the next space's upper half), leaving the two outer halves open for single-pole breakers. */
+  /** Add a quad (space-saver): one device laid out as three circuits across two spaces — an outer
+   *  single (this space's upper half 'A'), the inner handle-tied 2-pole (this space's lower half 'B'
+   *  reaching the next space's upper half 'A'), and an outer single (the next space's lower half 'B').
+   *  Each is independently editable; the inner is a real 2-pole (breakerType 'quad'), not a tandem. */
   function addQuad(slot) {
     if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: space-saver quads are not applicable.`, 'error', 3600); return; }
     const circuits = (panel.circuits || []).map((x) => ({ ...x }));
     const r = placement(circuits, { slot, half: 'B', poles: 2 }, slotCount(panel));
     if (!r.ok) { ui.toast(r.reason, 'error'); return; }
-    circuits.push({ slot, half: 'B', poles: 2, description: '', amps: 20, loadVA: 0, breakerType: 'standard', phase: '' });
+    circuits.push(...quadCircuits(slot));
     setCircuits(circuits);
-    setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"][data-half="B"] input[name=description]`)?.focus(), 0);
+    setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"][data-half="A"] input[name=description]`)?.focus(), 0);
   }
 
   /** Turn a full single-pole breaker into a half tandem in place; returns true on success, else toasts. */
@@ -468,8 +486,11 @@ function editorView(root, ctx, id) {
       if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: space-saver quads are not applicable.`, 'error', 3600); return; }
       const r = placement(circuits, { slot, half: 'B', poles: 2 }, slotCount(panel));
       if (!r.ok) { ui.toast(r.reason, 'error'); return; }
+      // A quad template fills all three circuits of the device: the inner 2-pole takes the template's
+      // amp/load/description; the two outer singles start blank for the user to fill in.
+      const [top, inner, bottom] = quadCircuits(slot);
       const base = PT.applyBreakerTemplate(tpl, { slot, poles: 2, amps: 20, loadVA: 0 });
-      circuits.push({ ...base, slot, half: 'B', poles: 2, phase: '' });
+      circuits.push(top, { ...inner, ...base, slot, half: 'B', poles: 2, breakerType: 'quad', phase: '' }, bottom);
       setCircuits(circuits);
       return;
     }
@@ -514,8 +535,9 @@ function editorView(root, ctx, id) {
   function openCircuitOptions(c) {
     const colours = coloursNow();
     const pp = panelPrintSettings(store.settings());
+    const quadInner = isQuadInner(c);
     const phaseKeys = (c.phase || S.circuitPhases(c.slot, phasePolesOf(c), panel.voltage)).split('-');
-    const typeOptions = PT.BREAKER_TYPE_KEYS.map((k) => ({ value: k, label: PT.BREAKER_TYPES[k] }));
+    const typeOptions = PT.CONSTRUCTION_TYPE_KEYS.map((k) => ({ value: k, label: PT.BREAKER_TYPES[k] }));
     const phaseOptions = [{ value: '', label: 'By phase (default)' }, ...Object.keys(colours.phases).map((p) => ({ value: p, label: `Phase ${p} · ${colours.phases[p].name}` }))];
     // Row-highlight choices. '' keeps the default (red for a smoke/alarm purpose, none otherwise).
     const highlightOptions = [
@@ -533,7 +555,9 @@ function editorView(root, ctx, id) {
     const sheet = ui.formSheet({
       title: `Breaker ${c.slot}${halfOf(c) || ''}${c.description ? ' · ' + c.description : ''}`,
       fields: [
-        { label: 'Breaker type', name: 'breakerType', type: 'select', value: c.breakerType || 'standard', options: typeOptions },
+        quadInner
+          ? { label: 'Breaker type', name: 'breakerTypeShown', type: 'text', value: 'Quad 2-pole (space-saver)', readonly: true, hint: 'A quad’s inner handle-tied 2-pole. The two outer singles are separate breakers.' }
+          : { label: 'Breaker type', name: 'breakerType', type: 'select', value: c.breakerType || 'standard', options: typeOptions },
         { label: 'Purpose tag', name: 'purpose', type: 'text', value: c.purpose || '', placeholder: 'e.g. smoke, kitchen, lighting', hint: '“smoke” or “alarm” is highlighted red by default' },
         { label: 'Wiring status', name: 'status', type: 'select', value: c.status || '', options: [{ value: '', label: 'Not tracked' }, ...PANEL_STATUSES.map((s) => ({ value: s.key, label: s.label }))] },
         { label: 'Row highlight', name: 'highlight', type: 'select', value: curHex, options: highlightOptions },
@@ -560,9 +584,13 @@ function editorView(root, ctx, id) {
         const circuits = panel.circuits.map((x) => ({ ...x }));
         const cur = circuits.find((x) => sameCircuit(x, c));
         if (!cur) return;
-        const bt = v.breakerType || 'standard';
-        if (bt === 'tandem') { if (!makeTandem(cur, circuits)) return; }
-        else cur.breakerType = bt;
+        // A quad inner keeps its 'quad' type (its control is read-only); everything else sets its type,
+        // with 'tandem' converting a full breaker to a half.
+        if (!quadInner) {
+          const bt = v.breakerType || 'standard';
+          if (bt === 'tandem') { if (!makeTandem(cur, circuits)) return; }
+          else cur.breakerType = bt;
+        }
         cur.purpose = (v.purpose || '').trim().slice(0, 40) || null;
         cur.status = v.status || null;
         // A chosen highlight ('none' or a #hex) wins; otherwise fall back to the phase-colour override.
@@ -623,29 +651,35 @@ function editorView(root, ctx, id) {
     const onChange = (field) => (e) => changeCircuit(c, field, e.target.value);
     const bType = c.breakerType || 'standard';
     const half = halfOf(c);
+    const quadInner = isQuadInner(c);
     const label = `Space ${slot}${half || ''}`;
     const hl = highlightFor(c, pp);
     const polesCtl = half
-      ? h('span', { class: 'slot-poles-fixed', title: isQuadInner(c) ? 'A quad’s inner breaker is a handle-tied 2-pole across both legs' : 'A tandem is a single-pole half-space breaker' }, isQuadInner(c) ? '2P' : '1P')
+      ? h('span', { class: 'slot-poles-fixed', title: quadInner ? 'A quad’s inner breaker is a handle-tied 2-pole across both legs' : 'A tandem is a single-pole half-space breaker' }, quadInner ? '2P' : '1P')
       : h('select', { class: 'input', name: 'poles', 'aria-label': `${label} poles`, onChange: onChange('poles') },
           [1, 2, 3].filter((p) => p >= S.minPoles(panel.voltage) && (p < 3 || S.systemOf(panel.voltage).three)).map((p) => h('option', { value: p, selected: Number(c.poles) === p }, `${p}P`)));
+    // A quad's inner 2-pole is a fixed form-factor, shown as a locked label — never the type dropdown,
+    // so it can't read "Tandem". Every other breaker picks a construction type (tandem included, quad not).
+    const typeCtl = quadInner
+      ? h('span', { class: 'slot-type-fixed', title: 'Quad inner: a handle-tied 2-pole across both legs (space-saver)' }, 'Quad 2-pole')
+      : h('select', { class: 'input slot-type', name: 'breakerType', 'aria-label': `${label} breaker type`, onChange: onChange('breakerType') },
+          PT.CONSTRUCTION_TYPE_KEYS.map((k) => h('option', { value: k, selected: bType === k }, PT.BREAKER_TYPES[k])));
     const statusCtl = h('select', { class: 'input slot-status', name: 'status', 'aria-label': `${label} wiring status`, onChange: onChange('status') },
       [{ key: '', label: 'Status…' }, ...PANEL_STATUSES].map((s) => h('option', { value: s.key, selected: (c.status || '') === s.key }, s.label)));
     const node = h('div', { class: ['slot-fields', hl ? 'has-highlight' : null], style: hl ? { borderLeft: `3px solid ${hl}` } : null },
-      h('input', { class: 'input slot-desc', name: 'description', value: c.description || '', placeholder: 'Circuit description', 'aria-label': `${label} description`, onChange: onChange('description') }),
+      h('input', { class: 'input slot-desc', name: 'description', list: 'fishtape-circuit-names', autocomplete: 'off', value: c.description || '', placeholder: 'Circuit description', 'aria-label': `${label} description`, onChange: onChange('description') }),
       h('div', { class: 'slot-row' },
         h('select', { class: 'input', name: 'amps', 'aria-label': `${label} breaker amps`, onChange: onChange('amps') },
           BREAKERS.map((a) => h('option', { value: a, selected: Number(c.amps) === a }, `${a} A`))),
         polesCtl,
-        h('select', { class: 'input slot-type', name: 'breakerType', 'aria-label': `${label} breaker type`, onChange: onChange('breakerType') },
-          PT.BREAKER_TYPE_KEYS.map((k) => h('option', { value: k, selected: bType === k }, PT.BREAKER_TYPES[k]))),
+        typeCtl,
         h('label', { class: 'slot-va' }, h('input', { class: 'input', name: 'loadVA', type: 'number', min: 0, step: 'any', inputmode: 'decimal', value: c.loadVA || '', placeholder: '0', 'aria-label': `${label} load VA`, onChange: onChange('loadVA') }), h('span', null, 'VA')),
         ui.button('', { variant: 'ghost', size: 'sm', icon: 'sliders', title: `Options for breaker ${slot}${half || ''}`, onClick: () => openCircuitOptions(c) }),
         ui.button('', { variant: 'ghost', size: 'sm', icon: 'trash', title: `Remove breaker ${slot}${half || ''}`, onClick: () => removeCircuit(c) })),
       h('div', { class: ['slot-meta', over ? 'warn' : null] },
         h('span', { class: 'wire-swatches' }, circuitSwatches(c, colours)),
         ` ${c.phase || S.circuitPhases(c.slot, phasePolesOf(c), panel.voltage)} · ${ui.fmtNum(amps, 1)} A`,
-        isQuadInner(c) ? h('span', { class: 'quad-tag' }, 'quad 2P') : null,
+        quadInner ? h('span', { class: 'quad-tag' }, 'quad') : null,
         c.subFeed ? h('span', { class: 'subfeed-tag' }, 'sub-feed') : null,
         c.purpose ? h('span', { class: ['purpose-tag', hl ? 'hl' : null], style: hl ? { color: hl, borderColor: hl } : null }, c.purpose) : null,
         over ? ` · over 80% of ${c.amps} A` : '',
@@ -694,7 +728,11 @@ function editorView(root, ctx, id) {
       return h('div', { class: ['slot-half', isQuadInner(hc) ? 'quad' : null, f.over ? 'over' : null, hc.subFeed ? 'subfeed' : null], dataset: { slot, half: letter } },
         h('span', { class: 'slot-half-tag', title: isQuadInner(hc) ? `Half ${letter} · quad inner 2-pole` : `Half ${letter}` }, letter), f.node);
     };
-    return h('div', { class: ['slot', 'used', 'tandem', side] }, num, ph,
+    // A quad's two spaces read as one group: the home space (inner lives in its 'B') is the top,
+    // the space the inner reaches into (its 'A') is the bottom, joined by an accent border.
+    const quadTop = o.B && isQuadInner(o.B) && Number(o.B.slot) === slot;
+    const quadBottom = o.A && isQuadInner(o.A) && Number(o.A.slot) !== slot;
+    return h('div', { class: ['slot', 'used', 'tandem', side, (quadTop || quadBottom) ? 'quad-group' : null, quadTop ? 'quad-top' : null, quadBottom ? 'quad-bottom' : null], dataset: { slot } }, num, ph,
       h('div', { class: 'slot-halves' }, halfBlock('A'), halfBlock('B')));
   }
 
@@ -703,6 +741,10 @@ function editorView(root, ctx, id) {
     const total = slotCount(panel);
     const occ = occupancy(panel.circuits || []);
     const colours = coloursNow();
+    // One datalist, referenced by every description input's list="fishtape-circuit-names". Native
+    // type-ahead: CSP-safe, offline, no JS dropdown. Company-managed list, or the shipped default.
+    gridEl.append(h('datalist', { id: 'fishtape-circuit-names' },
+      PT.panelCircuitNames(store.settings()).map((name) => h('option', { value: name }))));
     gridEl.append(h('div', { class: 'panel-bus' }, h('span', null, 'Odd'), h('span', null, 'Even')));
     for (let row = 1; row <= total / 2; row++) {
       gridEl.append(h('div', { class: 'panel-row' }, slotCell(2 * row - 1, occ, 'left', colours), slotCell(2 * row, occ, 'right', colours)));
@@ -905,7 +947,8 @@ function editorView(root, ctx, id) {
     const colours = coloursNow();
     const pp = panelPrintSettings(store.settings());
     const c = completion(panel);
-    const typeTag = (x) => (x.breakerType && x.breakerType !== 'standard' ? ' ' + PT.breakerTypeLabel(x.breakerType) : '');
+    // The amp cell's type note; 'quad' is conveyed by the 2P + "(quad)" marks, so it isn't repeated here.
+    const typeTag = (x) => (x.breakerType && x.breakerType !== 'standard' && x.breakerType !== 'quad' ? ' ' + PT.breakerTypeLabel(x.breakerType) : '');
 
     // One side's cells for a slot, in reading order from the outer edge toward the centre.
     const sideCells = (slot, side) => {

@@ -172,9 +172,11 @@
               "dual",
               "hacr",
               "tandem",
+              "quad",
               "lock-on",
               null
-            ]
+            ],
+            "description": "Breaker type. 'tandem' is a single half-space breaker; 'quad' marks the inner handle-tied 2-pole of a space-saver quad (with half='B' and poles=2)."
           },
           "colorOverride": {
             "type": [

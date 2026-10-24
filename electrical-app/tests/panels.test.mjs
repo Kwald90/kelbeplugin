@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as PT from '../js/lib/panel-templates.js';
 import * as S from '../js/lib/cec/systems.js';
-import { occupancy, slotCount, placement, halfOf, isQuadInner, bandIndexBySlot, completion, makeFullSpace, highlightFor, panelPrintSettings, PANEL_PRINT_DEFAULTS, PANEL_STATUSES } from '../js/modules/panels.js';
+import { occupancy, slotCount, placement, halfOf, isQuadInner, quadCircuits, bandIndexBySlot, completion, makeFullSpace, highlightFor, panelPrintSettings, PANEL_PRINT_DEFAULTS, PANEL_STATUSES } from '../js/modules/panels.js';
 import { panelUrl, qrSvg, qrMatrix } from '../js/lib/qr.js';
 import { BRAND } from '../js/brand.js';
 
@@ -427,6 +427,83 @@ test('quad built-in template places the inner 2-pole (poles 2, marked quad)', ()
   assert.equal(c.breakerType, 'standard');
 });
 
+test('quadCircuits: placing a quad makes exactly three circuits — single / 2-pole / single', () => {
+  const q = quadCircuits(5);
+  assert.equal(q.length, 3);
+  const [top, inner, bottom] = q;
+  // top outer single: this space's upper half, 1-pole
+  assert.equal(top.slot, 5);
+  assert.equal(top.half, 'A');
+  assert.equal(top.poles, 1);
+  assert.notEqual(top.breakerType, 'quad');
+  // inner handle-tied 2-pole: this space's lower half, poles 2, typed 'quad' (NOT a tandem)
+  assert.equal(inner.slot, 5);
+  assert.equal(inner.half, 'B');
+  assert.equal(inner.poles, 2);
+  assert.equal(inner.breakerType, 'quad');
+  assert.notEqual(inner.breakerType, 'tandem');
+  assert.equal(isQuadInner(inner), true);
+  // bottom outer single: the next space's lower half, 1-pole
+  assert.equal(bottom.slot, 7);
+  assert.equal(bottom.half, 'B');
+  assert.equal(bottom.poles, 1);
+  assert.notEqual(bottom.breakerType, 'quad');
+  // exactly two 1-pole singles and one 2-pole
+  assert.equal(q.filter((c) => Number(c.poles) === 1).length, 2);
+  assert.equal(q.filter((c) => Number(c.poles) === 2).length, 1);
+});
+
+test('a placed quad occupies the four half-positions and refuses collisions', () => {
+  const total = 24;
+  const q = quadCircuits(5); // 5A single, 5B/7A inner 2-pole, 7B single
+  const occ = occupancy(q);
+  const s5 = occ.get(5), s7 = occ.get(7);
+  assert.equal(s5.full, null);
+  assert.equal(s5.A, q[0]);       // top single
+  assert.equal(s5.B, q[1]);       // inner home
+  assert.equal(s7.A, q[1]);       // inner reaches down (same object)
+  assert.equal(s7.B, q[2]);       // bottom single
+  assert.ok(s5.B === s7.A);
+  // the inner's two halves are refused to any further breaker
+  assert.equal(placement(q, { slot: 5, half: 'B' }, total).ok, false);
+  assert.equal(placement(q, { slot: 7, half: 'A' }, total).ok, false);
+  // a full breaker can't go into either of the quad's spaces
+  assert.equal(placement(q, { slot: 5, poles: 1 }, total).ok, false);
+  assert.equal(placement(q, { slot: 7, poles: 1 }, total).ok, false);
+  assert.equal(placement(q, { slot: 5, poles: 2 }, total).ok, false);
+});
+
+test('a placed quad splits phases: each outer single on its space phase, inner across both (240 V)', () => {
+  // On 120/240, space 5 is phase A and space 7 is phase B.
+  const q = quadCircuits(5).map((c) => ({ ...c, loadVA: c.poles === 2 ? 5760 : 1200 }));
+  // phases of each circuit
+  assert.equal(S.circuitPhases(q[0].slot, 1, '120/240 1ph'), 'A');  // top single -> A
+  assert.equal(S.circuitPhases(q[1].slot, 2, '120/240 1ph'), 'A-B'); // inner 2-pole -> A-B
+  assert.equal(S.circuitPhases(q[2].slot, 1, '120/240 1ph'), 'B');  // bottom single -> B
+  const b = S.phaseBalance(q, '120/240 1ph');
+  // A: top single 1200 + half the inner 5760/2=2880 = 4080; B: bottom 1200 + 2880 = 4080
+  assert.equal(b.perPhase.A, 1200 + 2880);
+  assert.equal(b.perPhase.B, 1200 + 2880);
+  assert.equal(b.totalVA, 1200 + 5760 + 1200);
+});
+
+test('a quad inner selects as a real 2-pole, never a tandem; quad is not a dropdown construction type', () => {
+  // The grid/options type dropdowns offer CONSTRUCTION_TYPE_KEYS, which excludes 'quad' but keeps 'tandem'.
+  assert.ok(PT.CONSTRUCTION_TYPE_KEYS.includes('tandem'));
+  assert.ok(!PT.CONSTRUCTION_TYPE_KEYS.includes('quad'));
+  // 'quad' is a known type with its own label, shown as a fixed 2-pole label.
+  assert.equal(PT.breakerTypeLabel('quad'), 'Quad 2-pole (space-saver)');
+  assert.ok(PT.BREAKER_TYPE_KEYS.includes('quad'));
+});
+
+test('backward compat: a legacy quad inner typed standard is still recognised as a 2-pole quad', () => {
+  // Panels saved before the 'quad' type used breakerType 'standard' on the inner; geometry still rules.
+  const legacy = { slot: 5, half: 'B', poles: 2, breakerType: 'standard' };
+  assert.equal(isQuadInner(legacy), true);
+  const occ = occupancy([legacy]);
+  assert.equal(occ.get(7).A, legacy);
+});
+
 test('tandem templates in the built-in library carry breakerType tandem and apply as single-pole', () => {
   const t = PT.BUILT_IN_BREAKERS.find((x) => x.id === 'tandem-15');
   assert.ok(t);
@@ -549,6 +626,31 @@ test('panelUrl is the canonical deep link to a panel (appOrigin + hash route)', 
   assert.equal(panelUrl({ id: 'abc123' }, 'https://app.fishtapehq.com'), 'https://app.fishtapehq.com/#/panels/abc123');
   assert.equal(panelUrl('xy-9', 'https://app.fishtapehq.com/'), 'https://app.fishtapehq.com/#/panels/xy-9');
   assert.ok(panelUrl({ id: 'p1' }).startsWith(BRAND.appOrigin + '/#/panels/p1'));
+});
+
+// ---------------------------------------------------------------------------
+// Circuit-name type-ahead: a company-managed list bound to a native <datalist> on the description
+// input (CSP-safe, offline). Default list when unset; the company's own list once set.
+// ---------------------------------------------------------------------------
+
+test('panelCircuitNames: ships the default list when unset', () => {
+  const names = PT.panelCircuitNames({});
+  assert.deepEqual(names, PT.DEFAULT_CIRCUIT_NAMES); // the default list verbatim (already unique)
+  assert.ok(names.length >= 30);
+  assert.ok(names.includes('Kitchen plugs'));
+  assert.ok(names.includes('EV charger'));
+  assert.ok(names.includes('Spare'));
+  // same when the setting is missing or not an array
+  assert.deepEqual(PT.panelCircuitNames(undefined), names);
+  assert.deepEqual(PT.panelCircuitNames({ panelCircuitNames: 'nope' }), names);
+  assert.deepEqual(PT.panelCircuitNames({ panelCircuitNames: [] }), names); // empty list falls back to default
+});
+
+test('panelCircuitNames: uses the company list when set, trimmed and de-duplicated', () => {
+  const names = PT.panelCircuitNames({ panelCircuitNames: ['  Shop plugs  ', 'Welder', 'shop plugs', '', '  ', 'Welder'] });
+  assert.deepEqual(names, ['Shop plugs', 'Welder']); // trimmed, case-insensitive dedupe, blanks dropped
+  // a single-entry company list is honoured (not merged with defaults)
+  assert.deepEqual(PT.panelCircuitNames({ panelCircuitNames: ['Only this'] }), ['Only this']);
 });
 
 test('qrMatrix encodes text offline into a square module grid', () => {

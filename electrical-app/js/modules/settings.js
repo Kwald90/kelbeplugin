@@ -14,6 +14,7 @@ import { requestSettings, fmtSendAt, nextSendAt, PROVINCE_TZ, validTimeZone } fr
 import { FEATURE_PLAN, hasFeature } from '../plans.js';
 import { session, savePref } from '../session.js';
 import { panelPrintSettings } from './panels.js';
+import { panelCircuitNames } from '../lib/panel-templates.js';
 
 export const APP_VERSION = '0.3.0';
 
@@ -199,6 +200,34 @@ export default {
       panelPrintHost.append(form, saveRow('Save panel settings', save));
     };
 
+    // circuit-name suggestions for the panel description type-ahead (settings.panelCircuitNames)
+    const circuitNamesHost = h('div', { class: 'stack' });
+    const drawCircuitNames = () => {
+      ui.clear(circuitNamesHost);
+      const names = panelCircuitNames(store.settings());
+      const saveNames = (next) => {
+        // Store the working list only when it differs from the shipped default, so an untouched
+        // company keeps getting default updates; any edit pins the company's own list.
+        store.saveSettings({ panelCircuitNames: next });
+        drawCircuitNames();
+      };
+      const addForm = h('form', { class: 'row', onSubmit: (e) => {
+        e.preventDefault();
+        const input = addForm.querySelector('input');
+        const v = (input.value || '').trim();
+        if (!v) return;
+        if (names.some((n) => n.toLowerCase() === v.toLowerCase())) { ui.toast('That name is already in the list', 'info'); input.value = ''; return; }
+        saveNames([...names, v.slice(0, 60)]);
+      } },
+        h('input', { class: 'input grow', name: 'newName', placeholder: 'Add a circuit name', 'aria-label': 'New circuit name', maxlength: 60, autocomplete: 'off' }),
+        ui.button('Add', { variant: 'primary', icon: 'plus', type: 'submit' }));
+      circuitNamesHost.append(
+        h('div', { class: 'muted' }, 'Suggested as you type a circuit description on a panel schedule. Add your own; remove any you don’t use.'),
+        h('div', { class: 'chip-list circuit-names' }, names.map((n) => h('span', { class: 'chip' }, n,
+          ui.button('', { variant: 'ghost', size: 'sm', icon: 'x', title: `Remove ${n}`, onClick: () => saveNames(names.filter((x) => x !== n)) })))),
+        addForm);
+    };
+
     // defaults
     const defaults = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
       { label: 'Labour rate (per hour)', name: 'labourRateCents', type: 'money', value: s.labourRateCents, hint: 'Estimates, and time & material jobs' },
@@ -371,7 +400,7 @@ export default {
       ? ui.badge('Memory only: data is lost on reload', 'danger')
       : store.persistent ? ui.badge('Persistent storage', 'success') : ui.badge('Browser may clear data when low on space', 'warning');
 
-    drawCode(); drawTax(); drawPlacement(); drawPanelPrint(); drawModules(); drawMaterials();
+    drawCode(); drawTax(); drawPlacement(); drawPanelPrint(); drawCircuitNames(); drawModules(); drawMaterials();
     const modulesCard = card('Modules', 'Turn off what you don’t use. Nothing is deleted: turn a module back on and everything in it comes back.', modulesHost);
     modulesCard.id = 'modules';
     root.append(ui.page({ title: 'Settings', subtitle: s.company?.name },
@@ -385,6 +414,7 @@ export default {
         ctx.on?.('materials') !== false ? card('Material requests', 'When the crew’s requests go to the office as one list', materialsHost) : null,
         card('Box placement', 'Used when placing boxes on drawings', placementHost),
         card('Panel schedules', 'Colours and columns for printed panel directories and the QR panel label', panelPrintHost),
+        card('Circuit names', 'The suggestions offered as you fill in a panel schedule', circuitNamesHost),
         ctx.auth?.synced ? card('Your account', 'Password, two-step sign-in, your units and theme',
           ui.button('Password and sign-in', { icon: 'key', href: '#/account' })) : null,
         card('Appearance', null, themeHost),

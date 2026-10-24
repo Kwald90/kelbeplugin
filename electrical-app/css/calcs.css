@@ -196,6 +196,20 @@
 .slot-half.quad { border-style: solid; border-color: var(--accent); }
 .slot-half.quad .slot-half-tag { color: var(--accent); }
 .quad-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 700; background: var(--accent-soft); color: var(--text); }
+/* the quad inner's locked type label (a real 2-pole, never a tandem dropdown) */
+.slot-type-fixed { flex: none; align-self: center; padding: 2px 8px; border-radius: var(--r-pill); font-weight: 700; font-size: var(--fs-xs); background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+/* the two spaces of a quad read as one group: an accent rail joins top and bottom */
+.slot.quad-group { border-left: 3px solid var(--accent); }
+.slot.right.quad-group { border-left: 1px solid var(--border); border-right: 3px solid var(--accent); }
+.slot.quad-group.quad-top { border-bottom-left-radius: 0; }
+.slot.quad-group.quad-bottom { border-top-left-radius: 0; }
+.slot.right.quad-group.quad-top { border-bottom-right-radius: 0; }
+.slot.right.quad-group.quad-bottom { border-top-right-radius: 0; }
+
+/* ---------- circuit-name list (Settings) ---------- */
+.circuit-names { display: flex; flex-wrap: wrap; gap: 6px; }
+.circuit-names .chip { display: inline-flex; align-items: center; gap: 2px; cursor: default; color: var(--text); }
+.circuit-names .chip .btn { padding: 0 2px; min-height: auto; min-width: auto; }
 
 .tpl-list, .tpl-groups { display: flex; flex-direction: column; gap: var(--s3); }
 .tpl-group { display: flex; flex-direction: column; gap: 4px; }
