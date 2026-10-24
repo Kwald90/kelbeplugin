@@ -21,6 +21,7 @@ what) and the [backlog](BACKLOG.md) (what's open, and what needs Kelvin).
 - [Release 1 "Get paid and know the margin": the build contract](releases/r1-get-paid.md) (RST fixes,
   signed tickets, deposits, collections, offsite backups, job costing, prompt payment, period lock) ·
   [Gap analysis 2026-10](releases/gap-analysis-2026-10.md)
+- [Job standards](releases/job-standards.md): region-specific work-type playbooks built on SOPs (materials, breakers, specs, tasks; apply to a job)
 
 ## Architecture
 

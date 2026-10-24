@@ -125,6 +125,324 @@
           }
         }
       }
+    },
+    "isStandard": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Marks this SOP as a region-specific job standard (docs/releases/job-standards.md). A standard is any SOP with isStandard true or a non-empty jobType."
+    },
+    "jobType": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 120,
+      "description": "The work-type lookup label, e.g. 'RTM hookup', 'Hot tub', 'Kitchen', '200A panel change', 'Lighting'."
+    },
+    "scale": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "description": "Size tag; suggested small | service | residential | light-commercial | commercial | condo, free text allowed."
+    },
+    "region": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Where the standard applies. An empty province list applies anywhere.",
+      "properties": {
+        "provinces": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 14,
+          "items": {
+            "type": "string",
+            "maxLength": 2
+          }
+        },
+        "authority": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80,
+          "description": "'' | 'Manitoba Hydro' | 'City of Winnipeg' | ..."
+        }
+      }
+    },
+    "regionRequirements": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 50,
+      "description": "Region-specific rules. An empty province is shown everywhere; Manitoba-only rules carry province 'MB'.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "province": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2
+          },
+          "authority": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        }
+      }
+    },
+    "materials": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 500,
+      "description": "Bill of materials. itemId links the price book; name is the fallback when there is no price-book item.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300
+          },
+          "qty": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 30
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300
+          }
+        }
+      }
+    },
+    "breakers": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 200,
+      "description": "Breakers for the panel. breakerType is a key of BREAKER_TYPES (js/lib/panel-templates.js); templateId optionally references a BUILT_IN_BREAKERS id.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "templateId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "poles": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 4
+          },
+          "amps": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "breakerType": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "standard",
+              "gfci",
+              "afci",
+              "dual",
+              "hacr",
+              "tandem",
+              "lock-on",
+              null
+            ]
+          },
+          "qty": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 400
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300
+          },
+          "loadVA": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "panelTemplateId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "A BUILT_IN_PANELS or company-saved panel preset id (e.g. 'res-200')."
+    },
+    "specs": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 100,
+      "description": "Wire / service / connection specs, e.g. { label: 'Service', value: '100A underground' }.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          }
+        }
+      }
+    },
+    "tasks": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 300,
+      "description": "A task list (taskTemplate-shaped) seeded as draft work tasks when the standard is applied to a job.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300
+          },
+          "phaseName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "taskType": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 100
+          },
+          "estHours": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "qty": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40
+          },
+          "requiresPhoto": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "minPhotos": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 6
+          },
+          "priority": {
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              null
+            ]
+          }
+        }
+      }
     }
   },
   "additionalProperties": true

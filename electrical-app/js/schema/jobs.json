@@ -819,6 +819,48 @@
         }
       },
       "description": "Office only: estimated cost, percent complete and the frozen estimate budget."
+    },
+    "appliedStandards": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 200,
+      "description": "Job standards applied to this job (docs/releases/job-standards.md), de-duplicated by sopId.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sopId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "appliedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "appliedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          }
+        }
+      }
     }
   },
   "additionalProperties": true

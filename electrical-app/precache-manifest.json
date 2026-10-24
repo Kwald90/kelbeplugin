@@ -92,6 +92,7 @@
   "./js/lib/geocode.js",
   "./js/lib/importers.js",
   "./js/lib/job-overview.js",
+  "./js/lib/job-standards.js",
   "./js/lib/kpis.js",
   "./js/lib/location-policy.js",
   "./js/lib/location-ui.js",

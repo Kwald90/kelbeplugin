@@ -14,9 +14,92 @@ import { closeoutChecklist, closeoutRecord, closeoutBlocks, OVERRIDE_MIN, releas
 import { holdbackLedger, depositsAvailable } from '../lib/receivables.js';
 import { ticketToChangeOrder, ticketLabel, ticketReconciliation, billableTickets, batchCandidates, ticketSummary } from '../lib/tickets.js';
 import { buildSignature, signatureSheet, emailAcceptanceSheet, queueSignatureFirst } from '../lib/esign.js';
+import { filterStandards, visibleRequirements, applyStandard } from '../lib/job-standards.js';
 
 /** Can this person see money (prices, costs, margins)? Office and owners; crew never. */
 const seesMoney = (auth) => auth.seesMoney?.() ?? (auth.can('invoices') || auth.can('estimates'));
+
+/**
+ * "Apply a standard": pick a region-specific job standard (a SOP with the job-standard fields) and seed
+ * its materials, tasks, SOP link, optional panel and office-only draft estimate onto the job. Idempotent
+ * per job+sop (lib/job-standards.js applyStandard). Managers/office only.
+ */
+export function applyStandardSheet(ctx, job) {
+  const { store, ui, auth, nav } = ctx;
+  const { h } = ui;
+  const money = seesMoney(auth);
+  const settings = store.settings();
+  const authority = store.list('permits', (p) => p.jobId === job.id).map((p) => p.authority).find(Boolean) || null;
+  let province = settings.company?.province || 'ON';
+  let selectedId = null;
+  let createPanel = false;
+  let buildEstimate = false;
+
+  const listHost = h('div', { class: 'list' });
+  const previewHost = h('div', { class: 'stack' });
+
+  const drawPreview = () => {
+    ui.clear(previewHost);
+    const sop = selectedId ? store.get('sops', selectedId) : null;
+    if (!sop) { previewHost.append(h('p', { class: 'muted' }, 'Pick a standard to see what it will add.')); applyBtn.disabled = true; return; }
+    applyBtn.disabled = false;
+    const reqs = visibleRequirements(sop, { province: province === 'all' ? null : province, authority });
+    const counts = `${(sop.materials || []).length} materials · ${(sop.tasks || []).length} tasks · ${(sop.breakers || []).length} breakers`;
+    const panelBox = h('label', { class: 'field check' }, h('input', { type: 'checkbox', checked: createPanel, disabled: !(sop.breakers || []).length, onChange: (e) => { createPanel = e.target.checked; } }), h('span', null, 'Create a panel schedule from the breakers'));
+    const estBox = h('label', { class: 'field check' }, h('input', { type: 'checkbox', checked: buildEstimate, onChange: (e) => { buildEstimate = e.target.checked; } }), h('span', null, 'Build a draft estimate (office only)'));
+    previewHost.append(
+      h('h3', { style: { margin: '0' } }, sop.jobType || sop.title),
+      h('p', { class: 'muted', style: { margin: 0 } }, counts),
+      reqs.length ? h('div', { class: 'card flat' }, h('strong', null, 'Region requirements'), h('ul', { class: 'sop-reqs' }, reqs.map((r) => h('li', null, [r.province, r.authority].filter(Boolean).length ? h('strong', null, [r.province, r.authority].filter(Boolean).join(' · ') + ': ') : null, r.text)))) : null,
+      panelBox,
+      money ? estBox : h('p', { class: 'muted', style: { margin: 0 } }, 'Draft estimate is office-only.'));
+  };
+
+  const drawList = () => {
+    ui.clear(listHost);
+    const rows = filterStandards(store.list('sops'), { province: province === 'all' ? null : province, authority });
+    if (!rows.length) { listHost.append(h('div', { class: 'list-row muted' }, 'No job standards for this region. Create one in SOPs → Job standards.')); return; }
+    for (const s of rows) {
+      const row = h('label', { class: 'list-row click' },
+        h('input', { type: 'radio', name: 'apply-standard', value: s.id, checked: s.id === selectedId, onChange: () => { selectedId = s.id; drawList(); drawPreview(); } }),
+        h('div', { class: 'grow' }, h('div', { class: 'title' }, s.jobType || s.title),
+          h('div', { class: 'meta muted' }, `${(s.region?.provinces || []).join(', ') || 'Anywhere'}${s.region?.authority ? ' · ' + s.region.authority : ''}`)),
+        s.scale ? ui.badge(s.scale, 'accent') : null);
+      listHost.append(row);
+    }
+  };
+
+  const provincesInUse = [...new Set(store.list('sops').flatMap((s) => s.region?.provinces || []))].filter(Boolean).sort();
+  const regionOpts = [{ value: settings.company?.province || 'ON', label: 'Your province' }, { value: 'all', label: 'All regions' },
+    ...provincesInUse.filter((p) => p !== (settings.company?.province || 'ON')).map((p) => ({ value: p, label: p }))];
+  const regionSel = h('select', { class: 'input', 'aria-label': 'Region', onChange: (e) => { province = e.target.value; selectedId = null; drawList(); drawPreview(); } },
+    regionOpts.map((o) => h('option', { value: o.value, selected: o.value === province }, o.label)));
+
+  const applyBtn = ui.button('Apply standard', { variant: 'primary', icon: 'check', disabled: true, onClick: () => {
+    const sop = selectedId && store.get('sops', selectedId);
+    if (!sop) return;
+    const res = applyStandard({ store, auth, ui }, store.get('jobs', job.id), sop, { createPanel, buildEstimate, province: province === 'all' ? null : province, authority });
+    const parts = [`${res.addedTasks} task${res.addedTasks === 1 ? '' : 's'}`, `${res.addedMaterials} material${res.addedMaterials === 1 ? '' : 's'}`];
+    if (res.panel === 'added') parts.push('a panel');
+    if (res.estimate === 'added') parts.push('a draft estimate');
+    const skipped = res.skippedTasks + res.skippedMaterials;
+    ui.toast(`Applied ${sop.jobType || sop.title}: added ${parts.join(', ')}${skipped ? `; skipped ${skipped} already applied` : ''}${res.estimate === 'blocked' ? '. Estimate needs money access.' : ''}`, 'success', 5000);
+    sheet.close();
+    nav('#/jobs/' + job.id + '?tab=materials');
+  } });
+
+  drawList();
+  drawPreview();
+  const sheet = ui.openSheet({
+    title: `Apply a standard · ${job.number || ''}`, wide: true,
+    body: h('div', { class: 'stack' },
+      h('p', { class: 'muted', style: { margin: 0 } }, 'A job standard is a work-type playbook. Applying it seeds the material list, a task list and the SOP onto this job; the office can also build a panel and a draft estimate.'),
+      h('div', { class: 'row', style: { alignItems: 'center', gap: '8px' } }, h('span', { class: 'muted' }, 'Region'), regionSel),
+      listHost, h('hr'), previewHost),
+    actions: [h('span', { class: 'grow' }), ui.button('Cancel', { variant: 'ghost', onClick: () => sheet.close() }), applyBtn],
+  });
+  return sheet;
+}
 
 /** Everything the T&M and job-costing maths read, from the store. */
 export function tmSources(store) {
@@ -364,7 +447,8 @@ function detailView(root, ctx, id) {
           h('div', { class: 'job-exp-shortcuts' },
             on('drawings') ? ui.button('Drawings', { icon: 'pen', href: `#/jobs/${job.id}?tab=drawings` }) : null,
             on('today') ? ui.button('My day', { icon: 'check', href: '#/today' }) : null,
-            on('materials') && !ctx.readOnly ? ui.button('Request material', { icon: 'truck', href: `#/materials?new=1&jobId=${job.id}` }) : null)),
+            on('materials') && !ctx.readOnly ? ui.button('Request material', { icon: 'truck', href: `#/materials?new=1&jobId=${job.id}` }) : null,
+            auth.isManager() && !ctx.readOnly ? ui.button('Apply a standard', { icon: 'book', onClick: () => applyStandardSheet(ctx, job) }) : null)),
         panel(visit ? 'Next crew visit' : nextTask ? 'Next assigned work' : 'Crew & timing',
           visit ? h('p', { class: 'job-exp-visit-date' }, ui.fmtDate(visit.date, { weekday: 'long', month: 'short', day: 'numeric' }))
             : nextTask ? h('p', { class: 'job-exp-visit-date' }, ui.fmtDate(nextTask.date, { weekday: 'long', month: 'short', day: 'numeric' }))
@@ -621,6 +705,7 @@ function detailView(root, ctx, id) {
     const rows = store.list('materialRequests', (r) => r.jobId === job.id).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const items = new Map(store.list('items').map((i) => [i.id, i]));
     el.append(h('div', { class: 'row ops-sub-actions' }, !ctx.readOnly ? ui.button('Request material', { variant: 'primary', icon: 'truck', href: `#/materials?new=1&jobId=${job.id}` }) : null,
+      canEdit ? ui.button('Apply a standard', { icon: 'book', onClick: () => applyStandardSheet(ctx, job) }) : null,
       canEdit ? ui.button('All requests', { icon: 'list', href: '#/materials' }) : null));
     el.append(ui.table({
       columns: [
