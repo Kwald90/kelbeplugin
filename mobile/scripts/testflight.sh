@@ -37,6 +37,12 @@ mkdir -p "$OUT"
 KEYFILE="$HOME/.appstoreconnect/api_key.json"
 field() { node -e "const c=require(process.argv[1]);process.stdout.write(String(c[process.argv[2]]||''))" "$KEYFILE" "$1"; }
 
+# Drop fastlane's leftover temporary keychain from the search list: it is permanently locked and,
+# being ahead of the login keychain, makes codesign fail with "locked" even after the login
+# keychain is unlocked. Leave only the (user-unlockable) login keychain and the system keychain.
+# This needs no password and is what the long-working builds relied on.
+security list-keychains -d user -s "$LOGIN_KEYCHAIN" /Library/Keychains/System.keychain >/dev/null 2>&1 || true
+
 # The distribution certificate in the login keychain (override with SIGNING_CERT=<sha1>).
 CERT="${SIGNING_CERT:-$(security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" | awk -v t="($TEAM)" '/"Apple Distribution: / && index($0, t) {print $2; exit}')}"
 [ -n "$CERT" ] || { echo "No Apple Distribution certificate for team $TEAM in the login keychain"; exit 1; }
