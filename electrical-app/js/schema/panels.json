@@ -127,6 +127,17 @@
               "null"
             ]
           },
+          "half": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "A",
+              "B",
+              null
+            ]
+          },
           "loadVA": {
             "type": [
               "number",
