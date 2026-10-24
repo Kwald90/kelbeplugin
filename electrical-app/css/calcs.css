@@ -142,4 +142,12 @@
   .panel-page .page-head, .panel-summary, .calc-disclaimer { display: none !important; }
   .print-swatches .wire-swatch, .print-legend .wire-swatch { border: 1px solid #000; }
 }
-@media print { .panel-print { width: 7.5in; } }
+/* Fit the paper the printer actually uses: full width on narrow media (label/thermal, A5),
+   capped at a tidy 7.5in on Letter/A4 so a full-size sheet stays readable. Never a fixed width
+   that overflows and clips. */
+@media print {
+  @page { margin: 12mm; }
+  .panel-print { width: 100%; max-width: 7.5in; margin: 0 auto; }
+  .panel-print-table { table-layout: fixed; }
+  .panel-print-table td { overflow-wrap: anywhere; }
+}
