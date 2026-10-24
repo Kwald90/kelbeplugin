@@ -1,0 +1,30 @@
+/* My day: distinguish task progress, the personal time clock, and server confirmation. */
+.field-sync { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; padding: var(--s3) var(--s4); margin-bottom: var(--s3); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); }
+.field-sync > .grow { min-width: 180px; }
+.field-status-detail { color: var(--text-muted); font-size: var(--fs-xs); line-height: var(--lh-xs); margin-top: var(--s1); overflow-wrap: anywhere; }
+.field-sync.is-danger { border-color: var(--danger); background: var(--danger-soft); }
+.field-sync.is-danger strong { color: var(--danger); }
+.field-sync.is-warning { border-color: var(--warning); background: var(--warning-soft); }
+.field-sync.is-success strong { color: var(--success); }
+.field-shift { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s3); padding: var(--s4); margin-bottom: var(--s4); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+.field-shift > svg { flex: none; color: var(--text-muted); }
+.field-shift > .grow { min-width: 200px; }
+.field-shift h2 { font-size: var(--fs-base); line-height: var(--lh-base); margin: 0; }
+.field-shift p, .field-clock-note { color: var(--text-muted); font-size: var(--fs-xs); line-height: var(--lh-xs); margin: var(--s1) 0 0; }
+.field-clock-note { margin-bottom: var(--s4); }
+.field-shift.is-info > svg { color: var(--info); }
+.field-site { margin: var(--s2) var(--s4); padding: var(--s3); background: var(--surface-2); border-radius: var(--r-sm); }
+.field-site > strong { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.field-site .field-status-detail { display: flex; align-items: flex-start; gap: var(--s1); }
+.field-site .field-status-detail > svg { flex: none; }
+.field-site > .row { margin-top: var(--s2); }
+.field-site-contact { border-top: 1px solid var(--border); padding-top: var(--s2); margin-top: var(--s2); display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; font-size: var(--fs-xs); }
+.field-task-note { margin: var(--s1) var(--s4) var(--s2); color: var(--text-muted); font-size: var(--fs-xs); line-height: var(--lh-xs); }
+.field-day .wp-card.is-in-progress { border-left-color: var(--info); box-shadow: 0 0 0 1px var(--info), var(--shadow-card); }
+.field-day .tk-today { margin-top: var(--s4); }
+.field-day :is(.field-site, .field-sync, .field-shift) .btn { min-height: 44px; }
+@media (max-width: 480px) {
+  .field-shift > .btn { width: 100%; }
+  .field-day .wp-cards { grid-template-columns: minmax(0, 1fr); }
+}
+@media print { .field-sync { display: none; } }

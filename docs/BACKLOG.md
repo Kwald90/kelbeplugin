@@ -5,7 +5,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 
 ## Needs Kelvin
 
-- **K** App Store Connect: create the app record for bundle ID `com.fishtapehq.app` (registered 2026-10-19, team 9C68LPL6JA) in the web UI (Apple has no API for that), then TestFlight. Steps: `docs/mobile/README.md`.
+- **K** iOS device acceptance and public App Store release: the FishTapeHQ app record exists, and `1.0 (20261023.25)` is available to the internal TG Electrical TestFlight group (verified 2026-10-22). Complete the device checks and public-release review in [the release record](mobile/UX-TESTFLIGHT.md).
 - **K** Production VPS at dotmoose: host, SSH access, OS, data-centre country, disk encryption.
 - **K** Domain: confirm the spelling registered (fishtapehq.com vs fishtapewq.com) and point DNS (`app.`, `hq.`, `status.`).
 - **K** Real tier prices (placeholders in `electrical-app/js/plans.js`), the failed-payment grace period (7 days now), the trial length (14 days now, `TRIAL_DAYS`) and the deleted-company grace (30 days now).
@@ -19,7 +19,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 - **K** "Ask us to set this up": real address (placeholder `setup@fishtapehq.com`) and price.
 - **K** "FB Muse": Facebook Lead Ads (built) or Meta's Muse AI model?
 - **K** AI defaults: a US$50/month cap per company, the model (Opus 5.5 now, about US$0.10–0.15 per drafted estimate, unmeasured; `AI_MODEL` can switch to a cheaper one), whether MCP agents may create and update records or only read and draft, and keeping chats (with photos) 180 days.
-- **K** GitHub: make `claude/electrical-concept-app-h4qz12` the default branch, turn on Dependabot alerts, branch protection ("CI passed"), private vulnerability reporting, and the `staging`/`production` environments with secrets (`docs/runbooks/deploy-staging.md`).
+- **K** GitHub: make `claude/electrical-concept-app-h4qz12` the default branch, turn on branch protection ("CI passed"), private vulnerability reporting, and the `staging`/`production` environments with secrets (`docs/runbooks/deploy-staging.md`). Dependency graph and Dependabot vulnerability alerts enabled with Kelvin's approval on 2026-10-21; see [CI remediation](ux/CI-REMEDIATION.md).
 - **K** Offsite backup target in Canada, an uptime monitor, a backup heartbeat URL.
 - **K** Move the backup private key (`C:\Users\Kelvin\.fishtape-keys\fishtape-staging-backup.key`) into the password manager and onto a USB stick.
 - **K** Change the build Mac's password and turn on "Prevent automatic sleeping when the display is off".
@@ -41,7 +41,9 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 
 ## Code
 
-- **dev** Estimate status panel (electrical-app/js/modules/estimates.js): the R1-D merge kept R1-D's sign/deposit/revise panel and dropped the cloud UX session's "next-step guidance" headline/copy (e.g. "Awaiting the customer", "Plan the work"). All actions remain; re-add that guidance copy on top of the R1-D panel (ask the cloud session for the exact wording).
+- **dev, implemented on `codex/ux-sprint-02`, pending merge** Estimate next-step guidance restored alongside R1 signing/deposit/revision controls; see [Sprint 02](ux/SPRINT-02.md) for validation.
+- **dev** Signed estimates: existing `readOnly` combines plan locks with signed-record freezing, preventing Revise and Create job for an unlinked signed quote. Separate immutable quote fields from authorized handoff/revision actions with server-contract regression coverage; keep signed evidence unchanged.
+- **dev** Quote defaults: new estimate creation currently initializes material markup to zero, while setup stores a company markup. Decide and test how company defaults should seed new quotes; onboarding now asks users to review each quote's pricing rather than promising automatic application.
 - **dev** Server-side sequence runner: steps after day 0 are only queued when someone opens Sequences.
 - **dev** Sequences screen still says providers aren't connected and hides failed outbox items unless "Show sent" is on.
 - **dev** Facebook leads after a downgrade get a 403 and are lost once Meta stops retrying: store them and show them as locked instead.

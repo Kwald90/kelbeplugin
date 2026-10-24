@@ -2,6 +2,8 @@
 import { docTotals, invoiceShown, invoicePaidCents, entryHours } from '../lib/money.js';
 import { emergencyCard } from '../lib/safety-emergency.js';
 import { siteCard } from '../lib/location-ui.js';
+import { jobOverview } from '../lib/job-overview.js';
+import { STATUS_LABEL as MATERIAL_STATUS } from '../lib/materials.js';
 import { entryMinutes, kindOf, fmtH } from '../lib/timesheet.js';
 import { locationSettings } from '../lib/location-policy.js';
 import { BILLING_MODES, billingLabel, jobBillingMode, defaultBillingMode, jobRates, unbilledTm, buildTmInvoice, jobCosting } from '../lib/tm.js';
@@ -181,7 +183,7 @@ function jobForm(ctx, job, onSaved) {
 function listView(root, ctx) {
   const { store, ui, nav, auth } = ctx;
   const { h } = ui;
-  const canEdit = auth.isManager();
+  const canEdit = auth.isManager() && !ctx.readOnly;
   let filter = ctx.query.status || 'active', q = '';
   const body = h('div');
   const counts = () => {
@@ -259,11 +261,15 @@ function moneyFor(store, job) {
 function detailView(root, ctx, id) {
   const { store, ui, nav, auth } = ctx;
   const { h } = ui;
-  const canEdit = auth.isManager();
+  const canEdit = auth.isManager() && !ctx.readOnly;
   // Crew never see prices or costs (the server strips them too): no money tab or totals.
   const showMoney = seesMoney(auth);
   const money$ = showMoney;
-  const on = (m) => (ctx.on ? ctx.on(m) : moduleOn(store.settings(), m));
+  const on = (m) => (ctx.on ? ctx.on(m) : moduleOn(store.settings(), m)) && auth.can(({ materials: 'jobs', tickets: 'jobs' })[m] || m);
+  const expanded = new Set();
+  const disclosure = (key, label, ...children) => h('details', { class: 'job-exp-details', open: expanded.has(key),
+    onToggle: (e) => { if (!e.currentTarget.isConnected) return; if (e.currentTarget.open) expanded.add(key); else expanded.delete(key); } },
+  h('summary', null, label), h('div', { class: 'job-exp-details-body' }, ...children));
   let tab = ctx.query.tab || 'overview';
   const host = h('div');
 
@@ -293,7 +299,7 @@ function detailView(root, ctx, id) {
     ].filter(Boolean);
 
     const meta = h('div', { class: 'ops-meta' },
-      h('span', { class: 'ops-meta-item' }, ui.icon('users', 16), client ? h('a', { href: '#/clients/' + client.id }, client.name) : h('span', { class: 'muted' }, 'No client')),
+      h('span', { class: 'ops-meta-item' }, ui.icon('users', 16), client ? (on('clients') ? h('a', { href: '#/clients/' + client.id }, client.name) : h('span', null, client.name)) : h('span', { class: 'muted' }, 'No customer')),
       job.address ? h('span', { class: 'ops-meta-item' }, ui.icon('map-pin', 16), h('a', { href: 'https://maps.apple.com/?q=' + encodeURIComponent(job.address), target: '_blank', rel: 'noopener' }, job.address)) : null,
       h('span', { class: 'ops-meta-item' }, ui.icon('calendar', 16), `${ui.fmtDate(job.startDate)} – ${ui.fmtDate(job.endDate)}`),
       h('span', { class: 'ops-meta-item' }, statusSel), hold,
@@ -321,11 +327,75 @@ function detailView(root, ctx, id) {
     (renderers[tab] || overview)(panel, job, m);
 
     host.append(ui.page({ title: `${job.number} · ${job.title}`, actions }, meta,
-      emergencyCard(ctx, job.id, { editHref: canEdit ? `#/safety/job/${job.id}` : null }) || (canEdit ? h('a', { class: 'sf-em-add', href: `#/safety/job/${job.id}` }, '+ Add emergency info for this site') : null),
+      on('safety') ? (emergencyCard(ctx, job.id, { editHref: canEdit ? `#/safety/job/${job.id}` : null }) || (canEdit ? h('a', { class: 'sf-em-add', href: `#/safety/job/${job.id}` }, '+ Add emergency info for this site') : null)) : null,
       h('div', { class: 'ops-tabs-row' }, ui.tabs(tabsList, tab, (t) => { tab = t; draw(); })), panel));
   };
 
+  function operationalOverview(el, job) {
+    const manager = auth.isManager();
+    const summary = jobOverview({ job, day: ui.today(), employeeId: auth.current().id, manager,
+      readOnly: Boolean(ctx.readOnly), can: (p) => auth.can(p), on, seesMoney: showMoney,
+      schedule: on('schedule') ? store.list('schedule', (s) => s.jobId === job.id) : [],
+      tasks: on('workplan') || on('today') ? store.list('workTasks', (t) => t.jobId === job.id, { omit: ['photos'] }) : [],
+      materials: on('materials') ? store.list('materialRequests', (r) => r.jobId === job.id) : [],
+      hold: Boolean(store.get('clients', job.clientId)?.credit?.hold?.on),
+    });
+    const person = (id) => store.get('employees', id)?.name || 'Unassigned';
+    const visit = summary.nextVisit;
+    const nextTask = summary.upcomingTasks[0];
+    const crewIds = visit?.crewIds.length ? visit.crewIds : job.crewIds || [];
+    const crew = [...new Set(crewIds)].map(person);
+    const next = summary.next;
+    const panel = (title, ...children) => h('section', { class: 'job-exp-section', 'aria-label': title }, h('h2', null, title), ...children);
+    const note = (text) => h('p', { class: 'job-exp-note' }, text);
+    const row = (title, text, href, tone) => h(href ? 'a' : 'div', { class: ['job-exp-row', tone], href },
+      h('span', { class: 'job-exp-row-copy' }, h('strong', null, title), h('span', null, text)),
+      href ? ui.icon('chevron-right', 16) : null);
+    el.append(h('div', { class: 'job-exp-overview', dataset: { jobOverview: job.id } },
+      next ? h('section', { class: ['job-exp-next', next.tone], 'aria-label': 'Next step' },
+        h('div', { class: 'job-exp-next-copy' }, h('span', { class: 'job-exp-eyebrow' }, 'Next step'),
+          h('h2', null, next.title), h('p', null, next.detail)),
+        next.href ? ui.button(next.label, { variant: next.tone ? 'secondary' : 'primary', href: next.href }) : null) : null,
+      h('div', { class: 'job-exp-grid' },
+        panel('Scope of work',
+          h('div', { class: 'job-exp-scope' }, job.description || (job.kind === 'service'
+            ? 'No service details recorded. Confirm the issue and agreed work with the office before starting.'
+            : 'No scope recorded. Confirm the agreed work with the office before starting.')),
+          h('div', { class: 'job-exp-shortcuts' },
+            on('drawings') ? ui.button('Drawings', { icon: 'pen', href: `#/jobs/${job.id}?tab=drawings` }) : null,
+            on('today') ? ui.button('My day', { icon: 'check', href: '#/today' }) : null,
+            on('materials') && !ctx.readOnly ? ui.button('Request material', { icon: 'truck', href: `#/materials?new=1&jobId=${job.id}` }) : null)),
+        panel(visit ? 'Next crew visit' : nextTask ? 'Next assigned work' : 'Crew & timing',
+          visit ? h('p', { class: 'job-exp-visit-date' }, ui.fmtDate(visit.date, { weekday: 'long', month: 'short', day: 'numeric' }))
+            : nextTask ? h('p', { class: 'job-exp-visit-date' }, ui.fmtDate(nextTask.date, { weekday: 'long', month: 'short', day: 'numeric' }))
+              : note(on('schedule') ? 'No upcoming crew visit recorded.' : 'Confirm visit timing with the office.'),
+          nextTask && !visit ? note(nextTask.title) : null,
+          crew.length ? h('div', null, note(visit?.crewIds.length ? 'Scheduled crew' : 'Assigned crew'),
+            h('div', { class: 'job-exp-crew' }, crew.map((name) => h('span', null, ui.icon('user', 16), name))))
+            : note('No crew assigned to this job yet.'),
+          visit?.notes.length ? h('div', { class: 'job-exp-visit-notes' }, visit.notes.map((text) => h('p', null, text))) : null,
+          job.endDate ? note(`Target finish: ${ui.fmtDate(job.endDate)}`) : null,
+          on('schedule') ? ui.button('View schedule', { variant: 'ghost', icon: 'calendar', href: `#/jobs/${job.id}?tab=schedule` }) : null)),
+      h('div', { class: 'job-exp-grid' },
+        on('workplan') || on('today') ? panel(manager ? 'Work blockers' : 'Your work blockers',
+          summary.blockers.length ? h('div', { class: 'job-exp-list' }, summary.blockers.map((b) => row(b.title, `${person(b.employeeId)}: ${b.reason}`, b.href, 'danger')))
+            : note(manager ? 'No blocked tasks recorded for this job.' : 'None of your published tasks are blocked.')) : null,
+        on('materials') ? panel('Material needs',
+          summary.needs.length ? h('div', { class: 'job-exp-list' }, summary.needs.slice(0, 4).map((r) => row(
+            `${r.qty ?? ''} ${r.unit || ''} ${r.itemId ? store.get('items', r.itemId)?.name || r.description : r.description}`.trim(),
+            `${r.urgent ? 'Urgent · ' : ''}${MATERIAL_STATUS[r.status] || r.status}`, `#/jobs/${job.id}?tab=materials`, r.urgent ? 'warning' : null)),
+          summary.needs.length > 4 ? ui.button(`View all ${summary.needs.length} requests`, { variant: 'ghost', href: `#/jobs/${job.id}?tab=materials` }) : null)
+            : note('No open material requests for this job.')) : null)));
+  }
+
   function overview(el, job, m) {
+    operationalOverview(el, job);
+    const detail = h('div');
+    overviewDetails(detail, job, m);
+    el.append(disclosure('financials', showMoney ? 'Billing, costs & contract' : 'Hours & job details', detail));
+  }
+
+  function overviewDetails(el, job, m) {
     const pct = m.revenueCents ? Math.round((m.marginCents / m.revenueCents) * 100) : null;
     const tm = jobBillingMode(job) === 'tm';
     // The job site for the time clock (location while clocked in), for every role that sees the job.
@@ -333,9 +403,7 @@ function detailView(root, ctx, id) {
     if (!showMoney) {
       el.append(h('div', { class: 'grid ops-stats' }, ui.stat({ label: 'Labour', value: ui.fmtHours(m.hours), hint: 'logged on this job' }),
         ui.stat({ label: 'Change orders', value: String((job.changeOrders || []).length), hint: `${(job.changeOrders || []).filter((c) => c.status === 'pending').length} pending` })),
-      canEdit ? (tm ? tmCard(job) : estimateVsActual(job)) : null,
-      h('h2', { class: 'section' }, 'Scope'),
-      h('div', { class: 'card flat ops-scope' }, job.description ? job.description : h('span', { class: 'muted' }, 'No description yet.')),
+      auth.isManager() ? (tm ? tmCard(job) : estimateVsActual(job)) : null,
       ...site());
       return;
     }
@@ -346,10 +414,8 @@ function detailView(root, ctx, id) {
         ui.stat({ label: 'Labour', value: ui.fmtHours(m.hours), hint: money$ ? `${ui.fmtMoney(m.labourCents, { whole: true })} cost` : 'logged on this job' }),
         money$ ? ui.stat({ label: 'Materials used', value: ui.fmtMoney(m.materialCents, { whole: true }), hint: 'at cost, from stock moves' }) : null,
         money$ ? ui.stat({ label: 'Margin', value: ui.fmtMoney(m.marginCents, { whole: true }), hint: pct == null ? 'no revenue yet' : `${pct}% of ${m.invoicedCents ? 'invoiced' : 'estimate'}`, tone: m.marginCents < 0 ? 'danger' : 'success' }) : null),
-      canEdit ? (tm ? tmCard(job) : estimateVsActual(job)) : null,
-      canEdit ? contractCard(job) : null,
-      h('h2', { class: 'section' }, 'Scope'),
-      h('div', { class: 'card flat ops-scope' }, job.description ? job.description : h('span', { class: 'muted' }, 'No description yet.')),
+      auth.isManager() ? (tm ? tmCard(job) : estimateVsActual(job)) : null,
+      auth.isManager() ? contractCard(job) : null,
       ...site(),
     );
   }
@@ -437,7 +503,7 @@ function detailView(root, ctx, id) {
   function tmCard(job) {
     const src = tmSources(store);
     const u = unbilledTm({ job, settings: store.settings(), ...src, dayOf: ui.localDay });
-    const canBill = money$ && auth.can('invoices') && on('invoices');
+    const canBill = !ctx.readOnly && money$ && auth.can('invoices') && on('invoices');
     const parts = [
       `${ui.fmtHours(u.hours)} labour`, u.travelHours ? `${ui.fmtHours(u.travelHours)} travel` : null,
       `${u.materials.length} material line${u.materials.length === 1 ? '' : 's'}`,
@@ -554,7 +620,7 @@ function detailView(root, ctx, id) {
   function materials(el, job) {
     const rows = store.list('materialRequests', (r) => r.jobId === job.id).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const items = new Map(store.list('items').map((i) => [i.id, i]));
-    el.append(h('div', { class: 'row ops-sub-actions' }, ui.button('Request material', { variant: 'primary', icon: 'truck', href: `#/materials?new=1&jobId=${job.id}` }),
+    el.append(h('div', { class: 'row ops-sub-actions' }, !ctx.readOnly ? ui.button('Request material', { variant: 'primary', icon: 'truck', href: `#/materials?new=1&jobId=${job.id}` }) : null,
       canEdit ? ui.button('All requests', { icon: 'list', href: '#/materials' }) : null));
     el.append(ui.table({
       columns: [
@@ -572,8 +638,8 @@ function detailView(root, ctx, id) {
     const client = job.clientId && store.get('clients', job.clientId);
     // one drawing set per customer is the obvious default; separate drawings stay possible
     el.append(h('div', { class: 'row ops-sub-actions' },
-      ui.button(client ? `Open ${client.name}'s drawings` : 'Open drawings', { variant: 'primary', icon: 'pen', href: `#/drawings/customer?jobId=${encodeURIComponent(job.id)}` }),
-      ui.button('New separate drawing', { icon: 'plus', href: `#/drawings/new?jobId=${job.id}` })));
+      !ctx.readOnly ? ui.button(client ? `Open ${client.name}'s drawings` : 'Open drawings', { variant: 'primary', icon: 'pen', href: `#/drawings/customer?jobId=${encodeURIComponent(job.id)}` }) : null,
+      !ctx.readOnly ? ui.button('New separate drawing', { icon: 'plus', href: `#/drawings/new?jobId=${job.id}` }) : null));
     if (!rows.length) return el.append(ui.empty({ icon: 'pen', title: 'No drawings for this job yet', text: `Open ${client ? `${client.name}'s` : 'the'} drawings to start the customer's plan set, then mark it up with symbols and wiring.` }));
     el.append(h('div', { class: 'grid' }, rows.map((d) => h('a', { class: 'card click ops-drawing', href: '#/drawings/' + d.id },
       h('div', { class: 'ops-thumb' }, d.thumb ? h('img', { src: d.thumb, alt: '' }) : ui.icon('pen', 28)),
@@ -584,10 +650,10 @@ function detailView(root, ctx, id) {
   function money(el, job, m) {
     const tm = jobBillingMode(job) === 'tm';
     el.append(h('div', { class: 'row ops-sub-actions' },
-      on('estimates') ? ui.button('New estimate', { variant: tm ? 'secondary' : 'primary', icon: 'file-text', href: `#/estimates/new?jobId=${job.id}${job.clientId ? '&clientId=' + job.clientId : ''}` }) : null,
-      on('invoices') && tm && auth.can('invoices') ? ui.button('Build invoice from time & material', { variant: 'primary', icon: 'receipt', onClick: () => buildInvoiceSheet(job) }) : null,
-      on('invoices') ? ui.button('New invoice', { icon: 'receipt', href: `#/invoices/new?jobId=${job.id}` }) : null,
-      on('invoices') && auth.can('invoices') ? ui.button('New deposit invoice', { icon: 'dollar', href: `#/invoices/new?kind=deposit&jobId=${job.id}` }) : null));
+      !ctx.readOnly && on('estimates') ? ui.button('New estimate', { variant: tm ? 'secondary' : 'primary', icon: 'file-text', href: `#/estimates/new?jobId=${job.id}${job.clientId ? '&clientId=' + job.clientId : ''}` }) : null,
+      !ctx.readOnly && on('invoices') && tm && auth.can('invoices') ? ui.button('Build invoice from time & material', { variant: 'primary', icon: 'receipt', onClick: () => buildInvoiceSheet(job) }) : null,
+      !ctx.readOnly && on('invoices') ? ui.button('New invoice', { icon: 'receipt', href: `#/invoices/new?jobId=${job.id}` }) : null,
+      !ctx.readOnly && on('invoices') && auth.can('invoices') ? ui.button('New deposit invoice', { icon: 'dollar', href: `#/invoices/new?kind=deposit&jobId=${job.id}` }) : null));
     if (on('invoices') && auth.can('invoices')) holdbackAndDeposits(el, job);
     if (!on('estimates')) return moneyInvoices(el, m);
     el.append(h('h2', { class: 'section' }, 'Estimates'));
@@ -631,7 +697,7 @@ function detailView(root, ctx, id) {
         led.retainedByCustomerCents ? h('div', { class: 'ops-kv' }, h('span', { class: 'muted' }, 'Kept by the customer on its own'), h('span', { class: 'num' }, ui.fmtMoney(led.retainedByCustomerCents))) : null,
         deps.length ? h('div', { class: 'ops-kv' }, h('span', { class: 'muted' }, 'Deposits paid, not applied'), h('span', { class: 'num' }, ui.fmtMoney(unapplied))) : null),
       h('div', { class: 'row ops-sub-actions' },
-        led.outstandingCents > 0 ? (due ? ui.button('Invoice holdback release', { variant: 'primary', href: `#/invoices/new?kind=release&jobId=${job.id}` })
+        led.outstandingCents > 0 ? (due && !ctx.readOnly ? ui.button('Invoice holdback release', { variant: 'primary', href: `#/invoices/new?kind=release&jobId=${job.id}` })
           : h('span', { class: 'muted' }, job.contract?.holdbackReleaseOn ? `Release invoice from ${ui.fmtDate(job.contract.holdbackReleaseOn)}.` : 'Set the holdback release date on the contract card.')) : null,
         led.retainedByCustomerCents ? ui.button('Request holdback release', { onClick: letter }) : null)));
   }
@@ -740,7 +806,7 @@ function detailView(root, ctx, id) {
   // ---- field tickets on the job (4.1) ----
   function tickets(el, job) {
     const list = store.list('fieldTickets', (t) => t.jobId === job.id).sort((a, b) => String(b.date).localeCompare(String(a.date)));
-    const office = auth.can('invoices') && showMoney;
+    const office = !ctx.readOnly && auth.can('invoices') && showMoney;
     const tm = jobBillingMode(job) === 'tm';
     const drafts = batchCandidates(list, job.id);
     const priceAsCo = (t) => {
@@ -762,8 +828,8 @@ function detailView(root, ctx, id) {
       });
     };
     el.append(h('div', { class: 'row ops-sub-actions' },
-      ui.button('New ticket', { variant: 'primary', icon: 'plus', href: `#/tickets/new?jobId=${job.id}` }),
-      drafts.length > 1 && (auth.isManager() || office) ? ui.button(`Sign several tickets (${drafts.length})`, { icon: 'pen', href: `#/tickets/batch?jobId=${job.id}` }) : null,
+      !ctx.readOnly ? ui.button('New ticket', { variant: 'primary', icon: 'plus', href: `#/tickets/new?jobId=${job.id}` }) : null,
+      !ctx.readOnly && drafts.length > 1 && (auth.isManager() || office) ? ui.button(`Sign several tickets (${drafts.length})`, { icon: 'pen', href: `#/tickets/batch?jobId=${job.id}` }) : null,
       ui.button('All tickets', { variant: 'ghost', icon: 'list', href: '#/tickets' })));
     el.append(ui.table({
       columns: [
@@ -840,7 +906,7 @@ function detailView(root, ctx, id) {
 
   root.append(host);
   draw();
-  const offs = ['jobs', 'estimates', 'invoices', 'payments', 'timeEntries', 'schedule', 'drawings', 'permits', 'inspections', 'stockMoves', 'jobSafety', 'materialRequests', 'fieldTickets', 'clients'].map((c) => store.on(c, draw));
+  const offs = ['jobs', 'estimates', 'invoices', 'payments', 'timeEntries', 'schedule', 'drawings', 'permits', 'inspections', 'stockMoves', 'jobSafety', 'materialRequests', 'fieldTickets', 'clients', 'workTasks', 'employees', 'items'].map((c) => store.on(c, draw));
   return () => offs.forEach((f) => f());
 }
 

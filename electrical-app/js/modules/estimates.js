@@ -304,24 +304,39 @@ function renderDetail(root, ctx, id) {
     const cur = store.get('estimates', id) || doc;
     const st = cur.status;
     const signed = Boolean(cur.signatureId);
+    const linked = linkedJob();
+    const guidance = ctx.readOnly
+      ? ['View quote', 'This estimate is available to view. Editing and sending require a plan with Estimates.']
+      : st === 'superseded'
+        ? ['Replaced by a revision', 'Use the latest agreed revision when planning or billing the work.']
+        : signed
+          ? ['Approval recorded', linked ? 'This signed version is kept unchanged. Open the linked job to follow the work.' : 'This signed version is kept unchanged. Keep its approval with the job records.']
+          : st === 'accepted'
+            ? [linked ? 'Plan the work' : 'Turn approval into a job', 'Open the job to choose dates and assign the crew.']
+            : st === 'sent'
+              ? ['Awaiting the customer', 'Record the customer’s decision when it arrives, or capture their signature together on this device.']
+              : st === 'declined'
+                ? ['Review the feedback', 'Return to draft to revise the scope and price before sending again.']
+                : ['Review before sending', 'Preview the customer quote, then print it or email it when an email integration is connected.'];
     h(statusHost, null,
+      h('div', { class: 'estimate-next-copy' }, h('h2', null, guidance[0]), h('p', { class: 'muted estimate-hint' }, guidance[1])),
       h('div', { class: 'row' }, h('strong', null, 'Status'), h('span', { class: 'grow' }), qboBadge(ctx, 'estimates', id, { detail: true, record: cur }), ui.statusBadge(st)),
       signed ? h('div', { class: 'money-signed', dataset: { signedBy: cur.signedName || '' } }, ui.icon('pen', 16), ` Signed by ${cur.signedName || 'the customer'} ${ui.fmtDateTime(cur.signedAt)}`) : null,
       cur.revisionOf ? h('div', { class: 'muted' }, 'Revises ', h('a', { href: '#/estimates/' + cur.revisionOf }, store.get('estimates', cur.revisionOf)?.number || 'an earlier estimate')) : null,
       st === 'superseded' ? h('p', { class: 'muted' }, 'A later revision replaced this estimate.') : null,
-      st === 'draft' ? lookupAction(ctx, { entity: 'estimates', clientId: cur.clientId }) : null,
+      !readOnly && st === 'draft' ? lookupAction(ctx, { entity: 'estimates', clientId: cur.clientId }) : null,
       !readOnly && st !== 'superseded' ? h('div', { class: 'row money-actions' },
         st !== 'accepted' ? ui.button('Sign on this device', { size: 'sm', variant: 'primary', icon: 'pen', onClick: signHere }) : null,
         st !== 'sent' && st !== 'accepted' ? ui.button('Mark sent', { size: 'sm', icon: 'send', onClick: markSent }) : null,
-        st !== 'accepted' ? ui.button('Accepted', { size: 'sm', icon: 'check', onClick: () => accept() }) : null,
+        st !== 'accepted' ? ui.button('Record approval', { size: 'sm', icon: 'check', onClick: () => accept() }) : null,
         st !== 'accepted' ? ui.button('Customer accepted by email', { size: 'sm', variant: 'ghost', onClick: byEmail }) : null,
         st !== 'declined' ? ui.button('Declined', { size: 'sm', variant: 'ghost danger', icon: 'x', onClick: () => setStatus('declined') }) : null,
         st !== 'draft' ? ui.button('Back to draft', { size: 'sm', variant: 'ghost', onClick: () => setStatus('draft') }) : null) : null,
       !readOnly && (signed || st === 'accepted') && st !== 'superseded' ? h('div', { class: 'row' }, ui.button('Revise', { size: 'sm', icon: 'copy', onClick: revise })) : null,
       st === 'accepted' ? h('div', { class: 'row' },
-        cur.jobId ? ui.button('Open job', { size: 'sm', icon: 'briefcase', href: '#/jobs/' + cur.jobId }) : ui.button('Create job', { size: 'sm', icon: 'briefcase', onClick: createJob }),
-        on('invoices') ? ui.button('Create invoice', { size: 'sm', icon: 'receipt', onClick: () => { save.flush(); nav('#/invoices/new?estimateId=' + id); } }) : null,
-        on('invoices') ? ui.button('New deposit invoice', { size: 'sm', icon: 'dollar', onClick: () => { save.flush(); nav(`#/invoices/new?kind=deposit&estimateId=${id}`); } }) : null) : null);
+        linked ? ui.button('Open job', { size: 'sm', variant: 'primary', icon: 'briefcase', href: jobHref(linked) }) : !readOnly ? ui.button('Create job', { size: 'sm', variant: 'primary', icon: 'briefcase', onClick: createJob }) : null,
+        !ctx.readOnly && ctx.auth.can('invoices') && on('invoices') ? ui.button('Create invoice', { size: 'sm', icon: 'receipt', onClick: () => { save.flush(); nav('#/invoices/new?estimateId=' + id); } }) : null,
+        !ctx.readOnly && ctx.auth.can('invoices') && on('invoices') ? ui.button('New deposit invoice', { size: 'sm', icon: 'dollar', onClick: () => { save.flush(); nav(`#/invoices/new?kind=deposit&estimateId=${id}`); } }) : null) : null);
   };
   const setStatus = (st, extra = {}) => { save.write({ status: st, ...extra }, { summary: `${doc.number} → ${st}` }); drawStatus(); ui.toast(`${doc.number} marked ${st}`, 'success'); };
   // Sending runs the exemption check (Manitoba estimates warn, 2.9).

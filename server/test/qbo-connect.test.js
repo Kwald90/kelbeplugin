@@ -7,6 +7,7 @@
 // housekeeping and purge jobs, and the realm re-hash script.
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'node:crypto';
 import { skip, createTestDatabase } from './support/db.js';
 import { createFakeQbo, connectViaFake } from './support/fake-qbo.js';
@@ -337,16 +338,50 @@ describe('tokens', { skip }, () => {
   test('single flight: concurrent callers make one refresh, and no transaction is open during the call', async () => {
     await expire(A.tenantId);
     const calls = fake.state.tokenCalls.length;
-    let idleInTx = null;
-    fake.beforeToken(async () => {
-      const { rows } = await t.superPool.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction'");
-      idleInTx = rows[0].n;
-    });
-    const all = await Promise.all([1, 2, 3, 4].map(() => withAccessToken(t.db, sealer, config, A.tenantId)));
-    fake.beforeToken(null);
-    assert.equal(fake.state.tokenCalls.length, calls + 1);
-    assert.equal(new Set(all.map((x) => x.accessToken)).size, 1);
-    assert.equal(idleInTx, 0, 'no transaction held across the Intuit call');
+    // Every caller reads a token snapshot before joining the single-flight promise.
+    // Another caller may legitimately be between statements in that short transaction
+    // when the refresh starts. Inspect the refreshing caller's transactions, not the
+    // database-wide idle count. SET LOCAL resets the label on COMMIT/ROLLBACK, so a
+    // pooled connection reused by another caller cannot be mistaken for its old owner.
+    const callerContext = new AsyncLocalStorage();
+    const callers = [1, 2, 3, 4].map((n) => `qbo-refresh-caller-${n}`);
+    const labelledDb = {
+      ...t.db,
+      withTenant(ctx, fn, opts) {
+        const caller = callerContext.getStore();
+        return t.db.withTenant(ctx, async (tx) => {
+          await tx.query("SELECT set_config('application_name', $1, true)", [caller]);
+          return fn(tx);
+        }, opts);
+      },
+    };
+    const observations = [];
+    // Negative control: prove the observer sees a real open transaction without
+    // falsely attributing it to the caller performing the external refresh.
+    const unrelated = await t.appPool.connect();
+    try {
+      await unrelated.query('BEGIN');
+      const { rows: [{ pid }] } = await unrelated.query('SELECT pg_backend_pid() AS pid');
+      fake.beforeToken(async () => {
+        const caller = callerContext.getStore();
+        const { rows } = await t.superPool.query(
+          `SELECT count(*) FILTER (WHERE application_name = $1 AND xact_start IS NOT NULL)::int AS caller_open,
+                  count(*) FILTER (WHERE pid = $2 AND state = 'idle in transaction')::int AS unrelated_open
+             FROM pg_stat_activity WHERE datname = current_database()`, [caller, pid]);
+        observations.push({ caller, ...rows[0] });
+      });
+      const all = await Promise.all(callers.map((caller) => callerContext.run(caller,
+        () => withAccessToken(labelledDb, sealer, config, A.tenantId))));
+      assert.equal(fake.state.tokenCalls.length, calls + 1);
+      assert.equal(new Set(all.map((x) => x.accessToken)).size, 1);
+      assert.equal(observations.length, 1, 'the external refresh was observed exactly once');
+      assert.ok(callers.includes(observations[0].caller), 'the refresh belongs to an identified caller');
+      assert.equal(observations[0].unrelated_open, 1, 'the observer detects the deliberately held transaction');
+      assert.equal(observations[0].caller_open, 0, 'no transaction held by the refreshing caller across the Intuit call');
+    } finally {
+      fake.beforeToken(null);
+      try { await unrelated.query('ROLLBACK'); } finally { unrelated.release(); }
+    }
   });
 
   test('another process holding the refresh lease: wait for it, then take over when it lapses', async () => {

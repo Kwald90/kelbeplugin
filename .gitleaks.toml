@@ -2,7 +2,9 @@
 # CI scans the whole history on every push (.github/workflows/security.yml). Locally:
 #   gitleaks git --config .gitleaks.toml --redact .
 # A finding means: rotate the secret first (docs/runbooks/rotate-secrets.md), then clean up.
-# Allow-list a false positive narrowly (one regex or path, with a comment), never a whole rule.
+# Historical proven test fixtures are pinned to exact findings in .gitleaksignore.
+# Prefer exact fingerprints; never suppress an entire rule or test directory.
+# Review process and regression check: docs/security/gitleaks-fixtures.md.
 
 title = "Fishtape gitleaks config"
 

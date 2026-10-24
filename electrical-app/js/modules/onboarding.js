@@ -23,6 +23,7 @@ export function collectFacts(store, { synced = false, server = null } = {}) {
     synced,
     items: store.count('items'),
     jobs: store.count('jobs'),
+    estimates: store.count('estimates'),
     planSets: store.count('drawings', (d) => d.planSet || d.underlay),
     employees: store.count('employees', (e) => e.active !== false),
     server: server || store.meta?.(FACTS_META) || null,
@@ -51,7 +52,7 @@ export function detectSteps(f) {
       done: Boolean(ob.provinceAt) || (co.province && co.province !== DEFAULT_SETTINGS.company.province) || (s.codeBook && s.codeBook !== DEFAULT_SETTINGS.codeBook),
       detail: co.province ? `${PROVINCES.find((p) => p.code === co.province)?.name || co.province} · ${s.codeBook === 'NEC-2023' ? 'NEC 2023' : 'CEC 2024'}` : '', href: '#/settings' },
     { id: 'logo', title: 'Your logo', text: 'A small copy goes on printed estimates and invoices.', done: Boolean(co.logo), detail: co.logo ? 'Logo added' : '', href: '#/settings' },
-    { id: 'rates', title: 'Labour rate and markup', text: 'The defaults for new estimates.',
+    { id: 'rates', title: 'Labour rate and markup', text: 'Review your labour rate and material markup before quoting; check pricing in each quote.',
       done: Boolean(ob.ratesAt) || s.labourRateCents !== DEFAULT_RATE || s.markupPct !== DEFAULT_MARKUP,
       detail: `$${((s.labourRateCents ?? 0) / 100).toFixed(2)}/h · ${s.markupPct ?? 0}% markup`, href: '#/settings' },
     { id: 'pricebook', title: 'Import or add your price book', text: 'From QuickBooks, a supplier price list or any spreadsheet.',
@@ -74,6 +75,42 @@ export function detectSteps(f) {
 export function progress(steps) {
   const done = steps.filter((s) => s.done || s.skipped).length;
   return { done, total: steps.length, complete: done === steps.length, next: steps.find((s) => !s.done && !s.skipped) || null };
+}
+
+/** Presentation only: skipping a step never verifies the essentials or changes stored progress. */
+export function onboardingJourney(steps) {
+  const ids = ['company', 'province', 'rates'];
+  const essential = ids.map((id) => steps.find((st) => st.id === id)).filter(Boolean);
+  const later = steps.filter((st) => !ids.includes(st.id));
+  return {
+    essential, later,
+    verified: essential.filter((st) => st.done).length,
+    ready: essential.length === ids.length && essential.every((st) => st.done),
+    next: essential.find((st) => !st.done && !st.skipped) || null,
+    completed: steps.filter((st) => st.done).length,
+    skipped: steps.filter((st) => st.skipped).length,
+  };
+}
+
+/** The quote entry follows role, company switches and the server's effective plan features. */
+export function onboardingQuoteAction({ canEstimate, enabled, synced = false, entitlements = null, estimateCount = 0 }) {
+  if (!canEstimate) return { href: null, text: 'An owner or office teammate with Estimates access can prepare the quote.' };
+  if (!enabled) return { href: null, text: 'Estimates are turned off for this company. You can keep setting up the tools you use.' };
+  if (synced && !entitlements?.features?.includes('estimates')) return { href: null, text: 'Quote creation is available when your company plan includes Estimates.' };
+  return estimateCount > 0
+    ? { href: '#/estimates', label: 'Open estimates', text: 'Continue an existing estimate or create another for your next customer.' }
+    : { href: '#/estimates/new', label: 'Create first quote', text: 'Add custom line items and labour. A price book can wait until you need it.' };
+}
+
+function quoteFor(ctx, facts) {
+  return onboardingQuoteAction({
+    canEstimate: Boolean(ctx.auth.can?.('estimates')), enabled: ctx.on ? ctx.on('estimates') : moduleOn(facts.settings, 'estimates'),
+    synced: ctx.auth.synced, entitlements: ctx.app?.session?.me?.entitlements, estimateCount: facts.estimates,
+  });
+}
+
+function checklistSummary(journey, total) {
+  return `${journey.completed} of ${total} setup steps completed${journey.skipped ? `; ${journey.skipped} skipped` : ''}`;
 }
 
 /** Should the checklist show for this person? Owners and admins, until done or dismissed. */
@@ -156,17 +193,23 @@ export function logoField(ctx) {
 export function onboardingCard(ctx) {
   const { store, ui, auth } = ctx;
   const { h } = ui;
-  const steps = detectSteps(collectFacts(store, { synced: auth.synced }));
-  if (!showFor(auth, store.settings(), steps)) return null;
-  const p = progress(steps);
+  const facts = collectFacts(store, { synced: auth.synced });
+  const steps = detectSteps(facts);
+  if (!showFor(auth, facts.settings, steps)) return null;
+  const journey = onboardingJourney(steps);
+  const quote = quoteFor(ctx, facts);
+  const nextHref = '#/onboarding' + (journey.next ? '?step=' + journey.next.id : '');
   return h('section', { class: 'card ob-card', 'aria-label': 'Set-up checklist' },
     h('div', { class: 'row' },
-      h('div', { class: 'grow' }, h('h3', { style: { margin: 0 } }, `Set up ${store.settings().company?.name && store.settings().company.name !== DEFAULT_SETTINGS.company.name ? store.settings().company.name : 'your company'}`),
-        h('div', { class: 'muted' }, `${p.done} of ${p.total} done${p.next ? ` · next: ${p.next.title.toLowerCase()}` : ''}`)),
-      ui.button('Continue', { variant: 'primary', icon: 'chevron-right', href: '#/onboarding' }),
+      h('div', { class: 'grow' }, h('h3', { style: { margin: 0 } }, journey.ready ? 'Your quote basics are set' : 'Start with the essentials'),
+        h('div', { class: 'muted' }, `${journey.verified} of ${journey.essential.length} essentials verified${journey.next ? ` - next: ${journey.next.title.toLowerCase()}` : ''}`)),
+      journey.ready && quote.href ? ui.button(quote.label, { variant: 'primary', icon: 'file-text', href: quote.href }) : ui.button('Continue', { variant: 'primary', icon: 'chevron-right', href: nextHref }),
+      journey.ready ? ui.button('More setup', { variant: 'ghost', href: '#/onboarding' }) : null,
       ui.button('', { variant: 'ghost', icon: 'x', title: 'Hide the checklist', onClick: () => dismiss(ctx) })),
-    h('div', { class: 'progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(p.total), 'aria-valuenow': String(p.done) },
-      h('i', { style: { width: `${Math.round((p.done / p.total) * 100)}%` } })));
+    h('p', { class: 'ob-caption muted' }, checklistSummary(journey, steps.length)),
+    h('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Verified essentials', 'aria-valuemin': '0', 'aria-valuemax': String(journey.essential.length), 'aria-valuenow': String(journey.verified) },
+      h('i', { style: { width: `${journey.essential.length ? Math.round((journey.verified / journey.essential.length) * 100) : 0}%` } })));
+
 }
 
 async function dismiss(ctx) {
@@ -282,39 +325,62 @@ export default {
   render(root, ctx) {
     const { store, ui, auth } = ctx;
     const { h } = ui;
-    let open = ctx.query.step || null;
-    const host = h('div', { class: 'stack' });
+    let open = ctx.query.step || undefined;
+    let laterOpen = false;
+    const host = h('div', { class: 'stack ob-flow' });
     const head = h('div');
     const draw = () => {
-      const steps = detectSteps(collectFacts(store, { synced: auth.synced }));
-      const p = progress(steps);
-      if (!open || steps.find((s) => s.id === open)?.done) open = p.next?.id || null;
-      ui.clear(head).append(h('div', { class: 'card ob-card' },
-        h('div', { class: 'row' }, h('strong', { class: 'grow' }, p.complete ? 'All set. Nice work.' : `${p.done} of ${p.total} done`),
+      const facts = collectFacts(store, { synced: auth.synced });
+      const steps = detectSteps(facts);
+      const journey = onboardingJourney(steps);
+      const quote = quoteFor(ctx, facts);
+      if (open === undefined) open = journey.next?.id || null;
+      if (open && !steps.some((st) => st.id === open)) open = journey.next?.id || null;
+      const quoteLabel = !journey.ready && quote.href === '#/estimates/new' ? 'Start a draft quote' : quote.label;
+      ui.clear(head).append(h('section', { class: 'card ob-card ob-start', 'aria-label': 'Setup progress' },
+        h('div', { class: 'row' }, h('strong', { class: 'grow' }, journey.ready ? 'Your quote basics are set' : 'Start with three essentials'),
           store.settings().onboarding?.dismissedAt
             ? ui.button('Show on the dashboard', { size: 'sm', variant: 'ghost', onClick: () => { saveOb(store, { dismissedAt: null }); draw(); } })
             : ui.button('Hide checklist', { size: 'sm', variant: 'ghost', icon: 'eye-off', onClick: () => dismiss(ctx) })),
-        h('div', { class: 'progress' }, h('i', { style: { width: `${Math.round((p.done / p.total) * 100)}%` } }))));
-      ui.clear(host).append(h('ol', { class: 'ob-steps' }, steps.map((st, i) => {
+        h('p', { class: 'ob-caption muted' }, `${journey.verified} of ${journey.essential.length} essentials verified. ${checklistSummary(journey, steps.length)}.`),
+        h('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Verified essentials', 'aria-valuemin': '0', 'aria-valuemax': String(journey.essential.length), 'aria-valuenow': String(journey.verified) },
+          h('i', { style: { width: `${journey.essential.length ? Math.round((journey.verified / journey.essential.length) * 100) : 0}%` } })),
+        h('div', { class: 'ob-quote-entry' },
+          h('div', { class: 'grow' }, h('h2', null, facts.estimates > 0 ? 'Keep your quoting moving' : 'Build a useful first quote'),
+            h('p', { class: 'ob-caption muted' }, quote.text),
+            quote.href && !journey.ready ? h('p', { class: 'ob-caption muted' }, 'You can start a draft while finishing setup. Review the essentials, tax and prices before sending.') : null,
+            journey.essential.some((st) => st.skipped) ? h('p', { class: 'ob-caption muted' }, 'Skipped essentials still need review; they are not verified.') : null),
+          quote.href ? ui.button(quoteLabel, { variant: journey.ready ? 'primary' : 'secondary', icon: 'file-text', href: quote.href }) : null)));
+      const stepRow = (st, i) => {
         const isOpen = open === st.id;
         return h('li', { class: ['card', 'ob-step', st.done ? 'done' : st.skipped ? 'skipped' : null, isOpen ? 'open' : null], dataset: { step: st.id } },
-          h('button', { type: 'button', class: 'ob-step-head', 'aria-expanded': String(isOpen), onClick: () => { open = isOpen ? null : st.id; draw(); } },
+          h('button', { type: 'button', class: 'ob-step-head', 'aria-expanded': String(isOpen), 'aria-controls': 'ob-body-' + st.id, onClick: () => { open = isOpen ? null : st.id; draw(); } },
             h('span', { class: 'ob-tick', 'aria-hidden': 'true' }, st.done ? ui.icon('check', 16) : st.skipped ? ui.icon('minus', 16) : String(i + 1)),
             h('span', { class: 'grow' }, h('span', { class: 'ob-title' }, st.title), st.detail ? h('span', { class: 'ob-detail muted' }, st.detail) : null),
             st.done ? ui.badge('Done', 'success') : st.skipped ? ui.badge('Skipped') : null,
             ui.icon(isOpen ? 'chevron-down' : 'chevron-right', 16)),
-          isOpen ? h('div', { class: 'ob-step-body stack' },
+          h('div', { id: 'ob-body-' + st.id, class: 'ob-step-body stack', hidden: !isOpen }, isOpen ? [
             h('p', { class: 'muted', style: { margin: '0' } }, st.text),
-            stepBody(ctx, st, draw),
+            stepBody(ctx, st, () => { open = undefined; draw(); }),
             st.done ? null : h('div', { class: 'row' }, h('span', { class: 'grow' }),
               ui.button(st.skipped ? 'Undo skip' : 'Skip this step', { size: 'sm', variant: 'ghost', onClick: () => {
                 const sk = { ...(store.settings().onboarding?.skipped || {}) };
                 if (st.skipped) delete sk[st.id]; else sk[st.id] = true;
-                saveOb(store, { skipped: sk }); draw();
-              } }))) : null);
-      })));
+                saveOb(store, { skipped: sk }); open = st.skipped ? st.id : undefined; draw();
+              } }))] : null));
+      };
+      const laterRemaining = journey.later.filter((st) => !st.done && !st.skipped).length;
+      ui.clear(host).append(
+        h('section', { 'aria-labelledby': 'ob-essentials-title' },
+          h('h2', { id: 'ob-essentials-title', class: 'ob-section-title' }, 'Essentials'),
+          h('p', { class: 'ob-caption muted' }, 'Company details, where you work and the rates to review before quoting.'),
+          h('ol', { class: 'ob-steps' }, journey.essential.map(stepRow))),
+        h('details', { class: 'ob-later', open: laterOpen || journey.later.some((st) => st.id === open), onToggle: (e) => { if (e.currentTarget.isConnected) laterOpen = e.currentTarget.open; } },
+          h('summary', null, `More setup for later${laterRemaining ? ` - ${laterRemaining} remaining` : ''}`),
+          h('p', { class: 'ob-caption muted' }, 'Add your logo, price book, team and connected tools when you need them. Completed and skipped steps stay available here.'),
+          h('ol', { class: 'ob-steps', start: journey.essential.length + 1 }, journey.later.map((st, i) => stepRow(st, i + journey.essential.length)))));
     };
-    root.append(ui.page({ title: 'Set-up checklist', subtitle: 'The few things that make your first week smooth' }, head, host));
+    root.append(ui.page({ title: 'Set-up checklist', subtitle: 'Start with the essentials, then build your first quote' }, head, host));
     draw();
     loadServerFacts(store, auth).then(() => { if (root.isConnected) draw(); });
     let t = null;

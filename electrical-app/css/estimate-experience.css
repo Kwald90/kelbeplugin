@@ -1,5 +1,5 @@
 /* Quote workflow: keep scope readable and advanced configuration available on demand. */
-.estimate-experience .estimate-next { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s3); align-items: center; }
+.estimate-experience .estimate-next { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); align-items: center; }
 .estimate-experience .estimate-next h2 { margin: 0; font-size: var(--fs-lg); line-height: var(--lh-lg); }
 .estimate-experience .estimate-hint { margin: var(--s2) 0 0; line-height: 1.5; }
 .estimate-experience .estimate-next-actions { justify-content: flex-end; }
