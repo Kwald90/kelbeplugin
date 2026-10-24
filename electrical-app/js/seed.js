@@ -283,6 +283,30 @@ export function seedIfEmpty(store) {
       { slot: 8, description: 'Transformer T1 45 kVA to LP-1 120/208 V', amps: 70, poles: 3, loadVA: 30000, phase: 'B-C-A' },
     ],
   }, S);
+  // A 120/240 V house panel that exercises every space type: full 1- and 2-pole breakers,
+  // two tandems sharing a space (A over B), and an Eaton-style quad (space-saver) — a single
+  // device that is two outer singles plus one inner handle-tied 2-pole across four half-positions.
+  // Quad at spaces 5 & 7: 5A single, inner 2-pole in 5B+7A, 7B single.
+  store.add('panels', {
+    jobId: j1.id, name: 'Panel HP-1 (house · tandems + quad)', voltage: '120/240 1ph', mainType: 'MB', mainAmps: 200, busAmps: 200, slots: 24, circuits: [
+      // left column (odd)
+      { slot: 1, half: 'A', description: 'Kitchen plugs', amps: 15, poles: 1, loadVA: 1440, breakerType: 'tandem', phase: 'A' },
+      { slot: 1, half: 'B', description: 'Bedroom lights', amps: 15, poles: 1, loadVA: 900, breakerType: 'tandem', phase: 'A' },
+      { slot: 3, description: 'Living room plugs', amps: 20, poles: 1, loadVA: 1440, phase: 'B' },
+      { slot: 5, half: 'A', description: 'Bathroom plugs', amps: 15, poles: 1, loadVA: 1440, breakerType: 'gfci', phase: 'A' },
+      { slot: 5, half: 'B', description: 'Garage 240 V heater (quad inner)', amps: 30, poles: 2, loadVA: 5760, breakerType: 'standard', phase: 'A-B' },
+      { slot: 7, half: 'B', description: 'Hall + stair lights', amps: 15, poles: 1, loadVA: 800, breakerType: 'tandem', phase: 'B' },
+      { slot: 9, description: 'Dryer', amps: 30, poles: 2, loadVA: 5000, phase: 'A-B' },
+      { slot: 13, description: 'Smoke / CO alarms', amps: 15, poles: 1, loadVA: 300, purpose: 'smoke', phase: 'B' },
+      // right column (even)
+      { slot: 2, description: 'Dishwasher', amps: 15, poles: 1, loadVA: 1200, phase: 'A' },
+      { slot: 4, half: 'A', description: 'Office plugs', amps: 15, poles: 1, loadVA: 1200, breakerType: 'tandem', phase: 'B' },
+      { slot: 4, half: 'B', description: 'Basement lights', amps: 15, poles: 1, loadVA: 700, breakerType: 'tandem', phase: 'B' },
+      { slot: 6, description: 'Microwave', amps: 20, poles: 1, loadVA: 1500, phase: 'A' },
+      { slot: 8, description: 'Range', amps: 40, poles: 2, loadVA: 8000, phase: 'A-B' },
+      { slot: 12, description: 'EV charger', amps: 50, poles: 2, loadVA: 9600, phase: 'A-B' },
+    ],
+  }, S);
 
   // one drawing so the gallery is not empty (canvas module fills in the rest)
   store.add('drawings', {

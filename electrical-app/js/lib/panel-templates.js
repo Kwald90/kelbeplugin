@@ -53,6 +53,11 @@ export const BUILT_IN_BREAKERS = [
   { id: 'tandem-15', label: '15 A tandem (half-space)', poles: 1, amps: 15, loadVA: 1440, breakerType: 'tandem', descriptionDefault: 'Receptacles', group: 'Tandem / space-saver' },
   { id: 'tandem-20', label: '20 A tandem (half-space)', poles: 1, amps: 20, loadVA: 1920, breakerType: 'tandem', descriptionDefault: 'Receptacles', group: 'Tandem / space-saver' },
   { id: 'tandem-15-light', label: '15 A tandem lighting (half-space)', poles: 1, amps: 15, loadVA: 1200, breakerType: 'tandem', descriptionDefault: 'Lighting', group: 'Tandem / space-saver' },
+  // Quad / space-saver inner 2-pole (Eaton/Square D/Siemens "quad"): one device = two outer singles
+  // plus this inner handle-tied 2-pole across two spaces. The template places only the inner 2-pole
+  // (in the inner halves Nb + N+1a); the two outer halves stay open for single-pole breakers.
+  { id: 'quad-30', label: '30 A quad inner 2-pole (space-saver)', poles: 2, amps: 30, loadVA: 0, breakerType: 'standard', quad: true, descriptionDefault: '240 V load', group: 'Tandem / space-saver' },
+  { id: 'quad-20', label: '20 A quad inner 2-pole (space-saver)', poles: 2, amps: 20, loadVA: 0, breakerType: 'standard', quad: true, descriptionDefault: '240 V load', group: 'Tandem / space-saver' },
   // Other
   { id: 'spare', label: 'Spare', poles: 1, amps: 20, loadVA: 0, breakerType: 'standard', descriptionDefault: 'Spare', group: 'Other' },
   { id: 'space', label: 'Space (blank)', poles: 1, amps: null, loadVA: 0, breakerType: 'standard', descriptionDefault: 'Space', group: 'Other' },

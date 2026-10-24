@@ -132,7 +132,8 @@
             "type": [
               "number",
               "null"
-            ]
+            ],
+            "description": "Number of poles (1, 2 or 3). With half='B', poles=2 marks a quad (space-saver) inner 2-pole: it occupies this space's lower half and the next space's upper half, leaving the two outer halves free for single-pole breakers."
           },
           "half": {
             "type": [
@@ -143,7 +144,8 @@
               "A",
               "B",
               null
-            ]
+            ],
+            "description": "Half-space position: 'A' (upper) or 'B' (lower) for a tandem; absent/null for a full-space breaker. A 'B' half with poles=2 is a quad inner 2-pole that spans into the next space's 'A' half."
           },
           "loadVA": {
             "type": [

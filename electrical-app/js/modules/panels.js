@@ -107,6 +107,16 @@ export function makeFullSpace(circuits, c) {
   const half = halfOf(c);
   if (!half) return false;
   const slot = Number(c.slot);
+  if (isQuadInner(c)) {
+    // A quad inner 2-pole becomes a full-space 2-pole at the same slot, but only if the two outer
+    // halves it was sharing with (this space's 'A', the next space's 'B') are empty.
+    const next = slot + 2;
+    const blocked = (circuits || []).some((x) => x !== c
+      && ((Number(x.slot) === slot && halfOf(x) === 'A') || (Number(x.slot) === next && halfOf(x) === 'B')));
+    if (blocked) return false;
+    delete c.half; // poles stays 2: now a full-space 2-pole spanning its two spaces
+    return true;
+  }
   const sibling = half === 'A' ? 'B' : 'A';
   if ((circuits || []).some((x) => x !== c && Number(x.slot) === slot && halfOf(x) === sibling)) return false;
   delete c.half;
@@ -120,8 +130,21 @@ const bookOf = () => (store.settings().codeBook === 'NEC-2023' ? 'NEC-2023' : 'C
 /** The half of a space a circuit sits in: 'A' (upper) or 'B' (lower) for a tandem, else null (full space). */
 export const halfOf = (c) => (c && (c.half === 'A' || c.half === 'B') ? c.half : null);
 
-/** Slots a circuit spans past its first: a half takes only its own space, a full breaker 2×(poles−1) more. */
-const spanTo = (c) => (halfOf(c) ? Number(c.slot) : Number(c.slot) + 2 * ((Number(c.poles) || 1) - 1));
+/**
+ * A quad (space-saver / "Eaton quad") inner 2-pole: a half-space circuit that carries 2 poles.
+ * It sits in the lower half ('B') of its own space and reaches into the upper half ('A') of the
+ * next space down, so it crosses both legs for a true 240 V connection while the two outer halves
+ * (this space's 'A', the next space's 'B') stay free for single-pole breakers. One physical "quad"
+ * device = two outer singles + this one inner 2-pole across two adjacent spaces.
+ */
+export const isQuadInner = (c) => halfOf(c) === 'B' && (Number(c && c.poles) || 1) === 2;
+
+/** Poles used for phase assignment: a normal tandem is 1 pole; a quad inner crosses 2; a full breaker uses its own count. */
+const phasePolesOf = (c) => (halfOf(c) ? (isQuadInner(c) ? 2 : 1) : (Number(c.poles) || 1));
+
+/** Slots a circuit spans past its first: a quad inner reaches the next space down, any other half
+ *  takes only its own space, and a full breaker spans 2×(poles−1) more. */
+const spanTo = (c) => (halfOf(c) ? (isQuadInner(c) ? Number(c.slot) + 2 : Number(c.slot)) : Number(c.slot) + 2 * ((Number(c.poles) || 1) - 1));
 
 /** Identity of a circuit within a panel: same space and same half (full breakers share the null half). */
 const sameCircuit = (a, b) => Number(a.slot) === Number(b.slot) && (halfOf(a) || '') === (halfOf(b) || '');
@@ -153,7 +176,12 @@ export function occupancy(circuits) {
   };
   for (const c of circuits) {
     const half = halfOf(c);
-    if (half) { at(Number(c.slot))[half] = c; continue; }
+    if (half) {
+      at(Number(c.slot))[half] = c;
+      // A quad's inner 2-pole also fills the upper ('A') half of the next space down.
+      if (isQuadInner(c)) at(Number(c.slot) + 2).A = c;
+      continue;
+    }
     const poles = Number(c.poles) || 1;
     for (let k = 0; k < poles; k++) {
       const o = at(Number(c.slot) + 2 * k);
@@ -178,6 +206,18 @@ export function placement(circuits, { slot, poles = 1, half = null }, total) {
   slot = Number(slot);
   const occ = occupancy(circuits);
   if (half === 'A' || half === 'B') {
+    if ((Number(poles) || 1) >= 2) {
+      // Quad (space-saver) inner 2-pole: it takes this space's lower half and the next space's upper half.
+      if (half !== 'B') return { ok: false, reason: `A quad's inner 2-pole sits in the lower half of a space; pick that space.` };
+      const next = slot + 2;
+      if (next > total) return { ok: false, reason: `A quad at space ${slot} needs space ${next}, past the end of the panel.` };
+      const o = occ.get(slot), o2 = occ.get(next);
+      if (o && o.full) return { ok: false, reason: `Space ${slot} has a full-size breaker, so a quad can't share it.` };
+      if (o && o.B) return { ok: false, reason: `Space ${slot}B is taken, so a quad's inner breaker can't go there.` };
+      if (o2 && o2.full) return { ok: false, reason: `Space ${next} has a full-size breaker, so a quad can't share it.` };
+      if (o2 && o2.A) return { ok: false, reason: `Space ${next}A is taken, so a quad's inner breaker can't go there.` };
+      return { ok: true };
+    }
     const o = occ.get(slot);
     if (o && o.full) return { ok: false, reason: `Space ${slot} has a full-size breaker, so a tandem can't share it.` };
     if (o && o[half]) return { ok: false, reason: `Space ${slot}${half} already has a tandem.` };
@@ -193,7 +233,7 @@ export function placement(circuits, { slot, poles = 1, half = null }, total) {
 }
 
 function withPhases(circuits, system) {
-  return circuits.map((c) => ({ ...c, phase: S.circuitPhases(c.slot, halfOf(c) ? 1 : c.poles, system) }));
+  return circuits.map((c) => ({ ...c, phase: S.circuitPhases(c.slot, phasePolesOf(c), system) }));
 }
 
 function summary(panel) {
@@ -385,6 +425,18 @@ function editorView(root, ctx, id) {
     setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"][data-half="${letter}"] input[name=description]`)?.focus(), 0);
   }
 
+  /** Add a quad (space-saver): the inner handle-tied 2-pole in the inner halves (this space's lower
+   *  half + the next space's upper half), leaving the two outer halves open for single-pole breakers. */
+  function addQuad(slot) {
+    if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: space-saver quads are not applicable.`, 'error', 3600); return; }
+    const circuits = (panel.circuits || []).map((x) => ({ ...x }));
+    const r = placement(circuits, { slot, half: 'B', poles: 2 }, slotCount(panel));
+    if (!r.ok) { ui.toast(r.reason, 'error'); return; }
+    circuits.push({ slot, half: 'B', poles: 2, description: '', amps: 20, loadVA: 0, breakerType: 'standard', phase: '' });
+    setCircuits(circuits);
+    setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"][data-half="B"] input[name=description]`)?.focus(), 0);
+  }
+
   /** Turn a full single-pole breaker into a half tandem in place; returns true on success, else toasts. */
   function makeTandem(cur, circuits) {
     if (halfOf(cur)) { cur.breakerType = 'tandem'; return true; } // already a half
@@ -412,6 +464,15 @@ function editorView(root, ctx, id) {
    * template (breakerType 'tandem') lands in a half space, taking `preferHalf` or the first free half. */
   function placeTemplate(slot, tpl, preferHalf) {
     const circuits = (panel.circuits || []).map((x) => ({ ...x }));
+    if (tpl.quad) {
+      if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: space-saver quads are not applicable.`, 'error', 3600); return; }
+      const r = placement(circuits, { slot, half: 'B', poles: 2 }, slotCount(panel));
+      if (!r.ok) { ui.toast(r.reason, 'error'); return; }
+      const base = PT.applyBreakerTemplate(tpl, { slot, poles: 2, amps: 20, loadVA: 0 });
+      circuits.push({ ...base, slot, half: 'B', poles: 2, phase: '' });
+      setCircuits(circuits);
+      return;
+    }
     if (tpl.breakerType === 'tandem' || tpl.half) {
       if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: tandems are single-pole and can't be used.`, 'error', 3600); return; }
       const o = occupancy(circuits).get(slot);
@@ -435,7 +496,7 @@ function editorView(root, ctx, id) {
   function openTemplatePicker(slot, preferHalf) {
     // Tandem templates are single-pole half-space breakers; a no-neutral system can't use them, so
     // hide them here the same way the empty-cell UI hides the Tandem button.
-    const templates = PT.listBreakerTemplates(store.settings()).filter((t) => tandemsAllowed() || t.breakerType !== 'tandem');
+    const templates = PT.listBreakerTemplates(store.settings()).filter((t) => tandemsAllowed() || (t.breakerType !== 'tandem' && !t.quad));
     const groups = [...new Set(templates.map((t) => t.group || 'Other'))];
     const sheet = ui.openSheet({
       title: `Breaker template · space ${slot}${preferHalf ? ' ' + preferHalf : ''}`,
@@ -444,7 +505,7 @@ function editorView(root, ctx, id) {
         templates.filter((t) => (t.group || 'Other') === g).map((t) => h('div', { class: 'tpl-row' },
           h('button', { class: 'tpl-item', type: 'button', onClick: () => { sheet.close(); placeTemplate(slot, t, preferHalf); } },
             h('strong', null, t.label),
-            h('span', { class: 'muted' }, `${t.breakerType === 'tandem' ? 'half · 1P' : t.poles + 'P'} · ${t.amps == null ? '—' : t.amps + ' A'} · ${PT.breakerTypeLabel(t.breakerType)}${t.loadVA == null ? '' : ' · ' + ui.fmtNum(t.loadVA) + ' VA'}`)),
+            h('span', { class: 'muted' }, `${t.quad ? 'quad · 2P inner' : (t.breakerType === 'tandem' ? 'half · 1P' : t.poles + 'P')} · ${t.amps == null ? '—' : t.amps + ' A'} · ${PT.breakerTypeLabel(t.breakerType)}${t.loadVA == null ? '' : ' · ' + ui.fmtNum(t.loadVA) + ' VA'}`)),
           t.custom ? ui.button('', { variant: 'ghost danger', size: 'sm', icon: 'trash', title: 'Delete template', onClick: () => { PT.removeBreakerTemplate(store, t.id); sheet.close(); openTemplatePicker(slot, preferHalf); } }) : null))))),
     });
   }
@@ -453,7 +514,7 @@ function editorView(root, ctx, id) {
   function openCircuitOptions(c) {
     const colours = coloursNow();
     const pp = panelPrintSettings(store.settings());
-    const phaseKeys = (c.phase || S.circuitPhases(c.slot, halfOf(c) ? 1 : c.poles, panel.voltage)).split('-');
+    const phaseKeys = (c.phase || S.circuitPhases(c.slot, phasePolesOf(c), panel.voltage)).split('-');
     const typeOptions = PT.BREAKER_TYPE_KEYS.map((k) => ({ value: k, label: PT.BREAKER_TYPES[k] }));
     const phaseOptions = [{ value: '', label: 'By phase (default)' }, ...Object.keys(colours.phases).map((p) => ({ value: p, label: `Phase ${p} · ${colours.phases[p].name}` }))];
     // Row-highlight choices. '' keeps the default (red for a smoke/alarm purpose, none otherwise).
@@ -519,7 +580,7 @@ function editorView(root, ctx, id) {
   function circuitSwatches(c, colours) {
     // A colorOverride is a phase key only when it names a phase; a #hex or 'none' is a highlight, not a swatch.
     const phaseOverride = c.colorOverride && colours.phases[c.colorOverride] ? c.colorOverride : null;
-    const keys = phaseOverride ? [phaseOverride] : (c.phase || S.circuitPhases(c.slot, halfOf(c) ? 1 : c.poles, panel.voltage)).split('-');
+    const keys = phaseOverride ? [phaseOverride] : (c.phase || S.circuitPhases(c.slot, phasePolesOf(c), panel.voltage)).split('-');
     return keys.map((p) => {
       const col = colours.phases[p];
       return col ? h('span', { class: 'wire-swatch', style: { background: col.hex }, title: `Phase ${p} · ${col.name}` }) : null;
@@ -565,7 +626,7 @@ function editorView(root, ctx, id) {
     const label = `Space ${slot}${half || ''}`;
     const hl = highlightFor(c, pp);
     const polesCtl = half
-      ? h('span', { class: 'slot-poles-fixed', title: 'A tandem is a single-pole half-space breaker' }, '1P')
+      ? h('span', { class: 'slot-poles-fixed', title: isQuadInner(c) ? 'A quad’s inner breaker is a handle-tied 2-pole across both legs' : 'A tandem is a single-pole half-space breaker' }, isQuadInner(c) ? '2P' : '1P')
       : h('select', { class: 'input', name: 'poles', 'aria-label': `${label} poles`, onChange: onChange('poles') },
           [1, 2, 3].filter((p) => p >= S.minPoles(panel.voltage) && (p < 3 || S.systemOf(panel.voltage).three)).map((p) => h('option', { value: p, selected: Number(c.poles) === p }, `${p}P`)));
     const statusCtl = h('select', { class: 'input slot-status', name: 'status', 'aria-label': `${label} wiring status`, onChange: onChange('status') },
@@ -583,7 +644,8 @@ function editorView(root, ctx, id) {
         ui.button('', { variant: 'ghost', size: 'sm', icon: 'trash', title: `Remove breaker ${slot}${half || ''}`, onClick: () => removeCircuit(c) })),
       h('div', { class: ['slot-meta', over ? 'warn' : null] },
         h('span', { class: 'wire-swatches' }, circuitSwatches(c, colours)),
-        ` ${c.phase || S.circuitPhases(c.slot, half ? 1 : c.poles, panel.voltage)} · ${ui.fmtNum(amps, 1)} A`,
+        ` ${c.phase || S.circuitPhases(c.slot, phasePolesOf(c), panel.voltage)} · ${ui.fmtNum(amps, 1)} A`,
+        isQuadInner(c) ? h('span', { class: 'quad-tag' }, 'quad 2P') : null,
         c.subFeed ? h('span', { class: 'subfeed-tag' }, 'sub-feed') : null,
         c.purpose ? h('span', { class: ['purpose-tag', hl ? 'hl' : null], style: hl ? { color: hl, borderColor: hl } : null }, c.purpose) : null,
         over ? ` · over 80% of ${c.amps} A` : '',
@@ -603,6 +665,7 @@ function editorView(root, ctx, id) {
         h('div', { class: 'slot-empty-actions' },
           h('button', { class: 'slot-add', type: 'button', onClick: () => addCircuit(slot), 'aria-label': `Add breaker at space ${slot}` }, ui.icon('plus', 16), 'Add breaker'),
           tandemsAllowed() ? h('button', { class: 'slot-add tandem', type: 'button', onClick: () => addTandem(slot), 'aria-label': `Add a tandem (half-space) breaker at space ${slot}` }, ui.icon('plus', 16), 'Tandem') : null,
+          tandemsAllowed() && slot + 2 <= slotCount(panel) ? h('button', { class: 'slot-add quad', type: 'button', onClick: () => addQuad(slot), 'aria-label': `Add a quad (space-saver 2-pole) at space ${slot}` }, ui.icon('plus', 16), 'Quad') : null,
           h('button', { class: 'slot-add tpl', type: 'button', onClick: () => openTemplatePicker(slot), 'aria-label': `Add breaker from a template at space ${slot}` }, ui.icon('copy', 16), 'Template')));
     }
     if (o.full && !o.start) {
@@ -620,9 +683,16 @@ function editorView(root, ctx, id) {
           h('button', { class: 'slot-add tandem', type: 'button', onClick: () => addTandem(slot, letter), 'aria-label': `Add tandem ${letter} at space ${slot}` }, ui.icon('plus', 16), `Tandem ${letter}`),
           h('button', { class: 'slot-add tpl', type: 'button', onClick: () => openTemplatePicker(slot, letter), 'aria-label': `Add tandem ${letter} from a template at space ${slot}` }, ui.icon('copy', 16), 'Template'));
       }
+      // A quad inner 2-pole is edited on its home space (its 'B' half); its reach into the next space's
+      // 'A' half shows as a continuation so its amp/type/desc appear only once.
+      if (isQuadInner(hc) && Number(hc.slot) !== slot) {
+        return h('div', { class: ['slot-half', 'cont'], dataset: { slot, half: letter } },
+          h('span', { class: 'slot-half-tag', title: `Half ${letter}` }, letter),
+          h('span', { class: 'slot-cont muted' }, `↳ quad 2-pole from ${hc.slot}`));
+      }
       const f = breakerFields(hc, slot, colours);
-      return h('div', { class: ['slot-half', f.over ? 'over' : null, hc.subFeed ? 'subfeed' : null], dataset: { slot, half: letter } },
-        h('span', { class: 'slot-half-tag', title: `Half ${letter}` }, letter), f.node);
+      return h('div', { class: ['slot-half', isQuadInner(hc) ? 'quad' : null, f.over ? 'over' : null, hc.subFeed ? 'subfeed' : null], dataset: { slot, half: letter } },
+        h('span', { class: 'slot-half-tag', title: isQuadInner(hc) ? `Half ${letter} · quad inner 2-pole` : `Half ${letter}` }, letter), f.node);
     };
     return h('div', { class: ['slot', 'used', 'tandem', side] }, num, ph,
       h('div', { class: 'slot-halves' }, halfBlock('A'), halfBlock('B')));
@@ -862,14 +932,21 @@ function editorView(root, ctx, id) {
         cct = h('td', { class: 'pp-cct num', style: bst }, String(slot));
         amp = pp.showAmps ? h('td', { class: 'pp-amp num', style: bst }, `${x.amps}A ${x.poles}P${typeTag(x)}`) : null;
       } else {
-        // Tandem space: an A line over a B line, CCT.NO carrying the A/B suffix.
+        // Tandem / quad space: an A line over a B line, CCT.NO carrying the A/B suffix. A quad's inner
+        // 2-pole is written once on its home half; its reach into the next space shows as a continuation.
         const halfDesc = (x, letter) => {
           if (!x) return h('div', { class: 'print-half muted' }, `${slot}${letter}: —`);
+          if (isQuadInner(x) && Number(x.slot) !== slot) {
+            return h('div', { class: 'print-half muted' }, h('strong', null, `${slot}${letter}: `), `↳ quad 2-pole from ${x.slot}`);
+          }
           const hl = highlightFor(x, pp);
           return h('div', { class: ['print-half', hl ? 'pp-hl' : null], style: hl ? { borderLeft: `2.5pt solid ${hl}`, color: hl } : null },
-            h('strong', null, `${slot}${letter}: `), descBody(x));
+            h('strong', null, `${slot}${letter}: `), descBody(x), isQuadInner(x) ? ' (quad)' : null);
         };
-        const halfAmp = (x) => h('div', { class: 'print-half' }, x ? `${x.amps}A 1P${typeTag(x)}` : '');
+        const halfAmp = (x) => {
+          if (!x || (isQuadInner(x) && Number(x.slot) !== slot)) return h('div', { class: 'print-half' }, '');
+          return h('div', { class: 'print-half' }, `${x.amps}A ${isQuadInner(x) ? '2P' : '1P'}${typeTag(x)}`);
+        };
         desc = h('td', { class: 'pp-desc', style: bst }, halfDesc(o.A, 'A'), halfDesc(o.B, 'B'));
         cct = h('td', { class: 'pp-cct num', style: bst }, h('div', null, `${slot}A`), h('div', null, `${slot}B`));
         amp = pp.showAmps ? h('td', { class: 'pp-amp num', style: bst }, halfAmp(o.A), halfAmp(o.B)) : null;

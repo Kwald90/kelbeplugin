@@ -79,19 +79,24 @@
 .slot.over { border-color: var(--danger); }
 .slot-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; text-align: left; }
 .slot-fields .input { min-height: 36px; padding: 6px 8px; font-size: var(--fs-sm); }
-.slot-row { display: flex; gap: 6px; align-items: center; }
-.slot-row select { width: auto; flex: none; padding-right: 4px; }
+/* Wrap the control row so the amps/poles/type and the VA field + option buttons never overflow a
+   narrow slot (two-column widths and tablets); the inputs flow onto a second line instead of being
+   cut off at the slot edge. */
+.slot-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.slot-row select { width: auto; flex: none; padding-right: 4px; max-width: 100%; }
 .slot-va { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 70px; }
 .slot-va span { font-size: var(--fs-xs); color: var(--text-muted); }
 .slot-meta { font-size: var(--fs-xs); color: var(--text-muted); }
 .slot-meta.warn { color: var(--danger); font-weight: 600; }
 
-@media (max-width: 760px) {
+/* Collapse to a single column of spaces up to tablet width (an iPad in portrait is ~768–834 px, which
+   used to get the cramped two-column layout and cut the controls off). One wide space per row gives the
+   breaker fields room. */
+@media (max-width: 900px) {
   .panel-row { grid-template-columns: 1fr; gap: 6px; }
   .panel-row::before, .panel-bus { display: none; }
   .slot.right { flex-direction: row; text-align: left; }
   .phase-val { min-width: 0; }
-  .slot-row { flex-wrap: wrap; }
   .slot-row select { flex: 1; }
   .slot-va { order: 3; flex: 1 1 calc(100% - 44px); }
   .slot-row .btn { order: 4; }
@@ -181,7 +186,16 @@
 .slot-half.subfeed { border-left: 3px solid var(--accent); }
 .slot-half-tag { flex: none; width: 18px; padding-top: 6px; text-align: center; font-weight: 700; font-size: var(--fs-xs); color: var(--text-muted); }
 .slot-poles-fixed { flex: none; align-self: center; padding: 0 4px; font-weight: 700; font-size: var(--fs-xs); color: var(--text-muted); }
-.slot-add.tandem { color: var(--accent); min-height: 28px; font-size: var(--fs-xs); }
+.slot-add.tandem, .slot-add.quad { color: var(--accent); min-height: 28px; font-size: var(--fs-xs); }
+
+/* ---------- quad / space-saver (Eaton quad: two outer singles + one inner handle-tied 2-pole) ---------- */
+/* the inner 2-pole's reach into the next space down renders as a continuation, like a full multi-pole */
+.slot-half.cont { align-items: center; gap: 6px; background: transparent; border-style: dashed; }
+.slot-half.cont .slot-cont { flex: 1; font-size: var(--fs-xs); }
+/* the inner 2-pole's home half, marked so it reads as the handle-tied pair */
+.slot-half.quad { border-style: solid; border-color: var(--accent); }
+.slot-half.quad .slot-half-tag { color: var(--accent); }
+.quad-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 700; background: var(--accent-soft); color: var(--text); }
 
 .tpl-list, .tpl-groups { display: flex; flex-direction: column; gap: var(--s3); }
 .tpl-group { display: flex; flex-direction: column; gap: 4px; }

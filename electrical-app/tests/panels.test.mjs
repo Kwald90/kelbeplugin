@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as PT from '../js/lib/panel-templates.js';
 import * as S from '../js/lib/cec/systems.js';
-import { occupancy, slotCount, placement, halfOf, bandIndexBySlot, completion, makeFullSpace, highlightFor, panelPrintSettings, PANEL_PRINT_DEFAULTS, PANEL_STATUSES } from '../js/modules/panels.js';
+import { occupancy, slotCount, placement, halfOf, isQuadInner, bandIndexBySlot, completion, makeFullSpace, highlightFor, panelPrintSettings, PANEL_PRINT_DEFAULTS, PANEL_STATUSES } from '../js/modules/panels.js';
 import { panelUrl, qrSvg, qrMatrix } from '../js/lib/qr.js';
 import { BRAND } from '../js/brand.js';
 
@@ -290,6 +290,141 @@ test('print cell derives both halves from occupancy (each half rendered on its o
   assert.equal(s1.A.amps, 15);
   assert.equal(s1.B.description, 'Lights');
   assert.equal(s1.B.amps, 20);
+});
+
+// ---------------------------------------------------------------------------
+// Quad / space-saver (Eaton quad): one device = two outer single-pole breakers plus one inner
+// handle-tied 2-pole across two adjacent spaces. The inner 2-pole is a half-space circuit with
+// poles=2: it sits in this space's lower half ('B') and the next space's upper half ('A'); the
+// two outer halves (this space's 'A', the next space's 'B') stay free for single-pole breakers.
+// ---------------------------------------------------------------------------
+
+test('isQuadInner: a B half with 2 poles is a quad inner; tandems and full breakers are not', () => {
+  assert.equal(isQuadInner({ slot: 5, half: 'B', poles: 2 }), true);
+  assert.equal(isQuadInner({ slot: 5, half: 'B', poles: 1 }), false); // normal tandem
+  assert.equal(isQuadInner({ slot: 5, half: 'A', poles: 2 }), false); // inner always starts in the lower half
+  assert.equal(isQuadInner({ slot: 5, poles: 2 }), false);            // full 2-pole
+  assert.equal(isQuadInner({ slot: 5 }), false);
+});
+
+test('occupancy: a quad inner fills this space B and the next space A; outer singles sit in the outer halves', () => {
+  // Quad at spaces 5 & 7: 5A single, inner 2-pole in 5B + 7A, 7B single.
+  const inner = { slot: 5, half: 'B', poles: 2, loadVA: 5760, breakerType: 'standard' };
+  const circuits = [
+    { slot: 5, half: 'A', poles: 1, loadVA: 1440, breakerType: 'gfci' },
+    inner,
+    { slot: 7, half: 'B', poles: 1, loadVA: 800, breakerType: 'tandem' },
+  ];
+  const occ = occupancy(circuits);
+  const s5 = occ.get(5), s7 = occ.get(7);
+  assert.equal(s5.full, null);
+  assert.equal(s5.A.breakerType, 'gfci');     // outer single
+  assert.equal(s5.B, inner);                   // inner home
+  assert.equal(s7.A, inner);                   // inner reaches into 7A (same object)
+  assert.equal(s7.B.breakerType, 'tandem');    // outer single
+  // the inner is the same object in both halves it occupies
+  assert.ok(s5.B === s7.A);
+});
+
+test('slotCount / span: a quad inner reaches the next space down', () => {
+  // A quad inner at the bottom pushes the panel to include the next space.
+  assert.equal(slotCount({ circuits: [{ slot: 39, half: 'B', poles: 2 }] }), 42); // spans to 41 -> 42-space panel
+  // but a normal tandem at 39 does not grow the panel the same way
+  assert.equal(slotCount({ circuits: [{ slot: 39, half: 'B', poles: 1 }] }), 40);
+});
+
+test('placement: a quad goes in free inner halves and refuses every collision', () => {
+  const total = 24;
+  // empty: a quad at 5 is fine (needs 5B + 7A)
+  assert.equal(placement([], { slot: 5, half: 'B', poles: 2 }, total).ok, true);
+  // a quad whose inner halves are free coexists with outer singles already placed
+  const outers = [{ slot: 5, half: 'A', poles: 1 }, { slot: 7, half: 'B', poles: 1 }];
+  assert.equal(placement(outers, { slot: 5, half: 'B', poles: 2 }, total).ok, true);
+  // refuse when this space's B half is taken
+  const bTaken = [{ slot: 5, half: 'B', poles: 1 }];
+  assert.equal(placement(bTaken, { slot: 5, half: 'B', poles: 2 }, total).ok, false);
+  // refuse when the next space's A half is taken
+  const aNextTaken = [{ slot: 7, half: 'A', poles: 1 }];
+  const r = placement(aNextTaken, { slot: 5, half: 'B', poles: 2 }, total);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /7A|quad/i);
+  // refuse when a full breaker sits in either space
+  assert.equal(placement([{ slot: 5, poles: 1 }], { slot: 5, half: 'B', poles: 2 }, total).ok, false);
+  assert.equal(placement([{ slot: 7, poles: 1 }], { slot: 5, half: 'B', poles: 2 }, total).ok, false);
+  // refuse past the end of the panel
+  assert.equal(placement([], { slot: 23, half: 'B', poles: 2 }, total).ok, false);
+  // refuse an inner asked for the upper half (the inner always starts in the lower half)
+  assert.equal(placement([], { slot: 5, half: 'A', poles: 2 }, total).ok, false);
+});
+
+test('placement: a full breaker is refused where a quad inner already sits', () => {
+  const total = 24;
+  const quad = [{ slot: 5, half: 'B', poles: 2 }]; // fills 5B + 7A
+  // a full 1-pole at 5 clashes with 5B
+  assert.equal(placement(quad, { slot: 5, poles: 1 }, total).ok, false);
+  // a full 2-pole at 5 (needs 5 & 7) clashes
+  assert.equal(placement(quad, { slot: 5, poles: 2 }, total).ok, false);
+  // a full 1-pole at 7 clashes with 7A
+  assert.equal(placement(quad, { slot: 7, poles: 1 }, total).ok, false);
+  // a tandem in the still-free outer halves is allowed
+  assert.equal(placement(quad, { slot: 5, half: 'A' }, total).ok, true);
+  assert.equal(placement(quad, { slot: 7, half: 'B' }, total).ok, true);
+  // but a tandem in the inner halves is refused
+  assert.equal(placement(quad, { slot: 5, half: 'B' }, total).ok, false);
+  assert.equal(placement(quad, { slot: 7, half: 'A' }, total).ok, false);
+});
+
+test('makeFullSpace: a quad inner becomes a full 2-pole only when the outer halves are empty', () => {
+  // lone quad inner (no outer singles) -> full 2-pole at the same slot, poles kept at 2
+  const alone = [{ slot: 5, half: 'B', poles: 2, breakerType: 'standard' }];
+  assert.equal(makeFullSpace(alone, alone[0]), true);
+  assert.equal(halfOf(alone[0]), null);
+  assert.equal(alone[0].poles, 2);
+  // with an outer single present, conversion is refused
+  const withOuter = [{ slot: 5, half: 'A', poles: 1 }, { slot: 5, half: 'B', poles: 2 }];
+  assert.equal(makeFullSpace(withOuter, withOuter[1]), false);
+  assert.equal(isQuadInner(withOuter[1]), true);
+  // an outer single on the next space's B half also blocks it
+  const withNextOuter = [{ slot: 5, half: 'B', poles: 2 }, { slot: 7, half: 'B', poles: 1 }];
+  assert.equal(makeFullSpace(withNextOuter, withNextOuter[0]), false);
+});
+
+test('grid render-sanity: the quad home half shows fields, the reached half is a continuation', () => {
+  // The grid decides home vs continuation by isQuadInner(hc) && hc.slot !== slot. Assert that logic
+  // against the occupancy it reads, so the inner's amp/type/desc render exactly once.
+  const inner = { slot: 5, half: 'B', poles: 2 };
+  const occ = occupancy([inner]);
+  // at space 5, the B half is the inner's home (slot matches) -> fields
+  assert.ok(isQuadInner(occ.get(5).B) && occ.get(5).B.slot === 5);
+  // at space 7, the A half is the inner reaching down (slot differs) -> continuation
+  assert.ok(isQuadInner(occ.get(7).A) && occ.get(7).A.slot !== 7);
+});
+
+test('backward compatible: a panel with tandems but no quads is unchanged', () => {
+  // Two ordinary tandems in one space: both single-pole, no reach into the next space.
+  const circuits = [
+    { slot: 1, half: 'A', poles: 1, loadVA: 1000, breakerType: 'tandem' },
+    { slot: 1, half: 'B', poles: 1, loadVA: 500, breakerType: 'tandem' },
+  ];
+  assert.equal(isQuadInner(circuits[1]), false);
+  const occ = occupancy(circuits);
+  assert.equal(occ.get(1).A.loadVA, 1000);
+  assert.equal(occ.get(1).B.loadVA, 500);
+  assert.equal(occ.get(3), undefined); // nothing reaches into space 3
+  // a legacy full 2-pole is still a full breaker, never a quad
+  assert.equal(isQuadInner({ slot: 2, poles: 2 }), false);
+});
+
+test('quad built-in template places the inner 2-pole (poles 2, marked quad)', () => {
+  const q = PT.BUILT_IN_BREAKERS.find((t) => t.id === 'quad-30');
+  assert.ok(q);
+  assert.equal(q.quad, true);
+  assert.equal(q.poles, 2);
+  assert.equal(q.amps, 30);
+  // applying it yields a 2-pole the editor then stamps with half 'B'
+  const c = PT.applyBreakerTemplate(q, { slot: 5, poles: 1, amps: 20, loadVA: 0 });
+  assert.equal(c.poles, 2);
+  assert.equal(c.breakerType, 'standard');
 });
 
 test('tandem templates in the built-in library carry breakerType tandem and apply as single-pole', () => {

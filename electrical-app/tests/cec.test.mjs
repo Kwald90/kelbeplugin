@@ -320,3 +320,35 @@ test('Adoption and inspection authorities', () => {
   assert.equal(C.codeBookOf({}), 'CEC-2024');
   assert.equal(C.codeBookOf({ codeBook: 'NEC-2023' }), 'NEC-2023');
 });
+
+test('Quad (space-saver) phase balance: inner 2-pole splits across both legs, outer singles on their space phase', () => {
+  // A quad at spaces 5 & 7 on 120/240 1ph. Space 5 is phase A, space 7 is phase B (phases repeat by row).
+  // Inner 2-pole (half 'B', poles 2) crosses A-B; outer single 5A on A, outer single 7B on B.
+  const circuits = [
+    { slot: 5, half: 'A', poles: 1, loadVA: 1200, breakerType: 'gfci' },      // outer single on A
+    { slot: 5, half: 'B', poles: 2, loadVA: 5760, breakerType: 'standard' },  // quad inner 2-pole A-B
+    { slot: 7, half: 'B', poles: 1, loadVA: 800, breakerType: 'tandem' },     // outer single on B
+  ];
+  // the inner's phases, computed fresh, cross the two spaces
+  assert.equal(C.circuitPhases(5, 2, '120/240 1ph'), 'A-B');
+  const b = C.phaseBalance(circuits, '120/240 1ph');
+  // inner 5760 VA split 2880/2880; plus outer 1200 on A and 800 on B
+  assert.equal(b.perPhase.A, 1200 + 2880); // 4080
+  assert.equal(b.perPhase.B, 800 + 2880);  // 3680
+  assert.equal(b.totalVA, 1200 + 5760 + 800);
+  // amps at 120 V L-N for the per-phase totals
+  near(b.amps.A, 4080 / 120, 0.01, 'phase A amps');
+  near(b.amps.B, 3680 / 120, 0.01, 'phase B amps');
+});
+
+test('Quad inner uses its stored phase string when present (A-B), not a single leg', () => {
+  // With phase already stamped as 'A-B', the balance still splits it in two (regression against the
+  // old "a half is always one pole" rule that would have dumped it all on one phase).
+  const b = C.phaseBalance([{ slot: 5, half: 'B', poles: 2, loadVA: 4000, phase: 'A-B' }], '120/240 1ph');
+  assert.equal(b.perPhase.A, 2000);
+  assert.equal(b.perPhase.B, 2000);
+  // a normal tandem half stays single-pole on its one phase
+  const t = C.phaseBalance([{ slot: 5, half: 'B', poles: 1, loadVA: 1000, phase: 'A' }], '120/240 1ph');
+  assert.equal(t.perPhase.A, 1000);
+  assert.equal(t.perPhase.B, 0);
+});

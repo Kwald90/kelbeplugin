@@ -73,8 +73,10 @@ export const minPoles = (system) => (systemOf(system).neutral ? 1 : 2);
  * phaseBalance(circuits, system) -> { perPhase: { A: va, ... }, amps: { A: a, ... }, totalVA, imbalancePct, maxAmps }
  * A multi-pole load is split equally across the phases it occupies; per-phase
  * current uses phaseVolts(). Imbalance is max deviation from the average phase
- * load (NEMA definition). A half-space (tandem) circuit is a single pole on its
- * space's phase, so both halves of a space count on that one phase.
+ * load (NEMA definition). A normal half-space (tandem) circuit is a single pole on
+ * its space's phase, so both halves of a space count on that one phase; a quad
+ * (space-saver) inner breaker is a half that carries 2 poles, so it splits across
+ * the two spaces' phases just like a full 2-pole.
  */
 export function phaseBalance(circuits, system) {
   const sys = systemOf(system);
@@ -83,7 +85,11 @@ export function phaseBalance(circuits, system) {
   for (const c of circuits) {
     const va = Number(c.loadVA) || 0;
     if (!va) continue;
-    const poles = c.half === 'A' || c.half === 'B' ? 1 : c.poles; // a tandem is one pole on its space's phase
+    // A tandem half is 1 pole on its space's phase; a quad (space-saver) inner is a 'B' half carrying
+    // 2 poles that crosses the two spaces' phases; a full breaker uses its own pole count. Any other
+    // half (including a stray 2-pole on an 'A' half) counts as one pole on its space.
+    const isHalf = c.half === 'A' || c.half === 'B';
+    const poles = isHalf ? (c.half === 'B' && (Number(c.poles) || 1) === 2 ? 2 : 1) : c.poles;
     const phases = (c.phase || circuitPhases(c.slot, poles, system)).split('-').filter((p) => p in perPhase);
     if (!phases.length) continue;
     for (const p of phases) perPhase[p] += va / phases.length;
