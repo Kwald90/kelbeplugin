@@ -6,9 +6,113 @@ import * as E from '../lib/nec.js';
 import * as S from '../lib/cec/systems.js';
 import * as CEC from '../lib/cec/index.js';
 import * as PT from '../lib/panel-templates.js';
+import { BRAND } from '../brand.js';
+import { panelUrl, qrSvgNode } from '../lib/qr.js';
 
 const BREAKERS = CEC.STANDARD_RATINGS.filter((a) => a <= 400);
 const SLOT_COUNTS = [12, 16, 20, 24, 30, 32, 40, 42, 54, 60, 66, 72, 84];
+
+// Fill-as-you-go wiring status. Empty = not tracked; the rest run start → finish.
+export const PANEL_STATUSES = [
+  { key: 'planned', label: 'Planned' },
+  { key: 'rough-in', label: 'Rough-in' },
+  { key: 'connected', label: 'Connected' },
+  { key: 'tested', label: 'Tested' },
+  { key: 'done', label: 'Done' },
+];
+export const PANEL_STATUS_LABEL = (k) => (PANEL_STATUSES.find((s) => s.key === k) || {}).label || '';
+
+// Print options stored per company in settings.panelPrint. Band colours are photocopy-safe
+// (a faint grey band alternating with white), amps shown, status hidden, smoke red.
+export const PANEL_PRINT_DEFAULTS = { bandColors: ['#eef2f7', '#ffffff'], showAmps: true, showStatus: false, smokeColor: '#e2231a' };
+
+/** Merge a company's settings.panelPrint onto the defaults, validating each field. Pure. */
+export function panelPrintSettings(settings) {
+  const pp = (settings && settings.panelPrint) || {};
+  const hex = (v, d) => (/^#[0-9a-f]{6}$/i.test(String(v || '')) ? v : d);
+  const bc = Array.isArray(pp.bandColors) && pp.bandColors.length >= 2
+    ? [hex(pp.bandColors[0], PANEL_PRINT_DEFAULTS.bandColors[0]), hex(pp.bandColors[1], PANEL_PRINT_DEFAULTS.bandColors[1])]
+    : PANEL_PRINT_DEFAULTS.bandColors.slice();
+  return {
+    bandColors: bc,
+    showAmps: pp.showAmps !== false,
+    showStatus: pp.showStatus === true,
+    smokeColor: hex(pp.smokeColor, PANEL_PRINT_DEFAULTS.smokeColor),
+  };
+}
+
+/**
+ * Alternating band index (0 or 1) for every space, so each breaker's spaces read as one band and
+ * the next breaker alternates. Computed down each column (odd slots, then even), so a multi-pole
+ * breaker — whose spaces stack in one column — is a single band, and two tandems that share a
+ * space share its band. Pure. Returns a Map slot -> 0|1.
+ */
+export function bandIndexBySlot(circuits, total) {
+  const occ = occupancy(circuits || []);
+  const map = new Map();
+  for (const start of [1, 2]) {
+    let parity = 0, prevKey = null, first = true;
+    for (let slot = start; slot <= total; slot += 2) {
+      const o = occ.get(slot);
+      let key;
+      if (o && o.full) key = 'f:' + o.full.slot;          // a full breaker: keyed by its first space
+      else if (o && (o.A || o.B)) key = 't:' + slot;       // a tandem space: both halves one band
+      else key = 'e:' + slot;                              // empty space: its own band
+      if (first) first = false; else if (key !== prevKey) parity ^= 1;
+      map.set(slot, parity);
+      prevKey = key;
+    }
+  }
+  return map;
+}
+
+/**
+ * Fill-as-you-go completion: of the circuits that have a description (the ones actually planned),
+ * how many are marked 'done'. Pure. Returns { total, described, done, tracked, pct }.
+ */
+export function completion(panel) {
+  const circuits = (panel && panel.circuits) || [];
+  const described = circuits.filter((c) => (c.description || '').trim());
+  const done = described.filter((c) => c.status === 'done');
+  const tracked = circuits.filter((c) => c.status && c.status !== '');
+  return {
+    total: circuits.length,
+    described: described.length,
+    done: done.length,
+    tracked: tracked.length,
+    pct: described.length ? Math.round((done.length / described.length) * 100) : 0,
+  };
+}
+
+/**
+ * The highlight colour for a circuit, or null for none. A #rrggbb colorOverride is an explicit
+ * highlight; 'none' suppresses it; otherwise a 'smoke'/'alarm' purpose highlights red (the
+ * company's smokeColor). A phase-key colorOverride (A/B/C) is not a highlight. Pure.
+ */
+export function highlightFor(circuit, pp = PANEL_PRINT_DEFAULTS) {
+  const ov = circuit && circuit.colorOverride;
+  if (ov === 'none') return null;
+  if (ov && /^#[0-9a-f]{6}$/i.test(ov)) return ov;
+  const purpose = String((circuit && circuit.purpose) || '').toLowerCase();
+  if (purpose === 'smoke' || purpose === 'alarm' || purpose.includes('smoke')) return pp.smokeColor || PANEL_PRINT_DEFAULTS.smokeColor;
+  return null;
+}
+
+/**
+ * Convert a tandem half back to a full-size breaker, in place, when its sibling half is empty
+ * (clears `half`, and a 'tandem' type falls back to 'standard'). Pure on the passed array; returns
+ * true on success, false if it isn't a half or the sibling space is occupied.
+ */
+export function makeFullSpace(circuits, c) {
+  const half = halfOf(c);
+  if (!half) return false;
+  const slot = Number(c.slot);
+  const sibling = half === 'A' ? 'B' : 'A';
+  if ((circuits || []).some((x) => x !== c && Number(x.slot) === slot && halfOf(x) === sibling)) return false;
+  delete c.half;
+  if (c.breakerType === 'tandem') c.breakerType = 'standard';
+  return true;
+}
 
 let ui, h, store;
 const bookOf = () => (store.settings().codeBook === 'NEC-2023' ? 'NEC-2023' : 'CEC-2024');
@@ -198,6 +302,7 @@ function editorView(root, ctx, id) {
   // header form
   const head = h('form', { class: 'card panel-head no-print', onSubmit: (e) => e.preventDefault() }, ui.formGrid([
     { label: 'Panel name', name: 'name', value: panel.name, required: true },
+    { label: 'Location', name: 'location', value: panel.location || '', placeholder: 'e.g. Mechanical room, east wall' },
     { label: 'Job', name: 'jobId', type: 'select', value: panel.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`) },
     { label: 'System', name: 'voltage', type: 'select', value: panel.voltage, options: S.systemsFor(bookOf(), panel.voltage) },
     { label: 'Main type', name: 'mainType', type: 'select', value: panel.mainType || 'MB', options: [{ value: 'MB', label: 'Main breaker (MB)' }, { value: 'MLO', label: 'Main lug only (MLO)' }] },
@@ -225,7 +330,7 @@ function editorView(root, ctx, id) {
       return;
     }
     panel = store.update('panels', panel.id, {
-      name: v.name || 'Panel', jobId: v.jobId || null, voltage: v.voltage, mainType: v.mainType === 'MLO' ? 'MLO' : 'MB',
+      name: v.name || 'Panel', location: v.location || null, jobId: v.jobId || null, voltage: v.voltage, mainType: v.mainType === 'MLO' ? 'MLO' : 'MB',
       mainAmps: v.mainAmps ?? 0, busAmps: v.busAmps ?? 0, slots, feedThrough: !!v.feedThrough,
       circuits: withPhases(panel.circuits || [], v.voltage),
     });
@@ -235,6 +340,24 @@ function editorView(root, ctx, id) {
   const summaryEl = h('div', { class: 'panel-summary' });
   const gridEl = h('div', { class: 'panel-grid no-print' });
   const printEl = h('div', { class: 'print-only panel-print' });
+  const labelPrintEl = h('div', { class: 'panel-label-print' });
+
+  const serviceText = () => {
+    const mainTxt = panel.mainType === 'MLO' ? `MLO${panel.mainAmps ? ' · ' + panel.mainAmps + ' A feed' : ''}` : `${panel.mainAmps} A main`;
+    return `${sysLabel(panel.voltage)} · ${mainTxt}`;
+  };
+  const appOrigin = () => BRAND.appOrigin || (typeof location !== 'undefined' ? location.origin : '');
+  const thisPanelUrl = () => panelUrl(panel, appOrigin());
+
+  /** Print only the panel label/sticker (not the directory): flip a class, print, then restore. */
+  const printLabel = () => {
+    const page = root.querySelector('.panel-page') || root.lastElementChild;
+    if (!page) { window.print(); return; }
+    page.classList.add('print-label-only');
+    const cleanup = () => { page.classList.remove('print-label-only'); window.removeEventListener('afterprint', cleanup); };
+    window.addEventListener('afterprint', cleanup);
+    window.print();
+  };
 
   /** True if the current system allows tandems (single-pole half breakers need a neutral). */
   const tandemsAllowed = () => S.minPoles(panel.voltage) === 1;
@@ -310,7 +433,9 @@ function editorView(root, ctx, id) {
   }
 
   function openTemplatePicker(slot, preferHalf) {
-    const templates = PT.listBreakerTemplates(store.settings());
+    // Tandem templates are single-pole half-space breakers; a no-neutral system can't use them, so
+    // hide them here the same way the empty-cell UI hides the Tandem button.
+    const templates = PT.listBreakerTemplates(store.settings()).filter((t) => tandemsAllowed() || t.breakerType !== 'tandem');
     const groups = [...new Set(templates.map((t) => t.group || 'Other'))];
     const sheet = ui.openSheet({
       title: `Breaker template · space ${slot}${preferHalf ? ' ' + preferHalf : ''}`,
@@ -327,25 +452,49 @@ function editorView(root, ctx, id) {
   /** Per-circuit options sheet: save as template, sub-feed, breaker type, colour override. */
   function openCircuitOptions(c) {
     const colours = coloursNow();
+    const pp = panelPrintSettings(store.settings());
     const phaseKeys = (c.phase || S.circuitPhases(c.slot, halfOf(c) ? 1 : c.poles, panel.voltage)).split('-');
     const typeOptions = PT.BREAKER_TYPE_KEYS.map((k) => ({ value: k, label: PT.BREAKER_TYPES[k] }));
-    const colourOptions = [{ value: '', label: 'By phase (default)' }, ...Object.keys(colours.phases).map((p) => ({ value: p, label: `Phase ${p} · ${colours.phases[p].name}` }))];
+    const phaseOptions = [{ value: '', label: 'By phase (default)' }, ...Object.keys(colours.phases).map((p) => ({ value: p, label: `Phase ${p} · ${colours.phases[p].name}` }))];
+    // Row-highlight choices. '' keeps the default (red for a smoke/alarm purpose, none otherwise).
+    const highlightOptions = [
+      { value: '', label: 'Default (red for smoke / alarm)' },
+      { value: 'none', label: 'No highlight' },
+      { value: pp.smokeColor, label: 'Smoke red' },
+      { value: '#f59e0b', label: 'Amber' },
+      { value: '#16a34a', label: 'Green' },
+      { value: '#2563eb', label: 'Blue' },
+    ];
+    const curHex = c.colorOverride === 'none' || /^#[0-9a-f]{6}$/i.test(c.colorOverride || '') ? c.colorOverride : '';
+    const curPhase = c.colorOverride && colours.phases[c.colorOverride] ? c.colorOverride : '';
+    const isHalf = !!halfOf(c);
+    const siblingEmpty = isHalf && makeFullSpace((panel.circuits || []).map((x) => ({ ...x })), { ...c });
     const sheet = ui.formSheet({
       title: `Breaker ${c.slot}${halfOf(c) || ''}${c.description ? ' · ' + c.description : ''}`,
       fields: [
         { label: 'Breaker type', name: 'breakerType', type: 'select', value: c.breakerType || 'standard', options: typeOptions },
-        { label: 'Colour shown', name: 'colorOverride', type: 'select', value: c.colorOverride || '', options: colourOptions },
+        { label: 'Purpose tag', name: 'purpose', type: 'text', value: c.purpose || '', placeholder: 'e.g. smoke, kitchen, lighting', hint: '“smoke” or “alarm” is highlighted red by default' },
+        { label: 'Wiring status', name: 'status', type: 'select', value: c.status || '', options: [{ value: '', label: 'Not tracked' }, ...PANEL_STATUSES.map((s) => ({ value: s.key, label: s.label }))] },
+        { label: 'Row highlight', name: 'highlight', type: 'select', value: curHex, options: highlightOptions },
+        { label: 'Phase colour shown', name: 'colorShown', type: 'select', value: curPhase, options: phaseOptions },
         { label: 'Sub-feed / feeder breaker', name: 'subFeed', type: 'checkbox', value: !!c.subFeed, span: true },
       ],
       submitLabel: 'Apply',
       extra: h('div', { class: 'tpl-save-row' },
         h('span', { class: 'muted small' }, `Phases ${phaseKeys.join('-')}`),
-        ui.button('Save as template', { variant: 'ghost', icon: 'save', onClick: async () => {
-          const label = await ui.promptDialog('Template name', { title: 'Save as template', value: c.description || 'Custom breaker', okLabel: 'Save' });
-          if (label == null) return;
-          PT.saveBreakerTemplate(store, { label, poles: c.poles, amps: c.amps, loadVA: c.loadVA, breakerType: c.breakerType || 'standard', descriptionDefault: c.description || '', subFeed: c.subFeed, group: 'Company' });
-          ui.toast('Saved as a company template', 'success');
-        } })),
+        h('div', { class: 'row' },
+          siblingEmpty ? ui.button('Make full-space', { variant: 'ghost', icon: 'square', title: 'Convert this tandem back to a full-size breaker', onClick: () => {
+            const circuits = panel.circuits.map((x) => ({ ...x }));
+            const cur = circuits.find((x) => sameCircuit(x, c));
+            if (cur && makeFullSpace(circuits, cur)) { sheet.close(); setCircuits(circuits); }
+            else ui.toast('The other half of this space must be empty first.', 'error');
+          } }) : null,
+          ui.button('Save as template', { variant: 'ghost', icon: 'save', onClick: async () => {
+            const label = await ui.promptDialog('Template name', { title: 'Save as template', value: c.description || 'Custom breaker', okLabel: 'Save' });
+            if (label == null) return;
+            PT.saveBreakerTemplate(store, { label, poles: c.poles, amps: c.amps, loadVA: c.loadVA, breakerType: c.breakerType || 'standard', descriptionDefault: c.description || '', subFeed: c.subFeed, group: 'Company' });
+            ui.toast('Saved as a company template', 'success');
+          } }))),
       onSubmit: (v) => {
         const circuits = panel.circuits.map((x) => ({ ...x }));
         const cur = circuits.find((x) => sameCircuit(x, c));
@@ -353,7 +502,10 @@ function editorView(root, ctx, id) {
         const bt = v.breakerType || 'standard';
         if (bt === 'tandem') { if (!makeTandem(cur, circuits)) return; }
         else cur.breakerType = bt;
-        cur.colorOverride = v.colorOverride || null;
+        cur.purpose = (v.purpose || '').trim().slice(0, 40) || null;
+        cur.status = v.status || null;
+        // A chosen highlight ('none' or a #hex) wins; otherwise fall back to the phase-colour override.
+        cur.colorOverride = v.highlight ? v.highlight : (v.colorShown || null);
         cur.subFeed = !!v.subFeed;
         setCircuits(circuits);
       },
@@ -365,7 +517,9 @@ function editorView(root, ctx, id) {
 
   /** Colour swatches for a circuit's phase(s); a colorOverride forces one phase's colour. */
   function circuitSwatches(c, colours) {
-    const keys = c.colorOverride ? [c.colorOverride] : (c.phase || S.circuitPhases(c.slot, halfOf(c) ? 1 : c.poles, panel.voltage)).split('-');
+    // A colorOverride is a phase key only when it names a phase; a #hex or 'none' is a highlight, not a swatch.
+    const phaseOverride = c.colorOverride && colours.phases[c.colorOverride] ? c.colorOverride : null;
+    const keys = phaseOverride ? [phaseOverride] : (c.phase || S.circuitPhases(c.slot, halfOf(c) ? 1 : c.poles, panel.voltage)).split('-');
     return keys.map((p) => {
       const col = colours.phases[p];
       return col ? h('span', { class: 'wire-swatch', style: { background: col.hex }, title: `Phase ${p} · ${col.name}` }) : null;
@@ -402,17 +556,21 @@ function editorView(root, ctx, id) {
 
   /** Editable fields for one breaker (full or half). Returns { over, node }. A half shows a locked 1P and no pole select. */
   function breakerFields(c, slot, colours) {
+    const pp = panelPrintSettings(store.settings());
     const amps = circuitAmps(c, panel.voltage);
     const over = c.amps && amps > 0.8 * Number(c.amps);
     const onChange = (field) => (e) => changeCircuit(c, field, e.target.value);
     const bType = c.breakerType || 'standard';
     const half = halfOf(c);
     const label = `Space ${slot}${half || ''}`;
+    const hl = highlightFor(c, pp);
     const polesCtl = half
       ? h('span', { class: 'slot-poles-fixed', title: 'A tandem is a single-pole half-space breaker' }, '1P')
       : h('select', { class: 'input', name: 'poles', 'aria-label': `${label} poles`, onChange: onChange('poles') },
           [1, 2, 3].filter((p) => p >= S.minPoles(panel.voltage) && (p < 3 || S.systemOf(panel.voltage).three)).map((p) => h('option', { value: p, selected: Number(c.poles) === p }, `${p}P`)));
-    const node = h('div', { class: 'slot-fields' },
+    const statusCtl = h('select', { class: 'input slot-status', name: 'status', 'aria-label': `${label} wiring status`, onChange: onChange('status') },
+      [{ key: '', label: 'Status…' }, ...PANEL_STATUSES].map((s) => h('option', { value: s.key, selected: (c.status || '') === s.key }, s.label)));
+    const node = h('div', { class: ['slot-fields', hl ? 'has-highlight' : null], style: hl ? { borderLeft: `3px solid ${hl}` } : null },
       h('input', { class: 'input slot-desc', name: 'description', value: c.description || '', placeholder: 'Circuit description', 'aria-label': `${label} description`, onChange: onChange('description') }),
       h('div', { class: 'slot-row' },
         h('select', { class: 'input', name: 'amps', 'aria-label': `${label} breaker amps`, onChange: onChange('amps') },
@@ -427,7 +585,11 @@ function editorView(root, ctx, id) {
         h('span', { class: 'wire-swatches' }, circuitSwatches(c, colours)),
         ` ${c.phase || S.circuitPhases(c.slot, half ? 1 : c.poles, panel.voltage)} · ${ui.fmtNum(amps, 1)} A`,
         c.subFeed ? h('span', { class: 'subfeed-tag' }, 'sub-feed') : null,
-        over ? ` · over 80% of ${c.amps} A` : ''));
+        c.purpose ? h('span', { class: ['purpose-tag', hl ? 'hl' : null], style: hl ? { color: hl, borderColor: hl } : null }, c.purpose) : null,
+        over ? ` · over 80% of ${c.amps} A` : '',
+        h('span', { class: 'grow' }),
+        c.status ? h('span', { class: ['status-chip', 'st-' + c.status] }, PANEL_STATUS_LABEL(c.status)) : null,
+        statusCtl));
     return { over, node };
   }
 
@@ -489,7 +651,8 @@ function editorView(root, ctx, id) {
     if (b.imbalancePct > 10) warnings.push(`Phases are ${ui.fmtNum(b.imbalancePct, 1)}% out of balance. Move loads to the lightest phase.`);
     if (main && Number(panel.busAmps) && main > Number(panel.busAmps)) warnings.push(`Main ${main} A is larger than the ${panel.busAmps} A bus rating.`);
     const hot = (panel.circuits || []).filter((c) => c.amps && circuitAmps(c, panel.voltage) > 0.8 * c.amps);
-    if (hot.length) warnings.push(`${hot.length} breaker${hot.length > 1 ? 's are' : ' is'} loaded over 80% (${contRef}): ${hot.map((c) => c.slot).join(', ')}.`);
+    // Label tandems with their A/B so two halves of one space are told apart.
+    if (hot.length) warnings.push(`${hot.length} breaker${hot.length > 1 ? 's are' : ' is'} loaded over 80% (${contRef}): ${hot.map((c) => `${c.slot}${halfOf(c) || ''}`).join(', ')}.`);
     if (!sys.neutral && (panel.circuits || []).some((c) => (Number(c.poles) || 1) < 2)) warnings.push('1-pole breakers on a system with no neutral: change them to 2- or 3-pole.');
 
     summaryEl.append(
@@ -508,12 +671,48 @@ function editorView(root, ctx, id) {
           h('span', { class: 'value' }, main ? `${ui.fmtNum(loadPct, 0)}%` : '—'),
           h('div', { class: 'progress' }, h('i', { style: { width: `${Math.min(100, loadPct)}%`, background: loadPct > 80 ? 'var(--danger)' : '' } })),
           h('span', { class: 'hint' }, main ? `${ui.fmtNum(b.maxAmps, 1)} A of ${main} A, heaviest phase` : 'Set the main size'))),
+      progressCard(),
+      labelCard(),
       main ? serviceCard({ sys, b, main, totalAmps, cec }) : null,
       colourLegendCard(),
       warnings.length
         ? h('div', { class: 'card panel-warn', role: 'status' }, warnings.map((w) => h('div', { class: 'row' }, ui.icon('alert', 16), h('span', null, w))))
         : h('div', { class: 'card panel-ok' }, ui.icon('check', 16), ' No load or balance warnings.'),
     );
+  }
+
+  /** Fill-as-you-go progress: a completion bar plus a count of each wiring status. */
+  function progressCard() {
+    const c = completion(panel);
+    const counts = {};
+    for (const s of PANEL_STATUSES) counts[s.key] = 0;
+    for (const x of (panel.circuits || [])) if (x.status && counts[x.status] != null) counts[x.status] += 1;
+    return h('div', { class: 'card panel-progress' },
+      h('div', { class: 'calc-label row-between' }, h('span', null, 'Job progress'),
+        h('span', { class: 'num' }, c.described ? `${c.pct}% done` : 'Not started')),
+      h('div', { class: 'progress' }, h('i', { class: 'progress-done', style: { width: `${c.pct}%` } })),
+      h('div', { class: 'muted small' }, `${c.done} of ${c.described} wired circuit${c.described === 1 ? '' : 's'} marked done`),
+      c.tracked ? h('div', { class: 'status-counts' }, PANEL_STATUSES.filter((s) => counts[s.key]).map((s) =>
+        h('span', { class: ['status-chip', 'st-' + s.key] }, `${s.label} ${counts[s.key]}`))) : null);
+  }
+
+  /** On-screen panel label / sticker: the QR, the panel identity and the progress, to print and
+   *  stick inside the panel door so a scan a year later reopens this exact panel. */
+  function labelCard() {
+    const url = thisPanelUrl();
+    const c = completion(panel);
+    return h('div', { class: 'card panel-label-card' },
+      h('div', { class: 'calc-label row-between' }, h('span', null, 'Panel label'),
+        ui.button('Print label', { variant: 'ghost', size: 'sm', icon: 'printer', onClick: printLabel })),
+      h('div', { class: 'label-body' },
+        h('div', { class: 'label-qr' }, qrSvgNode(url, { label: `Open panel ${panel.name}` })),
+        h('div', { class: 'label-info' },
+          h('div', { class: 'label-name' }, panel.name || 'Panel'),
+          panel.location ? h('div', { class: 'label-loc' }, panel.location) : null,
+          h('div', { class: 'muted small' }, serviceText()),
+          h('div', { class: 'label-prog small' }, c.described ? `${c.pct}% wired` : 'Not started'),
+          h('div', { class: 'muted tiny label-url' }, url))),
+      h('p', { class: 'calc-note muted' }, 'Scan to open this panel on any device to view, update or reprint. Generated offline.'));
   }
 
   /** Service / feeder card: loading against the main, and conductors and bonding sized for it. */
@@ -604,51 +803,131 @@ function editorView(root, ctx, id) {
     return sheet;
   }
 
+  /** Company footer block for a printout: logo, name, website/email/phone (from company settings),
+   *  licence and the date. Same company record the invoices print from. */
+  function companyFooter() {
+    const co = store.settings().company || {};
+    const contact = [co.website, co.email, co.phone].filter(Boolean).join('  ·  ');
+    return h('div', { class: 'pp-foot' },
+      co.logo ? h('img', { class: 'pp-logo', src: co.logo, alt: '' }) : null,
+      h('div', { class: 'pp-foot-info' },
+        h('div', { class: 'pp-foot-name' }, co.name || ''),
+        contact ? h('div', null, contact) : null,
+        co.licenceNo ? h('div', null, `Lic. ${co.licenceNo}`) : null),
+      h('div', { class: 'pp-foot-date' }, ui.fmtDate(new Date())));
+  }
+
+  /** The service line shown on the directory header. */
+  function fullServiceLine(job) {
+    const mainTxt = panel.mainType === 'MLO' ? `MLO${panel.mainAmps ? ' · ' + panel.mainAmps + ' A feed' : ''}` : `Main ${panel.mainAmps} A`;
+    return `${sysLabel(panel.voltage)} · ${mainTxt} · Bus ${panel.busAmps} A${panel.feedThrough ? ' · feed-through' : ''}${job ? ` · ${job.number} ${job.title}` : ''}`;
+  }
+
+  // The branded two-column directory: a left half facing a centre a right half mirrors, with
+  // CCT.NO columns carrying A/B for tandems, the breaker amp/type shown once per breaker, alternating
+  // colour bands grouping each breaker's spaces, a smoke/purpose highlight, and (optionally) status.
   function drawPrint() {
     ui.clear(printEl);
-    const s = store.settings();
     const job = jobs.find((j) => j.id === panel.jobId);
     const total = slotCount(panel);
     const occ = occupancy(panel.circuits || []);
+    const band = bandIndexBySlot(panel.circuits || [], total);
     const colours = coloursNow();
-    const typeTag = (c) => (c.breakerType && c.breakerType !== 'standard' ? ' ' + PT.breakerTypeLabel(c.breakerType) : '');
-    const descCell = (c) => h('td', null, h('span', { class: 'print-swatches' }, circuitSwatches(c, colours)),
-      ` ${c.description || '—'}${c.subFeed ? ' (sub-feed)' : ''}`);
-    // A half line inside a tandem space: the letter, its swatch, description and rating, each on its own line.
-    const halfDescLine = (c, letter) => c
-      ? h('div', { class: 'print-half' }, h('strong', null, letter + ': '), h('span', { class: 'print-swatches' }, circuitSwatches(c, colours)), ` ${c.description || '—'}${c.subFeed ? ' (sub-feed)' : ''}`)
-      : h('div', { class: 'print-half muted' }, `${letter}: —`);
-    const halfRateLine = (c) => c ? h('div', { class: 'print-half' }, `${c.amps}A 1P${typeTag(c)}`) : h('div', { class: 'print-half' }, '');
-    const cell = (slot) => {
+    const pp = panelPrintSettings(store.settings());
+    const c = completion(panel);
+    const typeTag = (x) => (x.breakerType && x.breakerType !== 'standard' ? ' ' + PT.breakerTypeLabel(x.breakerType) : '');
+
+    // One side's cells for a slot, in reading order from the outer edge toward the centre.
+    const sideCells = (slot, side) => {
       const o = occ.get(slot);
-      if (!spaceTaken(o)) return [h('td', { class: 'num' }, slot), h('td', null, 'Spare / space'), h('td', null, '')];
-      if (o.full && !o.start) return [h('td', { class: 'num' }, slot), h('td', null, `↳ ${o.full.slot}`), h('td', null, '')];
-      if (o.full) {
-        const c = o.full;
-        return [h('td', { class: 'num' }, slot), descCell(c), h('td', { class: 'num' }, `${c.amps}A ${c.poles}P${typeTag(c)}`)];
+      const bg = pp.bandColors[band.get(slot) || 0];
+      const bst = { background: bg };
+      const descBody = (x) => [h('span', { class: 'print-swatches' }, circuitSwatches(x, colours)),
+        ` ${x.description || '—'}${x.subFeed ? ' (sub-feed)' : ''}`,
+        pp.showStatus && x.status ? h('span', { class: 'pp-status' }, ` · ${PANEL_STATUS_LABEL(x.status)}`) : null];
+      let desc, cct, amp;
+      if (!spaceTaken(o)) {
+        desc = h('td', { class: 'pp-desc pp-spare', style: bst }, 'Spare / space');
+        cct = h('td', { class: 'pp-cct num', style: bst }, String(slot));
+        amp = pp.showAmps ? h('td', { class: 'pp-amp num', style: bst }, '') : null;
+      } else if (o.full && !o.start) {
+        // A later space of a multi-pole breaker: amp/desc shown once on its first space, so blank here.
+        desc = h('td', { class: 'pp-desc pp-cont', style: bst }, '');
+        cct = h('td', { class: 'pp-cct num', style: bst }, String(slot));
+        amp = pp.showAmps ? h('td', { class: 'pp-amp num', style: bst }, '') : null;
+      } else if (o.full) {
+        const x = o.full;
+        const hl = highlightFor(x, pp);
+        desc = h('td', { class: ['pp-desc', hl ? 'pp-hl' : null], style: hl ? { ...bst, borderLeft: `2.5pt solid ${hl}`, color: hl } : bst }, descBody(x));
+        cct = h('td', { class: 'pp-cct num', style: bst }, String(slot));
+        amp = pp.showAmps ? h('td', { class: 'pp-amp num', style: bst }, `${x.amps}A ${x.poles}P${typeTag(x)}`) : null;
+      } else {
+        // Tandem space: an A line over a B line, CCT.NO carrying the A/B suffix.
+        const halfDesc = (x, letter) => {
+          if (!x) return h('div', { class: 'print-half muted' }, `${slot}${letter}: —`);
+          const hl = highlightFor(x, pp);
+          return h('div', { class: ['print-half', hl ? 'pp-hl' : null], style: hl ? { borderLeft: `2.5pt solid ${hl}`, color: hl } : null },
+            h('strong', null, `${slot}${letter}: `), descBody(x));
+        };
+        const halfAmp = (x) => h('div', { class: 'print-half' }, x ? `${x.amps}A 1P${typeTag(x)}` : '');
+        desc = h('td', { class: 'pp-desc', style: bst }, halfDesc(o.A, 'A'), halfDesc(o.B, 'B'));
+        cct = h('td', { class: 'pp-cct num', style: bst }, h('div', null, `${slot}A`), h('div', null, `${slot}B`));
+        amp = pp.showAmps ? h('td', { class: 'pp-amp num', style: bst }, halfAmp(o.A), halfAmp(o.B)) : null;
       }
-      // tandem space: both halves, each its own line with its phase colour.
-      return [h('td', { class: 'num' }, slot),
-        h('td', null, halfDescLine(o.A, 'A'), halfDescLine(o.B, 'B')),
-        h('td', { class: 'num' }, halfRateLine(o.A), halfRateLine(o.B))];
+      const order = side === 'left' ? [desc, cct, amp] : [amp, cct, desc];
+      const cells = order.filter(Boolean);
+      // The centre rule is the right border of the left half's innermost cell (collapsed borders
+      // make it the divider the right half faces).
+      if (side === 'left') cells[cells.length - 1]?.classList.add('pp-centre');
+      return cells;
     };
+
     const rows = [];
-    for (let r = 1; r <= total / 2; r++) rows.push(h('tr', null, cell(2 * r - 1), cell(2 * r)));
-    const mainTxt = panel.mainType === 'MLO' ? `MLO${panel.mainAmps ? ' · ' + panel.mainAmps + ' A feed' : ''}` : `Main ${panel.mainAmps} A`;
+    for (let r = 1; r <= total / 2; r++) rows.push(h('tr', null, ...sideCells(2 * r - 1, 'left'), ...sideCells(2 * r, 'right')));
+    const headCols = pp.showAmps ? ['DESCRIPTION', 'CCT.', 'AMP', 'AMP', 'CCT.', 'DESCRIPTION'] : ['DESCRIPTION', 'CCT.', 'CCT.', 'DESCRIPTION'];
+    const headRow = h('tr', { class: 'pp-colhead' }, headCols.map((t, i) => {
+      const leftInner = pp.showAmps ? 2 : 1;
+      return h('th', { class: i === leftInner ? 'pp-centre' : null }, t);
+    }));
     const legendChip = (label, col) => h('span', { class: 'print-legend-chip' }, h('span', { class: 'wire-swatch', style: { background: col.hex } }), `${label}: ${col.name}`);
+
     printEl.append(
-      h('h1', null, panel.name),
-      h('p', null, `${sysLabel(panel.voltage)} · ${mainTxt} · Bus ${panel.busAmps} A${panel.feedThrough ? ' · feed-through' : ''}${job ? ` · ${job.number} ${job.title}` : ''}`),
-      h('table', { class: 'panel-print-table' }, h('tbody', null, rows)),
+      h('div', { class: 'pp-head' },
+        h('div', { class: 'pp-head-main' },
+          h('h1', null, panel.name),
+          panel.location ? h('div', { class: 'pp-loc' }, `Location: ${panel.location}`) : null,
+          h('div', { class: 'pp-service' }, fullServiceLine(job)),
+          c.described ? h('div', { class: 'pp-prog' }, `Progress: ${c.pct}% wired (${c.done}/${c.described})`) : null),
+        h('div', { class: 'pp-head-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` }))),
+      h('table', { class: 'panel-print-table' }, h('thead', null, headRow), h('tbody', null, rows)),
       h('div', { class: 'print-legend' },
         Object.entries(colours.phases).map(([p, col]) => legendChip(`Ø${p}`, col)),
         legendChip('N', colours.neutral), legendChip('Bond', colours.bond)),
       h('p', { class: 'small' }, 'Only neutral (white/grey) and bond (green) colours are code-mandated; phase colours are convention unless colour-coding is required (CEC Rule 4-036). Confirm with the AHJ.'),
-      h('p', { class: 'small' }, `${s.company?.name || ''}${s.company?.licenceNo ? ' · Lic. ' + s.company.licenceNo : ''} · ${ui.fmtDate(new Date())}`),
+      companyFooter(),
     );
   }
 
-  function redraw() { drawSummary(); drawGrid(); drawPrint(); }
+  // The standalone panel label / sticker: the QR big enough to scan from arm's length, the panel
+  // identity, the progress, and the company footer. Printed on its own via printLabel().
+  function drawLabel() {
+    ui.clear(labelPrintEl);
+    const job = jobs.find((j) => j.id === panel.jobId);
+    const c = completion(panel);
+    labelPrintEl.append(
+      h('div', { class: 'pl-card' },
+        h('div', { class: 'pl-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` })),
+        h('div', { class: 'pl-info' },
+          h('h1', null, panel.name),
+          panel.location ? h('div', { class: 'pl-loc' }, panel.location) : null,
+          h('div', { class: 'pl-service' }, fullServiceLine(job)),
+          c.described ? h('div', { class: 'pl-prog' }, `${c.pct}% wired`) : null,
+          h('div', { class: 'pl-hint' }, 'Scan to open this panel to view, update or reprint.'),
+          h('div', { class: 'pl-url' }, thisPanelUrl()))),
+      companyFooter());
+  }
+
+  function redraw() { drawSummary(); drawGrid(); drawPrint(); drawLabel(); }
 
   const del = async () => {
     if (!(await ui.confirmDialog(`Delete ${panel.name} and its ${panel.circuits?.length || 0} circuits?`, { okLabel: 'Delete' }))) return;
@@ -662,11 +941,12 @@ function editorView(root, ctx, id) {
       subtitle: 'Odd spaces on the left, even on the right. Phases follow the bus.',
       actions: [
         ui.button('', { variant: 'ghost', icon: 'chevron-left', title: 'All panels', href: '#/panels' + (panel.jobId ? '?jobId=' + panel.jobId : '') }),
+        ui.button('Panel label', { variant: 'ghost', icon: 'qr', onClick: printLabel }),
         ui.button('Print directory', { icon: 'printer', onClick: () => window.print() }),
         ui.button('', { variant: 'ghost danger', icon: 'trash', title: 'Delete panel', onClick: del }),
       ],
     },
-    head, summaryEl, gridEl, printEl,
+    head, summaryEl, gridEl, printEl, labelPrintEl,
   ));
   root.lastElementChild.classList.add('panel-page');
   redraw();

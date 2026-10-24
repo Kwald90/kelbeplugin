@@ -46,6 +46,7 @@ export const ICONS = {
   download: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 21h16"/>',
   upload: '<path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 21h16"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-9 8"/>',
+  qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v7h-7M17.5 21H21"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5"/>',
   'chevron-left': '<path d="M15 5l-7 7 7 7"/>',
   'chevron-right': '<path d="M9 5l7 7-7 7"/>',

@@ -102,10 +102,68 @@
 .panel-print p { margin: 0 0 8pt; }
 .panel-print .small { font-size: 8pt; margin-top: 8pt; }
 .panel-print-table { width: 100%; border-collapse: collapse; font-size: 9pt; }
-.panel-print-table td { border: 1px solid #000; padding: 3pt 5pt; }
-.panel-print-table td.num { width: 1%; white-space: nowrap; text-align: center; vertical-align: top; }
+.panel-print-table td, .panel-print-table th { border: 1px solid #000; padding: 3pt 5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.panel-print-table td.num, .panel-print-table th { white-space: nowrap; text-align: center; vertical-align: top; }
+.panel-print-table .pp-cct { width: 1%; }
+.panel-print-table .pp-amp { width: 1%; white-space: nowrap; }
+.panel-print-table .pp-colhead th { font-size: 7.5pt; letter-spacing: .03em; background: #000; color: #fff; }
+.panel-print-table .pp-desc { text-align: left; vertical-align: top; }
+.panel-print-table .pp-centre { border-right: 2.5pt solid #000; }
+.panel-print-table .pp-spare, .panel-print-table .pp-cont { color: #777; }
+.panel-print-table .pp-hl { font-weight: 700; }
+.pp-status { font-size: 7.5pt; color: #444; text-transform: uppercase; letter-spacing: .03em; }
 .print-half { line-height: 1.35; }
 .print-half.muted { color: #666; }
+
+/* branded print header (name / location / service + QR) and footer (logo + contact) */
+.pp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12pt; margin-bottom: 8pt; }
+.pp-head-main { min-width: 0; }
+.pp-head-main h1 { margin: 0 0 2pt; }
+.pp-loc { font-size: 10pt; font-weight: 600; }
+.pp-service { font-size: 9pt; color: #333; }
+.pp-prog { font-size: 9pt; margin-top: 2pt; }
+.pp-head-qr { flex: none; }
+.pp-head-qr svg { width: 84px; height: 84px; display: block; }
+.pp-foot { display: flex; align-items: center; gap: 10pt; margin-top: 10pt; padding-top: 6pt; border-top: 1px solid #000; font-size: 8pt; }
+.pp-logo { max-height: 46px; max-width: 150px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.pp-foot-info { flex: 1; min-width: 0; }
+.pp-foot-name { font-weight: 700; font-size: 9pt; }
+.pp-foot-date { flex: none; color: #333; }
+
+/* on-screen panel label / sticker card */
+.panel-label-card { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--s2); }
+.panel-label-card .label-body { display: flex; gap: var(--s3); align-items: center; }
+.label-qr { flex: none; }
+.label-qr svg { width: 120px; height: 120px; display: block; background: #fff; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px; }
+.label-info { min-width: 0; }
+.label-name { font-weight: 700; font-size: var(--fs-lg); }
+.label-loc { font-weight: 600; }
+.label-url { word-break: break-all; margin-top: 4px; }
+.tiny { font-size: 10px; }
+.panel-progress .progress i.progress-done { background: var(--success); }
+.status-counts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: var(--s2); }
+
+/* wiring-status chips and per-circuit purpose tags on screen */
+.status-chip { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 700; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
+.status-chip.st-planned { background: var(--surface-2); color: var(--text-muted); }
+.status-chip.st-rough-in { background: var(--warning-soft); color: var(--warning); border-color: transparent; }
+.status-chip.st-connected { background: var(--accent-soft); color: var(--text); border-color: transparent; }
+.status-chip.st-tested { background: var(--info-soft, var(--accent-soft)); color: var(--info); border-color: transparent; }
+.status-chip.st-done { background: var(--success-soft, var(--accent-soft)); color: var(--success); border-color: transparent; }
+.slot-status { max-width: 8em; font-size: var(--fs-xs) !important; min-height: 28px !important; }
+.purpose-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted); }
+.slot-fields.has-highlight { padding-left: 6px; }
+
+/* the standalone QR panel label, printed on its own */
+.panel-label-print { display: none; }
+.pl-card { display: flex; gap: 18pt; align-items: center; }
+.pl-qr svg { width: 220px; height: 220px; display: block; }
+.pl-info h1 { margin: 0 0 4pt; font-size: 20pt; }
+.pl-loc { font-size: 13pt; font-weight: 600; }
+.pl-service { font-size: 10pt; color: #333; }
+.pl-prog { font-size: 12pt; margin-top: 4pt; font-weight: 700; }
+.pl-hint { font-size: 9pt; margin-top: 8pt; }
+.pl-url { font-size: 8pt; color: #555; word-break: break-all; margin-top: 2pt; }
 /* ---------- breaker / panel templates ---------- */
 .slot-empty-actions { flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .slot-add.tpl { color: var(--accent); font-size: var(--fs-xs); min-height: 28px; }
@@ -155,13 +213,17 @@
 @media print {
   .panel-page .page-head, .panel-summary, .calc-disclaimer { display: none !important; }
   .print-swatches .wire-swatch, .print-legend .wire-swatch { border: 1px solid #000; }
+  /* Default print is the directory; the standalone QR label prints only in label mode. */
+  .panel-label-print { display: none; }
+  .panel-page.print-label-only .panel-print { display: none !important; }
+  .panel-page.print-label-only .panel-label-print { display: block !important; }
 }
 /* Fit the paper the printer actually uses: full width on narrow media (label/thermal, A5),
    capped at a tidy 7.5in on Letter/A4 so a full-size sheet stays readable. Never a fixed width
    that overflows and clips. */
 @media print {
   @page { margin: 12mm; }
-  .panel-print { width: 100%; max-width: 7.5in; margin: 0 auto; }
-  .panel-print-table { table-layout: fixed; }
+  .panel-print, .panel-label-print { width: 100%; max-width: 7.5in; margin: 0 auto; }
+  .panel-print-table { table-layout: auto; }
   .panel-print-table td { overflow-wrap: anywhere; }
 }

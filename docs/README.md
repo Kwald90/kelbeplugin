@@ -22,6 +22,7 @@ what) and the [backlog](BACKLOG.md) (what's open, and what needs Kelvin).
   signed tickets, deposits, collections, offsite backups, job costing, prompt payment, period lock) ·
   [Gap analysis 2026-10](releases/gap-analysis-2026-10.md)
 - [Job standards](releases/job-standards.md): region-specific work-type playbooks built on SOPs (materials, breakers, specs, tasks; apply to a job)
+- [Panel schedule print & label](releases/panel-print.md): branded two-column directory, offline QR panel label, colour bands, smoke/purpose highlight, fill-as-you-go status + completion, breaker-size toggle
 
 ## Architecture
 
