@@ -252,5 +252,5 @@
   "./manifest.webmanifest",
   "./vendor/pdfjs-4.10.38/pdf.min.mjs",
   "./vendor/pdfjs-4.10.38/pdf.worker.min.mjs",
-  "./vendor/qrcode-generator-2.0.4/qrcode.mjs"
+  "./vendor/qrcode-generator-2.0.4/qrcode.js"
 ]

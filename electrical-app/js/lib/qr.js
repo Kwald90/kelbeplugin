@@ -3,7 +3,7 @@
 // generates with no network and under the app's strict CSP (no eval, no external script). We read
 // the module matrix ourselves and draw it as inline SVG of plain <rect>/<path> elements, never the
 // library's own createSvgTag (which emits inline style attributes that the CSP blocks).
-import qrcode from '../../vendor/qrcode-generator-2.0.4/qrcode.mjs';
+import qrcode from '../../vendor/qrcode-generator-2.0.4/qrcode.js';
 import { BRAND } from '../brand.js';
 
 /** Canonical deep link to a panel: appOrigin (or a fallback) + the hash route the app uses.
