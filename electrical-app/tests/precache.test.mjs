@@ -22,7 +22,7 @@ test('the manifest covers every screen, both CSS and JS modules, the guides and 
   assert.ok(has('./js/app.js') && has('./js/modules/index.js'), 'app entry and module registry');
   // a representative screen, its stylesheet, a lazy-imported helper, a guide and the PDF viewer
   for (const p of ['./js/modules/estimates.js', './css/quickbooks.css', './js/lib/shift-tracker.js',
-    './guides/quickbooks.md', './vendor/pdfjs-4.10.38/pdf.min.mjs']) {
+    './guides/quickbooks.md', './vendor/pdfjs-4.10.38/pdf.min.js']) {
     assert.ok(has(p), `missing ${p}`);
   }
   // never precache the worker itself, the manifest, or tests

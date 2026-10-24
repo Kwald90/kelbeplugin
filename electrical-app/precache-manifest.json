@@ -250,7 +250,7 @@
   "./js/ui.js",
   "./js/vendor/qr.js",
   "./manifest.webmanifest",
-  "./vendor/pdfjs-4.10.38/pdf.min.mjs",
-  "./vendor/pdfjs-4.10.38/pdf.worker.min.mjs",
+  "./vendor/pdfjs-4.10.38/pdf.min.js",
+  "./vendor/pdfjs-4.10.38/pdf.worker.min.js",
   "./vendor/qrcode-generator-2.0.4/qrcode.js"
 ]

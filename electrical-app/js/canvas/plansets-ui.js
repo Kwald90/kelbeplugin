@@ -14,8 +14,8 @@ import { LIGHT_PAPER } from './engine.js';
 const PDFJS = new URL('../../vendor/pdfjs-4.10.38/', import.meta.url);
 let pdfjsPromise = null;
 export function loadPdfJs() {
-  pdfjsPromise ||= import(new URL('pdf.min.mjs', PDFJS).href).then((lib) => {
-    lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.mjs', PDFJS).href;
+  pdfjsPromise ||= import(new URL('pdf.min.js', PDFJS).href).then((lib) => {
+    lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.js', PDFJS).href;
     return lib;
   }).catch(() => {
     pdfjsPromise = null;
