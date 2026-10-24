@@ -41,6 +41,7 @@ Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code
 
 ## Code
 
+- **dev** `electrical-app/tests/e2e/onboarding.e2e.mjs` (codex sprint-02, never run in CI since e2e needs Chrome) has pre-existing failures from the "security log shows the company audit log from the server" step onward: it times out waiting for the server audit rows to render. The audit feature itself is real and server-tested (services/audit.js, api_key.revoke event, 989 server tests pass); this is a test timing/selector issue in the never-run e2e. The "rates/logo/crew" steps were a real test bug (toggling an already-open step shut) and are fixed. Get the whole onboarding.e2e green in a dedicated pass and add it to CI with a headless-Chrome runner.
 - **dev, implemented on `codex/ux-sprint-02`, pending merge** Estimate next-step guidance restored alongside R1 signing/deposit/revision controls; see [Sprint 02](ux/SPRINT-02.md) for validation.
 - **dev** Signed estimates: existing `readOnly` combines plan locks with signed-record freezing, preventing Revise and Create job for an unlinked signed quote. Separate immutable quote fields from authorized handoff/revision actions with server-contract regression coverage; keep signed evidence unchanged.
 - **dev** Quote defaults: new estimate creation currently initializes material markup to zero, while setup stores a company markup. Decide and test how company defaults should seed new quotes; onboarding now asks users to review each quote's pricing rather than promising automatic application.

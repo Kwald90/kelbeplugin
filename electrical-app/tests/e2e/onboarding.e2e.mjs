@@ -270,19 +270,19 @@ try {
     await evaluate('{ const s = document.querySelector(".ob-step.open select[name=province]"); s.value = "AB"; s.dispatchEvent(new Event("change", { bubbles: true })); }');
     await click('Confirm', '.ob-step.open');
     await waitFor('!!document.querySelector(".ob-step.done[data-step=province]") && kelbe.store.settings().company.province === "AB"', 'province done (AB)');
-    await evaluate('document.querySelector("[data-step=logo] .ob-step-head").click()');
+    await evaluate('{ const el = document.querySelector("[data-step=logo]"); if (!el.classList.contains("open")) el.querySelector(".ob-step-head").click(); }');
     await waitFor('!!document.querySelector(".ob-step.open[data-step=logo]")', 'logo step');
     await chooseFile('Upload logo', logoSvg, '.ob-step.open');
     await waitFor('kelbe.store.settings().company.logo?.startsWith("data:image/")', 'logo stored');
     const logoLen = await evaluate('kelbe.store.settings().company.logo.length');
     await waitFor('!!document.querySelector(".ob-step.done[data-step=logo]")', 'logo done');
-    await evaluate('document.querySelector("[data-step=rates] .ob-step-head").click()');
+    await evaluate('{ const el = document.querySelector("[data-step=rates]"); if (!el.classList.contains("open")) el.querySelector(".ob-step-head").click(); }');
     await waitFor('!!document.querySelector(".ob-step.open[data-step=rates]")', 'rates step');
     await fill('.ob-step.open input[name=labourRateCents]', '110');
     await click('Confirm', '.ob-step.open');
     await waitFor('kelbe.store.settings().labourRateCents === 11000 && !!document.querySelector(".ob-step.done[data-step=rates]")', 'rates done');
     // crew: invite one member by email (PIN-only would work too)
-    await evaluate('document.querySelector("[data-step=crew] .ob-step-head").click()');
+    await evaluate('{ const el = document.querySelector("[data-step=crew]"); if (!el.classList.contains("open")) el.querySelector(".ob-step-head").click(); }');
     await click('Invite someone', '.ob-step.open');
     await waitFor('!!document.querySelector("[role=dialog] input[name=name]")', 'invite sheet');
     await fill('[role=dialog] input[name=name]', 'Sam Rivera');
