@@ -13,6 +13,7 @@ import { BILLING_MODES } from '../lib/tm.js';
 import { requestSettings, fmtSendAt, nextSendAt, PROVINCE_TZ, validTimeZone } from '../lib/materials.js';
 import { FEATURE_PLAN, hasFeature } from '../plans.js';
 import { session, savePref } from '../session.js';
+import { panelPrintSettings } from './panels.js';
 
 export const APP_VERSION = '0.3.0';
 
@@ -40,6 +41,7 @@ export default {
       { label: 'Company name', name: 'name', value: s.company?.name, required: true, span: true },
       { label: 'Phone', name: 'phone', type: 'tel', value: s.company?.phone },
       { label: 'Email', name: 'email', type: 'email', value: s.company?.email },
+      { label: 'Website', name: 'website', value: s.company?.website, placeholder: 'yourcompany.ca', hint: 'Printed on panel schedules and labels' },
       { label: 'Address', name: 'address', value: s.company?.address, span: true },
       { label: 'Province / territory', name: 'province', type: 'select', value: s.company?.province || 'ON', options: provinceOptions, hint: 'Sets code amendments, permit authority and sales tax' },
       { label: 'Contractor licence no.', name: 'licenceNo', value: s.company?.licenceNo, hint: 'e.g. ECRA/ESA licence in Ontario' },
@@ -169,6 +171,32 @@ export default {
         drawPlacement();
       };
       placementHost.append(form, saveRow('Save placement', save));
+    };
+
+    // panel schedule print / label options
+    const panelPrintHost = h('div', { class: 'stack' });
+    const drawPanelPrint = () => {
+      ui.clear(panelPrintHost);
+      const pp = panelPrintSettings(store.settings());
+      const form = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
+        { label: 'Band colour 1', name: 'band1', type: 'color', value: pp.bandColors[0], hint: 'Alternating bands group each breaker’s spaces' },
+        { label: 'Band colour 2', name: 'band2', type: 'color', value: pp.bandColors[1] },
+        { label: 'Smoke / alarm highlight', name: 'smokeColor', type: 'color', value: pp.smokeColor },
+        { label: 'Show breaker size (amps)', name: 'showAmps', type: 'checkbox', value: pp.showAmps },
+        { label: 'Show wiring status on prints', name: 'showStatus', type: 'checkbox', value: pp.showStatus },
+      ]));
+      const save = () => {
+        const v = ui.readForm(form);
+        store.saveSettings({ panelPrint: {
+          bandColors: [v.band1, v.band2],
+          smokeColor: v.smokeColor,
+          showAmps: !!v.showAmps,
+          showStatus: !!v.showStatus,
+        } });
+        ui.toast('Panel schedule settings saved', 'success');
+        drawPanelPrint();
+      };
+      panelPrintHost.append(form, saveRow('Save panel settings', save));
     };
 
     // defaults
@@ -343,7 +371,7 @@ export default {
       ? ui.badge('Memory only: data is lost on reload', 'danger')
       : store.persistent ? ui.badge('Persistent storage', 'success') : ui.badge('Browser may clear data when low on space', 'warning');
 
-    drawCode(); drawTax(); drawPlacement(); drawModules(); drawMaterials();
+    drawCode(); drawTax(); drawPlacement(); drawPanelPrint(); drawModules(); drawMaterials();
     const modulesCard = card('Modules', 'Turn off what you don’t use. Nothing is deleted: turn a module back on and everything in it comes back.', modulesHost);
     modulesCard.id = 'modules';
     root.append(ui.page({ title: 'Settings', subtitle: s.company?.name },
@@ -356,6 +384,7 @@ export default {
         card('Document numbering', 'The next number each new document gets', numbering, saveRow('Save numbering', saveNumbering)),
         ctx.on?.('materials') !== false ? card('Material requests', 'When the crew’s requests go to the office as one list', materialsHost) : null,
         card('Box placement', 'Used when placing boxes on drawings', placementHost),
+        card('Panel schedules', 'Colours and columns for printed panel directories and the QR panel label', panelPrintHost),
         ctx.auth?.synced ? card('Your account', 'Password, two-step sign-in, your units and theme',
           ui.button('Password and sign-in', { icon: 'key', href: '#/account' })) : null,
         card('Appearance', null, themeHost),

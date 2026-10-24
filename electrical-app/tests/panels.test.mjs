@@ -7,7 +7,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as PT from '../js/lib/panel-templates.js';
 import * as S from '../js/lib/cec/systems.js';
-import { occupancy, slotCount, placement, halfOf } from '../js/modules/panels.js';
+import { occupancy, slotCount, placement, halfOf, bandIndexBySlot, completion, makeFullSpace, highlightFor, panelPrintSettings, PANEL_PRINT_DEFAULTS, PANEL_STATUSES } from '../js/modules/panels.js';
+import { panelUrl, qrSvg, qrMatrix } from '../js/lib/qr.js';
+import { BRAND } from '../js/brand.js';
 
 // A tiny in-memory store standing in for js/store.js (settings() / saveSettings()).
 function fakeStore(initial = {}) {
@@ -298,4 +300,139 @@ test('tandem templates in the built-in library carry breakerType tandem and appl
   const c = PT.applyBreakerTemplate(t, { slot: 1, poles: 1, amps: 20, loadVA: 0 });
   assert.equal(c.breakerType, 'tandem');
   assert.equal(c.amps, 15);
+});
+
+// ---------------------------------------------------------------------------
+// Panel-print build (S27): colour bands, smoke/purpose highlight, status +
+// completion, the breaker-size toggle, the offline QR deep link, and the
+// tandem "make full-space" follow-up.
+// ---------------------------------------------------------------------------
+
+test('bandIndexBySlot alternates a band per breaker, down each column', () => {
+  // Left column (odd): a 1-pole at 1, a 2-pole at 3 (spans 3 & 5), a 1-pole at 7.
+  const circuits = [
+    { slot: 1, poles: 1 },
+    { slot: 3, poles: 2 },
+    { slot: 7, poles: 1 },
+  ];
+  const band = bandIndexBySlot(circuits, 8);
+  assert.equal(band.get(3), band.get(5), 'a multi-pole breaker is a single band');
+  assert.notEqual(band.get(1), band.get(3), 'next breaker alternates');
+  assert.notEqual(band.get(3), band.get(7), 'next breaker alternates again');
+  for (const v of band.values()) assert.ok(v === 0 || v === 1);
+});
+
+test('bandIndexBySlot: two tandems in one space share the space band', () => {
+  const circuits = [
+    { slot: 1, half: 'A', poles: 1, breakerType: 'tandem' },
+    { slot: 1, half: 'B', poles: 1, breakerType: 'tandem' },
+    { slot: 3, poles: 1 },
+  ];
+  const band = bandIndexBySlot(circuits, 6);
+  assert.notEqual(band.get(1), band.get(3));
+});
+
+test('bandIndexBySlot runs odd and even columns independently', () => {
+  const band = bandIndexBySlot([{ slot: 1, poles: 1 }, { slot: 2, poles: 1 }], 4);
+  assert.equal(band.get(1), 0);
+  assert.equal(band.get(2), 0);
+});
+
+test('completion counts done over described circuits', () => {
+  const panel = { circuits: [
+    { slot: 1, description: 'Plugs', status: 'done' },
+    { slot: 2, description: 'Lights', status: 'rough-in' },
+    { slot: 3, description: 'Range', status: 'done' },
+    { slot: 4, description: '', status: '' },
+    { slot: 5, description: 'Spare' },
+  ] };
+  const c = completion(panel);
+  assert.equal(c.described, 4);
+  assert.equal(c.done, 2);
+  assert.equal(c.pct, 50);
+  assert.equal(c.tracked, 3);
+});
+
+test('completion is 0% with nothing described, 100% when every described circuit is done', () => {
+  assert.equal(completion({ circuits: [] }).pct, 0);
+  assert.equal(completion({ circuits: [{ slot: 1, description: 'A', status: 'done' }] }).pct, 100);
+  assert.equal(completion({}).described, 0);
+});
+
+test('highlightFor: smoke / alarm purpose highlights red by default, editable, suppressible', () => {
+  const pp = PANEL_PRINT_DEFAULTS;
+  assert.equal(highlightFor({ purpose: 'smoke' }, pp), pp.smokeColor);
+  assert.equal(highlightFor({ purpose: 'alarm' }, pp), pp.smokeColor);
+  assert.equal(highlightFor({ purpose: 'Smoke detectors' }, pp), pp.smokeColor);
+  assert.equal(highlightFor({ purpose: 'lighting' }, pp), null);
+  assert.equal(highlightFor({ purpose: 'smoke', colorOverride: '#00ff00' }, pp), '#00ff00');
+  assert.equal(highlightFor({ purpose: 'smoke', colorOverride: 'none' }, pp), null);
+  assert.equal(highlightFor({ colorOverride: 'A' }, pp), null);
+  assert.equal(highlightFor({}, pp), null);
+});
+
+test('highlightFor uses the company smoke colour from settings', () => {
+  const pp = panelPrintSettings({ panelPrint: { smokeColor: '#123456' } });
+  assert.equal(highlightFor({ purpose: 'smoke' }, pp), '#123456');
+});
+
+test('panelPrintSettings merges onto defaults and validates (breaker-size toggle included)', () => {
+  const d = panelPrintSettings({});
+  assert.deepEqual(d.bandColors, PANEL_PRINT_DEFAULTS.bandColors);
+  assert.equal(d.showAmps, true);
+  assert.equal(d.showStatus, false);
+  const pp = panelPrintSettings({ panelPrint: { showAmps: false, showStatus: true, bandColors: ['#aabbcc', 'not-a-colour'], smokeColor: 'bad' } });
+  assert.equal(pp.showAmps, false);
+  assert.equal(pp.showStatus, true);
+  assert.equal(pp.bandColors[0], '#aabbcc');
+  assert.equal(pp.bandColors[1], PANEL_PRINT_DEFAULTS.bandColors[1]);
+  assert.equal(pp.smokeColor, PANEL_PRINT_DEFAULTS.smokeColor);
+});
+
+test('PANEL_STATUSES is the fill-as-you-go vocabulary', () => {
+  assert.deepEqual(PANEL_STATUSES.map((s) => s.key), ['planned', 'rough-in', 'connected', 'tested', 'done']);
+});
+
+test('makeFullSpace converts a lone tandem back to a full breaker, clearing half', () => {
+  const circuits = [{ slot: 1, half: 'A', poles: 1, breakerType: 'tandem', amps: 15 }];
+  assert.equal(makeFullSpace(circuits, circuits[0]), true);
+  assert.equal(halfOf(circuits[0]), null);
+  assert.equal(circuits[0].breakerType, 'standard');
+});
+
+test('makeFullSpace refuses when the sibling half is occupied, or when not a half', () => {
+  const circuits = [
+    { slot: 1, half: 'A', poles: 1, breakerType: 'tandem' },
+    { slot: 1, half: 'B', poles: 1, breakerType: 'tandem' },
+  ];
+  assert.equal(makeFullSpace(circuits, circuits[0]), false);
+  assert.equal(halfOf(circuits[0]), 'A');
+  assert.equal(makeFullSpace([{ slot: 2, poles: 1 }], { slot: 2, poles: 1 }), false);
+});
+
+test('panelUrl is the canonical deep link to a panel (appOrigin + hash route)', () => {
+  assert.equal(panelUrl({ id: 'abc123' }, 'https://app.fishtapehq.com'), 'https://app.fishtapehq.com/#/panels/abc123');
+  assert.equal(panelUrl('xy-9', 'https://app.fishtapehq.com/'), 'https://app.fishtapehq.com/#/panels/xy-9');
+  assert.ok(panelUrl({ id: 'p1' }).startsWith(BRAND.appOrigin + '/#/panels/p1'));
+});
+
+test('qrMatrix encodes text offline into a square module grid', () => {
+  const m = qrMatrix('https://app.fishtapehq.com/#/panels/p1');
+  assert.ok(m.count >= 21 && m.count % 2 === 1, 'a QR is an odd NxN grid, at least version 1 (21)');
+  assert.equal(m.modules.length, m.count);
+  assert.equal(m.modules[0].length, m.count);
+  assert.equal(m.isDark(0, 0), true);
+  assert.equal(m.modules[0][0], true);
+});
+
+test('qrSvg renders inline SVG with no script, eval, style attribute or external resource', () => {
+  const svg = qrSvg('https://app.fishtapehq.com/#/panels/p1', { label: 'Open panel' });
+  assert.ok(svg.startsWith('<svg'));
+  assert.ok(svg.includes('</svg>'));
+  assert.ok(svg.includes('viewBox'));
+  assert.ok(svg.includes('<path'));
+  assert.ok(/role="img"/.test(svg));
+  assert.ok(!/style=/.test(svg), 'no inline style attribute (CSP)');
+  assert.ok(!/<script/i.test(svg), 'no script');
+  assert.ok(!/on[a-z]+=/i.test(svg), 'no inline event handlers');
 });

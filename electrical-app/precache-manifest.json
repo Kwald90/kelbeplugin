@@ -118,6 +118,7 @@
   "./js/lib/qbo-api.js",
   "./js/lib/qbo-export.js",
   "./js/lib/qbo-ui.js",
+  "./js/lib/qr.js",
   "./js/lib/receivables.js",
   "./js/lib/rst.js",
   "./js/lib/rules.js",
@@ -250,5 +251,6 @@
   "./js/vendor/qr.js",
   "./manifest.webmanifest",
   "./vendor/pdfjs-4.10.38/pdf.min.mjs",
-  "./vendor/pdfjs-4.10.38/pdf.worker.min.mjs"
+  "./vendor/pdfjs-4.10.38/pdf.worker.min.mjs",
+  "./vendor/qrcode-generator-2.0.4/qrcode.mjs"
 ]
