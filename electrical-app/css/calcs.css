@@ -136,7 +136,19 @@
 .pp-tb-label { background: #e8edf3; font-size: 7.5pt; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; width: 1%; }
 .pp-tb-value { font-weight: 700; font-size: 11pt; }
 .pp-titleblock .pp-tb-sub { font-weight: 600; font-size: 8.5pt; }
-.pp-head-logo { max-height: 60px; max-width: 240px; display: block; margin-bottom: 7pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.pp-logo-top { text-align: center; margin-bottom: 8pt; }
+.pp-head-logo { max-height: 64px; max-width: 320px; display: block; margin: 0 auto; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+/* Fit the whole schedule on one page: denser as the panel grows (set in drawPrint by slot count). */
+.panel-print.pp-fit-2 .panel-print-table.pp-dense td, .panel-print.pp-fit-2 .panel-print-table.pp-dense th { padding: 1.7pt 6pt; font-size: 8pt; line-height: 1.14; }
+.panel-print.pp-fit-2 .pp-desc { font-size: 8pt; }
+.panel-print.pp-fit-2 .pp-head-logo { max-height: 52px; }
+.panel-print.pp-fit-3 .panel-print-table.pp-dense td, .panel-print.pp-fit-3 .panel-print-table.pp-dense th { padding: 0.7pt 5pt; font-size: 6.8pt; line-height: 1.05; }
+.panel-print.pp-fit-3 .pp-desc { font-size: 6.8pt; }
+.panel-print.pp-fit-3 .pp-head-logo { max-height: 38px; }
+.panel-print.pp-fit-3 .pp-logo-top { margin-bottom: 4pt; }
+.panel-print.pp-fit-3 .print-note { display: none; }
+.panel-print.pp-fit-3 .pp-foot { margin-top: 6pt; padding-top: 4pt; font-size: 7pt; }
 .pp-tb-service { text-align: center; font-weight: 700; font-size: 8.5pt; letter-spacing: .02em; }
 .pp-prog { font-size: 8.5pt; margin-top: 4pt; }
 
@@ -293,8 +305,11 @@ html.is-printing .panel-print-table { table-layout: auto; }
    capped at a tidy 7.5in on Letter/A4 so a full-size sheet stays readable. Never a fixed width
    that overflows and clips. */
 @media print {
-  @page { margin: 12mm; }
+  @page { margin: 10mm; }
   .panel-print, .panel-label-print { width: 100%; max-width: 7.5in; margin: 0 auto; }
+  /* keep the whole schedule together — it's sized to fit one page (pp-fit-*) */
+  .panel-print { page-break-inside: avoid; break-inside: avoid; }
   .panel-print-table { table-layout: auto; }
   .panel-print-table td { overflow-wrap: anywhere; }
 }
+html.is-printing .panel-print { page-break-inside: avoid; break-inside: avoid; }

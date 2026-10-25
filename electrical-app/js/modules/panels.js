@@ -1313,7 +1313,7 @@ function editorView(root, ctx, id) {
    *  licence and the date. Same company record the invoices print from. */
   function companyFooter() {
     const co = store.settings().company || {};
-    const contact = [co.website, co.email, co.phone].filter(Boolean).join('  ·  ');
+    const contact = [co.email, co.phone].filter(Boolean).join('  ·  ');
     return h('div', { class: 'pp-foot' },
       co.logo ? h('img', { class: 'pp-logo', src: co.logo, alt: '' }) : null,
       h('div', { class: 'pp-foot-info' },
@@ -1432,11 +1432,15 @@ function editorView(root, ctx, id) {
     const co = store.settings().company || {};
     const legendChip = (label, col) => h('span', { class: 'print-legend-chip' }, h('span', { class: 'wire-swatch', style: { background: col.hex } }), `${label}: ${col.name}`);
 
+    // Fit the whole schedule on one page: denser type/spacing as the panel grows (up to 84 spaces).
+    const spaces = slotCount(panel);
+    const fitClass = spaces <= 32 ? 'pp-fit-1' : spaces <= 54 ? 'pp-fit-2' : 'pp-fit-3';
+    printEl.className = 'print-only panel-print ' + fitClass;
+
     printEl.append(
+      co.logo ? h('div', { class: 'pp-logo-top' }, h('img', { class: 'pp-head-logo', src: co.logo, alt: co.name || '' })) : null,
       h('div', { class: 'pp-head' },
-        h('div', { class: 'pp-head-main' },
-          co.logo ? h('img', { class: 'pp-head-logo', src: co.logo, alt: co.name || '' }) : null,
-          titleblock),
+        h('div', { class: 'pp-head-main' }, titleblock),
         pp.showQr ? h('div', { class: 'pp-head-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` })) : null),
       table,
       pp.showLegend ? h('div', { class: 'print-legend' },
