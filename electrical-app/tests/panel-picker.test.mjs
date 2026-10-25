@@ -103,10 +103,10 @@ const blankPanel = { breakerFamily: null };
 
 test('circuitPartNumber resolves a confident core SKU for a standard breaker', () => {
   const r = circuitPartNumber(homePanel, { slot: 1, poles: 1, amps: 20, breakerType: 'standard' }, []);
-  assert.equal(r.number, 'HOM120');
+  assert.equal(r.number, 'CHOM120');
   assert.equal(r.confident, true);
   const r2 = circuitPartNumber(qoPanel, { slot: 3, poles: 2, amps: 30, breakerType: 'standard' }, []);
-  assert.equal(r2.number, 'QO230');
+  assert.equal(r2.number, 'CQO230');
   assert.equal(r2.confident, true);
 });
 
@@ -131,10 +131,10 @@ test('circuitPartNumber: a tandem passes BOTH halves’ amps as the combined bod
     { slot: 1, half: 'B', poles: 1, amps: 20, breakerType: 'tandem' },
   ];
   const r = circuitPartNumber(homePanel, circuits[0], circuits);
-  assert.equal(r.number, 'HOMT1520');
+  assert.equal(r.number, 'CHOMT1520');
   assert.equal(r.confident, true);
   // both halves resolve to the same physical body
-  assert.equal(circuitPartNumber(homePanel, circuits[1], circuits).number, 'HOMT1520');
+  assert.equal(circuitPartNumber(homePanel, circuits[1], circuits).number, 'CHOMT1520');
 });
 
 test('circuitPartNumber: a quad inner 2-pole uses the inner amp plus the two outer amps', () => {
@@ -146,7 +146,7 @@ test('circuitPartNumber: a quad inner 2-pole uses the inner amp plus the two out
   ];
   const inner = circuits[1];
   const r = circuitPartNumber(homePanel, inner, circuits);
-  assert.equal(r.number, 'HOMT1520230'); // HOMT{A}{B}2{inner}
+  assert.equal(r.number, 'CHOMT1520230'); // HOMT{A}{B}2{inner}
   assert.equal(r.confident, true);
   // a quad's outer single is part of the one quad device — it carries no SKU of its own
   assert.equal(partSpecFor(homePanel, circuits[0], circuits), null);
@@ -159,7 +159,7 @@ test('applyPartNumbers stamps auto SKUs, clears them without a family, and NEVER
     { slot: 3, poles: 2, amps: 40, breakerType: 'standard', partNo: 'CUSTOM-ABC', partNoManual: true },
   ];
   const out = applyPartNumbers(homePanel, circuits);
-  assert.equal(out[0].partNo, 'HOM120');            // auto-resolved
+  assert.equal(out[0].partNo, 'CHOM120');            // auto-resolved
   assert.equal(out[1].partNo, 'CUSTOM-ABC');        // manual override wins
   assert.equal(out[1].partNoManual, true);
 
@@ -179,7 +179,7 @@ test('applyPartNumbers is stable: re-running with the same inputs keeps the same
     { slot: 2, poles: 1, amps: 15, breakerType: 'standard', partNo: 'OVERRIDE1', partNoManual: true },
   ]);
   const twice = applyPartNumbers(homePanel, once);
-  assert.equal(twice[0].partNo, 'HOM115');
+  assert.equal(twice[0].partNo, 'CHOM115');
   assert.equal(twice[1].partNo, 'OVERRIDE1');
   assert.equal(twice[1].partNoManual, true);
 });

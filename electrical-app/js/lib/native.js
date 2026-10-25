@@ -135,6 +135,12 @@ export function nativePrint(win = globalThis) {
   const p = win.Capacitor?.Plugins?.FishtapePrint;
   if (!p || printing) return;
   printing = true;
+  // WKWebView's print formatter may rasterize the on-screen (screen-media) layout instead of
+  // re-rendering with @media print, which would print the editor instead of the schedule. Force the
+  // print layout in screen media for the duration of the sheet (CSS: html.is-printing …). Browsers
+  // never reach here (installNativePrint only runs in the app), so the web print path is unchanged.
+  const root = win.document?.documentElement;
+  root?.classList.add('is-printing');
   const held = [];
   const realSetTimeout = win.setTimeout;
   win.setTimeout = (fn, ms, ...args) => { held.push([fn, ms, args]); return 0; };
@@ -146,6 +152,7 @@ export function nativePrint(win = globalThis) {
   fire('beforeprint');
   const done = () => {
     printing = false;
+    root?.classList.remove('is-printing');
     fire('afterprint');
     for (const [fn, ms, args] of held) realSetTimeout(fn, ms, ...args);
   };

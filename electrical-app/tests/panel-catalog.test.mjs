@@ -100,16 +100,16 @@ test('TYPES lists the understood breaker types', () => {
 });
 
 test('Square D QO core', () => {
-  assert.equal(num({ family: 'QO', poles: 1, amps: 20 }), 'QO120');
-  assert.equal(num({ family: 'QO', poles: 2, amps: 20 }), 'QO220');
-  assert.equal(num({ family: 'QO', breakerType: 'tandem', tandemAmps: [15, 15] }), 'QO1515');
+  assert.equal(num({ family: 'QO', poles: 1, amps: 20 }), 'CQO120');
+  assert.equal(num({ family: 'QO', poles: 2, amps: 20 }), 'CQO220');
+  assert.equal(num({ family: 'QO', breakerType: 'tandem', tandemAmps: [15, 15] }), 'CQO1515');
   assert.ok(partNumber({ family: 'QO', poles: 1, amps: 20 }).confident);
 });
 
 test('Square D Homeline core + quad', () => {
-  assert.equal(num({ family: 'HOM', poles: 1, amps: 20 }), 'HOM120');
-  assert.equal(num({ family: 'HOM', breakerType: 'tandem', tandemAmps: [15, 15] }), 'HOMT1515');
-  assert.equal(num({ family: 'HOM', breakerType: 'quad', tandemAmps: [20, 20], amps: 30 }), 'HOMT2020230');
+  assert.equal(num({ family: 'HOM', poles: 1, amps: 20 }), 'CHOM120');
+  assert.equal(num({ family: 'HOM', breakerType: 'tandem', tandemAmps: [15, 15] }), 'CHOMT1515');
+  assert.equal(num({ family: 'HOM', breakerType: 'quad', tandemAmps: [20, 20], amps: 30 }), 'CHOMT2020230');
 });
 
 test('Eaton BR core + tandem + quad', () => {
@@ -149,7 +149,7 @@ test('GFCI / AFCI / dual come back confident:false with a note', () => {
 });
 
 test('never crosses families + unknown family is handled', () => {
-  assert.ok(num({ family: 'QO', poles: 1, amps: 20 }).startsWith('QO'));
+  assert.ok(num({ family: 'QO', poles: 1, amps: 20 }).startsWith('CQO'));
   assert.ok(num({ family: 'BR', poles: 1, amps: 20 }).startsWith('BR'));
   const bad = partNumber({ family: 'ACME', poles: 1, amps: 20 });
   assert.equal(bad.confident, false);

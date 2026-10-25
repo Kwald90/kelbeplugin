@@ -278,6 +278,13 @@
   .panel-page.print-label-only .panel-print { display: none !important; }
   .panel-page.print-label-only .panel-label-print { display: block !important; }
 }
+/* iOS app print fallback (see app.css .is-printing): same panel rules in screen media. */
+html.is-printing .panel-page .page-head, html.is-printing .panel-summary, html.is-printing .calc-disclaimer { display: none !important; }
+html.is-printing .panel-label-print { display: none; }
+html.is-printing .panel-page.print-label-only .panel-print { display: none !important; }
+html.is-printing .panel-page.print-label-only .panel-label-print { display: block !important; }
+html.is-printing .panel-print, html.is-printing .panel-label-print { width: 100%; max-width: 7.5in; margin: 0 auto; }
+html.is-printing .panel-print-table { table-layout: auto; }
 /* Fit the paper the printer actually uses: full width on narrow media (label/thermal, A5),
    capped at a tidy 7.5in on Letter/A4 so a full-size sheet stays readable. Never a fixed width
    that overflows and clips. */

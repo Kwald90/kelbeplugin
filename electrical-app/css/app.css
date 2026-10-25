@@ -255,6 +255,17 @@ table.table { width: 100%; border-collapse: collapse; }
   .sheet { position: static; box-shadow: none; border: 0; width: 100%; }
 }
 
+/* iOS app print fallback: WKWebView's print formatter can rasterize the on-screen (screen-media)
+   layout instead of re-rendering with @media print. nativePrint() adds .is-printing to <html> for
+   the duration of the print sheet so the print layout is forced in screen media too. Only the native
+   app sets this (installNativePrint); browsers use real window.print() and the @media print block
+   above, so the web print path is untouched. Keep these in sync with @media print. */
+html.is-printing, html.is-printing body { height: auto; overflow: visible; background: #fff; color: #000; }
+html.is-printing .rail, html.is-printing .wheel-fab, html.is-printing .wheel, html.is-printing .wheel-scrim, html.is-printing .no-print, html.is-printing .toasts, html.is-printing .scrim { display: none !important; }
+html.is-printing .main { position: static; overflow: visible; }
+html.is-printing .print-only { display: block; }
+html.is-printing .sheet { position: static; box-shadow: none; border: 0; width: 100%; }
+
 /* Card columns for settings-style pages: cards stack in balanced columns instead of rows padded
    to the tallest card (which left big gaps next to a long card). One column on narrow screens. */
 .settings-grid, .account-grid, .int-grid { display: block; columns: auto 340px; column-gap: var(--s4); }

@@ -20,13 +20,15 @@ const THQL_POLE = { 1: '11', 2: '21', 3: '31' };
 
 // Per-family builders. Each family is self-contained; nothing here mixes prefixes across families.
 const FAMILIES = {
+  // Square D in Canada carries the CSA "C" prefix: Homeline is CHOM(T), QO is CQO
+  // (Schneider CA catalogue, e.g. CHOM115GFI). US HOM/QO numbers are not CSA-certified here.
   QO: {
-    label: 'Square D QO', poleRepr: (p) => String(p), tandemPrefix: 'QO',
-    protected: { gfci: (s) => `QO${s}GFI`, afci: (s, pon) => `QO${s}${pon ? 'PCAFI' : 'CAFI'}`, dual: (s) => `QO${s}DF` },
+    label: 'Square D QO', poleRepr: (p) => String(p), tandemPrefix: 'CQO',
+    protected: { gfci: (s) => `CQO${s}GFI`, afci: (s, pon) => `CQO${s}${pon ? 'PCAFI' : 'CAFI'}`, dual: (s) => `CQO${s}DF` },
   },
   HOM: {
-    label: 'Square D Homeline', poleRepr: (p) => String(p), tandemPrefix: 'HOMT',
-    protected: { gfci: (s) => `HOM${s}GFICP`, afci: (s, pon) => `HOM${s}${pon ? 'PCAFI' : 'CAFI'}`, dual: (s, pon) => `HOM${s}${pon ? 'PDF' : 'DFC'}` },
+    label: 'Square D Homeline', poleRepr: (p) => String(p), tandemPrefix: 'CHOMT',
+    protected: { gfci: (s) => `CHOM${s}GFI`, afci: (s, pon) => `CHOM${s}${pon ? 'PCAFI' : 'CAFI'}`, dual: (s, pon) => `CHOM${s}${pon ? 'PDF' : 'DFC'}` },
   },
   BR: {
     label: 'Eaton BR', poleRepr: (p) => String(p), tandemPrefix: 'BD',
@@ -93,7 +95,7 @@ export function partNumber(spec = {}) {
       if (!isInt(pair[0]) || !isInt(pair[1]) || !isInt(spec.amps)) {
         return { number: '', confident: false, note: 'Homeline quad needs two outer amps (tandemAmps) and the inner 2-pole amps (amps).' };
       }
-      return { number: `HOMT${amp(pair[0])}${amp(pair[1])}2${amp(spec.amps)}`, confident: true, note: '' };
+      return { number: `CHOMT${amp(pair[0])}${amp(pair[1])}2${amp(spec.amps)}`, confident: true, note: '' };
     }
     if (family === 'BR') {
       // Two independent 2-pole breakers: BRD2{A}2{B}
@@ -128,8 +130,8 @@ export function partNumber(spec = {}) {
 // The plain prefix for the standard core of each family (separate from the tandem prefix).
 function basePrefix(family) {
   switch (family) {
-    case 'QO': return 'QO';
-    case 'HOM': return 'HOM';
+    case 'QO': return 'CQO';
+    case 'HOM': return 'CHOM';
     case 'BR': return 'BR';
     case 'CH': return 'CH';
     case 'Q': return 'Q';
