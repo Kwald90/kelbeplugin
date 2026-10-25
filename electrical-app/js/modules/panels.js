@@ -6,6 +6,8 @@ import * as E from '../lib/nec.js';
 import * as S from '../lib/cec/systems.js';
 import * as CEC from '../lib/cec/index.js';
 import * as PT from '../lib/panel-templates.js';
+import * as PC from '../lib/panel-catalog.js';
+import { partNumber, breakerFamilyFor } from '../lib/breaker-partnumbers.js';
 import { BRAND } from '../brand.js';
 import { panelUrl, qrSvgNode } from '../lib/qr.js';
 
@@ -183,6 +185,114 @@ export function makeFullSpace(circuits, c) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Panel catalogue: manufacturer → line → size, the line's tandem/quad rules, and the per-slot
+// breaker part number. Pure helpers (no DOM) so the picker, the affordance gating and the slot-fill
+// SKU are all testable; the editor wires them to the UI. See js/lib/panel-catalog.js and
+// js/lib/breaker-partnumbers.js for the data and the SKU generator.
+// ---------------------------------------------------------------------------
+
+/** The tandem mode a panel's breaker line allows: 'none'/'marked' when the catalogue set one, else
+ *  'all' (the default for a blank/legacy panel — unchanged behaviour). Pure. */
+export function tandemsModeOf(panel) {
+  const m = panel && panel.tandemsMode;
+  return m === 'none' || m === 'marked' ? m : 'all';
+}
+
+/** Whether a panel offers tandem (half-space) affordances: the system must allow 1-pole breakers
+ *  (has a neutral) AND the line must take tandems. `systemHasNeutral` is S.minPoles(voltage) === 1. Pure. */
+export function panelOffersTandems(panel, systemHasNeutral) {
+  return !!systemHasNeutral && tandemsModeOf(panel) !== 'none';
+}
+
+/** Whether a panel offers the quad (space-saver) affordance: tandems offered and the line's quad
+ *  flag is not explicitly false (a blank/legacy panel, flag undefined, still offers it). Pure. */
+export function panelOffersQuad(panel, systemHasNeutral) {
+  return panelOffersTandems(panel, systemHasNeutral) && (panel ? panel.quad !== false : true);
+}
+
+/** The panel fields implied by picking a catalogue entry + one of its sizes in the New-panel flow.
+ *  A size implies spaces + main amps + bus + main type; the line implies the breaker family (the
+ *  generator key that drives slot-fill SKUs — null for proprietary lines), width, tandem mode and
+ *  quad flag. Voltage defaults to residential single-phase; the editor keeps the full system list. Pure. */
+export function panelFromCatalog(entry, size, jobId = null) {
+  const family = breakerFamilyFor(entry);
+  return {
+    jobId: jobId || null,
+    name: `${entry.manufacturer} ${entry.line}`,
+    voltage: '120/240 1ph',
+    mainType: size.mainType === 'MLO' ? 'MLO' : 'MB',
+    mainAmps: Number(size.amps) || 0,
+    busAmps: Number(size.busAmps) || 0,
+    slots: Number(size.spaces) || 40,
+    feedThrough: false,
+    templateId: null,
+    manufacturer: entry.manufacturer,
+    line: entry.line,
+    breakerFamily: family,
+    breakerWidth: entry.breakerWidth,
+    tandemsMode: entry.tandems,
+    quad: !!entry.quad,
+    circuits: [],
+  };
+}
+
+/** The breaker-part spec for a circuit, or null when the panel has no breaker family or the circuit
+ *  is a quad's outer single (part of the one quad device, with no SKU of its own). A tandem passes
+ *  both halves' amps (one physical body); a quad inner passes the inner amp plus the two outer amps. Pure. */
+export function partSpecFor(panel, c, circuits) {
+  const family = panel && panel.breakerFamily;
+  if (!family || !c) return null;
+  const list = circuits || (panel && panel.circuits) || [];
+  const amps = Number(c.amps) || 0;
+  if (isQuadInner(c)) {
+    const occ = occupancy(list);
+    const o = occ.get(Number(c.slot)) || {};
+    const o2 = occ.get(Number(c.slot) + 2) || {};
+    const outerA = o.A && !isQuadInner(o.A) ? (Number(o.A.amps) || amps) : amps;
+    const outerB = o2.B && !isQuadInner(o2.B) ? (Number(o2.B.amps) || amps) : amps;
+    return { family, breakerType: 'quad', amps, tandemAmps: [outerA, outerB] };
+  }
+  if (halfOf(c)) {
+    const occ = occupancy(list);
+    const o = occ.get(Number(c.slot)) || {};
+    if (isQuadInner(o.A) || isQuadInner(o.B)) return null; // a quad's outer single: no own SKU
+    const bt = c.breakerType || 'tandem';
+    if (bt === 'tandem') {
+      const a = o.A ? Number(o.A.amps) || 0 : 0;
+      const b = o.B ? Number(o.B.amps) || 0 : 0;
+      return { family, breakerType: 'tandem', tandemAmps: [a || amps, b || a || amps] };
+    }
+    return { family, breakerType: bt, poles: 1, amps };
+  }
+  return { family, breakerType: c.breakerType || 'standard', poles: Number(c.poles) || 1, amps };
+}
+
+/** The resolved part number for a circuit ({ number, confident, note }), or null when the panel
+ *  has no family or the circuit carries no SKU of its own. Pure. */
+export function circuitPartNumber(panel, c, circuits) {
+  const spec = partSpecFor(panel, c, circuits);
+  return spec ? partNumber(spec) : null;
+}
+
+/** Return the circuits with auto part numbers stamped on `partNo`, leaving a manual override
+ *  (`partNoManual`) untouched — a manual value always wins. Clears `partNo` when the panel has no
+ *  family or the circuit resolves to none. Pure (returns fresh objects for the ones it changes). */
+export function applyPartNumbers(panel, circuits) {
+  const family = panel && panel.breakerFamily;
+  return (circuits || []).map((c) => {
+    if (c.partNoManual) return c; // a manual value wins and is never overwritten
+    const out = { ...c };
+    if (family) {
+      const r = circuitPartNumber(panel, out, circuits);
+      if (r && r.number) out.partNo = r.number; else delete out.partNo;
+    } else if ('partNo' in out) {
+      delete out.partNo;
+    }
+    return out;
+  });
+}
+
 let ui, h, store;
 const bookOf = () => (store.settings().codeBook === 'NEC-2023' ? 'NEC-2023' : 'CEC-2024');
 
@@ -343,17 +453,80 @@ function listView(root, ctx) {
     ctx.nav('#/panels/' + p.id);
   };
 
+  const createFromCatalog = (entry, size) => {
+    const p = store.add('panels', panelFromCatalog(entry, size, jobId));
+    ctx.nav('#/panels/' + p.id);
+  };
+
+  // Manufacturer → line → size picker. Three selects sourced from the catalogue, defaulting to the
+  // catalogue DEFAULT (Square D Homeline 200 A / 40 MB). Choosing sets the panel's spaces, main amps,
+  // bus, main type, and the breaker family / tandem mode / quad flag that drive slot-fill part numbers.
+  const catalogPicker = () => {
+    let mfr = PC.DEFAULT.manufacturer;
+    let line = PC.DEFAULT.line;
+    const mfrSel = h('select', { class: 'input', name: 'mfr', 'aria-label': 'Manufacturer' },
+      PC.manufacturers().map((m) => h('option', { value: m, selected: m === mfr }, m)));
+    const lineSel = h('select', { class: 'input', name: 'line', 'aria-label': 'Line' });
+    const sizeSel = h('select', { class: 'input', name: 'size', 'aria-label': 'Size' });
+    const noteEl = h('div', { class: 'catalog-note muted small' });
+    const curEntry = () => PC.catalogEntry(mfr, line);
+    const curSize = () => PC.sizesFor(mfr, line)[Number(sizeSel.value) || 0] || null;
+    const fillLines = () => {
+      const lines = PC.linesFor(mfr);
+      if (!lines.includes(line)) line = lines[0];
+      ui.clear(lineSel).append(...lines.map((l) => h('option', { value: l, selected: l === line }, l)));
+    };
+    const fillSizes = () => {
+      const sizes = PC.sizesFor(mfr, line);
+      const def = (mfr === PC.DEFAULT.manufacturer && line === PC.DEFAULT.line)
+        ? sizes.findIndex((s) => s.amps === PC.DEFAULT.amps && s.spaces === PC.DEFAULT.spaces && s.mainType === PC.DEFAULT.mainType) : 0;
+      ui.clear(sizeSel).append(...sizes.map((s, i) => h('option', { value: i, selected: i === Math.max(0, def) },
+        `${s.amps} A · ${s.spaces} spaces · ${s.mainType}`)));
+    };
+    const refreshNote = () => {
+      const e = curEntry();
+      ui.clear(noteEl);
+      if (!e) return;
+      const fam = breakerFamilyFor(e);
+      const tmode = e.tandems === 'none' ? 'no tandems' : e.tandems === 'marked' ? 'tandems in marked slots only' : 'tandems allowed';
+      noteEl.append(h('div', null, `${e.breakerFamily} · ${e.breakerWidth} · ${tmode}${e.quad ? ' · quads' : ''}`));
+      if (!fam) noteEl.append(h('div', { class: 'muted' }, 'Proprietary line: no automatic part numbers.'));
+      if (e.safetyFlag) noteEl.append(h('div', { class: 'catalog-flag' }, ui.icon('alert', 14), ' ', e.safetyFlag));
+    };
+    mfrSel.addEventListener('change', () => { mfr = mfrSel.value; fillLines(); fillSizes(); refreshNote(); });
+    lineSel.addEventListener('change', () => { line = lineSel.value; fillSizes(); refreshNote(); });
+    fillLines(); fillSizes(); refreshNote();
+    return { mfrSel, lineSel, sizeSel, noteEl, curEntry, curSize };
+  };
+
   const create = () => {
     const book = store.settings().codeBook === 'NEC-2023' ? 'NEC-2023' : 'CEC-2024';
     const region = book === 'NEC-2023' ? 'US' : 'CA';
     const templates = PT.listPanelTemplates(store.settings()).filter((t) => !t.region || t.region.includes(region) || t.custom);
+    const pick = catalogPicker();
     const sheet = ui.openSheet({
       title: 'New panel',
-      body: h('div', { class: 'tpl-list' },
-        h('button', { class: 'tpl-item', type: 'button', onClick: () => { sheet.close(); createFrom(null); } },
-          h('strong', null, 'Blank panel'), h('span', { class: 'muted' }, '120/240 V · 200 A · 40 spaces')),
-        templates.map((t) => h('button', { class: 'tpl-item', type: 'button', onClick: () => { sheet.close(); createFrom(t); } },
-          h('strong', null, t.label), h('span', { class: 'muted' }, `${t.mainType}${t.feedThrough ? ' · feed-through' : ''}${t.custom ? ' · company' : ''}`)))),
+      body: h('div', { class: 'stack' },
+        h('div', { class: 'card panel-picker' },
+          h('div', { class: 'calc-label' }, 'Pick the panel'),
+          h('div', { class: 'form-grid' },
+            h('label', { class: 'field' }, h('span', null, 'Manufacturer'), pick.mfrSel),
+            h('label', { class: 'field' }, h('span', null, 'Line'), pick.lineSel),
+            h('label', { class: 'field span-2' }, h('span', null, 'Size'), pick.sizeSel)),
+          pick.noteEl,
+          h('div', { class: 'row' }, h('span', { class: 'grow' }),
+            ui.button('Create panel', { variant: 'primary', icon: 'plus', onClick: () => {
+              const e = pick.curEntry(); const s = pick.curSize();
+              if (!e || !s) { ui.toast('Pick a manufacturer, line and size', 'error'); return; }
+              sheet.close(); createFromCatalog(e, s);
+            } })),
+          h('p', { class: 'calc-note muted' }, 'The size sets spaces, main amps, bus and main type; the line sets which breakers fit and the part numbers.')),
+        h('div', { class: 'tpl-list' },
+          h('div', { class: 'calc-label' }, 'Or start from a preset'),
+          h('button', { class: 'tpl-item', type: 'button', onClick: () => { sheet.close(); createFrom(null); } },
+            h('strong', null, 'Blank / generic panel'), h('span', { class: 'muted' }, '120/240 V · 200 A · 40 spaces · no breaker family')),
+          templates.map((t) => h('button', { class: 'tpl-item', type: 'button', onClick: () => { sheet.close(); createFrom(t); } },
+            h('strong', null, t.label), h('span', { class: 'muted' }, `${t.mainType}${t.feedThrough ? ' · feed-through' : ''}${t.custom ? ' · company' : ''}`))))),
     });
   };
 
@@ -418,7 +591,9 @@ function editorView(root, ctx, id) {
     panel = store.update('panels', panel.id, patch, opts);
     redrawKeepFocus();
   };
-  const setCircuits = (circuits) => save({ circuits: withPhases(circuits, panel.voltage) });
+  const setCircuits = (circuits) => save({ circuits: applyPartNumbers(panel, withPhases(circuits, panel.voltage)) });
+  /** The resolved part number ({ number, confident, note }) for a circuit in this panel, or null. */
+  const partOf = (c) => (panel.breakerFamily ? circuitPartNumber(panel, c, panel.circuits || []) : null);
 
   // header form
   const head = h('form', { class: 'card panel-head no-print', onSubmit: (e) => e.preventDefault() }, ui.formGrid([
@@ -482,6 +657,19 @@ function editorView(root, ctx, id) {
 
   /** True if the current system allows tandems (single-pole half breakers need a neutral). */
   const tandemsAllowed = () => S.minPoles(panel.voltage) === 1;
+  // The breaker LINE drives which affordances are offered: a 'none' line (Stab-lok, Leviton) hides
+  // Tandem/Quad entirely; 'marked' allows them with a "marked slots only" note; a quad:false line
+  // hides Quad. A blank/legacy panel has no mode and behaves as before (all offered).
+  const tandemsOffered = () => panelOffersTandems(panel, tandemsAllowed());
+  const quadOffered = () => panelOffersQuad(panel, tandemsAllowed());
+  const tandemsMarked = () => tandemsOffered() && tandemsModeOf(panel) === 'marked';
+  const constructionTypeKeys = () => (tandemsOffered() ? PT.CONSTRUCTION_TYPE_KEYS : PT.CONSTRUCTION_TYPE_KEYS.filter((k) => k !== 'tandem'));
+  /** Toast reason when a tandem/quad can't be added here (no neutral, or the line refuses them), else null. */
+  const tandemBlockReason = () => {
+    if (!tandemsAllowed()) return `${S.systemOf(panel.voltage).label} has no neutral: tandems are single-pole and can't be used.`;
+    if (tandemsModeOf(panel) === 'none') return `${panel.line ? panel.line + ' panels do' : 'This panel line does'} not accept tandem or quad breakers.`;
+    return null;
+  };
 
   function addCircuit(slot) {
     const circuits = panel.circuits || [];
@@ -494,7 +682,7 @@ function editorView(root, ctx, id) {
 
   /** Add a tandem (half-space, single-pole) breaker to space `slot`; picks the first free half if `half` is omitted. */
   function addTandem(slot, half) {
-    if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: tandems are single-pole and can't be used.`, 'error', 3600); return; }
+    if (!tandemsOffered()) { ui.toast(tandemBlockReason(), 'error', 3600); return; }
     const circuits = (panel.circuits || []).map((x) => ({ ...x }));
     const occ = occupancy(circuits);
     const o = occ.get(slot);
@@ -511,7 +699,7 @@ function editorView(root, ctx, id) {
    *  reaching the next space's upper half 'A'), and an outer single (the next space's lower half 'B').
    *  Each is independently editable; the inner is a real 2-pole (breakerType 'quad'), not a tandem. */
   function addQuad(slot) {
-    if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: space-saver quads are not applicable.`, 'error', 3600); return; }
+    if (!quadOffered()) { ui.toast(tandemBlockReason() || `${panel.line ? panel.line + ' panels do' : 'This panel line does'} not take space-saver quads.`, 'error', 3600); return; }
     const circuits = (panel.circuits || []).map((x) => ({ ...x }));
     const r = placement(circuits, { slot, half: 'B', poles: 2 }, slotCount(panel));
     if (!r.ok) { ui.toast(r.reason, 'error'); return; }
@@ -524,7 +712,7 @@ function editorView(root, ctx, id) {
   function makeTandem(cur, circuits) {
     if (halfOf(cur)) { cur.breakerType = 'tandem'; return true; } // already a half
     if ((Number(cur.poles) || 1) > 1) { ui.toast("Multi-pole breakers fill a full space and can't be tandems.", 'error'); return false; }
-    if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: tandems are single-pole and can't be used.`, 'error'); return false; }
+    if (!tandemsOffered()) { ui.toast(tandemBlockReason(), 'error'); return false; }
     const occ = occupancy(circuits.filter((x) => x !== cur));
     const o = occ.get(Number(cur.slot));
     const letter = !(o && o.A) ? 'A' : (!o.B ? 'B' : null);
@@ -548,7 +736,7 @@ function editorView(root, ctx, id) {
   function placeTemplate(slot, tpl, preferHalf) {
     const circuits = (panel.circuits || []).map((x) => ({ ...x }));
     if (tpl.quad) {
-      if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: space-saver quads are not applicable.`, 'error', 3600); return; }
+      if (!quadOffered()) { ui.toast(tandemBlockReason() || `${panel.line ? panel.line + ' panels do' : 'This panel line does'} not take space-saver quads.`, 'error', 3600); return; }
       const r = placement(circuits, { slot, half: 'B', poles: 2 }, slotCount(panel));
       if (!r.ok) { ui.toast(r.reason, 'error'); return; }
       // A quad template fills all three circuits of the device: the inner 2-pole takes the template's
@@ -560,7 +748,7 @@ function editorView(root, ctx, id) {
       return;
     }
     if (tpl.breakerType === 'tandem' || tpl.half) {
-      if (!tandemsAllowed()) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: tandems are single-pole and can't be used.`, 'error', 3600); return; }
+      if (!tandemsOffered()) { ui.toast(tandemBlockReason(), 'error', 3600); return; }
       const o = occupancy(circuits).get(slot);
       const letter = preferHalf && !(o && o[preferHalf]) ? preferHalf : (!(o && o.A) ? 'A' : (!o.B ? 'B' : null));
       if (!letter) { ui.toast(`Space ${slot} already has two tandems.`, 'error'); return; }
@@ -582,7 +770,7 @@ function editorView(root, ctx, id) {
   function openTemplatePicker(slot, preferHalf) {
     // Tandem templates are single-pole half-space breakers; a no-neutral system can't use them, so
     // hide them here the same way the empty-cell UI hides the Tandem button.
-    const templates = PT.listBreakerTemplates(store.settings()).filter((t) => tandemsAllowed() || (t.breakerType !== 'tandem' && !t.quad));
+    const templates = PT.listBreakerTemplates(store.settings()).filter((t) => (t.quad ? quadOffered() : (t.breakerType === 'tandem' ? tandemsOffered() : true)));
     const groups = [...new Set(templates.map((t) => t.group || 'Other'))];
     const sheet = ui.openSheet({
       title: `Breaker template · space ${slot}${preferHalf ? ' ' + preferHalf : ''}`,
@@ -602,7 +790,7 @@ function editorView(root, ctx, id) {
     const pp = panelPrintSettings(store.settings());
     const quadInner = isQuadInner(c);
     const phaseKeys = (c.phase || S.circuitPhases(c.slot, phasePolesOf(c), panel.voltage)).split('-');
-    const typeOptions = PT.CONSTRUCTION_TYPE_KEYS.map((k) => ({ value: k, label: PT.BREAKER_TYPES[k] }));
+    const typeOptions = constructionTypeKeys().map((k) => ({ value: k, label: PT.BREAKER_TYPES[k] }));
     const phaseOptions = [{ value: '', label: 'By phase (default)' }, ...Object.keys(colours.phases).map((p) => ({ value: p, label: `Phase ${p} · ${colours.phases[p].name}` }))];
     // Row-highlight choices. '' keeps the default (red for a smoke/alarm purpose, none otherwise).
     const highlightOptions = [
@@ -617,12 +805,14 @@ function editorView(root, ctx, id) {
     const curPhase = c.colorOverride && colours.phases[c.colorOverride] ? c.colorOverride : '';
     const isHalf = !!halfOf(c);
     const siblingEmpty = isHalf && makeFullSpace((panel.circuits || []).map((x) => ({ ...x })), { ...c });
+    const partInfo = partOf(c);
     const sheet = ui.formSheet({
       title: `Breaker ${c.slot}${halfOf(c) || ''}${c.description ? ' · ' + c.description : ''}`,
       fields: [
         quadInner
           ? { label: 'Breaker type', name: 'breakerTypeShown', type: 'text', value: 'Quad 2-pole (space-saver)', readonly: true, hint: 'A quad’s inner handle-tied 2-pole. The two outer singles are separate breakers.' }
           : { label: 'Breaker type', name: 'breakerType', type: 'select', value: c.breakerType || 'standard', options: typeOptions },
+        ...(partInfo ? [{ label: 'Breaker part no.', name: 'partNo', type: 'text', value: c.partNoManual ? (c.partNo || '') : partInfo.number, placeholder: partInfo.number || 'part no.', hint: c.partNoManual ? 'Manual override — clear it to use the catalogue number' : (partInfo.confident ? `From the ${panel.line || 'panel'} line` : (partInfo.note || 'Verify against the stamped breaker')) }] : []),
         { label: 'Purpose tag', name: 'purpose', type: 'text', value: c.purpose || '', placeholder: 'e.g. smoke, kitchen, lighting', hint: '“smoke” or “alarm” is highlighted red by default' },
         { label: 'Wiring status', name: 'status', type: 'select', value: c.status || '', options: [{ value: '', label: 'Not tracked' }, ...PANEL_STATUSES.map((s) => ({ value: s.key, label: s.label }))] },
         { label: 'Row highlight', name: 'highlight', type: 'select', value: curHex, options: highlightOptions },
@@ -661,6 +851,14 @@ function editorView(root, ctx, id) {
         // A chosen highlight ('none' or a #hex) wins; otherwise fall back to the phase-colour override.
         cur.colorOverride = v.highlight ? v.highlight : (v.colorShown || null);
         cur.subFeed = !!v.subFeed;
+        // Part number: a typed value that differs from the catalogue number (old or freshly resolved)
+        // is a manual override that wins; clearing it or matching the catalogue reverts to auto.
+        if (partInfo) {
+          const v2 = String(v.partNo || '').trim();
+          const auto = circuitPartNumber(panel, cur, circuits);
+          if (!v2 || v2 === partInfo.number || (auto && auto.number === v2)) { delete cur.partNo; delete cur.partNoManual; }
+          else { cur.partNo = v2; cur.partNoManual = true; }
+        }
         setCircuits(circuits);
       },
     });
@@ -697,6 +895,13 @@ function editorView(root, ctx, id) {
       else cur.breakerType = value || 'standard';
     } else if (field === 'amps' || field === 'loadVA') {
       cur[field] = Number(value) || 0;
+    } else if (field === 'partNo') {
+      // A typed value that differs from the catalogue number is a manual override (it wins); clearing
+      // it or matching the catalogue number reverts to the auto-resolved SKU.
+      const v2 = String(value || '').trim();
+      const auto = panel.breakerFamily ? circuitPartNumber(panel, cur, circuits) : null;
+      if (!v2 || (auto && auto.number === v2)) { delete cur.partNo; delete cur.partNoManual; }
+      else { cur.partNo = v2; cur.partNoManual = true; }
     } else {
       cur[field] = value;
     }
@@ -728,9 +933,24 @@ function editorView(root, ctx, id) {
     const typeCtl = quadInner
       ? h('span', { class: 'slot-type-fixed', title: 'Quad inner: a handle-tied 2-pole across both legs (space-saver)' }, 'Quad 2-pole')
       : h('select', { class: 'input slot-type', name: 'breakerType', 'aria-label': `${label} breaker type`, onChange: onChange('breakerType') },
-          PT.CONSTRUCTION_TYPE_KEYS.map((k) => h('option', { value: k, selected: bType === k }, PT.BREAKER_TYPES[k])));
+          // The line gates 'tandem' out of the dropdown when it offers no tandems, but keep a current
+          // tandem selectable so an existing breaker can still render/clear its own type.
+          constructionTypeKeys().concat(bType === 'tandem' && !tandemsOffered() ? ['tandem'] : []).map((k) => h('option', { value: k, selected: bType === k }, PT.BREAKER_TYPES[k])));
     const statusCtl = h('select', { class: 'input slot-status', name: 'status', 'aria-label': `${label} wiring status`, onChange: onChange('status') },
       [{ key: '', label: 'Status…' }, ...PANEL_STATUSES].map((s) => h('option', { value: s.key, selected: (c.status || '') === s.key }, s.label)));
+    // Slot-fill part number: the catalogue SKU for this breaker, editable inline. A confident:false
+    // SKU (GFCI/AFCI/dual, neutral-dependent) shows a "verify" hint; a manual value overrides it.
+    const part = partOf(c);
+    const partCtl = part ? (() => {
+      const manual = !!c.partNoManual;
+      const verify = !manual && !part.confident;
+      return h('span', { class: ['slot-partno', verify ? 'verify' : null, manual ? 'manual' : null] },
+        h('span', { class: 'pn-label' }, '#'),
+        h('input', { class: 'input pn-input', name: 'partNo', value: manual ? (c.partNo || '') : part.number, placeholder: 'part no.',
+          title: manual ? 'Manual part number (overrides the catalogue)' : (part.note || `${panel.line || 'Catalogue'} part number`),
+          autocomplete: 'off', 'aria-label': `${label} breaker part number`, onChange: onChange('partNo') }),
+        verify ? h('span', { class: 'pn-verify', title: part.note || 'Verify against the stamped breaker' }, 'verify') : null);
+    })() : null;
     const node = h('div', { class: ['slot-fields', hl ? 'has-highlight' : null], style: hl ? { borderLeft: `3px solid ${hl}` } : null },
       h('input', { class: 'input slot-desc', name: 'description', list: 'fishtape-circuit-names', autocomplete: 'off', value: c.description || '', placeholder: 'Circuit description', 'aria-label': `${label} description`, onChange: onChange('description') }),
       h('div', { class: 'slot-row' },
@@ -748,6 +968,7 @@ function editorView(root, ctx, id) {
         c.subFeed ? h('span', { class: 'subfeed-tag' }, 'sub-feed') : null,
         c.purpose ? h('span', { class: ['purpose-tag', hl ? 'hl' : null], style: hl ? { color: hl, borderColor: hl } : null }, c.purpose) : null,
         over ? ` · over 80% of ${c.amps} A` : '',
+        partCtl,
         h('span', { class: 'grow' }),
         c.status ? h('span', { class: ['status-chip', 'st-' + c.status] }, PANEL_STATUS_LABEL(c.status)) : null,
         statusCtl));
@@ -763,8 +984,8 @@ function editorView(root, ctx, id) {
       return h('div', { class: ['slot', 'empty', side], dataset: { slot } }, num, ph,
         h('div', { class: 'slot-empty-actions' },
           h('button', { class: 'slot-add', type: 'button', onClick: () => addCircuit(slot), 'aria-label': `Add breaker at space ${slot}` }, ui.icon('plus', 16), 'Add breaker'),
-          tandemsAllowed() ? h('button', { class: 'slot-add tandem', type: 'button', onClick: () => addTandem(slot), 'aria-label': `Add a tandem (half-space) breaker at space ${slot}` }, ui.icon('plus', 16), 'Tandem') : null,
-          tandemsAllowed() && slot + 2 <= slotCount(panel) ? h('button', { class: 'slot-add quad', type: 'button', onClick: () => addQuad(slot), 'aria-label': `Add a quad (space-saver 2-pole) at space ${slot}` }, ui.icon('plus', 16), 'Quad') : null,
+          tandemsOffered() ? h('button', { class: 'slot-add tandem', type: 'button', title: tandemsMarked() ? 'Only in slots the panel marks for tandems — check the label' : null, onClick: () => addTandem(slot), 'aria-label': `Add a tandem (half-space) breaker at space ${slot}` }, ui.icon('plus', 16), 'Tandem') : null,
+          quadOffered() && slot + 2 <= slotCount(panel) ? h('button', { class: 'slot-add quad', type: 'button', onClick: () => addQuad(slot), 'aria-label': `Add a quad (space-saver 2-pole) at space ${slot}` }, ui.icon('plus', 16), 'Quad') : null,
           h('button', { class: 'slot-add tpl', type: 'button', onClick: () => openTemplatePicker(slot), 'aria-label': `Add breaker from a template at space ${slot}` }, ui.icon('copy', 16), 'Template')));
     }
     if (o.full && !o.start) {
@@ -778,8 +999,9 @@ function editorView(root, ctx, id) {
     const halfBlock = (letter) => {
       const hc = o[letter];
       if (!hc) {
+        if (!tandemsOffered()) return h('div', { class: ['slot-half', 'empty'], dataset: { slot, half: letter } }, h('span', { class: 'muted small' }, `${slot}${letter}`));
         return h('div', { class: ['slot-half', 'empty'], dataset: { slot, half: letter } },
-          h('button', { class: 'slot-add tandem', type: 'button', onClick: () => addTandem(slot, letter), 'aria-label': `Add tandem ${letter} at space ${slot}` }, ui.icon('plus', 16), `Tandem ${letter}`),
+          h('button', { class: 'slot-add tandem', type: 'button', title: tandemsMarked() ? 'Only in slots the panel marks for tandems — check the label' : null, onClick: () => addTandem(slot, letter), 'aria-label': `Add tandem ${letter} at space ${slot}` }, ui.icon('plus', 16), `Tandem ${letter}`),
           h('button', { class: 'slot-add tpl', type: 'button', onClick: () => openTemplatePicker(slot, letter), 'aria-label': `Add tandem ${letter} from a template at space ${slot}` }, ui.icon('copy', 16), 'Template'));
       }
       // A quad inner 2-pole is edited on its home space (its 'B' half); its reach into the next space's
@@ -810,6 +1032,13 @@ function editorView(root, ctx, id) {
     // type-ahead: CSP-safe, offline, no JS dropdown. Company-managed list, or the shipped default.
     gridEl.append(h('datalist', { id: 'fishtape-circuit-names' },
       PT.panelCircuitNames(store.settings()).map((name) => h('option', { value: name }))));
+    if (panel.breakerFamily || panel.line) {
+      gridEl.append(h('div', { class: 'panel-line-note muted small' },
+        ui.icon('info', 14), ' ',
+        `${panel.manufacturer ? panel.manufacturer + ' ' : ''}${panel.line || ''}${panel.breakerWidth ? ' · ' + panel.breakerWidth + ' breakers' : ''}`,
+        tandemsModeOf(panel) === 'none' ? ' · no tandems or quads' : null,
+        tandemsMarked() ? ' · tandems only in slots the panel marks for them — check the label' : null));
+    }
     gridEl.append(h('div', { class: 'panel-bus' }, h('span', null, 'Odd'), h('span', null, 'Even')));
     for (let row = 1; row <= total / 2; row++) {
       gridEl.append(h('div', { class: 'panel-row' }, slotCell(2 * row - 1, occ, 'left', colours), slotCell(2 * row, occ, 'right', colours)));
@@ -849,6 +1078,7 @@ function editorView(root, ctx, id) {
           h('div', { class: 'progress' }, h('i', { style: { width: `${Math.min(100, loadPct)}%`, background: loadPct > 80 ? 'var(--danger)' : '' } })),
           h('span', { class: 'hint' }, main ? `${ui.fmtNum(b.maxAmps, 1)} A of ${main} A, heaviest phase` : 'Set the main size'))),
       progressCard(),
+      breakerListCard(),
       labelCard(),
       main ? serviceCard({ sys, b, main, totalAmps, cec }) : null,
       colourLegendCard(),
@@ -871,6 +1101,80 @@ function editorView(root, ctx, id) {
       h('div', { class: 'muted small' }, `${c.done} of ${c.described} wired circuit${c.described === 1 ? '' : 's'} marked done`),
       c.tracked ? h('div', { class: 'status-counts' }, PANEL_STATUSES.filter((s) => counts[s.key]).map((s) =>
         h('span', { class: ['status-chip', 'st-' + s.key] }, `${s.label} ${counts[s.key]}`))) : null);
+  }
+
+  /** Physical breakers in the panel, one per device: a full breaker is one; a tandem space (its A/B
+   *  halves) is one combined device; a quad (inner + two outers) is one device. Each carries the
+   *  resolved part number. The material takeoff aggregates these. */
+  function breakerDevices() {
+    const circuits = panel.circuits || [];
+    const occ = occupancy(circuits);
+    const out = [];
+    const done = new Set();
+    for (const c of circuits) {
+      const half = halfOf(c);
+      if (!half) { out.push({ slot: c.slot, desc: c.description, part: partOf(c) }); continue; }
+      const home = Number(c.slot);
+      if (isQuadInner(c)) {
+        if (done.has('q' + home)) continue;
+        done.add('q' + home);
+        out.push({ slot: home, desc: c.description || '240 V load', part: partOf(c), quad: true });
+        continue;
+      }
+      const o = occ.get(home) || {};
+      if (isQuadInner(o.A) || isQuadInner(o.B)) continue; // a quad's outer single: counted in the quad
+      if (done.has('t' + home)) continue;
+      done.add('t' + home);
+      const desc = [o.A && o.A.description, o.B && o.B.description].filter(Boolean).join(' / ');
+      out.push({ slot: home, desc: desc || 'Tandem', part: partOf(c), tandem: true });
+    }
+    return out;
+  }
+
+  /** Per-panel breaker list with part numbers — a minimal material takeoff. Part numbers are fine for
+   *  the crew; costs stay on the material request (office only). Lets the office roll the breakers
+   *  into material requests for the job. Shown only when the panel has a breaker family. */
+  function breakerListCard() {
+    if (!panel.breakerFamily) return null;
+    const withPart = breakerDevices().filter((d) => d.part && d.part.number);
+    if (!withPart.length) return null;
+    const agg = new Map();
+    for (const d of withPart) {
+      const k = d.part.number;
+      const e = agg.get(k) || { number: k, qty: 0, confident: true, note: d.part.note, descs: new Set() };
+      e.qty += 1;
+      if (!d.part.confident) { e.confident = false; e.note = d.part.note; }
+      if (d.desc) e.descs.add(d.desc);
+      agg.set(k, e);
+    }
+    const rows = [...agg.values()];
+    const me = ctx.auth && ctx.auth.current ? ctx.auth.current() : {};
+    const listText = () => rows.map((r) => `${r.qty} x ${r.number}${r.descs.size ? '  ' + [...r.descs].join(', ') : ''}`).join('\n');
+    const addToRequests = async () => {
+      if (!(await ui.confirmDialog(`Add ${rows.length} breaker line${rows.length === 1 ? '' : 's'} to material requests${panel.jobId ? '' : ' (no job)'}?`, { okLabel: 'Add', danger: false }))) return;
+      for (const r of rows) {
+        store.add('materialRequests', {
+          jobId: panel.jobId || null, itemId: null,
+          description: `${r.number} breaker${r.descs.size ? ' — ' + [...r.descs].join(', ') : ''}`,
+          qty: r.qty, unit: 'ea', note: `Panel ${panel.name || ''}`.trim() + (r.confident ? '' : ' (verify part no.)'),
+          urgent: false, employeeId: (me && me.id) || null, status: 'requested',
+        });
+      }
+      ui.toast(`Added ${rows.length} breaker line${rows.length === 1 ? '' : 's'} to material requests`, 'success', 3200);
+      ctx.nav('#/materials' + (panel.jobId ? '?jobId=' + panel.jobId : ''));
+    };
+    const copy = async () => { try { await navigator.clipboard.writeText(listText()); ui.toast('Copied', 'success'); } catch { ui.toast('Copying is blocked here', 'error'); } };
+    return h('div', { class: 'card panel-breakers' },
+      h('div', { class: 'calc-label row-between' }, h('span', null, `Breaker list · ${panel.manufacturer || ''} ${panel.line || panel.breakerFamily}`.trim()),
+        ui.button('Copy', { variant: 'ghost', size: 'sm', icon: 'copy', onClick: copy })),
+      h('table', { class: 'calc-lines panel-breaker-table' }, h('tbody', null, rows.map((r) => h('tr', null,
+        h('td', { class: 'num bk-qty' }, `${r.qty}×`),
+        h('td', null, h('span', { class: ['bk-part', r.confident ? null : 'verify'] }, r.number),
+          r.confident ? null : h('span', { class: 'bk-verify', title: r.note || 'Verify against the stamped breaker' }, 'verify'),
+          r.descs.size ? h('span', { class: 'muted' }, ' · ' + [...r.descs].join(', ')) : null))))),
+      h('div', { class: 'row' }, h('span', { class: 'grow' }),
+        ui.button('Add to material requests', { variant: 'ghost', size: 'sm', icon: 'truck', onClick: addToRequests })),
+      h('p', { class: 'calc-note muted' }, 'Part numbers come from the panel line; quantities count physical breakers (a tandem or quad is one device). Verify flagged numbers against the stamped breaker. Costs are set by the office on the material request.'));
   }
 
   /** On-screen panel label / sticker: the QR, the panel identity and the progress, to print and

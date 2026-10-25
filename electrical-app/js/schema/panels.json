@@ -100,6 +100,63 @@
       ],
       "maxLength": 128
     },
+    "manufacturer": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 60,
+      "description": "Panel manufacturer chosen in the New-panel picker (e.g. Square D, Eaton), from js/lib/panel-catalog.js."
+    },
+    "line": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 60,
+      "description": "Breaker line within the manufacturer (e.g. Homeline, QO, BR, CH)."
+    },
+    "breakerFamily": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 20,
+      "description": "The breaker-part generator key for the line (QO, HOM, BR, CH, Q, THQL, THQP), or null for a blank/proprietary panel. Drives the slot-fill part number (js/lib/breaker-partnumbers.js)."
+    },
+    "breakerWidth": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "1in",
+        "3/4in",
+        "1/2in",
+        null
+      ],
+      "description": "Breaker frame width class for the line."
+    },
+    "tandemsMode": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "all",
+        "marked",
+        "none",
+        null
+      ],
+      "description": "How the line accepts tandems: 'all' freely, 'marked' only in slots the label marks (CTL), 'none' not at all. Gates the Tandem/Quad affordances. Absent means 'all' (blank/legacy panel)."
+    },
+    "quad": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Whether the line supports a space-saver quad. false hides the Quad affordance; absent means allowed (blank/legacy panel)."
+    },
     "circuits": {
       "type": [
         "array",
@@ -215,6 +272,21 @@
               "boolean",
               "null"
             ]
+          },
+          "partNo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "description": "Breaker catalogue/part number for this circuit. Auto-resolved from the panel's breakerFamily and the circuit's poles/amps/type, or a manual override (see partNoManual). Fed to the per-panel breaker list / material takeoff."
+          },
+          "partNoManual": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "True when partNo was edited by hand; a manual value wins and is never overwritten by the auto-resolver."
           }
         }
       }
