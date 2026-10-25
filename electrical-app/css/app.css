@@ -249,6 +249,9 @@ table.table { width: 100%; border-collapse: collapse; }
   html, body { height: auto; }
   body { overflow: visible; background: #fff; color: #000; }
   .rail, .wheel-fab, .wheel, .wheel-scrim, .no-print, .toasts { display: none !important; }
+  /* The shell is position:fixed on screen; WebKit/Safari clips a fixed ancestor to the first page
+     when printing (blank or truncated output), so un-fix it and let the content flow onto paper. */
+  .app { position: static; display: block; height: auto; overflow: visible; }
   .main { position: static; overflow: visible; }
   .print-only { display: block; }
   .scrim { display: none; }
@@ -262,6 +265,7 @@ table.table { width: 100%; border-collapse: collapse; }
    above, so the web print path is untouched. Keep these in sync with @media print. */
 html.is-printing, html.is-printing body { height: auto; overflow: visible; background: #fff; color: #000; }
 html.is-printing .rail, html.is-printing .wheel-fab, html.is-printing .wheel, html.is-printing .wheel-scrim, html.is-printing .no-print, html.is-printing .toasts, html.is-printing .scrim { display: none !important; }
+html.is-printing .app { position: static; display: block; height: auto; overflow: visible; }
 html.is-printing .main { position: static; overflow: visible; }
 html.is-printing .print-only { display: block; }
 html.is-printing .sheet { position: static; box-shadow: none; border: 0; width: 100%; }
