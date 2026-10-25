@@ -3,7 +3,7 @@
 // Saved bends live in `bends`, the crew's own bender numbers in `benderProfiles`.
 import * as B from '../lib/bending.js';
 import * as P from '../lib/bending-profiles.js';
-import { bentSvg, marksSvg, rollSvg, SYMBOL_NAMES } from '../lib/bending-svg.js';
+import { bentSvg, animatedBendSvg, marksSvg, rollSvg, SYMBOL_NAMES } from '../lib/bending-svg.js';
 import { fmtLength, parseLength, getUnits, setUnits, inToM, mToIn } from '../lib/units.js';
 
 let ui, h, store, ctx;
@@ -314,50 +314,62 @@ function select(label, options, value, onPick, cls) {
       options.map((o) => h('option', { value: o.value, selected: String(o.value) === String(value) }, o.label))));
 }
 
+// Pick the pipe (conduit + size). Bender choice is demoted: the marks and the visual come straight
+// from the standard deduction for this pipe, and the bender picker / calibration sits in a quiet
+// "Advanced" panel below for crews who want their own take-up and gain.
 function benderBar(rerender) {
   const b = benderValues();
   const list = state.type === 'PVC' ? [] : P.profilesFor(state.type, state.size, userProfiles());
-  const parts = [
+  const mainRow = [
     select('Conduit', typeOptions(), state.type, (v) => { state.type = v; state.profileId = null; state.over = {}; remember(); rerender(); }),
     select('Trade size', sizeOptions(), state.size, (v) => { state.size = v; state.profileId = null; state.over = {}; remember(); rerender(); }),
   ];
   if (state.type === 'PVC') {
-    parts.push(lenInput('Bend radius (heat bending)', state.over.radiusM || fmt(b.minRadiusM), (v) => { state.over.radiusM = v; remember(); rerender.calc(); },
+    mainRow.push(lenInput('Bend radius (heat bending)', state.over.radiusM || fmt(b.minRadiusM), (v) => { state.over.radiusM = v; remember(); rerender.calc(); },
       { hint: `Code minimum for this size: ${fmt(b.minRadiusM)}` }));
-  } else if (list.length) {
-    parts.push(select('Bender', list.map((p) => ({ value: p.id, label: `${p.builtIn ? '' : '★ '}${p.name}` })), b.prof?.id, (v) => { state.profileId = v; state.over = {}; remember(); rerender(); }, 'wide'));
-  } else {
-    parts.push(h('div', { class: 'bend-field wide' }, h('span', { class: 'bend-label' }, 'Bender'),
-      h('div', { class: 'bend-none' }, 'No bender on file for this size. Enter its numbers below, or use a segment bend.')));
+    return h('section', { class: 'card bend-setup' },
+      h('div', { class: 'bend-setup-row' }, mainRow),
+      pvcNote(b));
   }
+
+  const yours = b.prof && !b.prof.builtIn;
+  const ded = b.takeUpM != null ? `${fmt(b.takeUpM)} deduct` : b.radiusM != null ? `${fmt(b.radiusM)} radius` : 'standard numbers';
   const vals = [
     b.takeUpM != null ? `take-up ${fmt(b.takeUpM)}` : null,
     b.gainM != null ? `gain ${fmt(b.gainM)}` : null,
     b.radiusM != null ? `radius ${fmt(b.radiusM)}` : null,
     b.odM != null ? `OD ${fmt(b.odM)}` : null,
   ].filter(Boolean).join(' · ');
-  const overrides = h('details', { class: 'bend-over', open: Object.values(state.over).some((v) => v && String(v).trim()) && state.type !== 'PVC' },
-    h('summary', null, 'Use my own numbers'),
-    h('div', { class: 'bend-fields three' },
-      ...(state.type === 'PVC' ? [] : [
+  const openAdvanced = yours || Object.values(state.over).some((v) => v && String(v).trim());
+  // the one quiet line: which deduction the marks and the picture use, and the way in to change it
+  const summary = h('summary', null,
+    h('span', { class: 'bend-adv-using' }, `Using ${yours ? 'your bender' : 'standard'} ${B.conduitLabel(state.type)} ${B.tradeSizeLabel(state.size)}: ${ded}`),
+    h('span', { class: 'bend-adv-cta' }, 'Change bender / calibrate'));
+  const benderField = list.length
+    ? select('Bender', list.map((p) => ({ value: p.id, label: `${p.builtIn ? '' : '★ '}${p.name}` })), b.prof?.id, (v) => { state.profileId = v; state.over = {}; remember(); rerender(); }, 'wide')
+    : h('div', { class: 'bend-field wide' }, h('span', { class: 'bend-label' }, 'Bender'),
+      h('div', { class: 'bend-none' }, 'No bender on file for this size. Enter its numbers below, or use a segment bend.'));
+  const advanced = h('details', { class: 'bend-advanced', open: openAdvanced }, summary,
+    h('div', { class: 'bend-advanced-body' },
+      benderField,
+      h('div', { class: 'bend-fields three' },
         lenInput('Take-up (deduct)', state.over.takeUpM || '', (v) => { state.over.takeUpM = v; remember(); rerender.calc(); }, { optional: true }),
         lenInput('Gain', state.over.gainM || '', (v) => { state.over.gainM = v; remember(); rerender.calc(); }, { optional: true }),
-        lenInput('Bend radius', state.over.radiusM || '', (v) => { state.over.radiusM = v; remember(); rerender.calc(); }, { optional: true }),
-      ])),
-    h('div', { class: 'row' },
-      ui.button('Clear my numbers', { size: 'sm', variant: 'ghost', onClick: () => { state.over = {}; remember(); rerender(); } }),
-      ui.button('Calibrate a bender', { size: 'sm', icon: 'wrench', onClick: () => calibrateSheet(rerender) })));
+        lenInput('Bend radius', state.over.radiusM || '', (v) => { state.over.radiusM = v; remember(); rerender.calc(); }, { optional: true })),
+      h('div', { class: 'bend-setup-meta' },
+        h('span', { class: 'num' }, vals || 'No bender numbers'),
+        b.prof?.builtIn ? h('span', { class: 'bend-verify' }, ui.icon('alert', 14), 'Typical published values. Check them against your own bender.') : null,
+        yours ? ui.badge('Your bender', 'success') : null,
+        h('label', { class: 'bend-toggle' },
+          h('input', { type: 'checkbox', checked: state.chart, onChange: (e) => { state.chart = e.target.checked; remember(); rerender.calc(); } }),
+          h('span', null, 'Chart numbers'),
+          h('span', { class: 'muted' }, ' (6, 2.6, 2, 1.4, 1.2; 2½ saddles)'))),
+      h('div', { class: 'row' },
+        ui.button('Clear my numbers', { size: 'sm', variant: 'ghost', onClick: () => { state.over = {}; remember(); rerender(); } }),
+        ui.button('Calibrate a bender', { size: 'sm', icon: 'wrench', onClick: () => calibrateSheet(rerender) }))));
   return h('section', { class: 'card bend-setup' },
-    h('div', { class: 'bend-setup-row' }, parts),
-    h('div', { class: 'bend-setup-meta' },
-      h('span', { class: 'num' }, vals || 'No bender numbers'),
-      b.prof?.builtIn ? h('span', { class: 'bend-verify' }, ui.icon('alert', 14), 'Typical published values. Check them against the marks on your own bender.') : null,
-      b.prof && !b.prof.builtIn ? ui.badge('Your bender', 'success') : null,
-      h('label', { class: 'bend-toggle' },
-        h('input', { type: 'checkbox', checked: state.chart, onChange: (e) => { state.chart = e.target.checked; remember(); rerender.calc(); } }),
-        h('span', null, 'Chart numbers'),
-        h('span', { class: 'muted' }, ' (6, 2.6, 2, 1.4, 1.2; 2½ saddles)'))),
-    state.type === 'PVC' ? pvcNote(b) : overrides);
+    h('div', { class: 'bend-setup-row' }, mainRow),
+    advanced);
 }
 
 function pvcNote(b) {
@@ -416,17 +428,32 @@ function marksTable(result) {
   });
 }
 
+// Which bend kind last auto-played, so the animation plays once when you pick a bend but doesn't
+// replay on every keystroke or on a resize (distracting on a jobsite).
+let animatedFor = null;
+const prefersReducedMotion = () => !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+
 function diagrams(result, odM, width) {
   const w = Math.max(300, Math.min(900, Math.round(width || 640)));
-  const bent = h('div', { class: 'bend-svg-wrap' });
-  bent.innerHTML = bentSvg(result, { fmt, width: w, odM: odM || 0 });
+  const reduced = prefersReducedMotion();
+  // the hero: the selected bend forming from flat pipe into the finished shape, to scale
+  const bent = h('div', { class: 'bend-svg-wrap bend-anim' });
+  bent.innerHTML = reduced ? bentSvg(result, { fmt, width: w, odM: odM || 0 }) : animatedBendSvg(result, { fmt, width: w, odM: odM || 0 });
+  const play = () => { for (const a of bent.querySelectorAll('.bd-anim')) { try { a.beginElement(); } catch { /* SMIL not ready */ } } };
+  if (!reduced && animatedFor !== result.kind) {
+    animatedFor = result.kind;
+    requestAnimationFrame(() => requestAnimationFrame(play)); // once the SVG is in the DOM and laid out
+  }
+  const heroCap = h('div', { class: 'bend-cap bend-cap-row' },
+    h('span', null, reduced ? 'Bent, to scale' : 'The bend, forming — to scale'),
+    reduced ? null : ui.button('Replay', { size: 'sm', icon: 'play', onClick: play }));
   const straight = h('div', { class: 'bend-svg-wrap' });
   straight.innerHTML = marksSvg(result, { fmt, snap, width: w });
   const roll = result.endView ? h('div', { class: 'bend-svg-wrap roll' }) : null;
   if (roll) roll.innerHTML = rollSvg(result, { fmt });
   const used = [...new Set(result.marks.map((m) => m.symbol))].filter((s) => s && s !== 'tick');
   return h('div', { class: 'bend-diagrams' },
-    h('div', { class: 'bend-cap' }, 'Bent, to scale'), bent,
+    heroCap, bent,
     roll ? [h('div', { class: 'bend-cap' }, 'End view: roll the pipe'), roll] : null,
     h('div', { class: 'bend-cap' }, result.reference === 'end' ? 'Marks on the straight pipe, from the end' : 'Marks on the straight pipe, from mark 1'), straight,
     used.length ? h('div', { class: 'bend-legend' }, used.map((s) => h('span', null, `${SYMBOL_TEXT[s]?.split(' ')[0] || ''} ${SYMBOL_NAMES[s]}`))) : null);

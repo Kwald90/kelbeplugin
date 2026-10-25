@@ -13,8 +13,21 @@
 
 /* pipe and bender bar */
 .bend-setup { display: flex; flex-direction: column; gap: var(--s3); }
-.bend-setup-row { display: grid; gap: var(--s3); grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr) minmax(220px, 2fr); align-items: start; }
+.bend-setup-row { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: start; }
 @media (max-width: 760px) { .bend-setup-row { grid-template-columns: 1fr 1fr; } .bend-setup-row .wide { grid-column: 1 / -1; } }
+
+/* bender choice is demoted: the marks + visual use the standard deduction; this is the quiet way in */
+.bend-advanced { border-top: 1px solid var(--border); padding-top: var(--s2); }
+.bend-advanced summary { cursor: pointer; min-height: 40px; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); list-style: none; }
+.bend-advanced summary::-webkit-details-marker { display: none; }
+.bend-advanced summary::before {
+  content: ""; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg); transition: transform var(--t-fast); flex: none;
+}
+.bend-advanced[open] summary::before { transform: rotate(45deg); }
+.bend-adv-using { font-weight: 650; color: var(--text); }
+.bend-adv-cta { font-size: var(--fs-xs); font-weight: 600; color: var(--accent); margin-left: auto; }
+.bend-advanced-body { display: flex; flex-direction: column; gap: var(--s3); margin-top: var(--s3); }
 .bend-setup-meta { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); align-items: center; font-size: var(--fs-xs); color: var(--text-muted); }
 .bend-verify { display: inline-flex; gap: 6px; align-items: center; color: var(--warning); font-size: var(--fs-xs); font-weight: 600; }
 .bend-verify svg { flex: none; }
@@ -87,6 +100,9 @@ select.bend-input { font-size: var(--fs-base); }
 .bend-diagram-card { padding: var(--s4); overflow: hidden; }
 .bend-diagrams { display: flex; flex-direction: column; gap: var(--s2); }
 .bend-cap { font-size: var(--fs-xs); font-weight: 650; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.bend-cap-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.bend-cap-row .btn { height: 36px; }
+.bend-anim { background: var(--surface-2); border-radius: var(--r-md); }
 .bend-svg-wrap { width: 100%; overflow: hidden; }
 .bend-svg-wrap.roll { max-width: 280px; }
 .bend-legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--fs-xs); color: var(--text-muted); }
@@ -126,6 +142,7 @@ select.bend-input { font-size: var(--fs-base); }
 .bend-svg .bd-endcap { stroke: var(--text); stroke-width: 4; stroke-linecap: round; }
 .bend-svg .bd-markline { stroke: var(--accent); stroke-width: 2.5; }
 .bend-svg .bd-tick { stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.bend-svg .bd-dir { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .bend-svg .bd-sym { fill: var(--accent-fill); stroke: var(--text); stroke-width: 1; }
 .bend-svg .bd-sym.heat { fill: var(--danger); stroke: none; }
 .bend-svg .bd-marktag { font-weight: 750; font-size: 13px; }

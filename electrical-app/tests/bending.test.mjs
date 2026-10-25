@@ -457,3 +457,97 @@ test('calibrate: take-up and gain from one test 90', () => {
   assert.throws(() => P.calibrate({ markM: inToM(12), stubM: inToM(10) }), /back of the bend/);
   assert.ok(P.calibrate({ markM: inToM(12), stubM: inToM(17), mark2M: inToM(30), legM: inToM(10) }).warnings.length);
 });
+
+// ---------------------------------------------------------------------------
+// Animated bend visual (animatedBendSvg)
+// ---------------------------------------------------------------------------
+
+const fmtIn = (m) => `${(m / 0.0254).toFixed(1)}"`;
+const animCases = {
+  offset: { riseM: inToM(6), angleDeg: 30, obstacleM: inToM(36) },
+  kick: { riseM: inToM(3), angleDeg: 22.5 },
+  saddle3: { heightM: inToM(2), centerM: inToM(24) },
+  saddle4: { heightM: inToM(4), widthM: inToM(10) },
+  stub90: { stubM: inToM(10), takeUpM: inToM(5), radiusM: inToM(4.1875), odM: inToM(0.706) },
+  backToBack: { stubM: inToM(10), backToBackM: inToM(30), takeUpM: inToM(5), radiusM: inToM(4.1875), odM: inToM(0.706) },
+  boxOffset: { riseM: inToM(0.5) },
+  rolling: { riseM: inToM(6), rollM: inToM(8), angleDeg: 45, obstacleM: inToM(40) },
+  parallel: { riseM: inToM(6), angleDeg: 30, count: 3, centersM: inToM(2), obstacleM: inToM(36) },
+  segment: { radiusM: inToM(30), stubM: inToM(48), shots: 10, odM: inToM(2.375) },
+  concentric: { count: 3, centersM: inToM(4), innerRadiusM: inToM(20), startM: inToM(12), shots: 9 },
+};
+// every value in a SMIL points animation must have the same coordinate count, or Chrome won't tween
+const pointCounts = (values) => values.split(';').map((v) => v.trim().split(/\s+/).length);
+const firstPoints = (svg, cls) => (svg.match(new RegExp(`<polyline class="${cls}"[^>]*?points="([^"]*)"`)) || [])[1];
+
+test('animated bend: every kind makes a valid, animated SVG that forms the shape', () => {
+  for (const [kind, input] of Object.entries(animCases)) {
+    const r = B.compute(kind, input, { fmt: fmtIn });
+    const svg = S.animatedBendSvg(r, { fmt: fmtIn, width: 480, odM: input.odM || 0 });
+    assert.match(svg, /^<svg class="bend-svg" viewBox="0 0 480 \d+"/, kind);
+    assert.ok(!/NaN|undefined/.test(svg), `${kind} has no NaN/undefined`);
+    assert.ok(!/>[^<]*"[^<]*</.test(svg), `${kind} escapes quotes in text`);
+    // the pipe animates its points, the labels fade in, and the trigger is findable
+    assert.ok(/<animate class="bd-anim" attributeName="points"/.test(svg), `${kind} animates the pipe points`);
+    assert.ok(/<animate class="bd-anim" attributeName="opacity"/.test(svg), `${kind} fades the labels in`);
+    // CSP: no inline style attribute, no script, SMIL only
+    assert.ok(!/\sstyle=/.test(svg), `${kind} uses no inline style`);
+    assert.ok(!/<script/i.test(svg), `${kind} has no script`);
+    // the pipe moves: the first frame differs from the last (the finished) frame
+    const vals = (svg.match(/attributeName="points"[^>]*values="([^"]*)"/) || [])[1];
+    const frames = vals.split(';');
+    assert.ok(frames.length >= 2, `${kind} has several frames`);
+    assert.notEqual(frames[0], frames[frames.length - 1], `${kind} forms (start !== end)`);
+    // every frame has the same number of points, so the tween is smooth
+    const counts = pointCounts(vals);
+    assert.ok(counts.every((c) => c === counts[0]), `${kind} frames keep a constant point count`);
+  }
+});
+
+test('animated bend: the finished frame equals the static diagram, and reduced motion drops the motion', () => {
+  for (const [kind, input] of Object.entries(animCases)) {
+    const r = B.compute(kind, input, { fmt: fmtIn });
+    const bent = S.bentSvg(r, { fmt: fmtIn, width: 480, odM: input.odM || 0 });
+    const reduced = S.animatedBendSvg(r, { fmt: fmtIn, width: 480, odM: input.odM || 0, reduced: true });
+    // reduced motion: no animation at all, and the pipe sits on the finished shape, same as bentSvg
+    assert.ok(!/<animate/.test(reduced), `${kind} reduced motion has no <animate>`);
+    assert.equal(firstPoints(reduced, 'bd-pipe'), firstPoints(bent, 'bd-pipe'), `${kind} reduced frame == static diagram`);
+    // the animation rests on the finished shape: the polyline's base points equal its last frame,
+    // so with no script run (or once play ends and freezes) it shows the finished bend
+    const anim = S.animatedBendSvg(r, { fmt: fmtIn, width: 480, odM: input.odM || 0 });
+    const vals = (anim.match(/attributeName="points"[^>]*values="([^"]*)"/) || [])[1].split(';');
+    assert.equal(firstPoints(anim, 'bd-pipe'), vals[vals.length - 1], `${kind} rests on its finished frame`);
+  }
+});
+
+test('animated bend: a still at 0 is flatter than the finished bend; stills reflect progress', () => {
+  const r = B.compute('offset', animCases.offset, { fmt: fmtIn });
+  const flat = S.animatedBendSvg(r, { fmt: fmtIn, width: 480, still: 0 });
+  const done = S.animatedBendSvg(r, { fmt: fmtIn, width: 480, still: 1 });
+  assert.ok(!/<animate/.test(flat) && !/<animate/.test(done), 'stills carry no motion');
+  const ys = (pts) => pts.split(/\s+/).map((p) => Number(p.split(',')[1]));
+  const spread = (pts) => { const v = ys(pts); return Math.max(...v) - Math.min(...v); };
+  assert.ok(spread(firstPoints(flat, 'bd-pipe')) < spread(firstPoints(done, 'bd-pipe')), 'the flat still rises less than the finished bend');
+  // the finished still matches the static diagram
+  assert.equal(firstPoints(done, 'bd-pipe'), firstPoints(S.bentSvg(r, { fmt: fmtIn, width: 480 }), 'bd-pipe'));
+});
+
+test('animated bend: the picture reflects the inputs (the measured rise is drawn and labelled)', () => {
+  const mm = (m) => `${Math.round(m * 1000)}mm`; // avoids the escaped inch quote, to keep the assert simple
+  const svgFor = (riseIn) => S.animatedBendSvg(B.compute('offset', { riseM: inToM(riseIn), angleDeg: 30 }, { fmt: mm }), { fmt: mm, width: 480 });
+  const shallow = svgFor(3), deep = svgFor(9);
+  assert.notEqual(shallow, deep, 'different rises draw differently');
+  assert.ok(shallow.includes('76mm'), 'the 3" (76 mm) rise is labelled on the picture');
+  assert.ok(deep.includes('229mm'), 'the 9" (229 mm) rise is labelled on the picture');
+  // a steeper angle makes a visibly different shape too (the bends move closer together)
+  const steep = S.animatedBendSvg(B.compute('offset', { riseM: inToM(6), angleDeg: 45 }, { fmt: mm }), { fmt: mm, width: 480 });
+  const shallowA = S.animatedBendSvg(B.compute('offset', { riseM: inToM(6), angleDeg: 22.5 }, { fmt: mm }), { fmt: mm, width: 480 });
+  assert.notEqual(steep, shallowA, 'the angle changes the drawing');
+});
+
+test('animated bend: one animated pipe (outline + core) per drawn pipe', () => {
+  const r = B.compute('parallel', animCases.parallel, { fmt: fmtIn });
+  const svg = S.animatedBendSvg(r, { fmt: fmtIn, width: 480 });
+  const pointAnims = (svg.match(/attributeName="points"/g) || []).length;
+  assert.equal(pointAnims, r.pipes.length * 2, 'outline + core animate for each of the 3 pipes');
+});

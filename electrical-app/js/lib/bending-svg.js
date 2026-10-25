@@ -67,16 +67,19 @@ function capSegments(segments, startHeading, leadIn = false) {
   return { segs, breaks };
 }
 
-/** The pipes to draw for a result, in metres: [{ path, od, main }]. */
-function pipesFor(result, odM) {
+/**
+ * The pipe segment lists to draw for a result, before tracing: [{ segs, start, main, breaks }].
+ * `segs` is a tracePath segment list; scaling its bendDeg lets the animated renderer form the bend.
+ */
+function pipeSegsFor(result) {
   const out = [];
   const startH = result.start?.headingDeg ?? 0;
   if (result.kind === 'concentric') {
     const leg = result.topM ? Math.max(0.02, result.topM - result.innerRadiusM) : result.innerRadiusM * 0.5;
     for (const p of result.pipes) {
       const lead = Math.min(result.startM, Math.max(result.innerRadiusM * 0.4, 0.05));
-      const path = tracePath([{ straightM: lead }, { bendDeg: 90, radiusM: p.radiusM }, { straightM: leg }], { x: 0, y: -(p.index - 1) * result.centersM });
-      out.push({ path, main: p.index === 1, breaks: lead < result.startM ? ['first'] : [] });
+      const segs = [{ straightM: lead }, { bendDeg: 90, radiusM: p.radiusM }, { straightM: leg }];
+      out.push({ segs, start: { x: 0, y: -(p.index - 1) * result.centersM }, main: p.index === 1, breaks: lead < result.startM ? ['first'] : [] });
     }
     return out;
   }
@@ -86,22 +89,56 @@ function pipesFor(result, odM) {
     for (const p of result.pipes) {
       const [a, b] = p.marks;
       const segs = [{ straightM: a.atM - cut }, { bendDeg: result.angleDeg }, { straightM: b.atM - a.atM }, { bendDeg: -result.angleDeg }, { straightM: cap.segs[cap.segs.length - 1].straightM }];
-      out.push({ path: tracePath(segs, { x: 0, y: -(p.index - 1) * result.centersM }), main: p.index === 1, breaks: cap.breaks });
+      out.push({ segs, start: { x: 0, y: -(p.index - 1) * result.centersM }, main: p.index === 1, breaks: cap.breaks });
     }
     return out;
   }
   const cap = capSegments(result.segments, startH, result.reference === 'mark1');
-  out.push({ path: tracePath(cap.segs, result.start), main: true, breaks: cap.breaks });
+  out.push({ segs: cap.segs, start: result.start, main: true, breaks: cap.breaks });
+  return out;
+}
+
+/** Trace a segment list with every bend scaled by `t` (0 = flat pipe, 1 = the finished bend). */
+function traceScaled(segs, start, t) {
+  return tracePath(segs.map((s) => (s.bendDeg != null ? { ...s, bendDeg: s.bendDeg * t } : s)), start);
+}
+
+/** The pipes to draw for a result, in metres: [{ path, main, breaks }]. */
+function pipesFor(result) {
+  return pipeSegsFor(result).map((d) => ({ path: tracePath(d.segs, d.start), main: d.main, breaks: d.breaks }));
+}
+
+/** Ease-in-out so the bend forms gently at both ends of the play. */
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+/** Even out a polyline to `count` points by arc length (so each animation frame has the same count). */
+function resample(points, count) {
+  if (count < 2 || points.length < 2) { const p = points[0] || [0, 0]; return Array.from({ length: Math.max(1, count) }, () => p.slice()); }
+  const seg = []; let total = 0;
+  for (let i = 1; i < points.length; i++) { const d = Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]); seg.push(d); total += d; }
+  if (total === 0) return Array.from({ length: count }, () => points[0].slice());
+  const out = [points[0].slice()];
+  const stepLen = total / (count - 1);
+  let s = 0, pos = 0;
+  for (let k = 1; k < count - 1; k++) {
+    let remain = stepLen;
+    while (s < seg.length && remain > seg[s] - pos) { remain -= seg[s] - pos; s++; pos = 0; }
+    if (s >= seg.length) { out.push(points[points.length - 1].slice()); continue; }
+    pos += remain;
+    const t = seg[s] === 0 ? 0 : pos / seg[s];
+    const a = points[s], b = points[s + 1];
+    out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+  }
+  out.push(points[points.length - 1].slice());
   return out;
 }
 
 /**
- * The bent pipe, side view, to scale.
- * opts: { fmt(m) -> string, width (px), odM, maxHeight }
+ * Work out the drawing transform for a result.
+ * `bboxPts` (optional) are extra world points the view must contain (the animation frames), so the
+ * frame stays put while the pipe forms. Returns the transform and the key geometry for the parts.
  */
-export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight = 340 } = {}) {
-  const pipes = pipesFor(result, odM);
-  const od = odM || 0;
+function layoutFor(result, pipes, od, { width, maxHeight }, bboxPts) {
   const main = pipes.find((p) => p.main).path;
   const shapes = []; // world-space extras for the bounding box: [x, y]
   const all = pipes.flatMap((p) => p.path.points);
@@ -113,9 +150,9 @@ export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight =
     const apex = main.bends[1];
     shapes.push([apex.x - obstacle.heightM / 2, -od / 2], [apex.x + obstacle.heightM / 2, -od / 2 + obstacle.heightM]);
   }
-  // bounding box with room for dimension lines
-  let minX = Math.min(...all.map((p) => p[0])) - od / 2, maxX = Math.max(...all.map((p) => p[0])) + od / 2;
-  let minY = lowest - od / 2, maxY = Math.max(...all.map((p) => p[1])) + od / 2;
+  const box = bboxPts && bboxPts.length ? bboxPts : all;
+  let minX = Math.min(...box.map((p) => p[0])) - od / 2, maxX = Math.max(...box.map((p) => p[0])) + od / 2;
+  let minY = Math.min(...box.map((p) => p[1])) - od / 2, maxY = Math.max(...box.map((p) => p[1])) + od / 2;
   for (const [x, y] of shapes) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
   const wM = Math.max(maxX - minX, 0.01), hM = Math.max(maxY - minY, 0.002);
   const left = PAD + 30, right = PAD + 56, top = PAD, bottom = PAD + 20;
@@ -129,9 +166,13 @@ export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight =
   const Y = (y) => offY + (maxY - y) * s;
   const P = ([x, y]) => [X(x), Y(y)];
   const pipeW = Math.max(4, od * s);
-  const parts = [];
+  return { main, dims, obstacle, step, lowest, minX, maxX, minY, maxY, s, X, Y, P, pipeW, height };
+}
 
-  // the surface the pipe lies on, and the obstruction
+/** The surface line and the obstruction (drawn behind the pipe). */
+function backgroundParts(result, L, od) {
+  const parts = [];
+  const { X, Y, s, pipeW, minX, maxX, lowest, main, obstacle, step } = L;
   if (['offset', 'saddle3', 'saddle4', 'boxOffset', 'rolling', 'parallel'].includes(result.kind)) {
     parts.push(line(X(minX), Y(lowest - od / 2), X(maxX), Y(lowest - od / 2), 'bd-surface'));
   }
@@ -147,29 +188,45 @@ export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight =
     const x1 = X(b.x) + pipeW, x2 = X(maxX);
     if (x2 - x1 > 8) parts.push(`<rect class="bd-obst" x="${n1(x1)}" y="${n1(Y(b.y - od / 2))}" width="${n1(x2 - x1)}" height="${n1(Math.max(2, Y(-od / 2) - Y(b.y - od / 2)))}"/>`);
   }
+  return parts;
+}
 
-  // pipes: an outline stroke and a lighter core, so it reads as tube
+/** The pipe as a tube (outline + lighter core), static. */
+function pipePolys(pipes, L) {
+  const parts = [];
   for (const p of pipes) {
-    const pts = p.path.points.map(P);
-    parts.push(poly(pts, 'bd-pipe', pipeW + 2), poly(pts, 'bd-pipe-core', Math.max(1.5, pipeW - 3)));
+    const pts = p.path.points.map(L.P);
+    parts.push(poly(pts, 'bd-pipe', L.pipeW + 2), poly(pts, 'bd-pipe-core', Math.max(1.5, L.pipeW - 3)));
+  }
+  return parts;
+}
+
+/** Break marks on a shortened lead-in or tail (the stretch not drawn to scale). */
+function breakParts(pipes, L) {
+  const parts = [];
+  for (const p of pipes) {
+    const pts = p.path.points.map(L.P);
     if (p.breaks.includes('first') && pts.length > 1) {
       const [a, b] = [pts[0], pts[1]];
-      parts.push(breakMark((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (-Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI, pipeW));
+      parts.push(breakMark((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (-Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI, L.pipeW));
     }
     if (p.breaks.includes('last') && pts.length > 1) {
       const [a, b] = [pts[pts.length - 2], pts[pts.length - 1]];
-      parts.push(breakMark((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (-Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI, pipeW));
+      parts.push(breakMark((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (-Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI, L.pipeW));
     }
   }
+  return parts;
+}
 
-  // the reference end
-  const [ex, ey] = P(main.points[0]);
+/** The reference-end marker, the bend-angle labels and the dimensions (drawn over the pipe). */
+function foregroundParts(result, L, od, fmt, pipes) {
+  const parts = [];
+  const { X, Y, s, pipeW, minX, maxX, lowest, main, dims } = L;
+  const [ex, ey] = L.P(main.points[0]);
   if (result.reference !== 'mark1') {
     parts.push(`<circle class="bd-end" cx="${n1(ex)}" cy="${n1(ey)}" r="${n1(Math.min(7, Math.max(3, pipeW / 2)))}"/>`);
     parts.push(text(ex, ey - pipeW / 2 - 8, 'END', 'bd-endtext'));
   }
-
-  // bend labels: mark number and angle, outside each bend
   const bendMarks = result.marks.filter((m) => m.angleDeg && (!m.pipe || m.pipe === 1));
   if (result.kind === 'concentric') {
     parts.push(text(PAD, PAD - 10, `90° in ${result.shots} shot${result.shots === 1 ? '' : 's'} each`, 'bd-angle', 'start'));
@@ -179,18 +236,15 @@ export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight =
   } else {
     main.bends.forEach((b, i) => {
       const m = bendMarks[i];
-      const h = (b.headingDeg * Math.PI) / 180;
+      const hh = (b.headingDeg * Math.PI) / 180;
       const sign = Math.sign(b.bendDeg) || 1;
-      // outside of the bend, in screen space (y flips)
-      const ox = Math.sin(h) * sign, oy = Math.cos(h) * sign;
+      const ox = Math.sin(hh) * sign, oy = Math.cos(hh) * sign;
       const d = pipeW / 2 + 16 + (result.kind === 'parallel' && b.bendDeg > 0 ? (result.count - 1) * result.centersM * s : 0);
       const x = X(b.x) + ox * d, y = Y(b.y) + oy * d + 4;
       const label = [m ? shortTag(m) : '', fmtDeg(Math.abs(b.bendDeg))].filter(Boolean).join(' · ');
       parts.push(text(x, y, label, 'bd-angle'));
     });
   }
-
-  // dimensions
   const gap = pipeW / 2 + 14;
   for (const d of dims) {
     if (d.type === 'rise' && main.bends.length >= 2) {
@@ -221,8 +275,113 @@ export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight =
       if (b) parts.push(text(X(b.x) + 10, Y(b.y) + 4, `R ${fmt(result.pipes[pipes.indexOf(p)].radiusM)}`, 'bd-dimtext', 'start'));
     }
   }
-  const h = Math.round(height);
-  return `<svg class="bend-svg" viewBox="0 0 ${width} ${h}" width="${width}" height="${h}" role="img" aria-label="Bent pipe, side view" xmlns="http://www.w3.org/2000/svg">${parts.join('')}</svg>`;
+  return parts;
+}
+
+/** A curved arrow at the first bend showing which way the leg swings — "face the bender this way". */
+function directionArrow(L) {
+  const b0 = L.main.bends[0];
+  if (!b0 || !b0.bendDeg) return '';
+  const cx = L.X(b0.x), cy = L.Y(b0.y);
+  const r = L.pipeW / 2 + 12;
+  const a0 = -((b0.headingDeg - b0.bendDeg / 2) * Math.PI) / 180; // screen angle (y flips)
+  const a1 = -((b0.headingDeg + b0.bendDeg / 2) * Math.PI) / 180;
+  const steps = 10;
+  const pts = [];
+  for (let k = 0; k <= steps; k++) { const a = a0 + ((a1 - a0) * k) / steps; pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+  const [hx, hy] = pts[steps];
+  const [px, py] = pts[steps - 1];
+  const ang = Math.atan2(hy - py, hx - px);
+  const ah = 5.5;
+  const head = `<path class="bd-dir" d="M${n1(hx)},${n1(hy)} L${n1(hx - ah * Math.cos(ang - 0.5))},${n1(hy - ah * Math.sin(ang - 0.5))} M${n1(hx)},${n1(hy)} L${n1(hx - ah * Math.cos(ang + 0.5))},${n1(hy - ah * Math.sin(ang + 0.5))}"/>`;
+  return poly(pts, 'bd-dir') + head;
+}
+
+const svgWrap = (width, height, label, inner) =>
+  `<svg class="bend-svg" viewBox="0 0 ${width} ${Math.round(height)}" width="${width}" height="${Math.round(height)}" role="img" aria-label="${esc(label)}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+
+/**
+ * The bent pipe, side view, to scale.
+ * opts: { fmt(m) -> string, width (px), odM, maxHeight }
+ */
+export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight = 340 } = {}) {
+  const pipes = pipesFor(result);
+  const od = odM || 0;
+  const L = layoutFor(result, pipes, od, { width, maxHeight }, null);
+  const parts = [
+    ...backgroundParts(result, L, od),
+    ...pipePolys(pipes, L),
+    ...breakParts(pipes, L),
+    ...foregroundParts(result, L, od, fmt, pipes),
+  ];
+  return svgWrap(width, L.height, 'Bent pipe, side view', parts.join(''));
+}
+
+/**
+ * The selected bend, drawn to scale, forming from flat pipe into the finished shape. The pipe
+ * polylines animate their points through the computed frames (SMIL, so no script runs in the SVG
+ * and it works offline); the dimensions and labels fade in as the shape settles. A persistent
+ * arrow shows which way the first bend swings.
+ *
+ * opts: { fmt, width, odM, maxHeight, reduced, still, frames, durMs }
+ *   reduced: draw the finished frame only, no motion (for prefers-reduced-motion).
+ *   still:   0..1, draw one static frame at that progress (used to capture stills), no motion.
+ * The caller plays it by calling beginElement() on every `.bd-anim` element in the SVG, which also
+ * lets a Play/Replay button restart it. With no script run, the SVG rests on the finished shape.
+ */
+export function animatedBendSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight = 340, reduced = false, still = null, frames = 26, durMs = 1500 } = {}) {
+  const od = odM || 0;
+  const defs = pipeSegsFor(result);
+  const animate = !reduced && still == null;
+  const finalPipes = defs.map((d) => ({ path: traceScaled(d.segs, d.start, 1), main: d.main, breaks: d.breaks }));
+  if (!animate) {
+    // a single frame: the finished shape (reduced) or a still at `still`
+    const t = reduced ? 1 : Math.max(0, Math.min(1, still));
+    const pipes = defs.map((d) => ({ path: traceScaled(d.segs, d.start, t), main: d.main, breaks: d.breaks }));
+    const L = layoutFor(result, finalPipes, od, { width, maxHeight }, null);
+    const parts = [
+      ...backgroundParts(result, L, od),
+      ...pipePolys(pipes, L),
+      ...breakParts(finalPipes, L),
+      directionArrow(L),
+      ...foregroundParts(result, L, od, fmt, finalPipes),
+    ];
+    return svgWrap(width, L.height, 'Bent pipe, side view', parts.join(''));
+  }
+
+  const N = Math.max(2, frames);
+  const framePipes = Array.from({ length: N }, (_, i) => {
+    const t = easeInOut(i / (N - 1));
+    return defs.map((d) => traceScaled(d.segs, d.start, t));
+  });
+  // the view must contain every frame, so the pipe forms in place without the frame jumping
+  const bboxPts = framePipes.flat().flatMap((p) => p.points).concat(finalPipes.flatMap((p) => p.path.points));
+  const L = layoutFor(result, finalPipes, od, { width, maxHeight }, bboxPts);
+  const dur = `${(durMs / 1000).toFixed(2)}s`;
+
+  const parts = [...backgroundParts(result, L, od)];
+  defs.forEach((d, pi) => {
+    const finalPts = finalPipes[pi].path.points;
+    const count = finalPts.length;
+    const hasArc = d.segs.some((s) => s.bendDeg != null && s.radiusM);
+    // one value per frame; the last is the true finished shape, so the frozen end matches the rest
+    const frameVals = framePipes.map((fp, i) => {
+      const raw = i === N - 1 ? finalPts : fp[pi].points;
+      const pts = hasArc ? resample(raw, count) : raw;
+      return pts.map((p) => L.P(p)).map(([x, y]) => `${n1(x)},${n1(y)}`).join(' ');
+    });
+    const base = frameVals[frameVals.length - 1];
+    const values = frameVals.join(';');
+    for (const [cls, w] of [['bd-pipe', L.pipeW + 2], ['bd-pipe-core', Math.max(1.5, L.pipeW - 3)]]) {
+      parts.push(`<polyline class="${cls}" stroke-width="${n1(w)}" points="${base}"><animate class="bd-anim" attributeName="points" dur="${dur}" begin="indefinite" fill="freeze" calcMode="linear" values="${values}"/></polyline>`);
+    }
+  });
+  parts.push(...breakParts(finalPipes, L));
+  parts.push(directionArrow(L));
+  // dimensions and labels appear as the shape settles (base opacity 1, so they show without script)
+  const fg = foregroundParts(result, L, od, fmt, finalPipes).join('');
+  parts.push(`<g class="bd-reveal" opacity="1"><animate class="bd-anim" attributeName="opacity" dur="${dur}" begin="indefinite" fill="freeze" calcMode="linear" keyTimes="0;0.55;1" values="0;0;1"/>${fg}</g>`);
+  return svgWrap(width, L.height, 'Bend forming, side view', parts.join(''));
 }
 
 // ---------------------------------------------------------------------------
