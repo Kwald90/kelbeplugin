@@ -1315,7 +1315,6 @@ function editorView(root, ctx, id) {
     const co = store.settings().company || {};
     const contact = [co.email, co.phone].filter(Boolean).join('  ·  ');
     return h('div', { class: 'pp-foot' },
-      co.logo ? h('img', { class: 'pp-logo', src: co.logo, alt: '' }) : null,
       h('div', { class: 'pp-foot-info' },
         h('div', { class: 'pp-foot-name' }, co.name || ''),
         contact ? h('div', null, contact) : null,
@@ -1434,7 +1433,7 @@ function editorView(root, ctx, id) {
 
     // Fit the whole schedule on one page: denser type/spacing as the panel grows (up to 84 spaces).
     const spaces = slotCount(panel);
-    const fitClass = spaces <= 32 ? 'pp-fit-1' : spaces <= 54 ? 'pp-fit-2' : 'pp-fit-3';
+    const fitClass = spaces <= 32 ? 'pp-fit-1' : spaces <= 42 ? 'pp-fit-2' : 'pp-fit-3';
     printEl.className = 'print-only panel-print ' + fitClass;
 
     printEl.append(
@@ -1445,8 +1444,7 @@ function editorView(root, ctx, id) {
       table,
       pp.showLegend ? h('div', { class: 'print-legend' },
         pp.phaseBandsOn ? Object.entries(colours.phases).map(([p, col]) => legendChip(`Ø${p}`, col)) : null,
-        legendChip('N', colours.neutral), legendChip('Bond', colours.bond),
-        h('span', { class: 'print-note' }, 'Neutral (white/grey) and bond (green) are code-mandated; phase colours are convention unless colour-coding is required (CEC Rule 4-036) — confirm with the AHJ.')) : null,
+        legendChip('N', colours.neutral), legendChip('Bond', colours.bond)) : null,
       companyFooter(),
     );
   }

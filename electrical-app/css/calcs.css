@@ -137,15 +137,15 @@
 .pp-tb-value { font-weight: 700; font-size: 11pt; }
 .pp-titleblock .pp-tb-sub { font-weight: 600; font-size: 8.5pt; }
 .pp-logo-top { text-align: center; margin-bottom: 8pt; }
-.pp-head-logo { max-height: 130px; max-width: 360px; display: block; margin: 0 auto; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.pp-head-logo { max-height: 115px; max-width: 340px; display: block; margin: 0 auto; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
 /* Fit the whole schedule on one page: denser as the panel grows (set in drawPrint by slot count). */
-.panel-print.pp-fit-2 .panel-print-table.pp-dense td, .panel-print.pp-fit-2 .panel-print-table.pp-dense th { padding: 1.7pt 6pt; font-size: 8pt; line-height: 1.14; }
-.panel-print.pp-fit-2 .pp-desc { font-size: 8pt; }
-.panel-print.pp-fit-2 .pp-head-logo { max-height: 92px; }
-.panel-print.pp-fit-3 .panel-print-table.pp-dense td, .panel-print.pp-fit-3 .panel-print-table.pp-dense th { padding: 0.7pt 5pt; font-size: 6.8pt; line-height: 1.05; }
-.panel-print.pp-fit-3 .pp-desc { font-size: 6.8pt; }
-.panel-print.pp-fit-3 .pp-head-logo { max-height: 62px; }
+.panel-print.pp-fit-2 .panel-print-table.pp-dense td, .panel-print.pp-fit-2 .panel-print-table.pp-dense th { padding: 1.6pt 6pt; font-size: 9pt; line-height: 1.16; }
+.panel-print.pp-fit-2 .pp-desc { font-size: 9pt; }
+.panel-print.pp-fit-2 .pp-head-logo { max-height: 72px; }
+.panel-print.pp-fit-3 .panel-print-table.pp-dense td, .panel-print.pp-fit-3 .panel-print-table.pp-dense th { padding: 0.8pt 5pt; font-size: 8pt; line-height: 1.05; }
+.panel-print.pp-fit-3 .pp-desc { font-size: 8pt; }
+.panel-print.pp-fit-3 .pp-head-logo { max-height: 44px; }
 .panel-print.pp-fit-3 .pp-logo-top { margin-bottom: 4pt; }
 .panel-print.pp-fit-3 .print-note { display: none; }
 .panel-print.pp-fit-3 .pp-foot { margin-top: 6pt; padding-top: 4pt; font-size: 7pt; }
