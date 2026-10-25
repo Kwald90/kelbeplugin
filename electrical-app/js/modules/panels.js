@@ -24,7 +24,10 @@ export const PANEL_STATUS_LABEL = (k) => (PANEL_STATUSES.find((s) => s.key === k
 
 // Print options stored per company in settings.panelPrint. Band colours are photocopy-safe
 // (a faint grey band alternating with white), amps shown, status hidden, smoke red.
-export const PANEL_PRINT_DEFAULTS = { bandColors: ['#eef2f7', '#ffffff'], showAmps: true, showStatus: false, smokeColor: '#e2231a' };
+// phaseBands: the CCT-column PHASE band fill in the printed schedule — red/grey/blue to separate
+// the phases the way the engineered reference sheet does (A grey, B red, C blue for 3φ), independent
+// of the wire-colour legend and overridable per company.
+export const PANEL_PRINT_DEFAULTS = { bandColors: ['#eef2f7', '#ffffff'], showAmps: true, showStatus: false, smokeColor: '#e2231a', phaseBands: { A: '#c9c9c9', B: '#d32f2f', C: '#1565c0' } };
 
 /** Merge a company's settings.panelPrint onto the defaults, validating each field. Pure. */
 export function panelPrintSettings(settings) {
@@ -33,12 +36,33 @@ export function panelPrintSettings(settings) {
   const bc = Array.isArray(pp.bandColors) && pp.bandColors.length >= 2
     ? [hex(pp.bandColors[0], PANEL_PRINT_DEFAULTS.bandColors[0]), hex(pp.bandColors[1], PANEL_PRINT_DEFAULTS.bandColors[1])]
     : PANEL_PRINT_DEFAULTS.bandColors.slice();
+  const dpb = PANEL_PRINT_DEFAULTS.phaseBands;
+  const ipb = (pp.phaseBands && typeof pp.phaseBands === 'object') ? pp.phaseBands : {};
+  const phaseBands = { A: hex(ipb.A, dpb.A), B: hex(ipb.B, dpb.B), C: hex(ipb.C, dpb.C) };
   return {
     bandColors: bc,
     showAmps: pp.showAmps !== false,
     showStatus: pp.showStatus === true,
     smokeColor: hex(pp.smokeColor, PANEL_PRINT_DEFAULTS.smokeColor),
+    phaseBands,
   };
+}
+
+// Terse type tags for the print AMP column — the engineered sheet's compact style ("15", "15 AFI",
+// "30A 2P"), not the verbose construction labels. A tandem's half-space is already shown by the A/B
+// in the CCT.NO cell and a quad by the 2P + grouping, so neither adds a tag here. Pure.
+export const PRINT_AMP_TYPE_TAGS = { afci: 'AFI', gfci: 'GFI', dual: 'DF' };
+export const printAmpTag = (c) => (c && PRINT_AMP_TYPE_TAGS[c.breakerType] ? ' ' + PRINT_AMP_TYPE_TAGS[c.breakerType] : '');
+/**
+ * The AMP cell text for the printed schedule: a single-pole shows just the amps plus a type tag when
+ * not standard ("15", "15 AFI"); a multi-pole keeps its pole count ("30A 2P", "40A 2P"). Compact and
+ * single-line. `poles` overrides the circuit's own count (a quad inner crosses 2). Pure.
+ */
+export function printAmpText(c, poles) {
+  if (!c || c.amps == null || c.amps === '') return '';
+  const p = Number(poles) || Number(c.poles) || 1;
+  const tag = printAmpTag(c);
+  return p > 1 ? `${c.amps}A ${p}P${tag}` : `${c.amps}${tag}`;
 }
 
 /** The print table's classes: a dense, engineered-schedule directory (vs. the airy web look). */
@@ -989,8 +1013,6 @@ function editorView(root, ctx, id) {
     const colours = coloursNow();
     const pp = panelPrintSettings(store.settings());
     const c = completion(panel);
-    // The amp cell's type note; 'quad' is conveyed by the 2P + "(quad)" marks, so it isn't repeated here.
-    const typeTag = (x) => (x.breakerType && x.breakerType !== 'standard' && x.breakerType !== 'quad' ? ' ' + PT.breakerTypeLabel(x.breakerType) : '');
     // No per-row swatches: the phase is shown by the CCT colour band; neutral/bond stay in the legend.
     const descBody = (x) => [`${x.description || '—'}${x.subFeed ? ' (sub-feed)' : ''}`,
       pp.showStatus && x.status ? h('span', { class: 'pp-status' }, ` · ${PANEL_STATUS_LABEL(x.status)}`) : null];
@@ -1020,14 +1042,14 @@ function editorView(root, ctx, id) {
         const ampProps = { class: ['pp-amp', 'num', span ? 'pp-span' : null] };
         if (span) { descProps.rowspan = poles; ampProps.rowspan = poles; }
         cells = [h('td', descProps, descBody(x)), cctCell(slot, String(slot)),
-          pp.showAmps ? h('td', ampProps, `${x.amps}A ${x.poles}P${typeTag(x)}`) : null];
+          pp.showAmps ? h('td', ampProps, printAmpText(x, poles)) : null];
       } else {
         // Tandem / quad space: an A line over a B line, CCT.NO carrying the A/B suffix. A quad's inner
         // 2-pole is written once on its home half; its reach into the next space shows as a continuation.
         const halfDesc = (x, letter) => {
           if (!x) return h('div', { class: 'print-half muted' }, `${slot}${letter}: —`);
           if (isQuadInner(x) && Number(x.slot) !== slot) {
-            return h('div', { class: 'print-half muted' }, h('strong', null, `${slot}${letter}: `), `↳ quad 2-pole from ${x.slot}`);
+            return h('div', { class: 'print-half muted' }, h('strong', null, `${slot}${letter}: `), `quad 2-pole (from ${x.slot})`);
           }
           const hl = highlightFor(x, pp);
           return h('div', { class: ['print-half', hl ? 'pp-hl' : null], style: hl ? { borderLeftColor: hl, color: hl } : null },
@@ -1035,7 +1057,7 @@ function editorView(root, ctx, id) {
         };
         const halfAmp = (x) => {
           if (!x || (isQuadInner(x) && Number(x.slot) !== slot)) return h('div', { class: 'print-half' }, '');
-          return h('div', { class: 'print-half' }, `${x.amps}A ${isQuadInner(x) ? '2P' : '1P'}${typeTag(x)}`);
+          return h('div', { class: 'print-half' }, printAmpText(x, isQuadInner(x) ? 2 : 1));
         };
         cells = [h('td', { class: 'pp-desc' }, halfDesc(o.A, 'A'), halfDesc(o.B, 'B')),
           cctCell(slot, [h('div', null, `${slot}A`), h('div', null, `${slot}B`)]),
@@ -1059,11 +1081,14 @@ function editorView(root, ctx, id) {
     const headRow = h('tr', { class: 'pp-colhead' }, headCols.map((t, i) => h('th', { class: i === leftInner ? 'pp-centre' : null }, t)));
 
     const table = h('table', { class: PANEL_PRINT_TABLE_CLASS }, h('thead', null, headRow), h('tbody', null, rows));
-    // The phase bands' colours come from the company's palette, injected as CSS variables the band
-    // classes read — so the cells stay class-only (CSP-safe; no per-cell inline colour).
-    for (const [p, col] of Object.entries(colours.phases)) {
-      table.style.setProperty('--pp-ph-' + p, col.hex);
-      table.style.setProperty('--pp-ph-' + p + '-fg', bandTextColor(col.hex));
+    // The CCT-column phase bands read as the engineered reference does: red / grey / blue separating
+    // the phases (A grey, B red, C blue), NOT the wire-colour legs. Injected as CSS variables the band
+    // classes read — so the cells stay class-only (CSP-safe; no per-cell inline colour). Driven by the
+    // system's own phases, so a 1φ panel only bands A/B and the palette stays company-overridable.
+    for (const p of Object.keys(colours.phases)) {
+      const bandHex = pp.phaseBands[p] || colours.phases[p].hex;
+      table.style.setProperty('--pp-ph-' + p, bandHex);
+      table.style.setProperty('--pp-ph-' + p + '-fg', bandTextColor(bandHex));
     }
 
     // Boxed titleblock header (PANEL NAME / PANEL LOCATION / service), engineered-drawing style.

@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as PT from '../js/lib/panel-templates.js';
 import * as S from '../js/lib/cec/systems.js';
-import { occupancy, slotCount, placement, halfOf, isQuadInner, quadCircuits, bandIndexBySlot, completion, makeFullSpace, highlightFor, panelPrintSettings, PANEL_PRINT_DEFAULTS, PANEL_STATUSES, phaseBandClass, bandTextColor, panelTitleblock, PANEL_PRINT_TABLE_CLASS } from '../js/modules/panels.js';
+import { occupancy, slotCount, placement, halfOf, isQuadInner, quadCircuits, bandIndexBySlot, completion, makeFullSpace, highlightFor, panelPrintSettings, PANEL_PRINT_DEFAULTS, PANEL_STATUSES, phaseBandClass, bandTextColor, panelTitleblock, PANEL_PRINT_TABLE_CLASS, printAmpText, printAmpTag } from '../js/modules/panels.js';
 import { panelUrl, qrSvg, qrMatrix } from '../js/lib/qr.js';
 import { BRAND } from '../js/brand.js';
 
@@ -627,6 +627,41 @@ test('panelPrintSettings merges onto defaults and validates (breaker-size toggle
   assert.equal(pp.bandColors[0], '#aabbcc');
   assert.equal(pp.bandColors[1], PANEL_PRINT_DEFAULTS.bandColors[1]);
   assert.equal(pp.smokeColor, PANEL_PRINT_DEFAULTS.smokeColor);
+});
+
+test('panelPrintSettings: print phase bands default to red/grey/blue and are company-overridable', () => {
+  // The default print band palette separates the phases A grey / B red / C blue, like the reference.
+  const d = panelPrintSettings({});
+  assert.deepEqual(d.phaseBands, { A: '#c9c9c9', B: '#d32f2f', C: '#1565c0' });
+  // B is red (dark enough for white text), A is a light grey (dark text) — both legible.
+  assert.equal(bandTextColor(d.phaseBands.B), '#ffffff');
+  assert.equal(bandTextColor(d.phaseBands.A), '#111111');
+  // A company may override any leg; a bad value falls back to the default for that leg.
+  const over = panelPrintSettings({ panelPrint: { phaseBands: { A: '#eeeeee', B: 'nope' } } });
+  assert.equal(over.phaseBands.A, '#eeeeee');
+  assert.equal(over.phaseBands.B, '#d32f2f');
+  assert.equal(over.phaseBands.C, '#1565c0');
+});
+
+test('printAmpText / printAmpTag: terse engineered-sheet amp tags (no verbose "Tandem (half-space)")', () => {
+  // A standard single-pole is just the amps; a multi-pole keeps its pole count.
+  assert.equal(printAmpText({ amps: 15, poles: 1, breakerType: 'standard' }), '15');
+  assert.equal(printAmpText({ amps: 20, poles: 1 }), '20');
+  assert.equal(printAmpText({ amps: 40, poles: 2 }), '40A 2P');
+  assert.equal(printAmpText({ amps: 30, poles: 2, breakerType: 'standard' }), '30A 2P');
+  // A tandem (half-space, 1-pole) shows only its amp — the half-space is shown by the A/B CCT cell.
+  assert.equal(printAmpText({ amps: 15, poles: 1, breakerType: 'tandem' }), '15');
+  // Type tags are terse: AFCI -> AFI, GFCI -> GFI, dual-function -> DF.
+  assert.equal(printAmpText({ amps: 15, poles: 1, breakerType: 'afci' }), '15 AFI');
+  assert.equal(printAmpText({ amps: 20, poles: 1, breakerType: 'gfci' }), '20 GFI');
+  assert.equal(printAmpText({ amps: 20, poles: 2, breakerType: 'dual' }), '20A 2P DF');
+  assert.equal(printAmpTag({ breakerType: 'standard' }), '');
+  assert.equal(printAmpTag({ breakerType: 'tandem' }), '');
+  // A quad inner 2-pole: poles override to 2, shown compactly as "30A 2P".
+  assert.equal(printAmpText({ amps: 30, poles: 2, breakerType: 'standard', quad: true }, 2), '30A 2P');
+  // No amps -> empty cell, never a bare unit.
+  assert.equal(printAmpText({ poles: 1 }), '');
+  assert.equal(printAmpText(null), '');
 });
 
 test('PANEL_STATUSES is the fill-as-you-go vocabulary', () => {
