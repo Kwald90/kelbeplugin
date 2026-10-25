@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as PT from '../js/lib/panel-templates.js';
 import * as S from '../js/lib/cec/systems.js';
-import { occupancy, slotCount, placement, halfOf, isQuadInner, quadCircuits, bandIndexBySlot, completion, makeFullSpace, highlightFor, panelPrintSettings, PANEL_PRINT_DEFAULTS, PANEL_STATUSES } from '../js/modules/panels.js';
+import { occupancy, slotCount, placement, halfOf, isQuadInner, quadCircuits, bandIndexBySlot, completion, makeFullSpace, highlightFor, panelPrintSettings, PANEL_PRINT_DEFAULTS, PANEL_STATUSES, phaseBandClass, bandTextColor, panelTitleblock, PANEL_PRINT_TABLE_CLASS } from '../js/modules/panels.js';
 import { panelUrl, qrSvg, qrMatrix } from '../js/lib/qr.js';
 import { BRAND } from '../js/brand.js';
 
@@ -679,6 +679,59 @@ test('panelCircuitNames: uses the company list when set, trimmed and de-duplicat
   assert.deepEqual(names, ['Shop plugs', 'Welder']); // trimmed, case-insensitive dedupe, blanks dropped
   // a single-entry company list is honoured (not merged with defaults)
   assert.deepEqual(PT.panelCircuitNames({ panelCircuitNames: ['Only this'] }), ['Only this']);
+});
+
+// ---------------------------------------------------------------------------
+// Engineered-schedule print redesign: a boxed titleblock, phase colour BANDS on the CCT cells
+// (a class the CSS colours from the company palette — never a per-cell inline colour), and a dense
+// table. These are the pure building blocks drawPrint() renders; the DOM wiring is proven by the
+// headless-Chrome render in the task, and these assert the contract the DOM is built from.
+// ---------------------------------------------------------------------------
+
+test('panelTitleblock gives the boxed PANEL NAME / PANEL LOCATION cells and the service line', () => {
+  const tb = panelTitleblock({ name: 'LP-2', location: 'Mechanical room' }, '120/240 V · 200 A · 1φ');
+  assert.equal(tb.length, 3);
+  assert.equal(tb[0].label, 'PANEL NAME');
+  assert.equal(tb[0].value, 'LP-2');
+  assert.equal(tb[1].label, 'PANEL LOCATION');
+  assert.equal(tb[1].value, 'Mechanical room');
+  assert.equal(tb[2].service, '120/240 V · 200 A · 1φ');
+  assert.equal(tb[2].label, undefined); // the service row is not a label/value row
+  // a missing name or location falls back to a dash, so a titleblock cell is never blank
+  const empty = panelTitleblock({}, '');
+  assert.equal(empty[0].value, '—');
+  assert.equal(empty[1].value, '—');
+  assert.equal(empty[2].service, '');
+});
+
+test('phaseBandClass puts a circuit cell on its phase band by CLASS (not an inline colour)', () => {
+  assert.equal(phaseBandClass('A'), 'pp-ph-A');
+  assert.equal(phaseBandClass('B'), 'pp-ph-B');
+  assert.equal(phaseBandClass('C'), 'pp-ph-C');
+  // On 120/240 the panel phases alternate by row, so the band alternates straight down the column.
+  assert.equal(phaseBandClass(S.slotPhase(1, '120/240 1ph')), 'pp-ph-A'); // row 1
+  assert.equal(phaseBandClass(S.slotPhase(3, '120/240 1ph')), 'pp-ph-B'); // row 2
+  assert.equal(phaseBandClass(S.slotPhase(5, '120/240 1ph')), 'pp-ph-A'); // row 3
+  assert.notEqual(phaseBandClass(S.slotPhase(1, '120/240 1ph')), phaseBandClass(S.slotPhase(3, '120/240 1ph')));
+});
+
+test('bandTextColor keeps the CCT number legible on its band (white on dark/red, dark on light)', () => {
+  assert.equal(bandTextColor('#000000'), '#ffffff'); // black phase leg
+  assert.equal(bandTextColor('#e2231a'), '#ffffff'); // red phase leg
+  assert.equal(bandTextColor('#2563eb'), '#ffffff'); // blue phase leg
+  assert.equal(bandTextColor('#ffffff'), '#111111'); // white
+  assert.equal(bandTextColor('#eef2f7'), '#111111'); // light grey
+  assert.equal(bandTextColor('not-a-colour'), '#111111'); // invalid -> safe default
+  // agrees for the CEC 120/240 default legs (A black -> white text, B red -> white text)
+  const single = S.systemColours('CEC-2024', '120/240 1ph');
+  assert.equal(bandTextColor(single.phases.A.hex), '#ffffff');
+  assert.equal(bandTextColor(single.phases.B.hex), '#ffffff');
+});
+
+test('the printed directory table carries the dense engineered-schedule class', () => {
+  const classes = PANEL_PRINT_TABLE_CLASS.split(/\s+/);
+  assert.ok(classes.includes('panel-print-table'));
+  assert.ok(classes.includes('pp-dense'));
 });
 
 test('qrMatrix encodes text offline into a square module grid', () => {
