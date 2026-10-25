@@ -1422,16 +1422,21 @@ function editorView(root, ctx, id) {
     }
 
     // Boxed titleblock header (PANEL NAME / PANEL LOCATION / service), engineered-drawing style.
+    // PANEL LOCATION reads smaller than the name so the panel name carries the header.
     const tbRows = panelTitleblock(panel, fullServiceLine(job)).map((r) => r.label
-      ? h('tr', null, h('th', { class: 'pp-tb-label' }, r.label), h('td', { class: 'pp-tb-value' }, r.value))
+      ? h('tr', null, h('th', { class: 'pp-tb-label' }, r.label),
+          h('td', { class: r.label === 'PANEL LOCATION' ? 'pp-tb-value pp-tb-sub' : 'pp-tb-value' }, r.value))
       : h('tr', null, h('td', { class: 'pp-tb-service', colspan: 2 }, r.service)));
     const titleblock = h('table', { class: 'pp-titleblock' }, h('tbody', null, tbRows));
 
+    const co = store.settings().company || {};
     const legendChip = (label, col) => h('span', { class: 'print-legend-chip' }, h('span', { class: 'wire-swatch', style: { background: col.hex } }), `${label}: ${col.name}`);
 
     printEl.append(
       h('div', { class: 'pp-head' },
-        h('div', { class: 'pp-head-main' }, titleblock),
+        h('div', { class: 'pp-head-main' },
+          co.logo ? h('img', { class: 'pp-head-logo', src: co.logo, alt: co.name || '' }) : null,
+          titleblock),
         pp.showQr ? h('div', { class: 'pp-head-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` })) : null),
       table,
       pp.showLegend ? h('div', { class: 'print-legend' },

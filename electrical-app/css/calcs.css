@@ -135,6 +135,8 @@
 .pp-titleblock td, .pp-titleblock th { border: 1px solid #000; padding: 2.5pt 7pt; text-align: left; vertical-align: middle; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .pp-tb-label { background: #e8edf3; font-size: 7.5pt; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; width: 1%; }
 .pp-tb-value { font-weight: 700; font-size: 11pt; }
+.pp-titleblock .pp-tb-sub { font-weight: 600; font-size: 8.5pt; }
+.pp-head-logo { max-height: 60px; max-width: 240px; display: block; margin-bottom: 7pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .pp-tb-service { text-align: center; font-weight: 700; font-size: 8.5pt; letter-spacing: .02em; }
 .pp-prog { font-size: 8.5pt; margin-top: 4pt; }
 
