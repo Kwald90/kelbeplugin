@@ -86,8 +86,28 @@
 .slot-row select { width: auto; flex: none; padding-right: 4px; max-width: 100%; }
 .slot-va { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 70px; }
 .slot-va span { font-size: var(--fs-xs); color: var(--text-muted); }
-.slot-meta { font-size: var(--fs-xs); color: var(--text-muted); }
+.slot-meta { font-size: var(--fs-xs); color: var(--text-muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .slot-meta.warn { color: var(--danger); font-weight: 600; }
+
+/* Slot-fill breaker part number: a small inline SKU on the breaker row, editable to override. A
+   confident:false SKU (GFCI/AFCI/dual) reads muted with a "verify" hint. */
+.slot-partno { display: inline-flex; align-items: center; gap: 2px; }
+.slot-partno .pn-label { color: var(--text-muted); font-weight: 700; }
+.pn-input { width: 10ch; min-width: 8ch; padding: 1px 5px !important; min-height: 22px !important; font-size: var(--fs-xs) !important; font-family: var(--font-mono, monospace); text-transform: uppercase; }
+.slot-partno.verify .pn-input { color: var(--text-muted); font-style: italic; }
+.slot-partno.manual .pn-input { border-color: var(--accent); color: var(--text); font-style: normal; }
+.pn-verify { color: var(--warning, #b45309); font-size: var(--fs-xs); font-weight: 600; }
+
+/* Per-panel breaker list (material takeoff) */
+.panel-breaker-table .bk-qty { width: 3ch; white-space: nowrap; }
+.bk-part { font-family: var(--font-mono, monospace); text-transform: uppercase; font-weight: 600; }
+.bk-part.verify { color: var(--text-muted); }
+.bk-verify { margin-left: 6px; color: var(--warning, #b45309); font-size: var(--fs-xs); font-weight: 600; }
+
+/* New-panel catalogue picker note */
+.panel-picker .catalog-note { margin-top: 6px; }
+.catalog-flag { margin-top: 4px; color: var(--danger); display: flex; align-items: center; gap: 4px; }
+.panel-line-note { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
 
 /* Collapse to a single column of spaces up to tablet width (an iPad in portrait is ~768–834 px, which
    used to get the cramped two-column layout and cut the controls off). One wide space per row gives the
