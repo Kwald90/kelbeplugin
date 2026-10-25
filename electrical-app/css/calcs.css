@@ -138,17 +138,19 @@
 .pp-tb-service { text-align: center; font-weight: 700; font-size: 8.5pt; letter-spacing: .02em; }
 .pp-prog { font-size: 8.5pt; margin-top: 4pt; }
 
-/* the dense directory table */
-.panel-print-table { width: 100%; border-collapse: collapse; font-size: 9pt; }
-.panel-print-table td, .panel-print-table th { border: 1px solid #000; padding: 3pt 5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.panel-print-table.pp-dense td, .panel-print-table.pp-dense th { padding: 1.3pt 5pt; font-size: 8.5pt; line-height: 1.18; }
+/* the directory table — a clean schedule, not a spreadsheet: bold outer frame, light inner rules,
+   a strong centre divider, roomy rows and readable type. */
+.panel-print-table { width: 100%; border-collapse: collapse; font-size: 9.5pt; border: 1.6pt solid #111; }
+.panel-print-table td, .panel-print-table th { border: .4pt solid #cfd4da; padding: 4.5pt 8pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.panel-print-table.pp-dense td, .panel-print-table.pp-dense th { padding: 3.4pt 8pt; font-size: 9pt; line-height: 1.3; }
+.panel-print-table tbody tr { border-bottom: .4pt solid #cfd4da; }
 .panel-print-table td.num, .panel-print-table th { white-space: nowrap; text-align: center; vertical-align: middle; }
 .panel-print-table .pp-cct { width: 1%; font-weight: 700; }
-.panel-print-table .pp-amp { width: 1%; white-space: nowrap; }
-.panel-print-table .pp-colhead th { font-size: 7.5pt; letter-spacing: .03em; background: #000; color: #fff; }
-.panel-print-table .pp-desc { text-align: left; vertical-align: top; }
+.panel-print-table .pp-amp { width: 1%; white-space: nowrap; color: #333; }
+.panel-print-table .pp-colhead th { font-size: 8pt; font-weight: 700; letter-spacing: .08em; background: #1a2230; color: #fff; padding-top: 5pt; padding-bottom: 5pt; }
+.panel-print-table .pp-desc { text-align: left; vertical-align: top; font-size: 9.5pt; }
 .panel-print-table .pp-desc.pp-span, .panel-print-table .pp-amp.pp-span { vertical-align: middle; }
-.panel-print-table .pp-centre { border-right: 2.5pt solid #000; }
+.panel-print-table .pp-centre { border-right: 2.2pt solid #111; }
 .panel-print-table .pp-spare, .panel-print-table .pp-cont { color: #777; }
 .panel-print-table .pp-hl { font-weight: 700; border-left-width: 2.5pt; border-left-style: solid; }
 /* phase colour bands on the CCT cells; the band colours arrive as CSS vars set on the table */

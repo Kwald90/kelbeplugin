@@ -184,7 +184,10 @@ export default {
         { label: 'Band colour 2', name: 'band2', type: 'color', value: pp.bandColors[1] },
         { label: 'Smoke / alarm highlight', name: 'smokeColor', type: 'color', value: pp.smokeColor },
         { label: 'Show breaker size (amps)', name: 'showAmps', type: 'checkbox', value: pp.showAmps },
+        { label: 'Phase colour bands', name: 'phaseBandsOn', type: 'checkbox', value: pp.phaseBandsOn },
         { label: 'Show wiring status on prints', name: 'showStatus', type: 'checkbox', value: pp.showStatus },
+        { label: 'Colour legend & code note', name: 'showLegend', type: 'checkbox', value: pp.showLegend },
+        { label: 'QR code on schedule', name: 'showQr', type: 'checkbox', value: pp.showQr },
       ]));
       const save = () => {
         const v = ui.readForm(form);
@@ -192,7 +195,10 @@ export default {
           bandColors: [v.band1, v.band2],
           smokeColor: v.smokeColor,
           showAmps: !!v.showAmps,
+          phaseBandsOn: !!v.phaseBandsOn,
           showStatus: !!v.showStatus,
+          showLegend: !!v.showLegend,
+          showQr: !!v.showQr,
         } });
         ui.toast('Panel schedule settings saved', 'success');
         drawPanelPrint();

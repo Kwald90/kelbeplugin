@@ -29,7 +29,7 @@ export const PANEL_STATUS_LABEL = (k) => (PANEL_STATUSES.find((s) => s.key === k
 // phaseBands: the CCT-column PHASE band fill in the printed schedule — red/grey/blue to separate
 // the phases the way the engineered reference sheet does (A grey, B red, C blue for 3φ), independent
 // of the wire-colour legend and overridable per company.
-export const PANEL_PRINT_DEFAULTS = { bandColors: ['#eef2f7', '#ffffff'], showAmps: true, showStatus: false, smokeColor: '#e2231a', phaseBands: { A: '#c9c9c9', B: '#d32f2f', C: '#1565c0' } };
+export const PANEL_PRINT_DEFAULTS = { bandColors: ['#eef2f7', '#ffffff'], showAmps: true, showStatus: false, phaseBandsOn: true, showLegend: true, showQr: true, smokeColor: '#e2231a', phaseBands: { A: '#c9c9c9', B: '#d32f2f', C: '#1565c0' } };
 
 /** Merge a company's settings.panelPrint onto the defaults, validating each field. Pure. */
 export function panelPrintSettings(settings) {
@@ -45,6 +45,9 @@ export function panelPrintSettings(settings) {
     bandColors: bc,
     showAmps: pp.showAmps !== false,
     showStatus: pp.showStatus === true,
+    phaseBandsOn: pp.phaseBandsOn !== false,
+    showLegend: pp.showLegend !== false,
+    showQr: pp.showQr !== false,
     smokeColor: hex(pp.smokeColor, PANEL_PRINT_DEFAULTS.smokeColor),
     phaseBands,
   };
@@ -653,6 +656,28 @@ function editorView(root, ctx, id) {
     const cleanup = () => { page.classList.remove('print-label-only'); window.removeEventListener('afterprint', cleanup); };
     window.addEventListener('afterprint', cleanup);
     window.print();
+  };
+
+  /** What shows on the printed schedule — toggles, company-wide, applied live. */
+  const openPrintOptions = () => {
+    const pp = panelPrintSettings(store.settings());
+    return ui.formSheet({
+      title: 'Print options',
+      fields: [
+        { label: 'Breaker size (amps)', name: 'showAmps', type: 'checkbox', value: pp.showAmps, hint: 'Show the AMP columns on the printed schedule' },
+        { label: 'Phase colour bands', name: 'phaseBandsOn', type: 'checkbox', value: pp.phaseBandsOn, hint: 'Shade each circuit-number cell by its phase' },
+        { label: 'Wiring status', name: 'showStatus', type: 'checkbox', value: pp.showStatus },
+        { label: 'Colour legend & code note', name: 'showLegend', type: 'checkbox', value: pp.showLegend },
+        { label: 'QR code', name: 'showQr', type: 'checkbox', value: pp.showQr },
+      ],
+      submitLabel: 'Apply',
+      onSubmit: (v) => {
+        const cur = (store.settings().panelPrint && typeof store.settings().panelPrint === 'object') ? store.settings().panelPrint : {};
+        store.saveSettings({ panelPrint: { ...cur, showAmps: !!v.showAmps, phaseBandsOn: !!v.phaseBandsOn, showStatus: !!v.showStatus, showLegend: !!v.showLegend, showQr: !!v.showQr } });
+        redraw();
+        ui.toast('Print options saved', 'success');
+      },
+    });
   };
 
   /** True if the current system allows tandems (single-pole half breakers need a neutral). */
@@ -1316,7 +1341,6 @@ function editorView(root, ctx, id) {
     const occ = occupancy(panel.circuits || []);
     const colours = coloursNow();
     const pp = panelPrintSettings(store.settings());
-    const c = completion(panel);
     // No per-row swatches: the phase is shown by the CCT colour band; neutral/bond stay in the legend.
     const descBody = (x) => [`${x.description || '—'}${x.subFeed ? ' (sub-feed)' : ''}`,
       pp.showStatus && x.status ? h('span', { class: 'pp-status' }, ` · ${PANEL_STATUS_LABEL(x.status)}`) : null];
@@ -1389,10 +1413,12 @@ function editorView(root, ctx, id) {
     // the phases (A grey, B red, C blue), NOT the wire-colour legs. Injected as CSS variables the band
     // classes read — so the cells stay class-only (CSP-safe; no per-cell inline colour). Driven by the
     // system's own phases, so a 1φ panel only bands A/B and the palette stays company-overridable.
-    for (const p of Object.keys(colours.phases)) {
-      const bandHex = pp.phaseBands[p] || colours.phases[p].hex;
-      table.style.setProperty('--pp-ph-' + p, bandHex);
-      table.style.setProperty('--pp-ph-' + p + '-fg', bandTextColor(bandHex));
+    if (pp.phaseBandsOn) {
+      for (const p of Object.keys(colours.phases)) {
+        const bandHex = pp.phaseBands[p] || colours.phases[p].hex;
+        table.style.setProperty('--pp-ph-' + p, bandHex);
+        table.style.setProperty('--pp-ph-' + p + '-fg', bandTextColor(bandHex));
+      }
     }
 
     // Boxed titleblock header (PANEL NAME / PANEL LOCATION / service), engineered-drawing style.
@@ -1405,14 +1431,13 @@ function editorView(root, ctx, id) {
 
     printEl.append(
       h('div', { class: 'pp-head' },
-        h('div', { class: 'pp-head-main' }, titleblock,
-          c.described ? h('div', { class: 'pp-prog' }, `Progress: ${c.pct}% wired (${c.done}/${c.described})`) : null),
-        h('div', { class: 'pp-head-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` }))),
+        h('div', { class: 'pp-head-main' }, titleblock),
+        pp.showQr ? h('div', { class: 'pp-head-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` })) : null),
       table,
-      h('div', { class: 'print-legend' },
-        Object.entries(colours.phases).map(([p, col]) => legendChip(`Ø${p}`, col)),
+      pp.showLegend ? h('div', { class: 'print-legend' },
+        pp.phaseBandsOn ? Object.entries(colours.phases).map(([p, col]) => legendChip(`Ø${p}`, col)) : null,
         legendChip('N', colours.neutral), legendChip('Bond', colours.bond),
-        h('span', { class: 'print-note' }, 'Neutral (white/grey) and bond (green) are code-mandated; phase colours are convention unless colour-coding is required (CEC Rule 4-036) — confirm with the AHJ.')),
+        h('span', { class: 'print-note' }, 'Neutral (white/grey) and bond (green) are code-mandated; phase colours are convention unless colour-coding is required (CEC Rule 4-036) — confirm with the AHJ.')) : null,
       companyFooter(),
     );
   }
@@ -1422,7 +1447,6 @@ function editorView(root, ctx, id) {
   function drawLabel() {
     ui.clear(labelPrintEl);
     const job = jobs.find((j) => j.id === panel.jobId);
-    const c = completion(panel);
     labelPrintEl.append(
       h('div', { class: 'pl-card' },
         h('div', { class: 'pl-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` })),
@@ -1430,7 +1454,6 @@ function editorView(root, ctx, id) {
           h('h1', null, panel.name),
           panel.location ? h('div', { class: 'pl-loc' }, panel.location) : null,
           h('div', { class: 'pl-service' }, fullServiceLine(job)),
-          c.described ? h('div', { class: 'pl-prog' }, `${c.pct}% wired`) : null,
           h('div', { class: 'pl-hint' }, 'Scan to open this panel to view, update or reprint.'),
           h('div', { class: 'pl-url' }, thisPanelUrl()))),
       companyFooter());
@@ -1450,6 +1473,7 @@ function editorView(root, ctx, id) {
       subtitle: 'Odd spaces on the left, even on the right. Phases follow the bus.',
       actions: [
         ui.button('', { variant: 'ghost', icon: 'chevron-left', title: 'All panels', href: '#/panels' + (panel.jobId ? '?jobId=' + panel.jobId : '') }),
+        ui.button('Print options', { variant: 'ghost', icon: 'sliders', onClick: openPrintOptions }),
         ui.button('Panel label', { variant: 'ghost', icon: 'qr', onClick: printLabel }),
         ui.button('Print directory', { icon: 'printer', onClick: () => window.print() }),
         ui.button('', { variant: 'ghost danger', icon: 'trash', title: 'Delete panel', onClick: del }),
