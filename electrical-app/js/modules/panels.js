@@ -1164,7 +1164,7 @@ function editorView(root, ctx, id) {
       ctx.nav('#/materials' + (panel.jobId ? '?jobId=' + panel.jobId : ''));
     };
     const copy = async () => { try { await navigator.clipboard.writeText(listText()); ui.toast('Copied', 'success'); } catch { ui.toast('Copying is blocked here', 'error'); } };
-    return h('div', { class: 'card panel-breakers' },
+    return h('div', { class: 'card panel-breakers no-print' },
       h('div', { class: 'calc-label row-between' }, h('span', null, `Breaker list · ${panel.manufacturer || ''} ${panel.line || panel.breakerFamily}`.trim()),
         ui.button('Copy', { variant: 'ghost', size: 'sm', icon: 'copy', onClick: copy })),
       h('table', { class: 'calc-lines panel-breaker-table' }, h('tbody', null, rows.map((r) => h('tr', null,
