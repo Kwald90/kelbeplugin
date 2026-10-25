@@ -24,7 +24,10 @@ export const PANEL_STATUS_LABEL = (k) => (PANEL_STATUSES.find((s) => s.key === k
 
 // Print options stored per company in settings.panelPrint. Band colours are photocopy-safe
 // (a faint grey band alternating with white), amps shown, status hidden, smoke red.
-export const PANEL_PRINT_DEFAULTS = { bandColors: ['#eef2f7', '#ffffff'], showAmps: true, showStatus: false, smokeColor: '#e2231a' };
+// phaseBands: the CCT-column PHASE band fill in the printed schedule — red/grey/blue to separate
+// the phases the way the engineered reference sheet does (A grey, B red, C blue for 3φ), independent
+// of the wire-colour legend and overridable per company.
+export const PANEL_PRINT_DEFAULTS = { bandColors: ['#eef2f7', '#ffffff'], showAmps: true, showStatus: false, smokeColor: '#e2231a', phaseBands: { A: '#c9c9c9', B: '#d32f2f', C: '#1565c0' } };
 
 /** Merge a company's settings.panelPrint onto the defaults, validating each field. Pure. */
 export function panelPrintSettings(settings) {
@@ -33,12 +36,68 @@ export function panelPrintSettings(settings) {
   const bc = Array.isArray(pp.bandColors) && pp.bandColors.length >= 2
     ? [hex(pp.bandColors[0], PANEL_PRINT_DEFAULTS.bandColors[0]), hex(pp.bandColors[1], PANEL_PRINT_DEFAULTS.bandColors[1])]
     : PANEL_PRINT_DEFAULTS.bandColors.slice();
+  const dpb = PANEL_PRINT_DEFAULTS.phaseBands;
+  const ipb = (pp.phaseBands && typeof pp.phaseBands === 'object') ? pp.phaseBands : {};
+  const phaseBands = { A: hex(ipb.A, dpb.A), B: hex(ipb.B, dpb.B), C: hex(ipb.C, dpb.C) };
   return {
     bandColors: bc,
     showAmps: pp.showAmps !== false,
     showStatus: pp.showStatus === true,
     smokeColor: hex(pp.smokeColor, PANEL_PRINT_DEFAULTS.smokeColor),
+    phaseBands,
   };
+}
+
+// Terse type tags for the print AMP column — the engineered sheet's compact style ("15", "15 AFI",
+// "30A 2P"), not the verbose construction labels. A tandem's half-space is already shown by the A/B
+// in the CCT.NO cell and a quad by the 2P + grouping, so neither adds a tag here. Pure.
+export const PRINT_AMP_TYPE_TAGS = { afci: 'AFI', gfci: 'GFI', dual: 'DF' };
+export const printAmpTag = (c) => (c && PRINT_AMP_TYPE_TAGS[c.breakerType] ? ' ' + PRINT_AMP_TYPE_TAGS[c.breakerType] : '');
+/**
+ * The AMP cell text for the printed schedule: a single-pole shows just the amps plus a type tag when
+ * not standard ("15", "15 AFI"); a multi-pole keeps its pole count ("30A 2P", "40A 2P"). Compact and
+ * single-line. `poles` overrides the circuit's own count (a quad inner crosses 2). Pure.
+ */
+export function printAmpText(c, poles) {
+  if (!c || c.amps == null || c.amps === '') return '';
+  const p = Number(poles) || Number(c.poles) || 1;
+  const tag = printAmpTag(c);
+  return p > 1 ? `${c.amps}A ${p}P${tag}` : `${c.amps}${tag}`;
+}
+
+/** The print table's classes: a dense, engineered-schedule directory (vs. the airy web look). */
+export const PANEL_PRINT_TABLE_CLASS = 'panel-print-table pp-dense';
+
+/**
+ * The CSS class that puts a CCT cell onto its phase band. The band colour itself is a CSS variable
+ * (--pp-ph-A/B/C) set on the print table from the company's phase palette, so each cell carries only
+ * a class — no per-cell inline colour. Pure.
+ */
+export const phaseBandClass = (phase) => 'pp-ph-' + phase;
+
+/**
+ * Legible text colour (#ffffff or a near-black) for text sitting on a phase band of the given hex,
+ * by perceived luminance — so a black or red band reads white and a light band reads dark. Pure.
+ */
+export function bandTextColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if (!m) return '#111111';
+  const n = parseInt(m[1], 16);
+  const L = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return L < 0.6 ? '#ffffff' : '#111111';
+}
+
+/**
+ * The boxed titleblock rows for the printed schedule — PANEL NAME / PANEL LOCATION in bordered
+ * label+value cells, then the service line — like an engineered drawing's titleblock. A missing
+ * name or location falls back to a dash so a cell is never blank. Pure.
+ */
+export function panelTitleblock(panel, service) {
+  return [
+    { label: 'PANEL NAME', value: (panel && panel.name) || '—' },
+    { label: 'PANEL LOCATION', value: (panel && panel.location) || '—' },
+    { service: service || '' },
+  ];
 }
 
 /**
@@ -941,95 +1000,115 @@ function editorView(root, ctx, id) {
     return `${sysLabel(panel.voltage)} · ${mainTxt} · Bus ${panel.busAmps} A${panel.feedThrough ? ' · feed-through' : ''}${job ? ` · ${job.number} ${job.title}` : ''}`;
   }
 
-  // The branded two-column directory: a left half facing a centre a right half mirrors, with
-  // CCT.NO columns carrying A/B for tandems, the breaker amp/type shown once per breaker, alternating
-  // colour bands grouping each breaker's spaces, a smoke/purpose highlight, and (optionally) status.
+  // The branded two-column directory, drawn like an engineered panel schedule: a boxed titleblock
+  // header; a dense table with a left half facing a centre a right half mirrors; each CCT.NO cell on
+  // its PHASE colour band (red / black / … alternating down the panel as the phases alternate); a
+  // multi-pole breaker's DESCRIPTION and AMP written once and vertically centred across its spaces;
+  // tandems/quads keeping their A/B lines; a smoke/purpose highlight and (optionally) status.
   function drawPrint() {
     ui.clear(printEl);
     const job = jobs.find((j) => j.id === panel.jobId);
     const total = slotCount(panel);
     const occ = occupancy(panel.circuits || []);
-    const band = bandIndexBySlot(panel.circuits || [], total);
     const colours = coloursNow();
     const pp = panelPrintSettings(store.settings());
     const c = completion(panel);
-    // The amp cell's type note; 'quad' is conveyed by the 2P + "(quad)" marks, so it isn't repeated here.
-    const typeTag = (x) => (x.breakerType && x.breakerType !== 'standard' && x.breakerType !== 'quad' ? ' ' + PT.breakerTypeLabel(x.breakerType) : '');
+    // No per-row swatches: the phase is shown by the CCT colour band; neutral/bond stay in the legend.
+    const descBody = (x) => [`${x.description || '—'}${x.subFeed ? ' (sub-feed)' : ''}`,
+      pp.showStatus && x.status ? h('span', { class: 'pp-status' }, ` · ${PANEL_STATUS_LABEL(x.status)}`) : null];
+    const cctCell = (slot, content) => {
+      const phase = S.slotPhase(slot, panel.voltage);
+      return h('td', { class: ['pp-cct', 'num', phaseBandClass(phase)], dataset: { phase } }, content);
+    };
 
-    // One side's cells for a slot, in reading order from the outer edge toward the centre.
+    // One side's cells for a slot, outer edge → centre. A multi-pole full breaker spans its rows:
+    // DESCRIPTION and AMP are emitted once (rowspan) on the breaker's first space; each space still
+    // shows its own CCT number on its own row, so continuation rows emit ONLY the CCT cell and the
+    // spanned cells reserve their columns — everything stays aligned across the mirrored halves.
     const sideCells = (slot, side) => {
       const o = occ.get(slot);
-      const bg = pp.bandColors[band.get(slot) || 0];
-      const bst = { background: bg };
-      const descBody = (x) => [h('span', { class: 'print-swatches' }, circuitSwatches(x, colours)),
-        ` ${x.description || '—'}${x.subFeed ? ' (sub-feed)' : ''}`,
-        pp.showStatus && x.status ? h('span', { class: 'pp-status' }, ` · ${PANEL_STATUS_LABEL(x.status)}`) : null];
-      let desc, cct, amp;
+      let cells;
       if (!spaceTaken(o)) {
-        desc = h('td', { class: 'pp-desc pp-spare', style: bst }, 'Spare / space');
-        cct = h('td', { class: 'pp-cct num', style: bst }, String(slot));
-        amp = pp.showAmps ? h('td', { class: 'pp-amp num', style: bst }, '') : null;
+        cells = [h('td', { class: 'pp-desc pp-spare' }, 'Spare / space'), cctCell(slot, String(slot)),
+          pp.showAmps ? h('td', { class: 'pp-amp num' }, '') : null];
       } else if (o.full && !o.start) {
-        // A later space of a multi-pole breaker: amp/desc shown once on its first space, so blank here.
-        desc = h('td', { class: 'pp-desc pp-cont', style: bst }, '');
-        cct = h('td', { class: 'pp-cct num', style: bst }, String(slot));
-        amp = pp.showAmps ? h('td', { class: 'pp-amp num', style: bst }, '') : null;
+        cells = [cctCell(slot, String(slot))]; // continuation: DESCRIPTION/AMP spanned from the first space
       } else if (o.full) {
         const x = o.full;
+        const poles = Number(x.poles) || 1;
+        const span = poles > 1;
         const hl = highlightFor(x, pp);
-        desc = h('td', { class: ['pp-desc', hl ? 'pp-hl' : null], style: hl ? { ...bst, borderLeft: `2.5pt solid ${hl}`, color: hl } : bst }, descBody(x));
-        cct = h('td', { class: 'pp-cct num', style: bst }, String(slot));
-        amp = pp.showAmps ? h('td', { class: 'pp-amp num', style: bst }, `${x.amps}A ${x.poles}P${typeTag(x)}`) : null;
+        const descProps = { class: ['pp-desc', span ? 'pp-span' : null, hl ? 'pp-hl' : null], style: hl ? { borderLeftColor: hl, color: hl } : null };
+        const ampProps = { class: ['pp-amp', 'num', span ? 'pp-span' : null] };
+        if (span) { descProps.rowspan = poles; ampProps.rowspan = poles; }
+        cells = [h('td', descProps, descBody(x)), cctCell(slot, String(slot)),
+          pp.showAmps ? h('td', ampProps, printAmpText(x, poles)) : null];
       } else {
         // Tandem / quad space: an A line over a B line, CCT.NO carrying the A/B suffix. A quad's inner
         // 2-pole is written once on its home half; its reach into the next space shows as a continuation.
         const halfDesc = (x, letter) => {
           if (!x) return h('div', { class: 'print-half muted' }, `${slot}${letter}: —`);
           if (isQuadInner(x) && Number(x.slot) !== slot) {
-            return h('div', { class: 'print-half muted' }, h('strong', null, `${slot}${letter}: `), `↳ quad 2-pole from ${x.slot}`);
+            return h('div', { class: 'print-half muted' }, h('strong', null, `${slot}${letter}: `), `quad 2-pole (from ${x.slot})`);
           }
           const hl = highlightFor(x, pp);
-          return h('div', { class: ['print-half', hl ? 'pp-hl' : null], style: hl ? { borderLeft: `2.5pt solid ${hl}`, color: hl } : null },
+          return h('div', { class: ['print-half', hl ? 'pp-hl' : null], style: hl ? { borderLeftColor: hl, color: hl } : null },
             h('strong', null, `${slot}${letter}: `), descBody(x), isQuadInner(x) ? ' (quad)' : null);
         };
         const halfAmp = (x) => {
           if (!x || (isQuadInner(x) && Number(x.slot) !== slot)) return h('div', { class: 'print-half' }, '');
-          return h('div', { class: 'print-half' }, `${x.amps}A ${isQuadInner(x) ? '2P' : '1P'}${typeTag(x)}`);
+          return h('div', { class: 'print-half' }, printAmpText(x, isQuadInner(x) ? 2 : 1));
         };
-        desc = h('td', { class: 'pp-desc', style: bst }, halfDesc(o.A, 'A'), halfDesc(o.B, 'B'));
-        cct = h('td', { class: 'pp-cct num', style: bst }, h('div', null, `${slot}A`), h('div', null, `${slot}B`));
-        amp = pp.showAmps ? h('td', { class: 'pp-amp num', style: bst }, halfAmp(o.A), halfAmp(o.B)) : null;
+        cells = [h('td', { class: 'pp-desc' }, halfDesc(o.A, 'A'), halfDesc(o.B, 'B')),
+          cctCell(slot, [h('div', null, `${slot}A`), h('div', null, `${slot}B`)]),
+          pp.showAmps ? h('td', { class: 'pp-amp num' }, halfAmp(o.A), halfAmp(o.B)) : null];
       }
-      const order = side === 'left' ? [desc, cct, amp] : [amp, cct, desc];
-      const cells = order.filter(Boolean);
-      // The centre rule is the right border of the left half's innermost cell (collapsed borders
-      // make it the divider the right half faces).
-      if (side === 'left') cells[cells.length - 1]?.classList.add('pp-centre');
-      return cells;
+      cells = cells.filter(Boolean);
+      const ordered = side === 'left' ? cells : cells.slice().reverse();
+      // Centre rule: the right border of the left half's innermost cell (AMP when shown, else CCT). On
+      // a continuation row the AMP is absent (spanned above), so the span already draws the divider.
+      if (side === 'left') {
+        const inner = pp.showAmps ? ordered.find((el) => el.classList.contains('pp-amp')) : ordered[ordered.length - 1];
+        inner?.classList.add('pp-centre');
+      }
+      return ordered;
     };
 
     const rows = [];
     for (let r = 1; r <= total / 2; r++) rows.push(h('tr', null, ...sideCells(2 * r - 1, 'left'), ...sideCells(2 * r, 'right')));
-    const headCols = pp.showAmps ? ['DESCRIPTION', 'CCT.', 'AMP', 'AMP', 'CCT.', 'DESCRIPTION'] : ['DESCRIPTION', 'CCT.', 'CCT.', 'DESCRIPTION'];
-    const headRow = h('tr', { class: 'pp-colhead' }, headCols.map((t, i) => {
-      const leftInner = pp.showAmps ? 2 : 1;
-      return h('th', { class: i === leftInner ? 'pp-centre' : null }, t);
-    }));
+    const headCols = pp.showAmps ? ['DESCRIPTION', 'CCT. NO', 'AMP', 'AMP', 'CCT. NO', 'DESCRIPTION'] : ['DESCRIPTION', 'CCT. NO', 'CCT. NO', 'DESCRIPTION'];
+    const leftInner = pp.showAmps ? 2 : 1;
+    const headRow = h('tr', { class: 'pp-colhead' }, headCols.map((t, i) => h('th', { class: i === leftInner ? 'pp-centre' : null }, t)));
+
+    const table = h('table', { class: PANEL_PRINT_TABLE_CLASS }, h('thead', null, headRow), h('tbody', null, rows));
+    // The CCT-column phase bands read as the engineered reference does: red / grey / blue separating
+    // the phases (A grey, B red, C blue), NOT the wire-colour legs. Injected as CSS variables the band
+    // classes read — so the cells stay class-only (CSP-safe; no per-cell inline colour). Driven by the
+    // system's own phases, so a 1φ panel only bands A/B and the palette stays company-overridable.
+    for (const p of Object.keys(colours.phases)) {
+      const bandHex = pp.phaseBands[p] || colours.phases[p].hex;
+      table.style.setProperty('--pp-ph-' + p, bandHex);
+      table.style.setProperty('--pp-ph-' + p + '-fg', bandTextColor(bandHex));
+    }
+
+    // Boxed titleblock header (PANEL NAME / PANEL LOCATION / service), engineered-drawing style.
+    const tbRows = panelTitleblock(panel, fullServiceLine(job)).map((r) => r.label
+      ? h('tr', null, h('th', { class: 'pp-tb-label' }, r.label), h('td', { class: 'pp-tb-value' }, r.value))
+      : h('tr', null, h('td', { class: 'pp-tb-service', colspan: 2 }, r.service)));
+    const titleblock = h('table', { class: 'pp-titleblock' }, h('tbody', null, tbRows));
+
     const legendChip = (label, col) => h('span', { class: 'print-legend-chip' }, h('span', { class: 'wire-swatch', style: { background: col.hex } }), `${label}: ${col.name}`);
 
     printEl.append(
       h('div', { class: 'pp-head' },
-        h('div', { class: 'pp-head-main' },
-          h('h1', null, panel.name),
-          panel.location ? h('div', { class: 'pp-loc' }, `Location: ${panel.location}`) : null,
-          h('div', { class: 'pp-service' }, fullServiceLine(job)),
+        h('div', { class: 'pp-head-main' }, titleblock,
           c.described ? h('div', { class: 'pp-prog' }, `Progress: ${c.pct}% wired (${c.done}/${c.described})`) : null),
         h('div', { class: 'pp-head-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` }))),
-      h('table', { class: 'panel-print-table' }, h('thead', null, headRow), h('tbody', null, rows)),
+      table,
       h('div', { class: 'print-legend' },
         Object.entries(colours.phases).map(([p, col]) => legendChip(`Ø${p}`, col)),
-        legendChip('N', colours.neutral), legendChip('Bond', colours.bond)),
-      h('p', { class: 'small' }, 'Only neutral (white/grey) and bond (green) colours are code-mandated; phase colours are convention unless colour-coding is required (CEC Rule 4-036). Confirm with the AHJ.'),
+        legendChip('N', colours.neutral), legendChip('Bond', colours.bond),
+        h('span', { class: 'print-note' }, 'Neutral (white/grey) and bond (green) are code-mandated; phase colours are convention unless colour-coding is required (CEC Rule 4-036) — confirm with the AHJ.')),
       companyFooter(),
     );
   }

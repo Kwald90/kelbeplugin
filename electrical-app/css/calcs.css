@@ -102,33 +102,44 @@
   .slot-row .btn { order: 4; }
 }
 
-/* printed panel directory */
-.panel-print h1 { font-size: 18pt; margin: 0 0 4pt; }
-.panel-print p { margin: 0 0 8pt; }
-.panel-print .small { font-size: 8pt; margin-top: 8pt; }
+/* printed panel directory — an engineered schedule, not a web table */
+.panel-print p { margin: 0 0 6pt; }
+.panel-print .small { font-size: 8pt; }
+
+/* boxed titleblock header (PANEL NAME / PANEL LOCATION / service in bordered cells) + QR */
+.pp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12pt; margin-bottom: 6pt; }
+.pp-head-main { min-width: 0; flex: 1; }
+.pp-head-qr { flex: none; }
+.pp-head-qr svg { width: 78px; height: 78px; display: block; }
+.pp-titleblock { border-collapse: collapse; width: 100%; max-width: 4.4in; }
+.pp-titleblock td, .pp-titleblock th { border: 1px solid #000; padding: 2.5pt 7pt; text-align: left; vertical-align: middle; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.pp-tb-label { background: #e8edf3; font-size: 7.5pt; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; width: 1%; }
+.pp-tb-value { font-weight: 700; font-size: 11pt; }
+.pp-tb-service { text-align: center; font-weight: 700; font-size: 8.5pt; letter-spacing: .02em; }
+.pp-prog { font-size: 8.5pt; margin-top: 4pt; }
+
+/* the dense directory table */
 .panel-print-table { width: 100%; border-collapse: collapse; font-size: 9pt; }
 .panel-print-table td, .panel-print-table th { border: 1px solid #000; padding: 3pt 5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.panel-print-table td.num, .panel-print-table th { white-space: nowrap; text-align: center; vertical-align: top; }
-.panel-print-table .pp-cct { width: 1%; }
+.panel-print-table.pp-dense td, .panel-print-table.pp-dense th { padding: 1.3pt 5pt; font-size: 8.5pt; line-height: 1.18; }
+.panel-print-table td.num, .panel-print-table th { white-space: nowrap; text-align: center; vertical-align: middle; }
+.panel-print-table .pp-cct { width: 1%; font-weight: 700; }
 .panel-print-table .pp-amp { width: 1%; white-space: nowrap; }
 .panel-print-table .pp-colhead th { font-size: 7.5pt; letter-spacing: .03em; background: #000; color: #fff; }
 .panel-print-table .pp-desc { text-align: left; vertical-align: top; }
+.panel-print-table .pp-desc.pp-span, .panel-print-table .pp-amp.pp-span { vertical-align: middle; }
 .panel-print-table .pp-centre { border-right: 2.5pt solid #000; }
 .panel-print-table .pp-spare, .panel-print-table .pp-cont { color: #777; }
-.panel-print-table .pp-hl { font-weight: 700; }
+.panel-print-table .pp-hl { font-weight: 700; border-left-width: 2.5pt; border-left-style: solid; }
+/* phase colour bands on the CCT cells; the band colours arrive as CSS vars set on the table */
+.panel-print-table .pp-cct.pp-ph-A { background: var(--pp-ph-A, transparent); color: var(--pp-ph-A-fg, #111); }
+.panel-print-table .pp-cct.pp-ph-B { background: var(--pp-ph-B, transparent); color: var(--pp-ph-B-fg, #111); }
+.panel-print-table .pp-cct.pp-ph-C { background: var(--pp-ph-C, transparent); color: var(--pp-ph-C-fg, #111); }
 .pp-status { font-size: 7.5pt; color: #444; text-transform: uppercase; letter-spacing: .03em; }
-.print-half { line-height: 1.35; }
+.print-half { line-height: 1.2; }
 .print-half.muted { color: #666; }
 
-/* branded print header (name / location / service + QR) and footer (logo + contact) */
-.pp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12pt; margin-bottom: 8pt; }
-.pp-head-main { min-width: 0; }
-.pp-head-main h1 { margin: 0 0 2pt; }
-.pp-loc { font-size: 10pt; font-weight: 600; }
-.pp-service { font-size: 9pt; color: #333; }
-.pp-prog { font-size: 9pt; margin-top: 2pt; }
-.pp-head-qr { flex: none; }
-.pp-head-qr svg { width: 84px; height: 84px; display: block; }
+/* branded print footer (logo + contact) */
 .pp-foot { display: flex; align-items: center; gap: 10pt; margin-top: 10pt; padding-top: 6pt; border-top: 1px solid #000; font-size: 8pt; }
 .pp-logo { max-height: 46px; max-width: 150px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .pp-foot-info { flex: 1; min-width: 0; }
@@ -235,8 +246,9 @@
 
 /* printed colour swatches and legend (force colour in print) */
 .print-swatches .wire-swatch, .print-legend .wire-swatch { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.print-legend { display: flex; flex-wrap: wrap; gap: 10pt; margin-top: 6pt; font-size: 8pt; }
+.print-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 3pt 10pt; margin-top: 5pt; font-size: 7.5pt; }
 .print-legend-chip { display: inline-flex; align-items: center; gap: 4pt; }
+.print-note { flex-basis: 100%; color: #333; margin-top: 1pt; }
 
 @media print {
   .panel-page .page-head, .panel-summary, .calc-disclaimer { display: none !important; }
