@@ -313,3 +313,14 @@ html.is-printing .panel-print-table { table-layout: auto; }
   .panel-print-table td { overflow-wrap: anywhere; }
 }
 html.is-printing .panel-print { page-break-inside: avoid; break-inside: avoid; }
+
+/* Fill the page: the schedule stretches down to the bottom instead of bunching at the top.
+   The table grows to fill the space left under the header; its rows share the extra height so a
+   small panel reads as a full-page schedule, not a cramped block with dead space below. The
+   pp-fit-* tiers still cap a large panel's natural height so it never spills to a second page. */
+@media print { .panel-print { display: flex; flex-direction: column; min-height: 9.4in; } }
+html.is-printing .panel-print { display: flex; flex-direction: column; min-height: 9.4in; }
+.pp-table-wrap { flex: 1 1 auto; display: flex; flex-direction: column; }
+.pp-table-wrap .panel-print-table { flex: 1 1 auto; height: 100%; }
+.pp-table-wrap .panel-print-table tbody { height: 100%; }
+.panel-print .panel-print-table td { vertical-align: middle; }

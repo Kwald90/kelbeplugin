@@ -1309,19 +1309,6 @@ function editorView(root, ctx, id) {
     return sheet;
   }
 
-  /** Company footer block for a printout: logo, name, website/email/phone (from company settings),
-   *  licence and the date. Same company record the invoices print from. */
-  function companyFooter() {
-    const co = store.settings().company || {};
-    const contact = [co.email, co.phone].filter(Boolean).join('  ·  ');
-    return h('div', { class: 'pp-foot' },
-      h('div', { class: 'pp-foot-info' },
-        h('div', { class: 'pp-foot-name' }, co.name || ''),
-        contact ? h('div', null, contact) : null,
-        co.licenceNo ? h('div', null, `Lic. ${co.licenceNo}`) : null),
-      h('div', { class: 'pp-foot-date' }, ui.fmtDate(new Date())));
-  }
-
   /** The service line shown on the directory header. */
   function fullServiceLine(job) {
     const mainTxt = panel.mainType === 'MLO' ? `MLO${panel.mainAmps ? ' · ' + panel.mainAmps + ' A feed' : ''}` : `Main ${panel.mainAmps} A`;
@@ -1441,11 +1428,10 @@ function editorView(root, ctx, id) {
       h('div', { class: 'pp-head' },
         h('div', { class: 'pp-head-main' }, titleblock),
         pp.showQr ? h('div', { class: 'pp-head-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` })) : null),
-      table,
+      h('div', { class: 'pp-table-wrap' }, table),
       pp.showLegend ? h('div', { class: 'print-legend' },
         pp.phaseBandsOn ? Object.entries(colours.phases).map(([p, col]) => legendChip(`Ø${p}`, col)) : null,
         legendChip('N', colours.neutral), legendChip('Bond', colours.bond)) : null,
-      companyFooter(),
     );
   }
 
@@ -1462,8 +1448,7 @@ function editorView(root, ctx, id) {
           panel.location ? h('div', { class: 'pl-loc' }, panel.location) : null,
           h('div', { class: 'pl-service' }, fullServiceLine(job)),
           h('div', { class: 'pl-hint' }, 'Scan to open this panel to view, update or reprint.'),
-          h('div', { class: 'pl-url' }, thisPanelUrl()))),
-      companyFooter());
+          h('div', { class: 'pl-url' }, thisPanelUrl()))));
   }
 
   function redraw() { drawSummary(); drawGrid(); drawPrint(); drawLabel(); }
