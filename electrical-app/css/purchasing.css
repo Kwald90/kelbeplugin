@@ -55,3 +55,8 @@
   .pu-vendor-pick { width: 100%; }
   .rcv-line { grid-template-columns: 1fr 90px; }
 }
+
+/* Quick receipt capture (wheel → Receipt): the captured photo preview in the allocate sheet. */
+.qr-quick .qr-snap { margin: 0; display: flex; align-items: center; justify-content: center; max-height: 240px; overflow: hidden; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md); }
+.qr-quick .qr-snap img { max-height: 240px; max-width: 100%; object-fit: contain; }
+.qr-quick .qr-snap.pdf { gap: 10px; padding: 16px; justify-content: flex-start; color: var(--text-muted); }

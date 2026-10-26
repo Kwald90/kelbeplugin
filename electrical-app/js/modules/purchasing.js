@@ -635,6 +635,76 @@ function renderBill(root, ctx, id) {
   };
 }
 
+/**
+ * Fast field capture (quick-actions wheel → Receipt): open the camera, attach the photo to a new
+ * paid receipt, then a small sheet to pick the job and type the amount — two taps from anywhere.
+ * "Add details" hands off to the full editor. It writes the same `bills` record the editor uses,
+ * so the receipt shows in Purchasing and rolls into the job's costs (lib/costing.js).
+ */
+export async function quickReceipt(ctx) {
+  const { store, ui, nav } = ctx;
+  const { h } = ui;
+  const file = await pickCapture();
+  if (!file) return; // camera cancelled
+  let photo;
+  try {
+    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '')) {
+      if (file.size > RECEIPT_MAX_CHARS * 0.74) { ui.toast('That PDF is too big — snap a photo of the receipt instead.', 'error', 4500); return; }
+      const d = await readAsDataUrl(file);
+      photo = { dataUrl: d.replace(/^data:[^;,]*/, 'data:application/pdf'), name: (file.name || 'bill.pdf').slice(0, 200), takenAt: new Date().toISOString() };
+    } else {
+      const p = await downscaleImage(file, RECEIPT_PHOTO_BYTES);
+      photo = { dataUrl: p.dataUrl, name: (file.name || 'photo.jpg').slice(0, 200), takenAt: new Date().toISOString() };
+    }
+  } catch (e) { console.error(e); ui.toast('Couldn’t read that photo', 'error'); return; }
+
+  const rec = newBill({ kind: 'receipt', settings: store.settings(), today: ui.today() });
+  rec.receipt = photo;
+  if (recordTooBig('bills', rec)) { ui.toast(tooBigMessage('bills'), 'error', 6000); return; }
+  const created = store.add('bills', rec); // kept as a draft until Save (or Discard removes it)
+
+  const jobs = sortedJobs(store);
+  const field = (label, control, hint) => h('label', { class: 'field' }, h('span', null, label), control, hint ? h('span', { class: 'hint' }, hint) : null);
+  const jobSel = h('select', { 'aria-label': 'Job' },
+    h('option', { value: '' }, '— no job (overhead) —'),
+    jobs.map((j) => h('option', { value: j.id }, jobLabel(j))));
+  const amountInp = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', placeholder: '0.00', 'aria-label': 'Amount' });
+  const isImg = receiptType(photo.dataUrl) !== 'application/pdf';
+
+  const save = (openEditor) => {
+    const dollars = parseFloat(amountInp.value);
+    const cents = Number.isFinite(dollars) && dollars > 0 ? Math.round(dollars * 100) : null;
+    const jobId = jobSel.value || null;
+    const patch = { jobId, status: enteredStatus(created) };
+    if (cents != null) {
+      patch.lines = [newBillLine({ description: 'Receipt', qty: 1, unitCents: cents, amountCents: cents, jobId })];
+      patch.totalCents = cents;
+    }
+    store.update('bills', created.id, patch);
+    sheet.close();
+    if (openEditor) { nav('purchasing/' + created.id); return; }
+    const j = jobId ? jobs.find((x) => x.id === jobId) : null;
+    ui.toast(j ? `Receipt saved to ${j.number || j.title || 'job'}` : 'Receipt saved to Purchasing', 'success');
+  };
+  const discard = () => { store.remove('bills', created.id); sheet.close(); };
+
+  const sheet = ui.openSheet({
+    title: 'Receipt captured',
+    body: h('div', { class: 'stack qr-quick' },
+      isImg
+        ? h('figure', { class: 'qr-snap' }, h('img', { src: photo.dataUrl, alt: 'Receipt photo' }))
+        : h('div', { class: 'qr-snap pdf' }, ui.icon('file-text', 28), h('span', null, photo.name)),
+      field('Job', jobSel, 'Allocate to a job, or leave as overhead.'),
+      field('Amount', amountInp, 'Optional — adds to the job’s costs. More fields under Add details.')),
+    actions: [
+      ui.button('Discard', { variant: 'ghost danger', onClick: discard }),
+      h('span', { class: 'grow' }),
+      ui.button('Add details', { variant: 'ghost', onClick: () => save(true) }),
+      ui.button('Save', { variant: 'primary', icon: 'check', onClick: () => save(false) }),
+    ],
+  });
+}
+
 /** Open the camera (rear camera on phones and iPads) for one photo. Resolves a File or null. */
 function pickCapture() {
   return new Promise((resolve) => {

@@ -18,6 +18,7 @@ import { session, api, syncPrefs } from './session.js';
 import { createSync } from './sync.js';
 import { FEATURE_PLAN, hasFeature } from './plans.js';
 import { notifyBell } from './modules/notifications.js';
+import { quickReceipt } from './modules/purchasing.js';
 import { moduleOn, linkOn, hrefModule, SWITCHES } from './lib/modules.js';
 import { primaryNavigation, navigationLabel } from './lib/navigation.js';
 
@@ -369,6 +370,7 @@ const WHEEL = [
   { label: 'Quote', icon: 'file-text', go: 'estimates/new', perm: 'estimates' },
   { label: 'Job', icon: 'briefcase', go: 'jobs?new=1', perm: 'jobs' },
   { label: 'Material', icon: 'truck', go: 'materials?new=1', perm: 'jobs' },
+  { label: 'Receipt', icon: 'image', go: 'purchasing', perm: 'invoices', run: quickReceipt },
   { label: 'Invoice', icon: 'receipt', go: 'invoices/new', perm: 'invoices' },
   { label: 'Calc', icon: 'calculator', go: 'calcs', perm: 'calcs' },
   { label: 'SOPs', icon: 'book', go: 'sops', perm: 'sops' },
@@ -384,7 +386,7 @@ function buildWheel() {
     const r = 118;
     wheel.append(h('button', {
       class: 'wheel-item', style: { left: `${150 + r * Math.cos(a)}px`, top: `${150 - r * Math.sin(a)}px` }, tabindex: -1,
-      onClick: () => { toggle(false); nav(w.go); },
+      onClick: () => { toggle(false); if (w.run) w.run({ store, ui, auth, nav }); else nav(w.go); },
     }, icon(w.icon, 20), w.label));
   });
   const fab = h('button', { class: 'wheel-fab no-print', 'aria-label': 'Quick actions', 'aria-expanded': 'false', onClick: () => toggle() },
