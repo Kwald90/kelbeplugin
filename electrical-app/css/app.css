@@ -154,6 +154,10 @@ h2.section { font-size: var(--fs-base); line-height: var(--lh-base); margin: var
 .field textarea { min-height: 88px; resize: vertical; }
 .input:focus, .field input:focus, .field select:focus, .field textarea:focus { box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--accent); }
 .field.invalid input, .field.invalid select { border-color: var(--danger); }
+/* Mobile: 16px form text so iOS doesn't auto-zoom into a field on focus now that pinch-zoom is allowed. */
+@media (max-width: 900px) {
+  .input, .field input:not([type=checkbox]):not([type=radio]):not([type=color]), .field select, .field textarea, input, textarea { font-size: 16px; }
+}
 .field.check { flex-direction: row; align-items: center; gap: var(--s2); }
 .form-grid { display: grid; gap: var(--s3) var(--s4); grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
 .form-grid .span-2 { grid-column: 1 / -1; }
