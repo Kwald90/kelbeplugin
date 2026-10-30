@@ -75,12 +75,16 @@ back as warnings before the file is used.
 
 ## Maps and address lookup (checked 2026-10-19)
 
-- **Tiles:** Natural Resources Canada, Canada Base Map – Transportation in Web Mercator:
-  `maps-cartes.services.geo.ca/server2_serveur2/rest/services/BaseMaps/CBMT_CBCT_GEOM_3857/MapServer/tile/{z}/{y}/{x}`
-  plus the `CBMT_TXT_3857` label layer. Zoom 0 to 15 (closer zooms scale the z15 tiles), Canada only,
-  no key, Open Government Licence – Canada (commercial use allowed; attribution shown on the map).
-  Whether the raster also needs OpenStreetMap credit: VERIFY. OSM's own tiles were not used: the OSMF
-  tile policy offers no SLA and may withdraw access for commercial services.
+- **Tiles:** OpenStreetMap standard tiles in Web Mercator:
+  `https://tile.openstreetmap.org/{z}/{x}/{y}.png`. One layer (street labels baked in), global,
+  zoom 0 to 19, no key, "© OpenStreetMap contributors" shown on the map (ODbL). Switched from
+  NRCan's Canada-only CBMT base map (zoom ≤ 15) on 2026-10-30 so maps render worldwide and zoom in
+  further. **Caveat (flagged to Kelvin):** the OSMF tile policy is for modest use, offers no SLA and
+  may withdraw access for commercial services, so OSM is a stopgap — before many paying companies,
+  move to a token provider (Carto free tier, MapTiler, etc.); that is a one-line `TILE_BASE` swap in
+  `electrical-app/js/lib/minimap.js` plus the `img-src` host in both security-headers files. Carto's
+  free CDN was tested and now returns blank placeholder tiles without an account token, so it needs a
+  (free) Carto key before it can be used.
 - **Address lookup:** NRCan Geolocator `https://geolocator.api.geo.ca/?q=…&lang=en&keys=locate`
   (replaces the geogratis service, which shuts down 2027-03-31). Free, no key, CORS open. Its page says
   "free for typical public, government, and research use" and asks high-volume users to write to

@@ -230,8 +230,8 @@ describe('maps and fixes', () => {
       assert.ok(tiles(home, undefined).length > 0, 'the job screen\'s map loads every tile');
       assert.deepEqual(tiles(home, SITES), [], 'My location at home: no tile request at all');
       const nearA = tiles(A, SITES);
-      const [tx, ty] = at(A, 15);
-      assert.ok(nearA.some((u) => u.endsWith(`/tile/15/${ty}/${tx}`)), 'at the site the map still loads');
+      const [tx, ty] = at(A, 16); // the map is drawn at zoom 16, within TILE_MAX_ZOOM
+      assert.ok(nearA.some((u) => u.endsWith(`/16/${tx}/${ty}.png`)), 'at the site the map still loads');
     } finally { globalThis.document = saved.document; globalThis.requestAnimationFrame = saved.raf; }
   });
 });

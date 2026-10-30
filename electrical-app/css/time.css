@@ -50,7 +50,6 @@
 .mm-pick { cursor: crosshair; }
 .mm-tiles, .mm-pins { position: absolute; inset: 0; }
 .mm-tile { position: absolute; max-width: none; pointer-events: none; }
-.mm-labels { mix-blend-mode: normal; }
 .mm-missing { visibility: hidden; }
 .mm-overlay { position: absolute; inset: 0; pointer-events: none; }
 .mm-radius { fill: var(--info); fill-opacity: .14; stroke: var(--info); stroke-width: 2; }

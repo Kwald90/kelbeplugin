@@ -2,21 +2,20 @@
 // pins and dots, drag to pan, buttons to zoom, tap to drop a pin. Used on the job screen (site
 // location), in My location (your own points) and on the opt-in crew map.
 //
-// Tiles: Natural Resources Canada's Canada Base Map – Transportation (CBMT), Web Mercator, under
-// the Open Government Licence – Canada (commercial use allowed). Checked 2026-10-19: base layer
-// CBMT_CBCT_GEOM_3857 (JPEG) plus the CBMT_TXT_3857 labels (transparent PNG), zoom 0-15, Canada
-// only, no key. Closer zooms scale the zoom-15 tiles. Tiles are requested from the browser with no
-// referrer; they show where a job is, never where a person is (the overlay is drawn locally). Maps
-// of people's points (My location, the crew map) pass `tilesNear`: the job sites. Only tiles near
-// a site are fetched; elsewhere the map stays blank and the points are drawn on the blank.
+// Tiles: OpenStreetMap standard tiles (https://tile.openstreetmap.org/{z}/{x}/{y}.png), Web
+// Mercator, global, no key, © OpenStreetMap contributors (ODbL). Zoom 0-19; street labels are
+// baked into each tile, so there is one layer, not a base + labels pair. Tiles are requested from
+// the browser with no referrer; they show where a job is, never where a person is (the overlay is
+// drawn locally). Maps of people's points (My location, the crew map) pass `tilesNear`: the job
+// sites. Only tiles near a site are fetched; elsewhere the map stays blank and the points are
+// drawn on the blank.
 import { project, unproject, metresPerPixel, TILE } from './geo.js';
 
-export const TILE_BASE = 'https://maps-cartes.services.geo.ca/server2_serveur2/rest/services/BaseMaps/CBMT_CBCT_GEOM_3857/MapServer/tile/{z}/{y}/{x}';
-export const TILE_LABELS = 'https://maps-cartes.services.geo.ca/server2_serveur2/rest/services/BaseMaps/CBMT_TXT_3857/MapServer/tile/{z}/{y}/{x}';
-export const TILE_MAX_ZOOM = 15;
-export const MAX_ZOOM = 18;
+export const TILE_BASE = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+export const TILE_MAX_ZOOM = 19;
+export const MAX_ZOOM = 19;
 export const MIN_ZOOM = 3;
-export const ATTRIBUTION = 'Base map © Natural Resources Canada. Contains information licensed under the Open Government Licence – Canada.';
+export const ATTRIBUTION = '© OpenStreetMap contributors';
 const SVGNS = 'http://www.w3.org/2000/svg';
 
 export const tileUrl = (tpl, z, x, y) => tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
@@ -92,11 +91,9 @@ export function miniMap({ h, center, zoom = 16, height = 240, circle = null, mar
       for (let tx = Math.floor(left / size); tx <= Math.floor((left + w) / size); tx++) {
         const x = ((tx % n) + n) % n;
         if (tilesNear && !tileNearSites(tz, x, ty, tilesNear)) continue;
-        for (const [tpl, cls] of [[TILE_BASE, 'mm-base'], [TILE_LABELS, 'mm-labels']]) {
-          const img = tileImg(tpl, tz, x, ty, cls);
-          Object.assign(img.style, { left: `${Math.round(tx * size - left)}px`, top: `${Math.round(ty * size - top)}px`, width: `${size}px`, height: `${size}px` });
-          kids.push(img);
-        }
+        const img = tileImg(TILE_BASE, tz, x, ty, 'mm-base');
+        Object.assign(img.style, { left: `${Math.round(tx * size - left)}px`, top: `${Math.round(ty * size - top)}px`, width: `${size}px`, height: `${size}px` });
+        kids.push(img);
       }
     }
     tiles.replaceChildren(...kids);

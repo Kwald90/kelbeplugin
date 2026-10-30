@@ -171,7 +171,7 @@ async function openPage(name, { width, height, mobile }) {
     else if (msg.method === 'Runtime.exceptionThrown') consoleLines.push(`[exception] ${msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text}`);
     else if (msg.method === 'Log.entryAdded') consoleLines.push(`[log:${msg.params.entry.level}] ${msg.params.entry.text} ${msg.params.entry.url || ''}`.trim());
     else if (msg.method === 'Fetch.requestPaused') {
-      // NRCan's services, answered locally: the address lookup and the map tiles.
+      // Answered locally: NRCan's address lookup and the OpenStreetMap tiles.
       const { requestId, request } = msg.params;
       const geo = request.url.startsWith('https://geolocator.api.geo.ca/');
       if (geo) outside.geocode++; else outside.tiles++;
@@ -181,7 +181,7 @@ async function openPage(name, { width, height, mobile }) {
     }
   });
   for (const m of ['Runtime.enable', 'Page.enable', 'Log.enable']) await send(m);
-  await send('Fetch.enable', { patterns: [{ urlPattern: 'https://geolocator.api.geo.ca/*' }, { urlPattern: 'https://maps-cartes.services.geo.ca/*' }] });
+  await send('Fetch.enable', { patterns: [{ urlPattern: 'https://geolocator.api.geo.ca/*' }, { urlPattern: 'https://tile.openstreetmap.org/*' }] });
   await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: mobile ? 2 : 1, mobile });
   if (mobile) await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await browserSend('Browser.grantPermissions', { permissions: ['geolocation'], origin: ORIGIN, browserContextId });

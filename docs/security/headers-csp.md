@@ -70,7 +70,7 @@ default-src 'self';
 script-src 'self';
 style-src 'self';
 style-src-attr 'unsafe-hashes' 'sha256-EcJt9BR7RzlCkX1VP+89sqJ3ShKTcSMgu49NQP6XlIU=';
-img-src 'self' data: blob: https://maps-cartes.services.geo.ca;
+img-src 'self' data: blob: https://tile.openstreetmap.org;
 font-src 'self' data:;
 connect-src 'self' https://geolocator.api.geo.ca;
 worker-src 'self' blob:;
@@ -90,7 +90,7 @@ upgrade-insecure-requests
 | `script-src 'self'` | Our ES modules and the self-hosted pdf.js. No `'unsafe-inline'` and no `'unsafe-eval'`: inline scripts, `onclick="..."`, `javascript:` URLs, `eval` and `new Function` don't run. |
 | `style-src 'self'` | Stylesheets from `css/` only; `<style>` blocks are refused. |
 | `style-src-attr 'unsafe-hashes' 'sha256-...'` | One exception for one inline `style` attribute: the `#boot` loading message in `index.html`. `'unsafe-hashes'` is the keyword that lets a hash apply to an attribute; despite its name, only that exact text is allowed. |
-| `img-src 'self' data: blob: https://maps-cartes.services.geo.ca` | Drawing thumbnails and plan underlays are `data:` URLs; photos and canvas exports are `blob:` URLs. The one other host is Natural Resources Canada's base-map tile server (CBMT, Open Government Licence – Canada) for the job-site map (2026-10-19). Images from any other host are refused, which also blocks tracking pixels and data exfiltration through image URLs in AI output; an image URL on that one government host can't carry data anywhere we don't already send it. |
+| `img-src 'self' data: blob: https://tile.openstreetmap.org` | Drawing thumbnails and plan underlays are `data:` URLs; photos and canvas exports are `blob:` URLs. The one other host is OpenStreetMap's standard tile server for the job-site map (switched from NRCan CBMT on 2026-10-30; "© OpenStreetMap contributors", ODbL). Images from any other host are refused, which also blocks tracking pixels and data exfiltration through image URLs in AI output; a tile URL on that one host carries only `{z}/{x}/{y}` (the map area around a job), not personal data. |
 | `font-src 'self' data:` | Local fonts and fonts embedded in CSS. |
 | `connect-src 'self' https://geolocator.api.geo.ca` + pdf.js path | `fetch` and XHR to our own API, plus Natural Resources Canada's Geolocator, which turns a job's street address into map coordinates when a manager taps Find address (one call per job, no key, no personal data: the job's address only; 2026-10-19). The pdf.js path is here because `sw.js` re-fetches the page's requests, and a service worker's fetches are connections. |
 | `worker-src 'self' blob:` | `sw.js` (service workers fall under `worker-src`) and the pdf.js worker (same-origin since the self-hosting; `blob:` kept until re-tested). |
