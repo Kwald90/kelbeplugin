@@ -93,7 +93,8 @@ h2.section { font-size: var(--fs-base); line-height: var(--lh-base); margin: var
   pointer-events: none; transform: scale(.4) rotate(-40deg); opacity: 0; transition: transform var(--t-base) var(--ease), opacity var(--t-base);
 }
 @media (max-width: 760px) { .wheel { right: calc(var(--s4) + 28px - 150px); bottom: calc(88px + 28px - 150px); } }
-.wheel.open { transform: none; opacity: 1; }
+.wheel.open { transform: none; opacity: 1; pointer-events: auto; touch-action: none; cursor: grab; }
+.wheel.open:active { cursor: grabbing; }
 .wheel.open .wheel-item { pointer-events: auto; }
 .wheel-disc { position: absolute; inset: 0; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-pop); }
 .wheel-disc::after { content: ""; position: absolute; inset: 92px; border-radius: 50%; background: var(--surface-2); border: 1px solid var(--border); }

@@ -366,6 +366,12 @@ export default {
     };
     drawTheme();
 
+    // quick-actions wheel (the radial + button): show or hide it (settings.ui.showWheel)
+    const wheelToggle = h('label', { class: 'field check' },
+      h('input', { type: 'checkbox', checked: store.settings()?.ui?.showWheel !== false,
+        onChange: (e) => { store.saveSettings({ ui: { ...(store.settings().ui || {}), showWheel: e.target.checked } }); ui.toast(e.target.checked ? 'Quick-actions wheel on' : 'Quick-actions wheel hidden', 'success'); } }),
+      h('span', null, 'Show the quick-actions wheel (the + button and radial menu)'));
+
     // data
     const exportBackup = () => {
       const dump = store.exportAll();
@@ -424,7 +430,7 @@ export default {
         card('Circuit names', 'The suggestions offered as you fill in a panel schedule', circuitNamesHost),
         ctx.auth?.synced ? card('Your account', 'Password, two-step sign-in, your units and theme',
           ui.button('Password and sign-in', { icon: 'key', href: '#/account' })) : null,
-        card('Appearance', null, themeHost),
+        card('Appearance', null, themeHost, wheelToggle),
         card('Drawing', 'Finger gestures on the drawing canvas. Yours only: they follow you to your other devices when signed in.',
           gesturePanel(ui, (k, v) => savePref(session.me, k, v)),
           h('div', { class: 'muted' }, 'Brush size, smoothness and the eraser mode are set per tool on the canvas: tap the centre of the tool wheel.')),

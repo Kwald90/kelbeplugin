@@ -2,7 +2,7 @@
 // tools/gen-precache.mjs) so every screen, setup guide and the PDF engine work with no service
 // after the first load, not just the screens opened while online. CORE is the minimum that must
 // cache even if the manifest fetch fails, so the app still opens offline.
-const CACHE = 'fishtape-v7-offline';
+const CACHE = 'fishtape-v8-offline';
 const CORE = ['./', './index.html', './manifest.webmanifest', './css/tokens.css', './css/app.css', './js/app.js'];
 
 // put() one by one rather than addAll(): addAll fails the whole install ("Entry already exists")

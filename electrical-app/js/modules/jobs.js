@@ -4,7 +4,7 @@ import { emergencyCard } from '../lib/safety-emergency.js';
 import { siteCard } from '../lib/location-ui.js';
 import { jobOverview } from '../lib/job-overview.js';
 import { STATUS_LABEL as MATERIAL_STATUS } from '../lib/materials.js';
-import { entryMinutes, kindOf, fmtH } from '../lib/timesheet.js';
+import { entryMinutes, kindOf, fmtH, isCorrection } from '../lib/timesheet.js';
 import { locationSettings } from '../lib/location-policy.js';
 import { BILLING_MODES, billingLabel, jobBillingMode, defaultBillingMode, jobRates, unbilledTm, buildTmInvoice, jobCosting } from '../lib/tm.js';
 import { moduleOn } from '../lib/modules.js';
@@ -233,6 +233,7 @@ function jobForm(ctx, job, onSaved) {
       crewPick,
       modeHost,
       { label: 'Labour rate for this job', name: 'labourRateCents', type: 'money', value: job?.labourRateCents ?? null, placeholder: ui.centsToInput(rates.labourRateCents), hint: 'Time & material only. Blank: the company rate' },
+      { label: 'Track labour hours on this job', name: 'trackLabour', type: 'checkbox', span: true, value: job ? job.trackLabour !== false : true, hint: 'When on, time clocked to this job counts toward its labour hours and cost.' },
       { label: 'Scope / description', name: 'description', type: 'textarea', value: job?.description, span: true },
     ],
     onSubmit(v, form) {
@@ -240,7 +241,7 @@ function jobForm(ctx, job, onSaved) {
       if (!v.address && v.clientId) v.address = store.get('clients', v.clientId)?.address || '';
       delete v.billingModeChoice;
       const rateRaw = form.querySelector('[name=labourRateCents]').value.trim();
-      const data = { ...v, clientId: v.clientId || null, crewIds: [...crew], billingMode: mode, labourRateCents: rateRaw === '' ? null : v.labourRateCents };
+      const data = { ...v, clientId: v.clientId || null, crewIds: [...crew], billingMode: mode, labourRateCents: rateRaw === '' ? null : v.labourRateCents, trackLabour: v.trackLabour !== false };
       let saved;
       // Complete and invoiced go through the final-billing checklist (4.8).
       const gated = job && data.status !== job.status && ['complete', 'invoiced'].includes(data.status) ? data.status : null;
@@ -337,8 +338,10 @@ function moneyFor(store, job) {
   const materialCents = moves.reduce((s, m) => s + Math.round((Number(m.qty) || 0) * (store.get('items', m.itemId)?.costCents || 0)), 0);
   const coCents = (job.changeOrders || []).filter((c) => c.status === 'approved').reduce((s, c) => s + (Number(c.amountCents) || 0), 0);
   const revenueCents = invoicedCents || estCents + coCents;
-  const costCents = labourCents + materialCents;
-  return { estimates, invoices, estCents, invoicedCents, paidCents, balanceCents, hours, labourCents, materialCents, coCents, revenueCents, costCents, marginCents: revenueCents - costCents };
+  // "Track labour on this job" off: the hours are kept for the record but not charged to the job's cost.
+  const labourCharged = job.trackLabour !== false;
+  const costCents = (labourCharged ? labourCents : 0) + materialCents;
+  return { estimates, invoices, estCents, invoicedCents, paidCents, balanceCents, hours, labourCents, labourCharged, materialCents, coCents, revenueCents, costCents, marginCents: revenueCents - costCents };
 }
 
 function detailView(root, ctx, id) {
@@ -474,9 +477,50 @@ function detailView(root, ctx, id) {
 
   function overview(el, job, m) {
     operationalOverview(el, job);
+    el.append(hoursSection(job, m));
     const detail = h('div');
     overviewDetails(detail, job, m);
     el.append(disclosure('financials', showMoney ? 'Billing, costs & contract' : 'Hours & job details', detail));
+  }
+
+  // ---- hours clocked to this job (a summary; the Time tab has the full entry list) ----
+  function hoursSection(job, m) {
+    const charged = job.trackLabour !== false;
+    // Completed shifts and office corrections; open shifts are left out of the total.
+    const entries = store.list('timeEntries', (t) => t.jobId === job.id && (t.clockOut || isCorrection(t)));
+    let workMin = 0, travelMin = 0;
+    const byPerson = new Map();
+    for (const t of entries) {
+      const min = entryMinutes(t);
+      if (kindOf(t) === 'travel') travelMin += min; else workMin += min;
+      const key = t.employeeId || '';
+      byPerson.set(key, (byPerson.get(key) || 0) + min);
+    }
+    const totalMin = workMin + travelMin;
+    const section = h('section', { class: 'job-exp-section', 'aria-label': 'Hours', dataset: { jobHours: job.id } }, h('h2', null, 'Hours'));
+    const timesheetLink = h('div', { class: 'row ops-sub-actions' }, ui.button('Open timesheets', { variant: 'ghost', icon: 'clock', href: '#/time/week' }));
+    if (!totalMin) {
+      section.append(h('p', { class: 'muted' }, 'No hours clocked to this job yet.'), timesheetLink);
+      return section;
+    }
+    const split = travelMin ? ` (${fmtH(workMin)} h work · ${fmtH(travelMin)} h travel)` : '';
+    section.append(h('p', { class: 'job-exp-note' }, charged
+      ? `${fmtH(totalMin)} h clocked to this job${split}.`
+      : `${fmtH(totalMin)} h clocked${split} — tracked only, not charged to this job.`));
+    // Labour cost (office and owners only).
+    if (money$) {
+      section.append(h('p', { class: 'job-exp-note' }, charged
+        ? `Labour cost: ${ui.fmtMoney(m.labourCents, { whole: true })}`
+        : `Labour cost ${ui.fmtMoney(m.labourCents, { whole: true })} — tracked only, not charged to this job.`));
+    }
+    const people = [...byPerson.entries()].sort((a, b) => b[1] - a[1]);
+    if (people.length) {
+      section.append(h('div', { class: 'ops-kvs' }, people.map(([id, min]) => h('div', { class: 'ops-kv' },
+        h('span', { class: 'muted' }, store.get('employees', id)?.name || 'Unassigned'),
+        h('span', { class: 'num' }, `${fmtH(min)} h`)))));
+    }
+    section.append(timesheetLink);
+    return section;
   }
 
   function overviewDetails(el, job, m) {
@@ -495,7 +539,7 @@ function detailView(root, ctx, id) {
       h('div', { class: 'grid ops-stats' },
         money$ && on('estimates') ? ui.stat({ label: tm ? 'Estimate (guide)' : 'Estimate', value: ui.fmtMoney(m.estCents, { whole: true }), hint: m.coCents ? `+ ${ui.fmtMoney(m.coCents, { whole: true })} approved changes` : `${m.estimates.length} estimate(s)` }) : null,
         money$ && on('invoices') ? ui.stat({ label: 'Invoiced', value: ui.fmtMoney(m.invoicedCents, { whole: true }), hint: `${ui.fmtMoney(m.paidCents, { whole: true })} paid · ${ui.fmtMoney(m.balanceCents, { whole: true })} due`, tone: m.balanceCents > 0 ? 'accent' : null }) : null,
-        ui.stat({ label: 'Labour', value: ui.fmtHours(m.hours), hint: money$ ? `${ui.fmtMoney(m.labourCents, { whole: true })} cost` : 'logged on this job' }),
+        ui.stat({ label: 'Labour', value: ui.fmtHours(m.hours), hint: money$ ? (m.labourCharged ? `${ui.fmtMoney(m.labourCents, { whole: true })} cost` : `${ui.fmtMoney(m.labourCents, { whole: true })} · tracked, not charged`) : 'logged on this job' }),
         money$ ? ui.stat({ label: 'Materials used', value: ui.fmtMoney(m.materialCents, { whole: true }), hint: 'at cost, from stock moves' }) : null,
         money$ ? ui.stat({ label: 'Margin', value: ui.fmtMoney(m.marginCents, { whole: true }), hint: pct == null ? 'no revenue yet' : `${pct}% of ${m.invoicedCents ? 'invoiced' : 'estimate'}`, tone: m.marginCents < 0 ? 'danger' : 'success' }) : null),
       auth.isManager() ? (tm ? tmCard(job) : estimateVsActual(job)) : null,

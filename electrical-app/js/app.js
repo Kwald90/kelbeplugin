@@ -376,24 +376,60 @@ const WHEEL = [
   { label: 'SOPs', icon: 'book', go: 'sops', perm: 'sops' },
 ];
 
+/** The wheel can be turned off in Settings (settings.ui.showWheel). Default on. */
+function wheelEnabled() { try { return store.settings()?.ui?.showWheel !== false; } catch { return true; } }
+
 function buildWheel() {
   const items = WHEEL.filter((w) => auth.can(w.perm) && moduleUnlocked(w.go.split(/[/?]/)[0]) && moduleEnabled(hrefModule('#/' + w.go)));
   const scrim = h('div', { class: 'wheel-scrim', onClick: () => toggle(false) });
   const wheel = h('div', { class: 'wheel', 'aria-hidden': 'true' }, h('div', { class: 'wheel-disc' }));
-  items.forEach((w, i) => {
-    // spread items over the upper-left 3/4 of the circle so they stay on screen in the corner
-    const a = Math.PI * (0.5 + (1.25 * i) / Math.max(1, items.length - 1)) + Math.PI * 0.12;
-    const r = 118;
-    wheel.append(h('button', {
-      class: 'wheel-item', style: { left: `${150 + r * Math.cos(a)}px`, top: `${150 - r * Math.sin(a)}px` }, tabindex: -1,
-      onClick: () => { toggle(false); if (w.run) w.run({ store, ui, auth, nav }); else nav(w.go); },
-    }, icon(w.icon, 20), w.label));
+  const r = 118;
+  // base angle of each item: spread over the upper-left 1.25π so they sit in the corner at rest
+  const bases = items.map((_, i) => Math.PI * (0.5 + (1.25 * i) / Math.max(1, items.length - 1)) + Math.PI * 0.12);
+  const btns = items.map((w) => h('button', {
+    class: 'wheel-item', tabindex: -1,
+    // a real drag suppresses the tap so spinning the wheel doesn't fire an action
+    onClick: (e) => { if (dragged) { e.preventDefault(); return; } toggle(false); if (w.run) w.run({ store, ui, auth, nav }); else nav(w.go); },
+  }, icon(w.icon, 20), w.label));
+  btns.forEach((b) => wheel.append(b));
+
+  // ---- turn the wheel: drag it round, with a little inertia ----
+  let rot = 0;
+  const layout = () => btns.forEach((b, i) => { const a = bases[i] + rot; b.style.left = `${150 + r * Math.cos(a)}px`; b.style.top = `${150 - r * Math.sin(a)}px`; });
+  layout();
+  let dragging = false, dragged = false, startAng = 0, startRot = 0, lastAng = 0, vel = 0, spin = 0;
+  const center = () => { const b = wheel.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; };
+  const angOf = (ev, c) => Math.atan2(c.y - ev.clientY, ev.clientX - c.x);
+  wheel.addEventListener('pointerdown', (ev) => {
+    cancelAnimationFrame(spin); dragging = true; dragged = false; vel = 0;
+    const c = center(); startAng = lastAng = angOf(ev, c); startRot = rot;
+    wheel.setPointerCapture?.(ev.pointerId);
   });
+  wheel.addEventListener('pointermove', (ev) => {
+    if (!dragging) return;
+    const c = center(); const a = angOf(ev, c);
+    rot = startRot + (a - startAng);
+    let step = a - lastAng; if (step > Math.PI) step -= 2 * Math.PI; else if (step < -Math.PI) step += 2 * Math.PI;
+    vel = step; lastAng = a;
+    if (Math.abs(a - startAng) > 0.06) dragged = true;
+    layout();
+  });
+  const endDrag = (ev) => {
+    if (!dragging) return;
+    dragging = false; wheel.releasePointerCapture?.(ev.pointerId);
+    const decay = () => { if (Math.abs(vel) < 0.002) return; rot += vel; vel *= 0.92; layout(); spin = requestAnimationFrame(decay); };
+    if (Math.abs(vel) > 0.01) spin = requestAnimationFrame(decay);
+    setTimeout(() => { dragged = false; }, 0);
+  };
+  wheel.addEventListener('pointerup', endDrag);
+  wheel.addEventListener('pointercancel', endDrag);
+
   const fab = h('button', { class: 'wheel-fab no-print', 'aria-label': 'Quick actions', 'aria-expanded': 'false', onClick: () => toggle() },
     h('span', { class: 'ring' }), icon('plus', 26));
   function toggle(force) {
     const open = force ?? fab.getAttribute('aria-expanded') !== 'true';
     fab.setAttribute('aria-expanded', String(open));
+    if (!open) { cancelAnimationFrame(spin); rot = 0; vel = 0; layout(); }
     wheel.classList.toggle('open', open); scrim.classList.toggle('open', open);
     wheel.setAttribute('aria-hidden', String(!open));
     for (const b of wheel.querySelectorAll('button')) b.tabIndex = open ? 0 : -1;
@@ -404,6 +440,7 @@ function buildWheel() {
 }
 
 let shell;
+let wheelShown = true;
 function rebuild() {
   moreSheet?.close();
   navStatusObserver?.disconnect();
@@ -419,7 +456,9 @@ function rebuild() {
   collapse.setAttribute('aria-label', compact ? 'Expand navigation' : 'Collapse navigation');
   collapse.title = compact ? 'Expand navigation' : 'Collapse navigation';
   modulesKey = currentModulesKey();
-  document.body.append(shell, ...buildWheel());
+  wheelShown = wheelEnabled();
+  document.body.append(shell);
+  if (wheelShown) document.body.append(...buildWheel());
   navStatusObserver = new MutationObserver(paintMobileStatus);
   navStatusObserver.observe(rail.querySelector('.notify-bell'), { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label'] });
   paintMobileStatus();
@@ -549,7 +588,7 @@ async function startShell() {
   }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   store.on('*', (e) => { if (e.type === 'reset') { switchCache = null; rebuild(); } });
   // A module turned on or off (here or on another device): redraw the rail, wheel and screen.
-  store.on('settings', () => { switchCache = null; if (currentModulesKey() !== modulesKey) rebuild(); });
+  store.on('settings', () => { switchCache = null; if (currentModulesKey() !== modulesKey || wheelEnabled() !== wheelShown) rebuild(); });
   startSweeper();
   addEventListener('hashchange', route);
   document.getElementById('boot')?.remove();

@@ -325,7 +325,10 @@ export function jobActuals({
   const prefs = settings?.payroll || {};
   const rule = otRule(prefs.otRule || province);
   const weekStartsOn = Number.isInteger(prefs.weekStartsOn) ? prefs.weekStartsOn : 1;
-  const mine = timeEntries.filter((t) => t?.jobId === jobId && (t.clockIn || (isCorrection(t) && t.workDay)) && inRange(entryDayOf(t), from, asOf || '9999-12-31'));
+  // "Track labour on this job" off (trackLabour === false): time is still logged but is not charged to
+  // the job, so no labour hours or cost roll up here. Undefined/true keeps every existing job unchanged.
+  const tracksLabour = job?.trackLabour !== false;
+  const mine = tracksLabour ? timeEntries.filter((t) => t?.jobId === jobId && (t.clockIn || (isCorrection(t) && t.workDay)) && inRange(entryDayOf(t), from, asOf || '9999-12-31')) : [];
   // Overtime is the person's whole week (every job), so allocate per person and week first.
   const weeks = new Set(mine.map((t) => `${t.employeeId}|${weekOf(entryDayOf(t), weekStartsOn)}`));
   const split = new Map();

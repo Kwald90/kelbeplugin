@@ -90,7 +90,7 @@ export default {
   render(root, ctx) {
     const { store, ui, auth } = ctx;
     const { h } = ui;
-    const me = auth.current();
+    let me = auth.current();
     const mgr = auth.isManager();
     const canApprove = auth.can('time-approve');
     const view = ['week', 'location', 'settings', 'map'].includes(ctx.params[0]) ? ctx.params[0] : 'clock';
@@ -210,8 +210,46 @@ export default {
         actions: [ui.button('Cancel', { variant: 'ghost', onClick: () => s.close() }), ui.button('Start work here', { variant: 'primary', icon: 'play', onClick: () => { s.close(); tracker.arriveFlow(flow, { jobId: sel.value || null }); } })] });
     }
 
+    /** Signed-in owner/manager with no employee record yet: create one and link the membership to it. */
+    async function setupTimecard() {
+      const acct = auth.account;
+      if (!acct?.membershipId) { ui.toast('Your account is not ready to set up a timecard yet.', 'error'); return; }
+      const ROLE_SET = ['owner', 'admin', 'office', 'foreman', 'electrician', 'apprentice'];
+      try {
+        const emp = store.add('employees', { name: acct.name || 'Me', role: ROLE_SET.includes(acct.role) ? acct.role : 'owner', active: true });
+        await ctx.app.api.patch('/api/v1/members/' + acct.membershipId, { employeeId: emp.id });
+        await ctx.app.sync?.syncNow?.().catch(() => {});
+        // Refresh the account so auth.account.employeeId (and me.id) reflect the new link without a reload.
+        const freshMe = await ctx.app.api.get('/api/v1/me');
+        store.setMeta('me', freshMe);
+        if (ctx.app.session) ctx.app.session.me = freshMe;
+        auth.setAccount(freshMe);
+        me = auth.current();
+        ui.toast('Your timecard is ready', 'success');
+        draw();
+      } catch (e) {
+        ui.toast(e?.message || "Couldn't set up your timecard. Try again when you're online.", 'error', 5000);
+      }
+    }
+
+    function setupCard() {
+      // Signed in to a company, a manager, not yet linked to an employee record: offer to set one up.
+      if (auth.synced && mgr && !auth.account?.employeeId) {
+        let busy = false;
+        return h('div', { class: 'card ops-clock' },
+          h('p', { class: 'muted' }, "You're not set up to track time yet. Set up your timecard to clock in and out and log hours to jobs."),
+          h('div', { class: 'row' },
+            ui.button('Set up my timecard', { variant: 'primary', icon: 'clock', size: 'lg', onClick: async () => { if (busy) return; busy = true; await setupTimecard(); busy = false; } }),
+            ui.button('Add or manage members', { variant: 'ghost', icon: 'users', onClick: () => ctx.nav('#/employees') })));
+      }
+      // Demo (or non-manager) fallback: the old guidance, with a shortcut to people for managers.
+      return h('div', { class: 'card ops-clock' },
+        h('p', { class: 'muted' }, mgr ? 'Your account is not linked to an employee record, so it has no clock.' : 'Pick who is using this device (avatar at the bottom of the rail) to clock in.'),
+        mgr ? h('div', { class: 'row' }, ui.button('Manage people', { variant: 'ghost', icon: 'users', onClick: () => ctx.nav('#/employees') })) : null);
+    }
+
     function clockPanel() {
-      if (!me.id) return h('div', { class: 'card ops-clock' }, h('p', { class: 'muted' }, mgr ? 'Your account is not linked to an employee record, so it has no clock. Link it in Account > Members.' : 'Pick who is using this device (avatar at the bottom of the rail) to clock in.'));
+      if (!me.id) return setupCard();
       const open = openEntry(store, me.id);
       const travel = open && kindOf(open) === 'travel';
       const readout = h('div', { class: 'ops-clock-time num', 'aria-live': 'off' }, open ? clockText(liveMin(open)) : '00:00:00');
