@@ -32,6 +32,15 @@
 .calc-mini strong { font-size: var(--fs-lg); line-height: var(--lh-lg); }
 .calc-note { font-size: var(--fs-xs); margin: 0; }
 .calc-rejected .calc-why { color: var(--text-muted); }
+
+/* Breaker kA selector: the "standard ratings used" reference table. */
+.calc-ka-ref { margin-top: var(--s3); }
+.calc-ka-table { width: 100%; border-collapse: collapse; margin-top: var(--s2); font-size: var(--fs-sm); }
+.calc-ka-table th, .calc-ka-table td { text-align: left; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border); vertical-align: top; }
+.calc-ka-table th { color: var(--text-muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; }
+.calc-ka-table td:first-child { white-space: nowrap; }
+.calc-ka-table tr.active { background: var(--accent-soft); }
+.calc-ka-table tr.active td { border-bottom-color: transparent; }
 .calc-lines { width: 100%; border-collapse: collapse; margin-top: var(--s3); font-size: var(--fs-xs); }
 .calc-lines td { padding: 6px 0; border-top: 1px solid var(--border); vertical-align: top; }
 .calc-lines td.right { padding-left: var(--s3); white-space: nowrap; }

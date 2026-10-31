@@ -6,6 +6,7 @@
 import * as NEC from '../lib/nec.js';
 import * as CEC from '../lib/cec/index.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
+import { recommendBreakerKa, KA_OPTIONS, KA_REFERENCE } from '../lib/breaker-ka.js';
 
 const FT2 = M_PER_FT * M_PER_FT; // m² per ft²
 const ML_PER_IN3 = 16.387064;
@@ -20,6 +21,7 @@ const TABS = [
   { id: 'motor', label: 'Motors' },
   { id: 'ohms', label: "Ohm's law" },
   { id: '3ph', label: '3-phase' },
+  { id: 'ka', label: 'Breaker kA' },
 ];
 
 const MATERIALS = [{ value: 'cu', label: 'Copper' }, { value: 'al', label: 'Aluminum' }];
@@ -700,9 +702,51 @@ function threePhaseTab() {
   });
 }
 
+// Breaker / panelboard interrupting-rating (kAIC) selector — code-book-neutral. Logic in lib/breaker-ka.js.
+function breakerKaTab() {
+  const lbl = (grp, val) => ((KA_OPTIONS[grp].find((o) => o.value === val) || {}).label || val);
+  return liveCalc('ka', { building: 'res', location: 'service', xfmr: 'unknown', distance: '25', conductor: '4/0', source: 'typical', motor: 'no' }, (v) => [
+    { label: 'Building / installation type', name: 'building', type: 'select', value: v.building, options: KA_OPTIONS.building },
+    { label: 'Where is the breaker?', name: 'location', type: 'select', value: v.location, options: KA_OPTIONS.location },
+    { label: 'Transformer feeding the service', name: 'xfmr', type: 'select', value: v.xfmr, options: KA_OPTIONS.xfmr },
+    { label: 'Distance from transformer / service to panel', name: 'distance', type: 'select', value: v.distance, options: KA_OPTIONS.distance },
+    { label: 'Feeder / service conductors', name: 'conductor', type: 'select', value: v.conductor, options: KA_OPTIONS.conductor },
+    { label: 'Utility source', name: 'source', type: 'select', value: v.source, options: KA_OPTIONS.source },
+    { label: 'Large motor loads or generators?', name: 'motor', type: 'select', value: v.motor, options: KA_OPTIONS.motor },
+  ], (x) => {
+    const r = recommendBreakerKa(x);
+    const cec = book === 'CEC-2024';
+    const table = h('div', { class: 'calc-ka-ref' },
+      h('div', { class: 'calc-label' }, 'Standard ratings used'),
+      h('table', { class: 'calc-ka-table' },
+        h('thead', null, h('tr', null, h('th', null, 'Rating'), h('th', null, 'Use it for'))),
+        h('tbody', null, KA_REFERENCE.map((row) => h('tr', { class: parseInt(row.rating, 10) === r.rating ? 'active' : null },
+          h('td', null, h('strong', null, row.rating)), h('td', null, row.use))))));
+    return [
+      result({
+        label: 'Recommended minimum interrupting rating',
+        value: r.engineeringReview ? '65+' : String(r.rating), unit: 'kA',
+        tone: r.engineeringReview ? 'warn' : 'pass',
+        badge: r.engineeringReview ? 'Engineering review' : 'Conservative minimum',
+        sub: `≈ ${num(r.estimateKa, 1)} kA estimated available fault current at this point.`,
+        lines: [
+          `A ${lbl('xfmr', x.xfmr).toLowerCase()} transformer on a ${lbl('source', x.source).toLowerCase()} source sets the starting fault level.`,
+          `${lbl('conductor', x.conductor)} over ${lbl('distance', x.distance).toLowerCase()} to a ${lbl('location', x.location).toLowerCase()} lower what reaches the device.`,
+          x.motor !== 'no' ? `${lbl('motor', x.motor)} add fault contribution.` : null,
+          `Rounded up to the next standard rating. The device's interrupting rating must be at least the available fault current at its terminals (${cec ? 'CEC Rule 14-012' : 'NEC 110.9 / 110.10'}).`,
+        ],
+        children: table,
+      }),
+      refs(cec ? 'CEC 2024 Rule 14-012' : 'NEC 2023 110.9 / 110.10', 'Conservative selection aid — not a short-circuit study'),
+      h('p', { class: 'calc-disclaimer' }, ui.icon('info', 16),
+        ' For permit-final or critical installations, verify with the utility’s available fault current, a short-circuit calculation, and manufacturer series-rated combination listings where applicable.'),
+    ];
+  });
+}
+
 const VIEWS = {
-  'CEC-2024': { vd: cecVoltageDrop, wire: cecWire, conduit: cecConduit, box: cecBox, load: cecLoad, motor: cecMotor, ohms: ohmsTab, '3ph': threePhaseTab },
-  'NEC-2023': { vd: necVoltageDrop, wire: necWire, conduit: necConduit, box: necBox, load: necLoad, motor: necMotor, ohms: ohmsTab, '3ph': threePhaseTab },
+  'CEC-2024': { vd: cecVoltageDrop, wire: cecWire, conduit: cecConduit, box: cecBox, load: cecLoad, motor: cecMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab },
+  'NEC-2023': { vd: necVoltageDrop, wire: necWire, conduit: necConduit, box: necBox, load: necLoad, motor: necMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab },
 };
 
 export default {

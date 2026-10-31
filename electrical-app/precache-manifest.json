@@ -61,6 +61,7 @@
   "./js/lib/bending-profiles.js",
   "./js/lib/bending-svg.js",
   "./js/lib/bending.js",
+  "./js/lib/breaker-ka.js",
   "./js/lib/breaker-partnumbers.js",
   "./js/lib/burden.js",
   "./js/lib/cec/amendments.js",
