@@ -1,47 +1,62 @@
-// Breaker / panelboard interrupting-rating selector (lib/breaker-ka.js): the conservative kA
-// recommendation from categorical install conditions.
+// Breaker / panelboard interrupting-rating selector (lib/breaker-ka.js): a faithful port of the field
+// tool's scoring. These tests pin the scoring to the original so the app gives the same answer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recommendBreakerKa, KA_STANDARD, KA_OPTIONS, KA_REFERENCE } from '../js/lib/breaker-ka.js';
 
-test('the recommended rating is always one of the standard ratings', () => {
-  for (const b of KA_OPTIONS.building) for (const x of KA_OPTIONS.xfmr) {
-    const r = recommendBreakerKa({ building: b.value, xfmr: x.value, location: 'service', distance: '25', conductor: '250', source: 'typical', motor: 'no' });
-    assert.ok(KA_STANDARD.includes(r.rating), `${b.value}/${x.value} -> ${r.rating}`);
-  }
+// The exact weights and thresholds from breaker_ka_value_selector.html, reproduced here independently
+// so the test fails if the library ever drifts from the field tool.
+const W = {
+  building: { res: 0, farm: 1, smallcomm: 2, comm: 3, ind: 4 },
+  location: { branch_far: -2, branch: -1, feeder: 1, main: 2, xfmr: 4 },
+  xfmr: { small: -1, med: 1, large: 2, xl: 3, xxl: 4, unknown: 1 },
+  distance: { close: 2, mid: 0, far: -2, unknown: 1 },
+  conductor: { small: -1, med: 0, large: 1, par: 2, unknown: 1 },
+  source: { weak: -2, normal: 0, strong: 2, unknown: 1 },
+  motor: { no: 0, some: 1, yes: 3, unknown: 1 },
+};
+const expectRating = (s) => (s <= 1 ? 10 : s <= 3 ? 22 : s <= 5 ? 25 : s <= 7 ? 35 : s <= 9 ? 50 : 65);
+
+test('scoring matches the field tool for every option combination', () => {
+  const keys = Object.keys(W);
+  const walk = (i, sel) => {
+    if (i === keys.length) {
+      const score = keys.reduce((a, k) => a + W[k][sel[k]], 0);
+      const r = recommendBreakerKa(sel);
+      assert.equal(r.score, score, JSON.stringify(sel));
+      assert.equal(r.ratingKa, expectRating(score), `rating for score ${score}`);
+      return;
+    }
+    for (const o of KA_OPTIONS[keys[i]]) walk(i + 1, { ...sel, [keys[i]]: o.value });
+  };
+  walk(0, {});
 });
 
-test('a far residential branch on a weak rural source lands at 10 kA', () => {
-  const r = recommendBreakerKa({ building: 'res', location: 'branch-far', xfmr: '50', distance: '25', conductor: '6', source: 'weak', motor: 'no' });
-  assert.equal(r.rating, 10);
-  assert.ok(r.estimateKa < 10);
+test('the tool opening defaults (res / far branch / small xfmr / close / #6 / weak / none) give 10 kA', () => {
+  const r = recommendBreakerKa({ building: 'res', location: 'branch_far', xfmr: 'small', distance: 'close', conductor: 'small', source: 'weak', motor: 'no' });
+  assert.equal(r.ratingKa, 10);
+  assert.equal(r.level, 'g');
 });
 
-test('a typical residential service lands at 22 kA', () => {
-  const r = recommendBreakerKa({ building: 'res', location: 'service', xfmr: 'unknown', distance: '25', conductor: '4/0', source: 'typical', motor: 'no' });
-  assert.equal(r.rating, 22);
-});
-
-test('a service close to a 150–300 kVA transformer lands at 25 kA', () => {
-  const r = recommendBreakerKa({ building: 'comm', location: 'service', xfmr: '300', distance: '25', conductor: '250', source: 'typical', motor: 'no' });
-  assert.equal(r.rating, 25);
-});
-
-test('a very large transformer with major motors flags an engineering review', () => {
-  const r = recommendBreakerKa({ building: 'ind', location: 'service', xfmr: '1500', distance: '25', conductor: 'parallel', source: 'strong', motor: 'big' });
+test('a worst-case industrial service flags engineering review (65 kA)', () => {
+  const r = recommendBreakerKa({ building: 'ind', location: 'xfmr', xfmr: 'xxl', distance: 'close', conductor: 'par', source: 'strong', motor: 'yes' });
   assert.equal(r.engineeringReview, true);
-  assert.equal(r.rating, 65);
-  assert.ok(r.estimateKa > 65);
+  assert.equal(r.ratingKa, 65);
+  assert.equal(r.level, 'r');
 });
 
-test('impedance monotonicity: more distance never raises the recommendation', () => {
-  const at = (distance) => recommendBreakerKa({ building: 'comm', location: 'service', xfmr: '500', distance, conductor: '4/0', source: 'typical', motor: 'no' }).estimateKa;
-  assert.ok(at('25') >= at('50') && at('50') >= at('100') && at('100') >= at('200'));
+test('reasons fire for the high-fault drivers, and a fallback when none do', () => {
+  const hi = recommendBreakerKa({ building: 'comm', location: 'main', xfmr: 'xl', distance: 'close', conductor: 'par', source: 'strong', motor: 'yes' });
+  assert.ok(hi.reasons.length >= 5);
+  assert.ok(hi.reasons.some((r) => /high-fault-current location/.test(r)));
+  const lo = recommendBreakerKa({ building: 'res', location: 'branch_far', xfmr: 'small', distance: 'far', conductor: 'small', source: 'weak', motor: 'no' });
+  assert.deepEqual(lo.reasons, ['Selected conditions indicate a lower available fault-current location.']);
 });
 
-test('unknown inputs fall back to conservative defaults, not NaN', () => {
-  const r = recommendBreakerKa({});
-  assert.ok(Number.isFinite(r.estimateKa) && KA_STANDARD.includes(r.rating));
+test('unknowns push toward a higher conservative rating with a note', () => {
+  const r = recommendBreakerKa({ building: 'res', location: 'feeder', xfmr: 'unknown', distance: 'unknown', conductor: 'unknown', source: 'unknown', motor: 'unknown' });
+  assert.ok(r.reasons.some((x) => /unknown/i.test(x)));
+  assert.ok(KA_STANDARD.includes(r.ratingKa));
 });
 
 test('every reference row maps to a real standard rating', () => {

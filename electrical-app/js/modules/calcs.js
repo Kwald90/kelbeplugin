@@ -702,10 +702,11 @@ function threePhaseTab() {
   });
 }
 
-// Breaker / panelboard interrupting-rating (kAIC) selector — code-book-neutral. Logic in lib/breaker-ka.js.
+// Breaker / panelboard interrupting-rating (kAIC) selector — code-book-neutral. Logic in lib/breaker-ka.js
+// (a faithful port of the field tool). Defaults match the tool's opening state.
+const KA_TONE = { g: 'pass', y: 'warn', r: 'fail' };
 function breakerKaTab() {
-  const lbl = (grp, val) => ((KA_OPTIONS[grp].find((o) => o.value === val) || {}).label || val);
-  return liveCalc('ka', { building: 'res', location: 'service', xfmr: 'unknown', distance: '25', conductor: '4/0', source: 'typical', motor: 'no' }, (v) => [
+  return liveCalc('ka', { building: 'res', location: 'branch_far', xfmr: 'small', distance: 'close', conductor: 'small', source: 'weak', motor: 'no' }, (v) => [
     { label: 'Building / installation type', name: 'building', type: 'select', value: v.building, options: KA_OPTIONS.building },
     { label: 'Where is the breaker?', name: 'location', type: 'select', value: v.location, options: KA_OPTIONS.location },
     { label: 'Transformer feeding the service', name: 'xfmr', type: 'select', value: v.xfmr, options: KA_OPTIONS.xfmr },
@@ -720,21 +721,16 @@ function breakerKaTab() {
       h('div', { class: 'calc-label' }, 'Standard ratings used'),
       h('table', { class: 'calc-ka-table' },
         h('thead', null, h('tr', null, h('th', null, 'Rating'), h('th', null, 'Use it for'))),
-        h('tbody', null, KA_REFERENCE.map((row) => h('tr', { class: parseInt(row.rating, 10) === r.rating ? 'active' : null },
+        h('tbody', null, KA_REFERENCE.map((row) => h('tr', { class: parseInt(row.rating, 10) === r.ratingKa ? 'active' : null },
           h('td', null, h('strong', null, row.rating)), h('td', null, row.use))))));
     return [
       result({
         label: 'Recommended minimum interrupting rating',
-        value: r.engineeringReview ? '65+' : String(r.rating), unit: 'kA',
-        tone: r.engineeringReview ? 'warn' : 'pass',
-        badge: r.engineeringReview ? 'Engineering review' : 'Conservative minimum',
-        sub: `≈ ${num(r.estimateKa, 1)} kA estimated available fault current at this point.`,
-        lines: [
-          `A ${lbl('xfmr', x.xfmr).toLowerCase()} transformer on a ${lbl('source', x.source).toLowerCase()} source sets the starting fault level.`,
-          `${lbl('conductor', x.conductor)} over ${lbl('distance', x.distance).toLowerCase()} to a ${lbl('location', x.location).toLowerCase()} lower what reaches the device.`,
-          x.motor !== 'no' ? `${lbl('motor', x.motor)} add fault contribution.` : null,
-          `Rounded up to the next standard rating. The device's interrupting rating must be at least the available fault current at its terminals (${cec ? 'CEC Rule 14-012' : 'NEC 110.9 / 110.10'}).`,
-        ],
+        value: r.engineeringReview ? '65+' : String(r.ratingKa), unit: 'kA',
+        tone: KA_TONE[r.level] || 'pass',
+        badge: r.engineeringReview ? 'Engineering review' : null,
+        sub: `Specify ${r.rating} for the breaker and panelboard.`,
+        lines: r.reasons,
         children: table,
       }),
       refs(cec ? 'CEC 2024 Rule 14-012' : 'NEC 2023 110.9 / 110.10', 'Conservative selection aid — not a short-circuit study'),
