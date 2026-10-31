@@ -111,6 +111,15 @@ h2.section { font-size: var(--fs-base); line-height: var(--lh-base); margin: var
 }
 .wheel-center:hover, .wheel-center:focus-visible { background: var(--accent-soft); }
 
+/* appears only while the page is pinch-zoomed; rides the visual viewport (app.js setupZoomReset) */
+.zoom-reset {
+  position: fixed; z-index: 90; top: var(--s3); left: var(--s3); transform-origin: 0 0;
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border-radius: var(--r-pill);
+  border: 1px solid var(--border); background: var(--text); color: var(--surface); box-shadow: var(--shadow-pop);
+  font-weight: 600; font-size: var(--fs-sm); cursor: pointer;
+}
+.zoom-reset[hidden] { display: none; }
+
 /* ---------- primitives ---------- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 40px; padding: 0 var(--s4);

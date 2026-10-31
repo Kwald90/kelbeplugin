@@ -735,6 +735,34 @@ function askUnitsOnce() {
   });
 }
 
+// iOS can pinch a fixed-layout web app IN but then refuses to pinch back OUT (WKWebView raises its
+// minimum zoom to the current scale). This gives a reliable way back: a button that shows only while
+// zoomed and snaps the page to 100% by briefly clamping the viewport. It rides the visual viewport so
+// it stays put and the same size while zoomed.
+function setupZoomReset() {
+  const vp = window.visualViewport;
+  const meta = document.querySelector('meta[name="viewport"]');
+  if (!vp || !meta) return;
+  const btn = h('button', {
+    class: 'zoom-reset no-print', type: 'button', 'aria-label': 'Reset zoom to fit', hidden: true,
+    onClick: () => {
+      const orig = meta.getAttribute('content');
+      meta.setAttribute('content', 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+      setTimeout(() => meta.setAttribute('content', orig), 350);
+    },
+  }, icon('minus', 18), h('span', null, 'Reset zoom'));
+  document.body.append(btn);
+  const update = () => {
+    const zoomed = vp.scale > 1.01;
+    btn.hidden = !zoomed;
+    if (zoomed) btn.style.transform = `translate(${Math.round(vp.offsetLeft)}px, ${Math.round(vp.offsetTop)}px) scale(${(1 / vp.scale).toFixed(3)})`;
+  };
+  vp.addEventListener('resize', update);
+  vp.addEventListener('scroll', update);
+  update();
+}
+
+setupZoomReset();
 boot();
 
 // Exposed for tests and the browser console.
