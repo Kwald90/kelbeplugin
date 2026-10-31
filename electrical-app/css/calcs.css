@@ -257,6 +257,10 @@
 .circuit-names { display: flex; flex-wrap: wrap; gap: 6px; }
 .circuit-names .chip { display: inline-flex; align-items: center; gap: 2px; cursor: default; color: var(--text); }
 .circuit-names .chip .btn { padding: 0 2px; min-height: auto; min-width: auto; }
+.circuit-names .chip[hidden] { display: none; }
+.circuit-names-search { display: flex; align-items: center; gap: var(--s2); }
+.circuit-names-search .input { flex: 1; min-width: 0; }
+.circuit-names-count { color: var(--text-muted); font-size: var(--fs-sm); white-space: nowrap; }
 
 .tpl-list, .tpl-groups { display: flex; flex-direction: column; gap: var(--s3); }
 .tpl-group { display: flex; flex-direction: column; gap: 4px; }

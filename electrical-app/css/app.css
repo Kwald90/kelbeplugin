@@ -297,11 +297,19 @@ html.is-printing .sheet { position: static; box-shadow: none; border: 0; width: 
 .settings-grid > *, .account-grid > *, .int-grid > * { break-inside: avoid; margin: 0 0 var(--s4); }
 
 /* Settings: a search box over categorised sections. */
-.settings-searchbar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); margin-bottom: var(--s4); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); color: var(--text-muted); }
+.settings-searchbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); margin-bottom: var(--s3); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); color: var(--text-muted); }
 .settings-searchbar > svg { flex-shrink: 0; }
 .settings-search { border: 0; background: none; padding: 0; height: 36px; flex: 1; min-width: 0; }
 .settings-search:focus { outline: none; }
+/* Category tabs: one screenful at a time instead of one long scroll. */
+.settings-tabs { position: sticky; top: 52px; z-index: 2; display: flex; flex-wrap: wrap; gap: var(--s2); padding: var(--s2) 0 var(--s3); margin-bottom: var(--s4); background: var(--bg); border-bottom: 1px solid var(--border); }
+.settings-tab { padding: 6px var(--s3); border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font: inherit; font-size: var(--fs-sm); cursor: pointer; white-space: nowrap; }
+.settings-tab:hover { color: var(--text); }
+.settings-tab.active { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
+.settings-tab.dim { opacity: 0.4; }
 .settings-section { margin: 0 0 var(--s6); }
+.settings-section .settings-cat { display: none; }
+.settings-sections.searching .settings-cat { display: block; }
 .settings-cat { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0 0 var(--s3); font-weight: 700; }
 .settings-section[hidden], .settings-grid > [hidden] { display: none; }
 .settings-nohits { padding: var(--s5) var(--s1); }

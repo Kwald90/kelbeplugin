@@ -229,11 +229,24 @@ export default {
       } },
         h('input', { class: 'input grow', name: 'newName', placeholder: 'Add a circuit name', 'aria-label': 'New circuit name', maxlength: 60, autocomplete: 'off' }),
         ui.button('Add', { variant: 'primary', icon: 'plus', type: 'submit' }));
+      const chips = names.map((n) => h('span', { class: 'chip', 'data-name': n.toLowerCase() }, n,
+        ui.button('', { variant: 'ghost', size: 'sm', icon: 'x', title: `Remove ${n}`, onClick: () => saveNames(names.filter((x) => x !== n)) })));
+      const list = h('div', { class: 'chip-list circuit-names' }, chips);
+      const count = h('span', { class: 'circuit-names-count' }, `${names.length}`);
+      const noHits = h('div', { class: 'muted', hidden: true }, 'No circuit names match.');
+      // Live lookup so a long list stays usable: filter the chips in place (no re-render, keeps focus).
+      const search = h('input', { class: 'input', type: 'search', placeholder: 'Search circuit names…', 'aria-label': 'Search circuit names', autocomplete: 'off',
+        onInput: (e) => {
+          const q = (e.target.value || '').trim().toLowerCase();
+          let shown = 0;
+          for (const c of chips) { const hit = !q || c.dataset.name.includes(q); c.hidden = !hit; if (hit) shown += 1; }
+          count.textContent = q ? `${shown} / ${names.length}` : `${names.length}`;
+          noHits.hidden = shown > 0;
+        } });
       circuitNamesHost.append(
         h('div', { class: 'muted' }, 'Suggested as you type a circuit description on a panel schedule. Add your own; remove any you don’t use.'),
-        h('div', { class: 'chip-list circuit-names' }, names.map((n) => h('span', { class: 'chip' }, n,
-          ui.button('', { variant: 'ghost', size: 'sm', icon: 'x', title: `Remove ${n}`, onClick: () => saveNames(names.filter((x) => x !== n)) })))),
-        addForm);
+        h('div', { class: 'row circuit-names-search' }, search, count),
+        list, noHits, addForm);
     };
 
     // defaults
@@ -383,7 +396,13 @@ export default {
       const shown = orderWheel(mine, prefs);
       const shownIds = shown.map((w) => w.id);
       const hiddenItems = mine.filter((w) => !shownIds.includes(w.id));
-      const commit = (next) => { saveWheelPrefs(uid, next); dispatchEvent(new Event('ft:wheel-changed')); drawWheelPrefs(); };
+      // Keep the page where it is: re-rendering the list collapses/regrows wheelHost, which would
+      // otherwise yank .main's scroll to the top and make a toggle look like it did nothing.
+      const commit = (next) => {
+        const sc = wheelHost.closest('.main'); const top = sc ? sc.scrollTop : 0;
+        saveWheelPrefs(uid, next); dispatchEvent(new Event('ft:wheel-changed')); drawWheelPrefs();
+        if (sc) sc.scrollTop = top;
+      };
       const setShown = (id, on) => {
         const hidden = new Set(prefs.hidden || []);
         let order = Array.isArray(prefs.order) ? [...prefs.order] : [...shownIds];
@@ -411,7 +430,7 @@ export default {
           shown.length ? shown.map((w, i) => row(w, i, true)) : h('div', { class: 'list-row muted' }, 'No shortcuts shown — tick some below.'),
           hiddenItems.map((w) => row(w, -1, false))),
         h('div', { class: 'row' }, h('span', { class: 'grow' }),
-          ui.button('Reset to default', { variant: 'ghost', icon: 'undo', onClick: () => { resetWheelPrefs(uid); dispatchEvent(new Event('ft:wheel-changed')); drawWheelPrefs(); ui.toast('Wheel shortcuts reset', 'success'); } })));
+          ui.button('Reset to default', { variant: 'ghost', icon: 'undo', onClick: () => { const sc = wheelHost.closest('.main'); const top = sc ? sc.scrollTop : 0; resetWheelPrefs(uid); dispatchEvent(new Event('ft:wheel-changed')); drawWheelPrefs(); if (sc) sc.scrollTop = top; ui.toast('Wheel shortcuts reset', 'success'); } })));
     };
     drawWheelPrefs();
 
@@ -529,28 +548,48 @@ export default {
         h('div', { class: 'grid-2 settings-grid' }, ...cards)),
     }));
     const noHits = h('div', { class: 'muted settings-nohits', hidden: true }, 'No settings match that. Try another word.');
-    const search = h('input', { class: 'input settings-search', type: 'search', placeholder: 'Search settings…', 'aria-label': 'Search settings', autocomplete: 'off', autocapitalize: 'none' });
-    const runSearch = () => {
+    const search = h('input', { class: 'input settings-search', type: 'search', placeholder: 'Search all settings…', 'aria-label': 'Search settings', autocomplete: 'off', autocapitalize: 'none' });
+
+    // One category shows at a time (tabs), so the page is a screenful, not an endless scroll. Typing
+    // in the search box overrides the tabs and filters every card across all categories at once.
+    let activeLabel = (ctx.query.section === 'modules' && blocks.some((b) => b.label === 'Modules')) ? 'Modules' : (blocks[0] && blocks[0].label);
+    const tabs = blocks.map((b) => h('button', { class: 'settings-tab', type: 'button', onClick: () => selectTab(b.label) }, b.label));
+    const sectionsWrap = h('div', { class: 'settings-sections' }, ...blocks.map((b) => b.el), noHits);
+
+    const applyView = () => {
       const q = search.value.trim().toLowerCase();
+      const searching = q.length > 0;
+      sectionsWrap.classList.toggle('searching', searching);
       let any = false;
-      for (const b of blocks) {
+      for (let i = 0; i < blocks.length; i++) {
+        const b = blocks[i];
         let shown = 0;
         for (const c of b.cards) {
-          const hay = `${b.label} ${c.textContent} ${c.dataset.keywords || ''}`.toLowerCase();
-          const hit = !q || hay.includes(q);
+          const hit = searching ? `${b.label} ${c.textContent} ${c.dataset.keywords || ''}`.toLowerCase().includes(q) : true;
           c.hidden = !hit;
           if (hit) shown++;
         }
-        b.el.hidden = shown === 0;
-        if (shown) any = true;
+        // While searching, show every category that has a match; otherwise only the active one.
+        b.el.hidden = searching ? shown === 0 : b.label !== activeLabel;
+        tabs[i].classList.toggle('active', !searching && b.label === activeLabel);
+        tabs[i].classList.toggle('dim', searching && shown === 0);
+        if (shown && (searching || b.label === activeLabel)) any = true;
       }
-      noHits.hidden = any;
+      noHits.hidden = any || !searching;
     };
-    search.addEventListener('input', runSearch);
+    const selectTab = (label) => {
+      activeLabel = label;
+      if (search.value) search.value = '';
+      applyView();
+      const sc = (root.closest && root.closest('.main')) || document.querySelector('.main');
+      if (sc) sc.scrollTop = 0;
+    };
+    search.addEventListener('input', applyView);
 
     root.append(ui.page({ title: 'Settings', subtitle: s.company?.name },
       h('div', { class: 'settings-searchbar no-print' }, ui.icon('search', 18), search),
-      h('div', { class: 'settings-sections' }, ...blocks.map((b) => b.el), noHits)));
-    if (ctx.query.section === 'modules') requestAnimationFrame(() => modulesCard.scrollIntoView({ block: 'start' }));
+      h('div', { class: 'settings-tabs no-print' }, ...tabs),
+      sectionsWrap));
+    applyView();
   },
 };
