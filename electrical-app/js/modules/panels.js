@@ -598,6 +598,58 @@ function editorView(root, ctx, id) {
   /** The resolved part number ({ number, confident, note }) for a circuit in this panel, or null. */
   const partOf = (c) => (panel.breakerFamily ? circuitPartNumber(panel, c, panel.circuits || []) : null);
 
+  // Every slot a circuit sits in, so the residential fill lands only in the empty spaces.
+  const occupiedSlots = () => {
+    const taken = new Set();
+    for (const c of panel.circuits || []) {
+      if (halfOf(c)) { taken.add(Number(c.slot)); if (isQuadInner(c)) taken.add(Number(c.slot) + 2); }
+      else { const p = Number(c.poles) || 1; for (let k = 0; k < p; k++) taken.add(Number(c.slot) + 2 * k); }
+    }
+    return [...taken];
+  };
+
+  // Drop the common house circuits into the empty spaces, placed for balanced load (lib/panel-templates).
+  const fillResidential = () => {
+    if (S.systemOf(panel.voltage).three) { ui.toast('Residential essentials are for a single-phase panel.', 'info'); return; }
+    const rows = PT.residentialEssentials();
+    const boxes = {};
+    const spec = (r) => `${r.amps} A${r.poles >= 2 ? ' 2-pole' : ''}${r.breakerType !== 'standard' ? ' ' + r.breakerType.toUpperCase() : ''}`;
+    const tierLabel = { required: 'Code expects these on most dwellings', recommended: 'Standard good practice', optional: 'Add if the house has it' };
+    const body = h('div', { class: 'stack resi-checklist' },
+      h('p', { class: 'muted' }, 'Drops the common house circuits into the empty spaces, placed across the phases for balanced load. A reminder from the Canadian Electrical Code and common practice; verify against the code in force where you work.'),
+      ...['required', 'recommended', 'optional'].map((t) => {
+        const group = rows.filter((r) => r.tier === t);
+        if (!group.length) return null;
+        return h('div', { class: 'stack resi-tier' },
+          h('div', { class: 'resi-tier-label muted' }, tierLabel[t]),
+          ...group.map((r) => {
+            const cb = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: r.defaultOn, 'aria-label': r.label });
+            boxes[r.id] = cb;
+            return h('label', { class: 'resi-row' },
+              h('span', { class: 'grow' }, h('strong', null, r.label),
+                h('span', { class: 'resi-spec muted' }, ` · ${spec(r)}${r.count > 1 ? ` × ${r.count}` : ''}`),
+                r.note ? h('div', { class: 'resi-note muted' }, r.note) : null),
+              cb);
+          }));
+      }).filter(Boolean));
+    const sheet = ui.openSheet({
+      title: 'Residential essentials', body,
+      actions: [
+        ui.button('Cancel', { variant: 'ghost', onClick: () => sheet.close() }),
+        ui.button('Fill empty spaces', { variant: 'primary', icon: 'home', onClick: () => {
+          const ids = rows.filter((r) => boxes[r.id] && boxes[r.id].checked).map((r) => r.id);
+          const specs = PT.expandResidentialEssentials(ids);
+          const placed = PT.layoutResidentialCircuits(specs, { system: panel.voltage, slots: slotCount(panel), occupied: occupiedSlots() });
+          if (!placed.length) { ui.toast(specs.length ? 'No empty spaces to fill.' : 'Nothing ticked.', 'info'); sheet.close(); return; }
+          setCircuits([...(panel.circuits || []), ...placed]);
+          const missed = specs.length - placed.length;
+          ui.toast(`Added ${placed.length} circuit${placed.length > 1 ? 's' : ''}${missed > 0 ? `; ${missed} didn’t fit the spaces left` : ''}`, missed > 0 ? 'info' : 'success');
+          sheet.close();
+        } }),
+      ],
+    });
+  };
+
   // header form
   const head = h('form', { class: 'card panel-head no-print', onSubmit: (e) => e.preventDefault() }, ui.formGrid([
     { label: 'Panel name', name: 'name', value: panel.name, required: true },
@@ -1465,6 +1517,7 @@ function editorView(root, ctx, id) {
       subtitle: 'Odd spaces on the left, even on the right. Phases follow the bus.',
       actions: [
         ui.button('', { variant: 'ghost', icon: 'chevron-left', title: 'All panels', href: '#/panels' + (panel.jobId ? '?jobId=' + panel.jobId : '') }),
+        !S.systemOf(panel.voltage).three ? ui.button('Residential essentials', { variant: 'ghost', icon: 'home', onClick: fillResidential }) : null,
         ui.button('Print options', { variant: 'ghost', icon: 'sliders', onClick: openPrintOptions }),
         ui.button('Panel label', { variant: 'ghost', icon: 'qr', onClick: printLabel }),
         ui.button('Print directory', { icon: 'printer', onClick: () => window.print() }),

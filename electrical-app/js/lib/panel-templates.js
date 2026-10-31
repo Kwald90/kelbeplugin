@@ -2,6 +2,8 @@
 // code-neutral: built-in libraries plus company-saved templates kept in company
 // settings (settings.panelTemplates), which already sync. No server collection.
 //
+import { slotPhase } from './cec/systems.js';
+//
 // A breaker template fills one circuit in a tap: { id, label, poles, amps, loadVA,
 // breakerType, descriptionDefault, group }. loadVA is a typical estimate for balancing,
 // nullable where it depends on the actual load (spares, feeders). A panel template is a
@@ -115,6 +117,109 @@ export const BUILT_IN_PANELS = [
   { id: 'comm-600-600', label: 'Distribution 600 A · 347/600 V 3φ · 42 spaces (MLO)', voltage: '347/600 3ph', mainType: 'MLO', mainAmps: 600, busAmps: 600, slots: 42, feedThrough: true, region: 'CA' },
   { id: 'comm-400-480', label: 'Commercial 400 A · 277/480 V 3φ · 42 spaces (MLO)', voltage: '480/277 3ph', mainType: 'MLO', mainAmps: 400, busAmps: 400, slots: 42, feedThrough: false, region: 'US' },
 ];
+
+// The circuits a typical Canadian house ends up with — the reference an estimator leans on so none
+// get missed when quoting, and the starting layout for a residential panel schedule. Each entry
+// points at a BUILT_IN_BREAKERS id for its poles/amps/loadVA/type, with a `count` (repeat it),
+// a `tier` and an optional `breakerType` override and `note`. tier: 'required' (code expects it on
+// essentially every dwelling), 'recommended' (standard good practice), 'optional' (include when the
+// house has it). These are estimating/reference aids, not a code ruling — verify against the CEC and
+// the local authority. Rule citations are to CSA C22.1:24.
+export const RESIDENTIAL_ESSENTIALS = [
+  { id: 'counter', breaker: 'recept-20-gfci', label: 'Kitchen counter plugs', count: 2, tier: 'required', note: 'At least two 20 A small-appliance counter circuits; receptacles within 1.5 m of a sink are GFCI (CEC 26-712, 26-700).' },
+  { id: 'fridge', breaker: 'recept-15', label: 'Refrigerator', count: 1, tier: 'recommended', note: 'A dedicated circuit so a tripped kitchen plug never thaws the fridge.' },
+  { id: 'dishwasher', breaker: 'recept-15', label: 'Dishwasher', count: 1, tier: 'recommended' },
+  { id: 'microwave', breaker: 'recept-20', label: 'Microwave', count: 1, tier: 'recommended' },
+  { id: 'bath', breaker: 'recept-15-gfci', label: 'Bathroom plugs (GFCI)', count: 1, tier: 'required', note: 'Bathroom receptacles are GFCI-protected (CEC 26-700).' },
+  { id: 'laundry', breaker: 'laundry-20', label: 'Laundry', count: 1, tier: 'required' },
+  { id: 'dryer', breaker: 'dryer-30', label: 'Dryer', count: 1, tier: 'recommended' },
+  { id: 'range', breaker: 'range-40', label: 'Range', count: 1, tier: 'recommended' },
+  { id: 'water-heater', breaker: 'wh-30', label: 'Water heater', count: 1, tier: 'recommended' },
+  { id: 'furnace', breaker: 'recept-15', label: 'Furnace / air handler', count: 1, tier: 'required', note: 'Dedicated circuit for the heating appliance.' },
+  { id: 'general', breaker: 'recept-15', label: 'General receptacles', count: 3, tier: 'required', breakerType: 'afci', note: 'AFCI protection for the 125 V receptacle circuits in a dwelling (CEC 26-724).' },
+  { id: 'lighting', breaker: 'light-15-afci', label: 'Lighting', count: 2, tier: 'required' },
+  { id: 'smoke', breaker: 'light-15-afci', label: 'Smoke / CO alarms', count: 1, tier: 'required', note: 'Interconnected, on an unswitched lighting circuit.' },
+  { id: 'outdoor', breaker: 'recept-15-gfci', label: 'Outdoor plugs (GFCI)', count: 1, tier: 'required', note: 'Outdoor receptacles are GFCI-protected (CEC 26-700).' },
+  { id: 'garage', breaker: 'recept-20-gfci', label: 'Garage plugs (GFCI)', count: 1, tier: 'recommended' },
+  { id: 'hrv', breaker: 'recept-15', label: 'HRV / ERV', count: 1, tier: 'recommended' },
+  { id: 'sump', breaker: 'recept-15', label: 'Sump pump', count: 1, tier: 'optional', note: 'Dedicated; keep it off the GFCI/AFCI you reset often.' },
+  { id: 'ac', breaker: 'ac-30', label: 'A/C or heat pump', count: 1, tier: 'optional' },
+  { id: 'ev', breaker: 'ev-50', label: 'EV charger', count: 1, tier: 'optional', note: 'New builds often rough-in a 50 A circuit for a future EVSE.' },
+];
+
+const BREAKER_BY_ID = Object.fromEntries(BUILT_IN_BREAKERS.map((b) => [b.id, b]));
+
+/** The essentials as reference rows for the checklist UI: each with its poles/amps/type resolved from
+ * the referenced breaker, plus tier/note/count. `defaultOn` is true for required + recommended. Pure. */
+export function residentialEssentials() {
+  return RESIDENTIAL_ESSENTIALS.map((e) => {
+    const b = BREAKER_BY_ID[e.breaker] || {};
+    return { id: e.id, label: e.label, count: e.count || 1, tier: e.tier, note: e.note || null,
+      poles: Number(b.poles) || 1, amps: b.amps ?? 20, loadVA: b.loadVA ?? 0,
+      breakerType: e.breakerType || b.breakerType || 'standard', defaultOn: e.tier !== 'optional' };
+  });
+}
+
+/** Expand the chosen essentials (ids; null = required + recommended) into individual circuit specs
+ * { poles, amps, loadVA, breakerType, description }, numbering repeats ("Lighting 1", "Lighting 2"). Pure. */
+export function expandResidentialEssentials(selectedIds = null) {
+  const chosen = RESIDENTIAL_ESSENTIALS.filter((e) => (selectedIds ? selectedIds.includes(e.id) : e.tier !== 'optional'));
+  const out = [];
+  for (const e of chosen) {
+    const b = BREAKER_BY_ID[e.breaker] || {};
+    const n = e.count || 1;
+    for (let i = 0; i < n; i++) {
+      out.push({ poles: Number(b.poles) || 1, amps: b.amps ?? 20, loadVA: b.loadVA ?? 0,
+        breakerType: e.breakerType || b.breakerType || 'standard',
+        description: n > 1 ? `${e.label} ${i + 1}` : e.label });
+    }
+  }
+  return out;
+}
+
+/**
+ * Place circuit specs into panel slots balanced for load. 2-pole breakers go in first (they occupy
+ * slot s and s+2, which are consecutive rows and so always straddle A and B — inherently balanced);
+ * then 1-pole circuits are assigned heaviest-first to whichever phase is currently lighter, matched
+ * to the lowest free slot carrying that phase. Returns circuits with a `slot` set, sorted by slot.
+ * Honours the panel's slot count (drops what will not fit) and leaves any `occupied` slots alone, so
+ * it can fill the empty spaces of a panel that already has breakers. Pure — phase from systems.slotPhase.
+ */
+export function layoutResidentialCircuits(specs, { system = '120/240 1ph', slots = 40, occupied = [] } = {}) {
+  const taken = new Set(occupied.map(Number));
+  const free = new Set();
+  for (let s = 1; s <= slots; s++) if (!taken.has(s)) free.add(s);
+  const phaseAt = (s) => slotPhase(s, system);
+  const load = {};
+  const addLoad = (p, va) => { load[p] = (load[p] || 0) + va; };
+  const placed = [];
+
+  const twos = specs.filter((c) => (Number(c.poles) || 1) >= 2).sort((a, b) => (b.loadVA || 0) - (a.loadVA || 0));
+  const ones = specs.filter((c) => (Number(c.poles) || 1) < 2).sort((a, b) => (b.loadVA || 0) - (a.loadVA || 0));
+
+  for (const c of twos) {
+    let at = null;
+    for (let s = 1; s + 2 <= slots; s++) { if (free.has(s) && free.has(s + 2)) { at = s; break; } }
+    if (at == null) continue;
+    free.delete(at); free.delete(at + 2);
+    addLoad(phaseAt(at), (c.loadVA || 0) / 2);
+    addLoad(phaseAt(at + 2), (c.loadVA || 0) / 2);
+    placed.push({ ...c, slot: at });
+  }
+
+  for (const c of ones) {
+    if (!free.size) break;
+    const byPhase = {};
+    for (const s of [...free].sort((a, b) => a - b)) { (byPhase[phaseAt(s)] ||= []).push(s); }
+    const target = Object.keys(byPhase).sort((a, b) => (load[a] || 0) - (load[b] || 0))[0];
+    const s = byPhase[target][0];
+    free.delete(s);
+    addLoad(target, c.loadVA || 0);
+    placed.push({ ...c, slot: s });
+  }
+
+  return placed.sort((a, b) => a.slot - b.slot);
+}
 
 const custom = (settings, kind) => {
   const pt = settings?.panelTemplates;

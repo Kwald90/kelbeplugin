@@ -6,6 +6,7 @@ import { lineEditor, taxEditor, totalsPanel, previewDocument, clientName, confir
 import { moduleOn } from '../lib/modules.js';
 import { qboBadge, noTaxReasonPicker, lookupAction, docEditor } from '../lib/qbo-ui.js';
 import { buildSignature, signatureSheet, emailAcceptanceSheet, queueSignatureFirst } from '../lib/esign.js';
+import { residentialEssentials } from '../lib/panel-templates.js';
 
 const STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'];
 
@@ -292,6 +293,49 @@ function renderDetail(root, ctx, id) {
   const editor = lineEditor({ doc, store, onChange: changed, readOnly });
   const totals = totalsPanel(doc, { money });
 
+  // A reminder checklist of the circuits a house needs, so none are missed when quoting. Ticked rows
+  // become line items (priced by the estimator). The same list seeds a residential panel schedule.
+  const residentialChecklist = () => {
+    if (readOnly) return;
+    const rows = residentialEssentials();
+    const boxes = {};
+    const spec = (r) => `${r.amps} A${r.poles >= 2 ? ' 2-pole' : ''}${r.breakerType !== 'standard' ? ' ' + r.breakerType.toUpperCase() : ''}`;
+    const tierLabel = { required: 'Code expects these on most dwellings', recommended: 'Standard good practice', optional: 'Add if the house has it' };
+    const body = h('div', { class: 'stack resi-checklist' },
+      h('p', { class: 'muted' }, 'Tick the circuits this house needs — each adds a line you can price. A reminder from the Canadian Electrical Code and common practice; verify against the code in force where you work.'),
+      ...['required', 'recommended', 'optional'].map((t) => {
+        const group = rows.filter((r) => r.tier === t);
+        if (!group.length) return null;
+        return h('div', { class: 'stack resi-tier' },
+          h('div', { class: 'resi-tier-label muted' }, tierLabel[t]),
+          ...group.map((r) => {
+            const cb = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: r.defaultOn, 'aria-label': r.label });
+            boxes[r.id] = cb;
+            return h('label', { class: 'resi-row' },
+              h('span', { class: 'grow' }, h('strong', null, r.label),
+                h('span', { class: 'resi-spec muted' }, ` · ${spec(r)}${r.count > 1 ? ` × ${r.count}` : ''}`),
+                r.note ? h('div', { class: 'resi-note muted' }, r.note) : null),
+              cb);
+          }));
+      }).filter(Boolean));
+    const s = ui.openSheet({
+      title: 'Residential circuits', body,
+      actions: [
+        ui.button('Cancel', { variant: 'ghost', onClick: () => s.close() }),
+        ui.button('Add ticked circuits', { variant: 'primary', icon: 'plus', onClick: () => {
+          const chosen = rows.filter((r) => boxes[r.id] && boxes[r.id].checked);
+          if (chosen.length) {
+            doc.lines = doc.lines || [];
+            for (const r of chosen) doc.lines.push({ itemId: null, description: `${r.label} — ${spec(r)}`, qty: r.count, unitCents: 0, labourHours: 0, kind: 'labour' });
+            changed(); save.flush(); redraw();
+            ui.toast(`Added ${chosen.length} circuit${chosen.length > 1 ? 's' : ''} to the quote`, 'success');
+          }
+          s.close();
+        } }),
+      ],
+    });
+  };
+
   const preview = () => { save.flush(); previewDocument({ kind: 'Estimate', doc, store, readOnly }); };
   const linkedJob = () => {
     const latest = store.get('estimates', id);
@@ -464,7 +508,10 @@ function renderDetail(root, ctx, id) {
     h('div', { class: 'doc-layout' },
       h('div', { class: 'stack' },
         h('section', { class: 'card' }, h('h3', null, 'Customer & work'), header),
-        h('section', { class: 'card' }, h('h3', null, 'Scope & line items'), editor),
+        h('section', { class: 'card' },
+          h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Scope & line items'),
+            !readOnly ? ui.button('Residential circuits', { size: 'sm', variant: 'ghost', icon: 'home', onClick: residentialChecklist }) : null),
+          editor),
         h('section', { class: 'card' }, h('h3', null, 'Customer notes'), h('div', { class: 'form-grid' }, notes)),
         pricing,
         links),
