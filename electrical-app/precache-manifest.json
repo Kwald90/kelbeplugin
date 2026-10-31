@@ -140,6 +140,7 @@
   "./js/lib/tm.js",
   "./js/lib/trial.js",
   "./js/lib/units.js",
+  "./js/lib/wheel.js",
   "./js/lib/wireruns.js",
   "./js/lib/workplan.js",
   "./js/modules/account.js",

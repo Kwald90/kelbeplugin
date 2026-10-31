@@ -15,6 +15,7 @@ import { FEATURE_PLAN, hasFeature } from '../plans.js';
 import { session, savePref } from '../session.js';
 import { panelPrintSettings } from './panels.js';
 import { panelCircuitNames } from '../lib/panel-templates.js';
+import { WHEEL, wheelPrefs, saveWheelPrefs, resetWheelPrefs, orderWheel } from '../lib/wheel.js';
 
 export const APP_VERSION = '0.3.0';
 
@@ -366,11 +367,53 @@ export default {
     };
     drawTheme();
 
-    // quick-actions wheel (the radial + button): show or hide it (settings.ui.showWheel)
+    // quick-actions wheel (the radial + button): company on/off (settings.ui.showWheel) plus each
+    // person's own choice of which shortcuts show and their order (lib/wheel.js prefs, per device).
     const wheelToggle = h('label', { class: 'field check' },
       h('input', { type: 'checkbox', checked: store.settings()?.ui?.showWheel !== false,
         onChange: (e) => { store.saveSettings({ ui: { ...(store.settings().ui || {}), showWheel: e.target.checked } }); ui.toast(e.target.checked ? 'Quick-actions wheel on' : 'Quick-actions wheel hidden', 'success'); } }),
       h('span', null, 'Show the quick-actions wheel (the + button and radial menu)'));
+
+    const wheelHost = h('div', { class: 'stack wheel-prefs' });
+    const drawWheelPrefs = () => {
+      ui.clear(wheelHost);
+      const uid = ctx.auth?.current?.()?.id || null;
+      const prefs = wheelPrefs(uid);
+      const mine = WHEEL.filter((w) => !w.perm || (ctx.auth?.can ? ctx.auth.can(w.perm) : true));
+      const shown = orderWheel(mine, prefs);
+      const shownIds = shown.map((w) => w.id);
+      const hiddenItems = mine.filter((w) => !shownIds.includes(w.id));
+      const commit = (next) => { saveWheelPrefs(uid, next); dispatchEvent(new Event('ft:wheel-changed')); drawWheelPrefs(); };
+      const setShown = (id, on) => {
+        const hidden = new Set(prefs.hidden || []);
+        let order = Array.isArray(prefs.order) ? [...prefs.order] : [...shownIds];
+        if (on) { hidden.delete(id); if (!order.includes(id)) order.push(id); } else hidden.add(id);
+        commit({ hidden: [...hidden], order });
+      };
+      const move = (id, dir) => {
+        const order = [...shownIds];
+        const i = order.indexOf(id), j = i + dir;
+        if (i < 0 || j < 0 || j >= order.length) return;
+        [order[i], order[j]] = [order[j], order[i]];
+        commit({ hidden: [...(prefs.hidden || [])], order });
+      };
+      const row = (w, i, on) => h('div', { class: ['wheel-pref-row', on ? null : 'off'], dataset: { wheel: w.id } },
+        ui.icon(w.icon, 18),
+        h('span', { class: 'grow' }, w.label),
+        on ? h('span', { class: 'row wheel-pref-move' },
+          ui.button('', { variant: 'ghost', size: 'sm', icon: 'chevron-up', title: `Move ${w.label} earlier`, disabled: i === 0, onClick: () => move(w.id, -1) }),
+          ui.button('', { variant: 'ghost', size: 'sm', icon: 'chevron-down', title: `Move ${w.label} later`, disabled: i === shown.length - 1, onClick: () => move(w.id, 1) })) : null,
+        h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: on, 'aria-label': `Show ${w.label} on the wheel`, onChange: (e) => setShown(w.id, e.target.checked) }));
+      wheelHost.append(
+        wheelToggle,
+        h('div', { class: 'muted' }, 'Below is just for you, on this device: tick the shortcuts to show on the + wheel and order them with the arrows.'),
+        h('div', { class: 'list wheel-pref-list' },
+          shown.length ? shown.map((w, i) => row(w, i, true)) : h('div', { class: 'list-row muted' }, 'No shortcuts shown — tick some below.'),
+          hiddenItems.map((w) => row(w, -1, false))),
+        h('div', { class: 'row' }, h('span', { class: 'grow' }),
+          ui.button('Reset to default', { variant: 'ghost', icon: 'undo', onClick: () => { resetWheelPrefs(uid); dispatchEvent(new Event('ft:wheel-changed')); drawWheelPrefs(); ui.toast('Wheel shortcuts reset', 'success'); } })));
+    };
+    drawWheelPrefs();
 
     // data
     const exportBackup = () => {
@@ -414,49 +457,100 @@ export default {
       : store.persistent ? ui.badge('Persistent storage', 'success') : ui.badge('Browser may clear data when low on space', 'warning');
 
     drawCode(); drawTax(); drawPlacement(); drawPanelPrint(); drawCircuitNames(); drawModules(); drawMaterials();
-    const modulesCard = card('Modules', 'Turn off what you don’t use. Nothing is deleted: turn a module back on and everything in it comes back.', modulesHost);
+
+    // Extra search terms for a card, for words a person might type that aren't in its visible text.
+    const tag = (el, keywords) => { if (el && keywords) el.dataset.keywords = keywords; return el; };
+
+    const modulesCard = tag(card('Modules', 'Turn off what you don’t use. Nothing is deleted: turn a module back on and everything in it comes back.', modulesHost), 'features add-ons apps enable disable');
     modulesCard.id = 'modules';
-    root.append(ui.page({ title: 'Settings', subtitle: s.company?.name },
-      h('div', { class: 'grid-2 settings-grid' },
-        card('Company', 'Shown on estimates, invoices and printouts', company, saveRow('Save company', saveCompany), h('strong', null, 'Logo'), logoField(ctx)),
-        modulesCard,
-        card('Code book and units', 'Which electrical code the field tools follow, and how lengths show', codeHost),
-        card('Sales tax', 'GST/HST and PST/RST for new estimates and invoices', taxHost),
+
+    // Settings grouped into categories; a search box filters the cards live (by their text + tags).
+    const groups = [
+      ['Business', [
+        tag(card('Company', 'Shown on estimates, invoices and printouts', company, saveRow('Save company', saveCompany), h('strong', null, 'Logo'), logoField(ctx)), 'logo licence address phone website province'),
+        tag(card('Sales tax', 'GST/HST and PST/RST for new estimates and invoices', taxHost), 'gst hst pst rst vat'),
+      ]],
+      ['Modules', [modulesCard]],
+      ['Money & documents', [
         card('Defaults', 'Applied to new estimates and invoices', defaults, saveRow('Save defaults', saveDefaults)),
         card('Document numbering', 'The next number each new document gets', numbering, saveRow('Save numbering', saveNumbering)),
+      ]],
+      ['Field & code', [
+        tag(card('Code book and units', 'Which electrical code the field tools follow, and how lengths show', codeHost), 'cec nec metric imperial csa'),
         ctx.on?.('materials') !== false ? card('Material requests', 'When the crew’s requests go to the office as one list', materialsHost) : null,
         card('Box placement', 'Used when placing boxes on drawings', placementHost),
         card('Panel schedules', 'Colours and columns for printed panel directories and the QR panel label', panelPrintHost),
         card('Circuit names', 'The suggestions offered as you fill in a panel schedule', circuitNamesHost),
-        ctx.auth?.synced ? card('Your account', 'Password, two-step sign-in, your units and theme',
-          ui.button('Password and sign-in', { icon: 'key', href: '#/account' })) : null,
-        card('Appearance', null, themeHost, wheelToggle),
         card('Drawing', 'Finger gestures on the drawing canvas. Yours only: they follow you to your other devices when signed in.',
           gesturePanel(ui, (k, v) => savePref(session.me, k, v)),
           h('div', { class: 'muted' }, 'Brush size, smoothness and the eraser mode are set per tool on the canvas: tap the centre of the tool wheel.')),
-        store.synced ? card('Data', 'Your company’s data lives on the server and syncs to this device.',
+      ]],
+      ['Appearance & account', [
+        ctx.auth?.synced ? tag(card('Your account', 'Password, two-step sign-in, your units and theme',
+          ui.button('Password and sign-in', { icon: 'key', href: '#/account' })), 'password pin two-step 2fa sign-in security') : null,
+        tag(card('Appearance', null, themeHost), 'theme dark light mode night day colour color'),
+        tag(card('Quick-actions wheel', 'The + button’s shortcuts', wheelHost), 'shortcuts quick actions radial fab plus menu customise customize'),
+      ]],
+      ['Data', [
+        store.synced ? tag(card('Data', 'Your company’s data lives on the server and syncs to this device.',
           h('div', { class: 'muted' }, counts),
           h('div', { class: 'row' }, ui.button('Export a copy', { icon: 'download', onClick: exportBackup })),
           h('div', { class: 'muted' }, 'A JSON copy of what is on this device, for your records. Restoring from a file only works in the demo; signed in, the server is the copy that counts.'),
           h('hr', { class: 'hr' }),
           h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', null, 'Download everything again'), h('div', { class: 'muted' }, 'Clears this device’s copy and downloads it fresh from the server. Changes still waiting to sync are kept and sent.')),
-            ui.button('Download again…', { icon: 'download', onClick: redownload })))
-          : card('Data', 'Everything lives on this device. Export a backup regularly.',
+            ui.button('Download again…', { icon: 'download', onClick: redownload }))), 'backup export sync download')
+          : tag(card('Data', 'Everything lives on this device. Export a backup regularly.',
           h('div', { class: 'row' }, storageStatus), h('div', { class: 'muted' }, counts),
           h('div', { class: 'row' },
             ui.button('Export backup', { icon: 'download', onClick: exportBackup }),
             ui.button('Restore from file', { icon: 'upload', onClick: restore })),
           h('hr', { class: 'hr' }),
           h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', null, 'Wipe all data'), h('div', { class: 'muted' }, 'Clears this device and reloads the demo data.')),
-            ui.button('Wipe…', { variant: 'danger', icon: 'trash', onClick: wipe }))),
-        card('Accounting and imports', 'Bring records in from other software; send invoices and payments to QuickBooks Online',
+            ui.button('Wipe…', { variant: 'danger', icon: 'trash', onClick: wipe }))), 'backup export restore wipe reset'),
+      ]],
+      ['Integrations', [
+        tag(card('Accounting and imports', 'Bring records in from other software; send invoices and payments to QuickBooks Online',
           h('div', { class: 'row' }, ui.button('QuickBooks Online sync', { icon: 'link', href: '#/quickbooks' }), ui.button('Import a file', { icon: 'upload', href: '#/import' }), ui.button('Export to QuickBooks', { icon: 'download', href: '#/import/export' })),
-          h('div', { class: 'row' }, ui.button('Developer & API keys', { variant: 'ghost', icon: 'key', href: '#/developer' }), ui.button('Set-up checklist', { variant: 'ghost', icon: 'check', href: '#/onboarding' }))),
+          h('div', { class: 'row' }, ui.button('Developer & API keys', { variant: 'ghost', icon: 'key', href: '#/developer' }), ui.button('Set-up checklist', { variant: 'ghost', icon: 'check', href: '#/onboarding' }))), 'quickbooks qbo api developer import export csv'),
+      ]],
+      ['About', [
         card('About', null,
           h('div', null, h('strong', null, BRAND.name), ` v${APP_VERSION}`),
           h('p', { class: 'muted', style: { margin: 0 } }, 'A CRM/ERP for Canadian electrical contractors, with an infinite-canvas plan workspace.'),
           h('p', { class: 'muted', style: { margin: 0 } }, 'Calculators follow the Canadian Electrical Code (CSA C22.1:24) by default, or NEC 2023 if you choose it. They are estimating aids that cite rule and table numbers; always verify against the code and amendments in force where you work, and the inspection authority.')),
-      )));
+      ]],
+    ].map(([label, cards]) => [label, cards.filter(Boolean)]).filter(([, cards]) => cards.length);
+
+    // One section per category; search hides the cards (and whole sections) that don't match.
+    const blocks = groups.map(([label, cards]) => ({
+      label, cards,
+      el: h('section', { class: 'settings-section' },
+        h('h2', { class: 'settings-cat' }, label),
+        h('div', { class: 'grid-2 settings-grid' }, ...cards)),
+    }));
+    const noHits = h('div', { class: 'muted settings-nohits', hidden: true }, 'No settings match that. Try another word.');
+    const search = h('input', { class: 'input settings-search', type: 'search', placeholder: 'Search settings…', 'aria-label': 'Search settings', autocomplete: 'off', autocapitalize: 'none' });
+    const runSearch = () => {
+      const q = search.value.trim().toLowerCase();
+      let any = false;
+      for (const b of blocks) {
+        let shown = 0;
+        for (const c of b.cards) {
+          const hay = `${b.label} ${c.textContent} ${c.dataset.keywords || ''}`.toLowerCase();
+          const hit = !q || hay.includes(q);
+          c.hidden = !hit;
+          if (hit) shown++;
+        }
+        b.el.hidden = shown === 0;
+        if (shown) any = true;
+      }
+      noHits.hidden = any;
+    };
+    search.addEventListener('input', runSearch);
+
+    root.append(ui.page({ title: 'Settings', subtitle: s.company?.name },
+      h('div', { class: 'settings-searchbar no-print' }, ui.icon('search', 18), search),
+      h('div', { class: 'settings-sections' }, ...blocks.map((b) => b.el), noHits)));
     if (ctx.query.section === 'modules') requestAnimationFrame(() => modulesCard.scrollIntoView({ block: 'start' }));
   },
 };

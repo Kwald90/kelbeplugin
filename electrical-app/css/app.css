@@ -296,6 +296,24 @@ html.is-printing .sheet { position: static; box-shadow: none; border: 0; width: 
 .int-grid { columns: auto 420px; }
 .settings-grid > *, .account-grid > *, .int-grid > * { break-inside: avoid; margin: 0 0 var(--s4); }
 
+/* Settings: a search box over categorised sections. */
+.settings-searchbar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); margin-bottom: var(--s4); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); color: var(--text-muted); }
+.settings-searchbar > svg { flex-shrink: 0; }
+.settings-search { border: 0; background: none; padding: 0; height: 36px; flex: 1; min-width: 0; }
+.settings-search:focus { outline: none; }
+.settings-section { margin: 0 0 var(--s6); }
+.settings-cat { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0 0 var(--s3); font-weight: 700; }
+.settings-section[hidden], .settings-grid > [hidden] { display: none; }
+.settings-nohits { padding: var(--s5) var(--s1); }
+
+/* Per-user wheel shortcut list in Settings. */
+.wheel-pref-list { border-top: 1px solid var(--border); margin-top: var(--s2); }
+.wheel-pref-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) 0; min-height: 48px; border-bottom: 1px solid var(--border); }
+.wheel-pref-row.off { color: var(--text-muted); }
+.wheel-pref-row.off > svg { opacity: 0.55; }
+.wheel-pref-move { gap: var(--s1); flex-wrap: nowrap; }
+.wheel-pref-move .btn[disabled] { opacity: 0.3; }
+
 
 /* Labelled shell: desktop destinations scroll independently of account utilities. */
 @media screen {

@@ -21,6 +21,7 @@ import { notifyBell } from './modules/notifications.js';
 import { quickReceipt } from './modules/purchasing.js';
 import { moduleOn, linkOn, hrefModule, SWITCHES } from './lib/modules.js';
 import { primaryNavigation, navigationLabel } from './lib/navigation.js';
+import { WHEEL, wheelPrefs, orderWheel } from './lib/wheel.js';
 
 const { h, icon } = ui;
 const put = (el, ...kids) => h(ui.clear(el), null, ...kids);
@@ -363,24 +364,17 @@ async function leaveDemo() {
 }
 
 // ---------- the wheel: a radial quick menu, our take on Concepts' tool wheel ----------
-const WHEEL = [
-  { label: 'Clock', icon: 'clock', go: 'time', perm: 'time' },
-  { label: 'Draw', icon: 'pen', go: 'drawings/new', perm: 'drawings' },
-  { label: 'Lead', icon: 'funnel', go: 'leads?new=1', perm: 'leads' },
-  { label: 'Quote', icon: 'file-text', go: 'estimates/new', perm: 'estimates' },
-  { label: 'Job', icon: 'briefcase', go: 'jobs?new=1', perm: 'jobs' },
-  { label: 'Material', icon: 'truck', go: 'materials?new=1', perm: 'jobs' },
-  { label: 'Receipt', icon: 'image', go: 'purchasing', perm: 'invoices', run: quickReceipt },
-  { label: 'Invoice', icon: 'receipt', go: 'invoices/new', perm: 'invoices' },
-  { label: 'Calc', icon: 'calculator', go: 'calcs', perm: 'calcs' },
-  { label: 'SOPs', icon: 'book', go: 'sops', perm: 'sops' },
-];
+// The shortcut list and each person's show/hide/order prefs live in lib/wheel.js; a WHEEL item's
+// `run` names a handler here rather than importing one into that module.
+const WHEEL_RUN = { quickReceipt };
 
-/** The wheel can be turned off in Settings (settings.ui.showWheel). Default on. */
+/** The wheel can be turned off for the whole company in Settings (settings.ui.showWheel). Default on. */
 function wheelEnabled() { try { return store.settings()?.ui?.showWheel !== false; } catch { return true; } }
 
 function buildWheel() {
-  const items = WHEEL.filter((w) => auth.can(w.perm) && moduleUnlocked(w.go.split(/[/?]/)[0]) && moduleEnabled(hrefModule('#/' + w.go)));
+  const permitted = WHEEL.filter((w) => auth.can(w.perm) && moduleUnlocked(w.go.split(/[/?]/)[0]) && moduleEnabled(hrefModule('#/' + w.go)));
+  // each person picks which of the ones they can use show, and their order (per device)
+  const items = orderWheel(permitted, wheelPrefs(auth.current?.()?.id));
   const scrim = h('div', { class: 'wheel-scrim', onClick: () => toggle(false) });
   const wheel = h('div', { class: 'wheel', 'aria-hidden': 'true' }, h('div', { class: 'wheel-disc' }));
   const r = 118;
@@ -389,7 +383,7 @@ function buildWheel() {
   const btns = items.map((w) => h('button', {
     class: 'wheel-item', tabindex: -1,
     // a real drag suppresses the tap so spinning the wheel doesn't fire an action
-    onClick: (e) => { if (dragged) { e.preventDefault(); return; } toggle(false); if (w.run) w.run({ store, ui, auth, nav }); else nav(w.go); },
+    onClick: (e) => { if (dragged) { e.preventDefault(); return; } toggle(false); const run = WHEEL_RUN[w.run]; if (run) run({ store, ui, auth, nav }); else nav(w.go); },
   }, icon(w.icon, 20), w.label));
   btns.forEach((b) => wheel.append(b));
   // a gear in the hub opens Settings (where the wheel itself can be turned off)
@@ -595,6 +589,8 @@ async function startShell() {
   store.on('*', (e) => { if (e.type === 'reset') { switchCache = null; rebuild(); } });
   // A module turned on or off (here or on another device): redraw the rail, wheel and screen.
   store.on('settings', () => { switchCache = null; if (currentModulesKey() !== modulesKey || wheelEnabled() !== wheelShown) rebuild(); });
+  // Settings changed this person's wheel shortcuts (lib/wheel.js prefs): rebuild so the live wheel follows.
+  addEventListener('ft:wheel-changed', () => rebuild());
   startSweeper();
   addEventListener('hashchange', route);
   document.getElementById('boot')?.remove();
