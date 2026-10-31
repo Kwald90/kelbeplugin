@@ -12,6 +12,9 @@
 .job-exp-section h2 { margin: 0 0 var(--s3); font-size: var(--fs-base); }
 .job-exp-scope { white-space: pre-wrap; overflow-wrap: anywhere; line-height: var(--lh-base); }
 .job-exp-note { color: var(--text-muted); margin: var(--s2) 0; }
+.job-notes .job-note-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: var(--lh-base); }
+.job-note-add { margin-top: var(--s3); }
+.job-note-input { width: 100%; resize: vertical; min-height: 56px; }
 .job-exp-shortcuts { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s4); }
 .job-exp-visit-date { font-size: var(--fs-lg); font-weight: 600; margin: var(--s2) 0 var(--s3); }
 .job-exp-crew { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); }

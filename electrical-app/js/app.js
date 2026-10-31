@@ -392,6 +392,12 @@ function buildWheel() {
     onClick: (e) => { if (dragged) { e.preventDefault(); return; } toggle(false); if (w.run) w.run({ store, ui, auth, nav }); else nav(w.go); },
   }, icon(w.icon, 20), w.label));
   btns.forEach((b) => wheel.append(b));
+  // a gear in the hub opens Settings (where the wheel itself can be turned off)
+  const centerBtn = h('button', {
+    class: 'wheel-center', tabindex: -1, 'aria-label': 'Settings',
+    onClick: (e) => { if (dragged) { e.preventDefault(); return; } toggle(false); nav('settings'); },
+  }, icon('settings', 24));
+  wheel.append(centerBtn);
 
   // ---- turn the wheel: drag it round, with a little inertia ----
   let rot = 0;

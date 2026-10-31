@@ -15,6 +15,7 @@ import { holdbackLedger, depositsAvailable } from '../lib/receivables.js';
 import { ticketToChangeOrder, ticketLabel, ticketReconciliation, billableTickets, batchCandidates, ticketSummary } from '../lib/tickets.js';
 import { buildSignature, signatureSheet, emailAcceptanceSheet, queueSignatureFirst } from '../lib/esign.js';
 import { filterStandards, visibleRequirements, applyStandard } from '../lib/job-standards.js';
+import { uid } from '../store.js';
 
 /** Can this person see money (prices, costs, margins)? Office and owners; crew never. */
 const seesMoney = (auth) => auth.seesMoney?.() ?? (auth.can('invoices') || auth.can('estimates'));
@@ -478,6 +479,7 @@ function detailView(root, ctx, id) {
   function overview(el, job, m) {
     operationalOverview(el, job);
     el.append(hoursSection(job, m));
+    el.append(notesSection(job));
     const detail = h('div');
     overviewDetails(detail, job, m);
     el.append(disclosure('financials', showMoney ? 'Billing, costs & contract' : 'Hours & job details', detail));
@@ -520,6 +522,42 @@ function detailView(root, ctx, id) {
         h('span', { class: 'num' }, `${fmtH(min)} h`)))));
     }
     section.append(timesheetLink);
+    return section;
+  }
+
+  // ---- running notes for the job (dictate with the keyboard mic) ----
+  function notesSection(job) {
+    const section = h('section', { class: 'job-exp-section', 'aria-label': 'Notes', dataset: { jobNotes: job.id } }, h('h2', null, 'Notes'));
+    const list = h('div', { class: 'list job-notes' });
+    const draw = () => {
+      ui.clear(list);
+      const notes = [...(store.get('jobs', job.id)?.notes || [])].sort((a, b) => String(b.at).localeCompare(String(a.at)));
+      if (!notes.length) { list.append(h('div', { class: 'list-row muted' }, 'No notes yet.')); return; }
+      for (const n of notes) {
+        const who = store.get('employees', n.by)?.name || n.byName || '';
+        list.append(h('div', { class: 'list-row' }, h('div', { class: 'grow' },
+          h('div', { class: 'job-note-text' }, n.text),
+          h('div', { class: 'meta' }, [who, n.at ? ui.fmtDateTime(n.at) : ''].filter(Boolean).join(' · ')))));
+      }
+    };
+    draw();
+    section.append(list);
+    if (canEdit) {
+      const ta = h('textarea', { class: 'input job-note-input', rows: 2, 'aria-label': 'New note',
+        placeholder: 'Add a note — tap the microphone on your keyboard to dictate.' });
+      const add = ui.button('Add note', { variant: 'primary', icon: 'plus', onClick: () => {
+        const text = ta.value.trim();
+        if (!text) { ta.focus(); return; }
+        const me = auth.current() || {};
+        const entry = { id: uid(), at: new Date().toISOString(), by: me.id || me.employeeId || null, byName: me.name || '', text };
+        const cur = store.get('jobs', job.id);
+        store.update('jobs', job.id, { notes: [...(cur?.notes || []), entry] }, { summary: `note on ${job.number}` });
+        ta.value = '';
+        draw();
+        ui.toast('Note added', 'success');
+      } });
+      section.append(h('div', { class: 'stack job-note-add' }, ta, h('div', { class: 'row' }, h('span', { class: 'grow' }), add)));
+    }
     return section;
   }
 
