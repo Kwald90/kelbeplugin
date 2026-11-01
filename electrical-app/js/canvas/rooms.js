@@ -46,6 +46,7 @@ export function createRooms(api) {
   let drag = null; // vertex | feature | featureDraw | ghost
   let ghosts = []; // proposals waiting for accept/discard
   let ghostHide = new Set(); // proposal groups hidden in the review (what-to-place filter)
+  let ghostRoomIds = []; // room(s) the current proposals came from, so we can re-select after accept/discard
   const GHOST_GROUPS = [['receptacle', 'Plugs'], ['switch', 'Switches'], ['light', 'Lights'], ['alarm', 'Alarms']];
   const visGhosts = () => ghosts.filter((g) => !ghostHide.has(g.group));
   let findings = [];
@@ -446,15 +447,21 @@ export function createRooms(api) {
         else { ghostHide.add(key); ghosts.forEach((g) => { if (g.group === key) g.picked = false; }); }
         api.updateChrome(); api.requestFrame();
       }, !ghostHide.has(key))) : [];
-      const scoped = ghostHide.size ? 'shown' : 'all';
+      const someHidden = vis.length < ghosts.length;
+      // the room these proposals came from, so "Lights" works without clearing the review first
+      const ghostRoom = d.rooms.find((r) => r.id === (ghostRoomIds[0] ?? ghosts[0]?.roomId));
       return [
         lab(one ? `${SYMBOLS[one.symbol]?.label || one.symbol}${one.ruleRefs.length ? ' · ' + ruleLabel(one.ruleRefs[0]) : ''}`
-          : `${vis.length} ${ghostHide.size ? 'shown' : 'proposed'}${picked.length ? ` · ${picked.length} picked` : ' · tap to pick, drag to nudge'}`),
+          : vis.length ? `${vis.length} ${someHidden ? 'shown' : 'proposed'}${picked.length ? ` · ${picked.length} picked` : ' · tap to pick, drag to nudge'}`
+            : 'Nothing shown — tap a group above, or Discard all'),
         ...filters,
-        picked.length ? chip('Accept picked', () => accept(picked)) : null,
+        ghostRoom ? chip('Lights', () => potLightSheet(ghostRoom)) : null,
+        picked.length ? chip('Place picked', () => accept(picked)) : null,
         picked.length ? chip('Discard picked', () => discard(picked)) : null,
-        chip(`Discard ${scoped}`, () => discard(vis)),
-        chip(`Accept ${scoped}`, () => accept(vis), true),
+        // "Discard all" always clears every proposal, so the review can never get stuck
+        chip('Discard all', () => discard(ghosts)),
+        // "Place": drop the hidden groups, place what's shown, and always empty the review
+        vis.length ? chip(someHidden ? 'Place shown' : 'Place all', () => { accept(visGhosts()); discard(ghosts); }, true) : null,
       ];
     }
     if (st.tool === 'room') {
@@ -492,6 +499,7 @@ export function createRooms(api) {
     const props = roomIds ? roomIds.flatMap((id) => proposeRoom(d, id, { ...opts, model })) : proposeAll(d, { ...opts, model });
     ghosts = props.map((p) => ({ ...p, picked: false }));
     ghostHide = new Set();
+    ghostRoomIds = roomIds ? [...roomIds] : [...new Set(ghosts.map((g) => g.roomId).filter(Boolean))];
     if (!ghosts.length) ui.toast('Nothing to add: the boxes already meet the placement rules', 'success');
     else {
       const kinds = new Set(ghosts.map((g) => g.group));
@@ -521,13 +529,24 @@ export function createRooms(api) {
     }
     const gone = new Set(list);
     ghosts = ghosts.filter((g) => !gone.has(g));
+    reselectAfterGhosts();
     api.changed();
     ui.toast(`Placed ${placed.length} box${placed.length === 1 ? '' : 'es'}. They count in the takeoff.`, 'success');
   }
   function discard(list) {
+    if (!list.length) return;
     const gone = new Set(list);
     ghosts = ghosts.filter((g) => !gone.has(g));
+    reselectAfterGhosts();
     api.updateChrome(); api.requestFrame();
+  }
+  // once the review is empty, re-select the room it came from so the Edit / Lights / Auto-place bar
+  // comes straight back (otherwise nothing is selected and the bar is blank until you tap the room).
+  function reselectAfterGhosts() {
+    if (ghosts.length || ghostRoomIds.length !== 1) { if (!ghosts.length) ghostRoomIds = []; return; }
+    const room = d.rooms.find((r) => r.id === ghostRoomIds[0]);
+    ghostRoomIds = [];
+    if (room) st.selection = [{ kind: 'room', id: room.id }];
   }
 
   // ---------- code check ----------
