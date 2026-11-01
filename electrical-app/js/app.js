@@ -744,6 +744,9 @@ function setupZoomReset() {
     onClick: () => {
       const orig = meta.getAttribute('content');
       meta.setAttribute('content', 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+      try { window.scrollTo(0, 0); } catch { /* ignore */ }
+      // a stranded canvas (fixed UI scrolled off while zoomed) comes back in the same tap
+      try { globalThis.kelbeCanvas?.fit?.(); } catch { /* ignore */ }
       setTimeout(() => meta.setAttribute('content', orig), 350);
     },
   }, icon('minus', 18), h('span', null, 'Reset zoom'));
