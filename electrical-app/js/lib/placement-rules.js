@@ -119,7 +119,9 @@ export const DEFAULT_PLACEMENT = {
   applianceHeightM: 1.1, // fridge and washer receptacles
   switchHeightM: 1.2, // centre above floor
   switchFromJambM: 0.15, // from the latch-side jamb to the box centre
-  recessedSpacingM: 1.5,
+  recessedSpacingM: 1.5, // kept for migration; recessed layout now derives spacing from ceiling height
+  ceilingHeightM: 2.44, // 8 ft; sets recessed-light spacing (≈ half the ceiling height)
+  potLightLumens: 650, // per-fixture lumens for the brightness count (4" LED)
   hallLightSpacingM: 3,
   cornerClearM: 0.15, // keep boxes off inside corners when the spacing allows
   excludeDoorSwing: true, // 26-722 c): wall behind a fully opened door is not usable

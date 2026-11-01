@@ -7,8 +7,9 @@ import { uid } from '../store.js';
 import { getUnits, fmtLength, parseLength } from '../lib/units.js';
 import {
   pxPerM, rectPoints, projectToWalls, featureSpan, featureCorners, pointInPoly, distToSeg, wallPoint, proposeRoom, proposeAll,
-  buildModel,
+  buildModel, recessedLayout,
 } from '../lib/placement.js';
+import { TARGET_FC as LIGHT_TARGET_FC, DEFAULT_TARGET_FC } from '../lib/lighting.js';
 import { checkDrawing, summarize } from '../lib/placement-check.js';
 import { RULES, ROOM_TYPES, ROOM_TYPE_ORDER, FEATURE_KINDS, FEATURE_ORDER, placementSettings, ruleLabel } from '../lib/placement-rules.js';
 import { drawObject, roomGeo, roomSizeLabel, hitTest } from './engine.js';
@@ -462,6 +463,7 @@ export function createRooms(api) {
       return [lab(`${room.name} · ${roomSizeLabel(room, d, units())}`),
         chip('Edit', () => roomSheet(room)),
         chip('Add door, window…', () => addFeatureSheet(room)),
+        chip('Pot lights', () => potLightSheet(room)),
         chip('Check', () => openCheck()),
         chip('Auto-place', () => autoPlace([room.id]), true)];
     }
@@ -607,6 +609,7 @@ export function createRooms(api) {
       { label: 'Lighting', name: 'lighting', type: 'select', value: room.lighting || '', options: [
         { value: '', label: 'Default for the room type' }, { value: 'ceiling', label: 'Ceiling light' }, { value: 'recessed', label: 'Recessed grid' },
         { value: 'wall', label: 'Wall lights' }, { value: 'switched-receptacle', label: 'Switched receptacle' }, { value: 'none', label: 'None' }] },
+      lenField('Ceiling height', 'ceilingM', room.ceilingM ?? null, 'Sets recessed-light spacing. Blank uses the company default.'),
     ];
     if (rect) fields.push(lenField('Width', 'w', geo.walls[0].lenM), lenField('Depth', 'h', geo.walls[1].lenM));
     fields.push({ label: 'Car spaces (garage)', name: 'carSpaces', type: 'number', min: 0, step: 1, value: room.carSpaces ?? '', hint: 'Garages need a receptacle for each car space (CEC 26-724 b), VERIFY).' });
@@ -637,6 +640,8 @@ export function createRooms(api) {
         if (v.lighting) room.lighting = v.lighting; else delete room.lighting;
         if (Number(v.carSpaces) > 0) room.carSpaces = Math.round(Number(v.carSpaces)); else delete room.carSpaces;
         if (above > 0) room.aboveGradeM = above; else delete room.aboveGradeM;
+        const ceil = readLen(v.ceilingM);
+        if (ceil > 0.3) room.ceilingM = Math.round(ceil * 1000) / 1000; else delete room.ceilingM;
         if (rect && (Math.abs(wM - geo.walls[0].lenM) > 0.001 || Math.abs(hM - geo.walls[1].lenM) > 0.001)) {
           const w0 = geo.walls[0], m = geo.ppm;
           const p0 = room.points[0];
@@ -726,7 +731,8 @@ export function createRooms(api) {
       lenField('Counter receptacle height', 'counterHeightM', S.counterHeightM),
       lenField('Switch height to centre', 'switchHeightM', S.switchHeightM, 'Company practice, not code.'),
       lenField('Switch from the latch jamb', 'switchFromJambM', S.switchFromJambM),
-      lenField('Recessed light spacing', 'recessedSpacingM', S.recessedSpacingM),
+      lenField('Default ceiling height', 'ceilingHeightM', S.ceilingHeightM, 'Recessed spacing ≈ half the ceiling height. A room can override this.'),
+      { label: 'Pot light output (lumens each)', name: 'potLightLumens', type: 'number', min: 1, step: 50, value: S.potLightLumens, hint: '4" LED ~650, 5"/6" ~900' },
       { label: 'Wall behind an open door is not usable (26-722 c))', name: 'excludeDoorSwing', type: 'checkbox', value: S.excludeDoorSwing },
       { label: '3-way switches when a room has two or more entries', name: 'threeWay', type: 'checkbox', value: S.threeWay },
       { label: 'Smoke alarm in each bedroom (NBC 9.10.19.3)', name: 'alarmBedrooms', type: 'checkbox', value: S.alarms.bedrooms },
@@ -741,11 +747,13 @@ export function createRooms(api) {
       fields,
       onSubmit: (v) => {
         const p = {};
-        for (const k of ['receptacleHeightM', 'counterHeightM', 'switchHeightM', 'switchFromJambM', 'recessedSpacingM']) {
+        for (const k of ['receptacleHeightM', 'counterHeightM', 'switchHeightM', 'switchFromJambM', 'ceilingHeightM']) {
           const m = readLen(v[k]);
           if (m == null || m < 0) { ui.toast('Check the lengths', 'error'); return false; }
           p[k] = Math.round(m * 1000) / 1000;
         }
+        const lm = Number(v.potLightLumens);
+        if (lm > 0) p.potLightLumens = Math.round(lm);
         p.excludeDoorSwing = v.excludeDoorSwing; p.threeWay = v.threeWay;
         p.alarms = { bedrooms: v.alarmBedrooms, hallways: v.alarmHallways, basement: v.alarmBasement };
         api.checkpoint();
@@ -790,6 +798,65 @@ export function createRooms(api) {
         }
         api.changed();
       },
+    });
+  }
+
+  /**
+   * Lay out recessed ("pot") lights in the selected room. Shows the recommended
+   * count (ceiling-height spacing, bumped to the room's light level) with a
+   * stepper; add or remove one and the grid re-solves. Applying replaces the
+   * recessed lights already in the room with the new even grid.
+   */
+  function potLightSheet(room) {
+    const geo = roomGeo(room, d);
+    const S = settings();
+    const target = LIGHT_TARGET_FC[room.type] ?? DEFAULT_TARGET_FC;
+    const lumens = S.potLightLumens;
+    const ceilingM = room.ceilingM ?? S.ceilingHeightM;
+    const solve = (count) => recessedLayout(geo, { ceilingM, targetFc: target, lumens, count });
+    const recommended = solve(0).layout;
+    const existing = () => d.objects.filter((o) => o.symbol === 'light-recessed' && o.roomId === room.id);
+    let count = existing().length || recommended.count || 1;
+
+    const nEl = h('strong', { class: 'cv-stepper-n' });
+    const info = h('div', { class: 'cv-stepper-info' });
+    const draw = () => {
+      const layout = solve(count).layout;
+      nEl.textContent = String(count);
+      ui.clear(info);
+      const enough = layout.fc + 1e-6 >= target;
+      info.append(
+        h('div', null, `${layout.cols} × ${layout.rows} · ${fmt(layout.spacingLenM)} apart · about ${Math.round(layout.fc)} fc`),
+        h('div', { class: enough ? 'muted' : 'cv-potlight-short' }, enough ? `Meets the ~${target} fc target for this room` : `Below the ~${target} fc target — add lights or use brighter cans`));
+    };
+    draw();
+
+    const place = (close) => {
+      const { points, layout } = solve(count);
+      api.checkpoint();
+      const layer = deviceLayer();
+      d.objects = d.objects.filter((o) => !(o.symbol === 'light-recessed' && o.roomId === room.id));
+      for (const [x, y] of points) d.objects.push({ id: uid(), layer, symbol: 'light-recessed', x, y, rotation: 0, scale: 1, roomId: room.id, auto: true, rules: ['NBC 9.34.2.2'] });
+      api.changed();
+      ui.toast(`${points.length} pot light${points.length === 1 ? '' : 's'} placed · about ${Math.round(layout.fc)} fc`, 'success');
+      close();
+    };
+
+    const body = h('div', { class: 'stack' },
+      h('p', { class: 'muted', style: { margin: 0 } }, `${room.name}: ${roomSizeLabel(room, d, units())}, ceiling ${fmt(ceilingM)}. Recommended ${recommended.count} for a ~${target} fc room.`),
+      h('div', { class: 'cv-stepper' },
+        ui.button('', { icon: 'minus', title: 'One fewer', onClick: () => { count = Math.max(1, count - 1); draw(); } }),
+        nEl,
+        ui.button('', { icon: 'plus', title: 'One more', onClick: () => { count += 1; draw(); } })),
+      info);
+
+    const s = ui.openSheet({
+      title: 'Pot lights',
+      body,
+      actions: [
+        ui.button('Cancel', { variant: 'ghost', onClick: () => s.close() }),
+        ui.button(existing().length ? 'Update layout' : 'Place lights', { variant: 'primary', icon: 'check', onClick: () => place(() => s.close()) }),
+      ],
     });
   }
 

@@ -13,6 +13,7 @@ import {
   RULES, ROOM_TYPES, FEATURE_KINDS, WET_KINDS, RECEPTACLE_SYMBOLS, SWITCH_SYMBOLS,
   LIGHT_SYMBOLS, ALARM_SYMBOLS, placementSettings,
 } from './placement-rules.js';
+import { solveLayout as solveLights, TARGET_FC as LIGHT_TARGET_FC, DEFAULT_TARGET_FC } from './lighting.js';
 
 export const M_PER_FT = 0.3048;
 const EPS = 1e-6;
@@ -435,6 +436,38 @@ export function gridPoints(geo, spacingM, { minWallM = 0.3 } = {}) {
   return out.length ? out : [interiorPoint(geo)];
 }
 
+/**
+ * Recessed-light positions for a room, laid out by the shared lighting engine
+ * (lib/lighting.js): spacing from the ceiling height, count bumped to the room's
+ * target light level, an even half-spacing border off the walls. A manual
+ * `count` overrides and re-solves. Returns the world points and the full solve.
+ */
+export function recessedLayout(geo, { ceilingM, targetFc = 0, lumens, count = 0, minWallM = 0.3 } = {}) {
+  const pts = geo.room.points;
+  const longest = geo.walls.reduce((a, w) => (w.lenM > a.lenM ? w : a), geo.walls[0]);
+  const [ux, uy] = longest.u, [nx, ny] = [-uy, ux];
+  const [cx, cy] = geo.centroid;
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (const [x, y] of pts) {
+    const u = ((x - cx) * ux + (y - cy) * uy) / geo.ppm, v = ((x - cx) * nx + (y - cy) * ny) / geo.ppm;
+    u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+  }
+  const L = u1 - u0, W = v1 - v0;
+  const layout = solveLights({ lengthM: L, widthM: W, ceilingM, targetFc, lumens, count });
+  const clear = Math.min(minWallM, (layout.spacingM || 1) / 3) * geo.ppm;
+  const out = [];
+  for (const p of layout.points) {
+    const u = u0 + p.u * L, v = v0 + p.v * W;
+    const x = cx + (u * ux + v * nx) * geo.ppm, y = cy + (u * uy + v * ny) * geo.ppm;
+    if (!pointInPoly(x, y, pts)) continue;
+    const wallD = Math.min(...geo.walls.map((w) => distToSeg(x, y, w.a[0], w.a[1], w.b[0], w.b[1]).d));
+    if (wallD < clear) continue;
+    out.push([x, y]);
+  }
+  if (!out.length && layout.count > 0) out.push(interiorPoint(geo));
+  return { points: out, layout };
+}
+
 /** Sample points inside a room every `stepM` metres (for reach checks). */
 export function samplePoints(geo, stepM = 0.3) {
   const pts = geo.room.points;
@@ -712,7 +745,8 @@ export function proposeRoom(d, roomId, { settings, codeOptions = {}, model } = {
   const lightPts = [];
   if (mode !== 'none' && mode !== 'switched-receptacle' && !objs.some(isLight)) {
     if (mode === 'recessed') {
-      for (const [x, y] of gridPoints(geo, S.recessedSpacingM)) lightPts.push(add({ symbol: 'light-recessed', x, y, group: 'light', ruleRefs: ['lighting'], reason: `Recessed lights about ${S.recessedSpacingM} m apart` }));
+      const { points, layout } = recessedLayout(geo, { ceilingM: room.ceilingM ?? S.ceilingHeightM, targetFc: LIGHT_TARGET_FC[room.type] ?? DEFAULT_TARGET_FC, lumens: S.potLightLumens });
+      for (const [x, y] of points) lightPts.push(add({ symbol: 'light-recessed', x, y, group: 'light', ruleRefs: ['lighting'], reason: `Recessed lights spaced for a ${Math.round((room.ceilingM ?? S.ceilingHeightM) * 100) / 100} m ceiling (about ${layout.cols}×${layout.rows}, ${Math.round(layout.fc)} fc)` }));
     } else if (mode === 'wall') {
       for (const f of features.filter((q) => q.kind === 'door')) {
         const pt = latchSwitchPoint(geo, f, 0.3, inset);

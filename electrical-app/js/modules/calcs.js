@@ -7,6 +7,7 @@ import * as NEC from '../lib/nec.js';
 import * as CEC from '../lib/cec/index.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 import { recommendBreakerKa, KA_OPTIONS, KA_REFERENCE } from '../lib/breaker-ka.js';
+import { FIXTURES, DEFAULT_LUMENS, TARGET_FC, DEFAULT_TARGET_FC, solveLayout } from '../lib/lighting.js';
 
 const FT2 = M_PER_FT * M_PER_FT; // m² per ft²
 const ML_PER_IN3 = 16.387064;
@@ -22,6 +23,7 @@ const TABS = [
   { id: 'ohms', label: "Ohm's law" },
   { id: '3ph', label: '3-phase' },
   { id: 'ka', label: 'Breaker kA' },
+  { id: 'potlight', label: 'Pot lights' },
 ];
 
 const MATERIALS = [{ value: 'cu', label: 'Copper' }, { value: 'al', label: 'Aluminum' }];
@@ -740,9 +742,65 @@ function breakerKaTab() {
   });
 }
 
+// Recessed ("pot") light layout. Code-neutral: the spacing rule-of-thumb and
+// the brightness (footcandle) method aren't in the CEC or NEC. Math in
+// lib/lighting.js; the same engine lays out a room on the drawing canvas.
+const POTLIGHT_ROOMS = {
+  kitchen: 'Kitchen', living: 'Living / family', dining: 'Dining', bedroom: 'Bedroom',
+  bathroom: 'Bathroom', hallway: 'Hallway', laundry: 'Laundry', garage: 'Garage',
+  basement: 'Basement', other: 'Other room',
+};
+const DRIVER_NOTE = {
+  spacing: 'Count set by even spacing for the ceiling height.',
+  brightness: 'Count set by the light level — the room needs more than an even grid alone.',
+  manual: 'Count set by you; spacing re-solved to stay even.',
+};
+
+function potlightTab(rerender) {
+  const D = { length: 4.27, width: 3.66, ceiling: 2.44, room: 'living', fc: DEFAULT_TARGET_FC, fixture: '4in', lumens: DEFAULT_LUMENS, count: '' };
+  return liveCalc('potlight', D, (v) => [
+    { label: 'Room length', name: 'length', qty: 'length', value: v.length },
+    { label: 'Room width', name: 'width', qty: 'length', value: v.width },
+    { label: 'Ceiling height', name: 'ceiling', qty: 'length', value: v.ceiling, hint: 'Spacing ≈ ceiling height ÷ 2' },
+    { label: 'Room', name: 'room', type: 'select', value: v.room, options: [...Object.entries(POTLIGHT_ROOMS).map(([k, l]) => ({ value: k, label: `${l} · ${TARGET_FC[k]} fc` })), { value: 'custom', label: 'Custom light level' }] },
+    v.room === 'custom' ? { label: 'Target light level (fc)', name: 'fc', type: 'number', value: v.fc, min: 1, step: 'any', hint: 'Footcandles: kitchen ~40, living ~20, bedroom ~15' } : null,
+    { label: 'Fixture', name: 'fixture', type: 'select', value: v.fixture, options: [...FIXTURES.map((f) => ({ value: f.id, label: `${f.label} · ${f.lumens} lm` })), { value: 'custom', label: 'Custom lumens' }] },
+    v.fixture === 'custom' ? { label: 'Lumens per light', name: 'lumens', type: 'number', value: v.lumens, min: 1, step: 'any' } : null,
+    { label: 'Number of lights', name: 'count', type: 'number', value: v.count, min: 0, step: 1, hint: 'Blank = recommended. Type a number to override and the spacing re-solves.' },
+  ], (x) => {
+    const L = x.length ?? 0, W = x.width ?? 0;
+    if (!(L > 0) || !(W > 0)) return result({ label: 'Enter the room size', tone: 'warn', lines: ['Give the room length and width to lay out the pot lights.'] });
+    const targetFc = x.room === 'custom' ? (n(x.fc) || DEFAULT_TARGET_FC) : (TARGET_FC[x.room] ?? DEFAULT_TARGET_FC);
+    const lumens = x.fixture === 'custom' ? (n(x.lumens) || DEFAULT_LUMENS) : (FIXTURES.find((f) => f.id === x.fixture)?.lumens || DEFAULT_LUMENS);
+    const r = solveLayout({ lengthM: L, widthM: W, ceilingM: x.ceiling ?? 2.44, targetFc, lumens, count: n(x.count) });
+    const roomName = x.room === 'custom' ? 'custom' : (POTLIGHT_ROOMS[x.room] || '').toLowerCase();
+    const enough = r.fc + 1e-6 >= targetFc;
+    const preview = h('div', { class: 'potlight-preview', style: { aspectRatio: `${L} / ${W}` }, role: 'img', 'aria-label': `${r.count} lights, ${r.cols} by ${r.rows}` },
+      r.points.map((p) => h('span', { class: 'potlight-dot', style: { left: `${p.u * 100}%`, top: `${p.v * 100}%` } })));
+    return [
+      result({
+        label: 'Pot lights', value: String(r.count), unit: r.count === 1 ? 'light' : 'lights', tone: 'pass',
+        badge: `${r.cols} × ${r.rows}`,
+        sub: `${len(r.spacingLenM)} × ${len(r.spacingWidM)} apart · ${len(r.spacingLenM / 2)} off the end walls · ${len(r.spacingWidM / 2)} off the sides`,
+        lines: [
+          DRIVER_NOTE[r.driver],
+          `About ${num(r.fc, 0)} fc delivered${roomName === 'custom' ? '' : ` for a ${roomName}`} (target ${num(targetFc, 0)} fc)${enough ? '' : ' — short of target; add lights or use brighter cans'}.`,
+          `Even-spacing grid wants ${r.geomCount}; the ${num(targetFc, 0)} fc light level wants ${r.brightCount}.`,
+        ],
+        children: preview,
+      }),
+      h('div', { class: 'calc-minis' },
+        mini('Recommended', `${Math.max(r.geomCount, r.brightCount)} lights`),
+        mini('Light delivered', `${num(r.fc, 0)} fc`),
+        mini('Fixtures', `${r.count} × ${num(lumens, 0)} lm`)),
+      refs('Spacing rule of thumb: ceiling height ÷ 2', 'Lumen method: fc × area ÷ fixture lumens', 'Estimating aid — not a photometric layout'),
+    ];
+  }, { onChange: (vals, e) => { if (e?.target?.name === 'room' || e?.target?.name === 'fixture') { rerender(); return 'rerender'; } } });
+}
+
 const VIEWS = {
-  'CEC-2024': { vd: cecVoltageDrop, wire: cecWire, conduit: cecConduit, box: cecBox, load: cecLoad, motor: cecMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab },
-  'NEC-2023': { vd: necVoltageDrop, wire: necWire, conduit: necConduit, box: necBox, load: necLoad, motor: necMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab },
+  'CEC-2024': { vd: cecVoltageDrop, wire: cecWire, conduit: cecConduit, box: cecBox, load: cecLoad, motor: cecMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab },
+  'NEC-2023': { vd: necVoltageDrop, wire: necWire, conduit: necConduit, box: necBox, load: necLoad, motor: necMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab },
 };
 
 export default {

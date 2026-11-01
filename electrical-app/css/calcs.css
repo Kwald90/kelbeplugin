@@ -346,3 +346,25 @@ html.is-printing .panel-print { display: flex; flex-direction: column; min-heigh
 .pp-table-wrap .panel-print-table { flex: 1 1 auto; height: 100%; }
 .pp-table-wrap .panel-print-table tbody { height: 100%; }
 .panel-print .panel-print-table td { vertical-align: middle; }
+
+/* Pot light layout preview: a ceiling plan with the lights where they land. The
+   box takes the room's aspect ratio; dots sit at their u/v fractions. */
+.potlight-preview {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  margin: var(--s3) 0 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.potlight-dot {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
