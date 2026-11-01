@@ -115,14 +115,26 @@ function pressureStroke(ctx, pts, size, minF) {
   }
 }
 
+/**
+ * How much a wire bows, as a signed fraction of each segment's length applied
+ * perpendicular to it (0 = straight, + one side, − the other). `curve === true`
+ * is a legacy on/off wire drawn before the arc was adjustable.
+ */
+export function curveK(curve) {
+  if (curve === true) return 0.22;
+  const n = Number(curve);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function wirePath(ctx, pts, curve) {
+  const k = curveK(curve);
   ctx.beginPath();
   ctx.moveTo(pts[0][0], pts[0][1]);
   for (let i = 1; i < pts.length; i++) {
     const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
-    if (curve) {
+    if (k) {
       const mx = (ax + bx) / 2, my = (ay + by) / 2;
-      const nx = -(by - ay) * 0.22, ny = (bx - ax) * 0.22;
+      const nx = -(by - ay) * k, ny = (bx - ax) * k;
       ctx.quadraticCurveTo(mx + nx, my + ny, bx, by);
     } else ctx.lineTo(bx, by);
   }
@@ -504,7 +516,7 @@ export function strokeBounds(s) {
   if (boundsCache.has(s)) return boundsCache.get(s);
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const [x, y] of s.points) { if (x < x0) x0 = x; if (y < y0) y0 = y; if (x > x1) x1 = x; if (y > y1) y1 = y; }
-  const pad = (s.size || 2) / 2 + (s.tool === 'wire' && s.curve ? wireLength(s.points) * 0.12 : 0);
+  const pad = (s.size || 2) / 2 + (s.tool === 'wire' ? wireLength(s.points) * Math.abs(curveK(s.curve)) * 0.6 : 0);
   const b = { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
   boundsCache.set(s, b);
   return b;
@@ -546,7 +558,7 @@ export function hitStroke(s, x, y, tol) {
     const corners = [[a[0], a[1]], [c[0], a[1]], [c[0], c[1]], [a[0], c[1]]];
     return corners.some((q, i) => { const n = corners[(i + 1) % 4]; return distToSeg(x, y, q[0], q[1], n[0], n[1]) <= r; });
   }
-  if (s.tool === 'wire' && s.curve) return true; // inside bounds is close enough for arcs
+  if (s.tool === 'wire' && curveK(s.curve)) return true; // inside bounds is close enough for arcs
   if (p.length === 1) return Math.hypot(x - p[0][0], y - p[0][1]) <= r;
   const pts = s.tool === 'line' || s.tool === 'measure' ? [p[0], p[p.length - 1]] : p;
   for (let i = 1; i < pts.length; i++) if (distToSeg(x, y, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]) <= r) return true;
@@ -624,9 +636,10 @@ function svgPathFor(s) {
   if (s.tool === 'line' || s.tool === 'measure') return `M${f(p[0][0])} ${f(p[0][1])}L${f(p[p.length - 1][0])} ${f(p[p.length - 1][1])}`;
   if (s.tool === 'wire') {
     let out = `M${f(p[0][0])} ${f(p[0][1])}`;
+    const k = curveK(s.curve);
     for (let i = 1; i < p.length; i++) {
       const [ax, ay] = p[i - 1], [bx, by] = p[i];
-      if (s.curve) out += `Q${f((ax + bx) / 2 - (by - ay) * 0.22)} ${f((ay + by) / 2 + (bx - ax) * 0.22)} ${f(bx)} ${f(by)}`;
+      if (k) out += `Q${f((ax + bx) / 2 - (by - ay) * k)} ${f((ay + by) / 2 + (bx - ax) * k)} ${f(bx)} ${f(by)}`;
       else out += `L${f(bx)} ${f(by)}`;
     }
     return out;

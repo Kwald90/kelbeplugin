@@ -423,3 +423,8 @@ body.canvas-open .toasts { bottom: calc(76px + env(safe-area-inset-bottom)); }
 .cv-stepper-n { font-size: var(--fs-2xl, 2rem); font-weight: 700; min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
 .cv-stepper-info { text-align: center; display: flex; flex-direction: column; gap: 2px; }
 .cv-potlight-short { color: var(--warning, #e07a1f); font-weight: 600; }
+
+/* Wire arc slider in the selection context bar: centre straight, each side bows the run. */
+.cv-arc { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; }
+.cv-arc svg { opacity: 0.7; flex: none; }
+.cv-arc-range { width: 104px; max-width: 34vw; accent-color: var(--accent-fill, #f5b301); cursor: ew-resize; }

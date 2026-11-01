@@ -4,7 +4,7 @@
 import { uid } from '../store.js';
 import {
   drawPaper, drawContent, drawStroke, drawObject, hitTest, itemBounds, textBounds,
-  contentBounds, renderToCanvas, toSVG, takeoff, fmtWorldLength, segLen, wireLength, FREEHAND,
+  contentBounds, renderToCanvas, toSVG, takeoff, fmtWorldLength, segLen, wireLength, curveK, FREEHAND,
 } from './engine.js';
 import { SYMBOLS, SYMBOL_ORDER, symbolPreview } from './symbols.js';
 import { createRooms, swallowNextClick, ROOM_ICON, CHECK_ICON, WAND_ICON } from './rooms.js';
@@ -1114,9 +1114,19 @@ export function openEditor(root, ctx, id) {
       const hasObj = st.selection.some((s) => s.kind === 'object');
       const hasSized = st.selection.some((s) => s.kind === 'object' || s.kind === 'text');
       const selObjs = st.selection.filter((s) => s.kind === 'object').map(findSel).filter(Boolean);
+      const selWires = st.selection.filter((s) => s.kind === 'stroke').map(findSel).filter((w) => w && w.tool === 'wire');
+      // Arc slider for a selected wire: centre is straight, each side bows the run that way. Live on
+      // input (keeps the slider alive mid-drag), committed on release so one undo reverts the change.
+      const arcCtl = selWires.length ? h('label', { class: 'cv-arc', title: 'Wire arc — drag to bow the run' },
+        icon(RAW.curve, 16),
+        h('input', { type: 'range', class: 'cv-arc-range', min: -50, max: 50, step: 1, value: String(Math.round(curveK(selWires[0].curve) * 100)), 'aria-label': 'Wire arc',
+          onPointerdown: () => checkpoint(),
+          onInput: (e) => { const k = Number(e.target.value) / 100; for (const w of selWires) { if (k) w.curve = k; else delete w.curve; } requestFrame(); },
+          onChange: () => changed() })) : null;
       parts.push(h('span', { class: 'cv-ctx-label' }, `${st.selection.length} selected`),
         st.selection.length === 1 ? collab.selectionInfo(findSel(st.selection[0])) : null,
         tbtn('copy', 'Duplicate (Ctrl+D)', duplicateSel),
+        arcCtl,
         hasObj ? tbtn(RAW.rotate, 'Rotate 45°', rotateSel) : null,
         hasObj ? tbtn(RAW.tag, 'Protection and height (GFCI, AFCI, TR)', () => rooms.deviceSheet(selObjs)) : null,
         hasSized ? tbtn(RAW.bigger, 'Bigger', () => scaleSel(1.2)) : null,
