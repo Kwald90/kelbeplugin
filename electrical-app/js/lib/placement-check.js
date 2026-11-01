@@ -215,10 +215,11 @@ function checkRoom(model, rm, findings, { fmt, lim, codeOptions, hasBedrooms }) 
     }
     return false;
   };
-  const noAfci = recs.filter((o) => !o.flags?.afci && !exempt(o));
+  // AFCI (26-658) and TR (26-706) are dwelling-unit rules; a work area / shop is not a dwelling.
+  const noAfci = type.workarea ? [] : recs.filter((o) => !o.flags?.afci && !exempt(o));
   if (noAfci.length) add('afci', 'info', `${noAfci.length} receptacle${noAfci.length === 1 ? '' : 's'} not marked AFCI (combination type on the circuit).`, [noAfci[0].x, noAfci[0].y],
     { fix: { label: 'Mark AFCI', objectIds: noAfci.map((o) => o.id), flags: { afci: true } } });
-  const noTr = recs.filter((o) => !o.flags?.tr);
+  const noTr = type.workarea ? [] : recs.filter((o) => !o.flags?.tr);
   if (noTr.length) add('tamper', 'info', `${noTr.length} receptacle${noTr.length === 1 ? '' : 's'} not marked tamper-resistant.`, [noTr[0].x, noTr[0].y],
     { fix: { label: 'Mark TR', objectIds: noTr.map((o) => o.id), flags: { tr: true } } });
 }

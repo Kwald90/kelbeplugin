@@ -56,6 +56,7 @@ export const RULES = {
   lighting: { book: 'NBC', ref: '9.34.2.2', title: 'Wall-switched lighting outlet in each room (switched receptacle allowed in bedrooms and living rooms)', src: 'NBC', verify: 'BC moved CEC 30-500 series here; confirm for your province.' },
   latchSwitch: { book: 'practice', ref: 'Practice', title: 'Switch on the latch side of each entry door' },
   threeWay: { book: 'practice', ref: 'Practice', title: '3-way switches at each entry of a room with two or more entries' },
+  shopPlug: { book: 'practice', ref: 'Practice', title: 'Work area / shop receptacle spacing (company setting, not the 1.8 m dwelling rule)' },
 };
 
 /** "CEC 26-722 a)" / "NBC 9.10.19.3" / "Practice". */
@@ -82,6 +83,7 @@ export const ROOM_TYPES = {
   basement: { label: 'Unfinished basement', wallRule: false, basement: true, light: 'ceiling', needsLight: false },
   outdoor: { label: 'Outdoor / balcony', wallRule: false, outdoor: true, light: 'wall', needsLight: false },
   other: { label: 'Other finished room', wallRule: true, light: 'ceiling', needsLight: false },
+  workarea: { label: 'Work area / shop', wallRule: false, workarea: true, light: 'recessed', needsLight: false },
 };
 export const ROOM_TYPE_ORDER = Object.keys(ROOM_TYPES);
 
@@ -122,6 +124,7 @@ export const DEFAULT_PLACEMENT = {
   recessedSpacingM: 1.5, // kept for migration; recessed layout now derives spacing from ceiling height
   ceilingHeightM: 2.44, // 8 ft; sets recessed-light spacing (≈ half the ceiling height)
   potLightLumens: 650, // per-fixture lumens for the brightness count (4" LED)
+  shopPlugSpacingM: 3.6, // work area / shop: a receptacle about every this-many metres around the walls (company habit, not code)
   hallLightSpacingM: 3,
   cornerClearM: 0.15, // keep boxes off inside corners when the spacing allows
   excludeDoorSwing: true, // 26-722 c): wall behind a fully opened door is not usable

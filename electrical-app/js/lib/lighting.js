@@ -30,6 +30,7 @@ export const DEFAULT_LUMENS = 650;
 export const TARGET_FC = {
   kitchen: 40, bathroom: 30, living: 20, dining: 30, bedroom: 15,
   hallway: 10, laundry: 30, garage: 30, basement: 20, outdoor: 10, other: 20,
+  workarea: 50, // shop / work area — a starting point; dial it in per space
 };
 export const DEFAULT_TARGET_FC = 20;
 
@@ -38,10 +39,11 @@ export const DEFAULT_TARGET_FC = 20;
 // coefficient of utilization and light-loss factor a full design would use.
 export const DEFAULT_EFFICIENCY = 0.7;
 
-// Rule-of-thumb spacing bounds (metres) so a very tall or low ceiling can't
-// produce silly spacing.
+// Rule-of-thumb spacing bounds (metres) so a very low ceiling can't produce
+// silly spacing. The upper bound is generous so tall commercial ceilings
+// (shops, warehouses) space their high-bays wider, as they should.
 export const MIN_SPACING_M = 0.9;
-export const MAX_SPACING_M = 2.6;
+export const MAX_SPACING_M = 4.5;
 const DEFAULT_CEILING_M = 2.44; // 8 ft
 
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));

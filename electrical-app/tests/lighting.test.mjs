@@ -13,7 +13,8 @@ const FT2_PER_M2 = 1 / (M_PER_FT * M_PER_FT);
 test('spacingForCeiling is half the ceiling height, within bounds', () => {
   near(spacingForCeiling(2.44), 1.22);
   assert.equal(spacingForCeiling(1.2), MIN_SPACING_M); // very low ceiling clamps up
-  assert.equal(spacingForCeiling(6), MAX_SPACING_M); // very tall clamps down
+  assert.equal(spacingForCeiling(10), MAX_SPACING_M); // very tall clamps down
+  near(spacingForCeiling(6), 3.0); // a 20 ft commercial ceiling spaces wide, no clamp
   near(spacingForCeiling(undefined), 1.22); // defaults to an 8 ft ceiling
 });
 

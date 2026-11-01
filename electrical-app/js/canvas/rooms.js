@@ -45,6 +45,9 @@ export function createRooms(api) {
   let draft = null; // { mode: 'rect', a, b } | { mode: 'poly', pts, hover }
   let drag = null; // vertex | feature | featureDraw | ghost
   let ghosts = []; // proposals waiting for accept/discard
+  let ghostHide = new Set(); // proposal groups hidden in the review (what-to-place filter)
+  const GHOST_GROUPS = [['receptacle', 'Plugs'], ['switch', 'Switches'], ['light', 'Lights'], ['alarm', 'Alarms']];
+  const visGhosts = () => ghosts.filter((g) => !ghostHide.has(g.group));
   let findings = [];
   let selFinding = null;
   let panelOpen = false;
@@ -184,7 +187,7 @@ export function createRooms(api) {
     // ghosts first: tap to pick, drag to nudge
     if (ghosts.length) {
       const r = Math.max(16, 20 / z());
-      const g = [...ghosts].reverse().find((q) => Math.hypot(q.x - wx, q.y - wy) <= r);
+      const g = [...ghosts].reverse().find((q) => !ghostHide.has(q.group) && Math.hypot(q.x - wx, q.y - wy) <= r);
       if (g) { drag = { type: 'ghost', g, last: [wx, wy], moved: false }; return true; }
     }
     if (findings.length && (panelOpen || codeOptions().live)) {
@@ -402,8 +405,9 @@ export function createRooms(api) {
       g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(q[0] + 0.01, q[1]); g.stroke();
       if (b - a >= 0.15) api.label(g, q, fmt(b - a));
     }
-    // ghosts
+    // ghosts (skip groups hidden by the what-to-place filter)
     for (const q of ghosts) {
+      if (ghostHide.has(q.group)) continue;
       g.globalAlpha = 0.5;
       drawObject(g, { ...q, flags: q.flags }, { dark });
       g.globalAlpha = 1;
@@ -432,15 +436,25 @@ export function createRooms(api) {
     const chip = (label, fn, on) => h('button', { class: ['cv-chip', on ? 'on' : null], type: 'button', onClick: fn }, label);
     const lab = (t) => h('span', { class: 'cv-ctx-label' }, t);
     if (ghosts.length) {
-      const picked = ghosts.filter((g) => g.picked);
+      const vis = visGhosts();
+      const picked = vis.filter((g) => g.picked);
       const one = picked.length === 1 ? picked[0] : null;
+      // one toggle per kind present, so you can place just plugs, just lights, etc.
+      const present = GHOST_GROUPS.filter(([key]) => ghosts.some((g) => g.group === key));
+      const filters = present.length > 1 ? present.map(([key, label]) => chip(`${label} ${ghosts.filter((g) => g.group === key).length}`, () => {
+        if (ghostHide.has(key)) ghostHide.delete(key);
+        else { ghostHide.add(key); ghosts.forEach((g) => { if (g.group === key) g.picked = false; }); }
+        api.updateChrome(); api.requestFrame();
+      }, !ghostHide.has(key))) : [];
+      const scoped = ghostHide.size ? 'shown' : 'all';
       return [
         lab(one ? `${SYMBOLS[one.symbol]?.label || one.symbol}${one.ruleRefs.length ? ' · ' + ruleLabel(one.ruleRefs[0]) : ''}`
-          : `${ghosts.length} proposed${picked.length ? ` · ${picked.length} picked` : ' · tap to pick, drag to nudge'}`),
+          : `${vis.length} ${ghostHide.size ? 'shown' : 'proposed'}${picked.length ? ` · ${picked.length} picked` : ' · tap to pick, drag to nudge'}`),
+        ...filters,
         picked.length ? chip('Accept picked', () => accept(picked)) : null,
         picked.length ? chip('Discard picked', () => discard(picked)) : null,
-        chip('Discard all', () => discard(ghosts)),
-        chip('Accept all', () => accept(ghosts), true),
+        chip(`Discard ${scoped}`, () => discard(vis)),
+        chip(`Accept ${scoped}`, () => accept(vis), true),
       ];
     }
     if (st.tool === 'room') {
@@ -463,7 +477,7 @@ export function createRooms(api) {
       return [lab(`${room.name} · ${roomSizeLabel(room, d, units())}`),
         chip('Edit', () => roomSheet(room)),
         chip('Add door, window…', () => addFeatureSheet(room)),
-        chip('Pot lights', () => potLightSheet(room)),
+        chip('Lights', () => potLightSheet(room)),
         chip('Check', () => openCheck()),
         chip('Auto-place', () => autoPlace([room.id]), true)];
     }
@@ -477,8 +491,14 @@ export function createRooms(api) {
     const model = buildModel(d, opts.settings);
     const props = roomIds ? roomIds.flatMap((id) => proposeRoom(d, id, { ...opts, model })) : proposeAll(d, { ...opts, model });
     ghosts = props.map((p) => ({ ...p, picked: false }));
+    ghostHide = new Set();
     if (!ghosts.length) ui.toast('Nothing to add: the boxes already meet the placement rules', 'success');
-    else ui.toast(`${ghosts.length} boxes proposed. Accept all, or tap to pick some.`);
+    else {
+      const kinds = new Set(ghosts.map((g) => g.group));
+      ui.toast(kinds.size > 1
+        ? `${ghosts.length} boxes proposed. Toggle Plugs / Switches / Lights / Alarms to place just those, or accept all.`
+        : `${ghosts.length} boxes proposed. Accept all, or tap to pick some.`);
+    }
     st.selection = [];
     if (st.tool !== 'select' && st.tool !== 'hand') api.setTool('select');
     api.updateChrome(); api.requestFrame();
@@ -613,6 +633,7 @@ export function createRooms(api) {
     ];
     if (rect) fields.push(lenField('Width', 'w', geo.walls[0].lenM), lenField('Depth', 'h', geo.walls[1].lenM));
     fields.push({ label: 'Car spaces (garage)', name: 'carSpaces', type: 'number', min: 0, step: 1, value: room.carSpaces ?? '', hint: 'Garages need a receptacle for each car space (CEC 26-724 b), VERIFY).' });
+    fields.push(lenField('Plug spacing (work area / shop)', 'plugSpacingM', room.plugSpacingM ?? null, 'How far apart to drop plugs around the walls on auto-place. Blank uses the company default.'));
     fields.push(lenField('Height above grade (outdoor)', 'aboveGrade', room.aboveGradeM ?? 0, 'Over 2.5 m (an upper balcony) means no GFCI is required by 26-704 2).'));
     const defaultName = room.name;
     const sheet = ui.formSheet({
@@ -642,6 +663,8 @@ export function createRooms(api) {
         if (above > 0) room.aboveGradeM = above; else delete room.aboveGradeM;
         const ceil = readLen(v.ceilingM);
         if (ceil > 0.3) room.ceilingM = Math.round(ceil * 1000) / 1000; else delete room.ceilingM;
+        const plugSp = readLen(v.plugSpacingM);
+        if (plugSp > 0.3) room.plugSpacingM = Math.round(plugSp * 1000) / 1000; else delete room.plugSpacingM;
         if (rect && (Math.abs(wM - geo.walls[0].lenM) > 0.001 || Math.abs(hM - geo.walls[1].lenM) > 0.001)) {
           const w0 = geo.walls[0], m = geo.ppm;
           const p0 = room.points[0];
@@ -656,6 +679,7 @@ export function createRooms(api) {
     const toggle = () => {
       const t = ROOM_TYPES[typeSel.value] || {};
       sheet.el.querySelector('[name=carSpaces]')?.closest('.field')?.toggleAttribute('hidden', !t.garage);
+      sheet.el.querySelector('[name=plugSpacingM]')?.closest('.field')?.toggleAttribute('hidden', !t.workarea);
       sheet.el.querySelector('[name=aboveGrade]')?.closest('.field')?.toggleAttribute('hidden', !t.outdoor);
     };
     typeSel?.addEventListener('change', toggle);
@@ -733,6 +757,7 @@ export function createRooms(api) {
       lenField('Switch from the latch jamb', 'switchFromJambM', S.switchFromJambM),
       lenField('Default ceiling height', 'ceilingHeightM', S.ceilingHeightM, 'Recessed spacing ≈ half the ceiling height. A room can override this.'),
       { label: 'Pot light output (lumens each)', name: 'potLightLumens', type: 'number', min: 1, step: 50, value: S.potLightLumens, hint: '4" LED ~650, 5"/6" ~900' },
+      lenField('Work area / shop plug spacing', 'shopPlugSpacingM', S.shopPlugSpacingM, 'How far apart auto-place drops plugs around a shop’s walls (not the 1.8 m dwelling rule). A room can override this.'),
       { label: 'Wall behind an open door is not usable (26-722 c))', name: 'excludeDoorSwing', type: 'checkbox', value: S.excludeDoorSwing },
       { label: '3-way switches when a room has two or more entries', name: 'threeWay', type: 'checkbox', value: S.threeWay },
       { label: 'Smoke alarm in each bedroom (NBC 9.10.19.3)', name: 'alarmBedrooms', type: 'checkbox', value: S.alarms.bedrooms },
@@ -747,7 +772,7 @@ export function createRooms(api) {
       fields,
       onSubmit: (v) => {
         const p = {};
-        for (const k of ['receptacleHeightM', 'counterHeightM', 'switchHeightM', 'switchFromJambM', 'ceilingHeightM']) {
+        for (const k of ['receptacleHeightM', 'counterHeightM', 'switchHeightM', 'switchFromJambM', 'ceilingHeightM', 'shopPlugSpacingM']) {
           const m = readLen(v[k]);
           if (m == null || m < 0) { ui.toast('Check the lengths', 'error'); return false; }
           p[k] = Math.round(m * 1000) / 1000;
@@ -802,56 +827,76 @@ export function createRooms(api) {
   }
 
   /**
-   * Lay out recessed ("pot") lights in the selected room. Shows the recommended
-   * count (ceiling-height spacing, bumped to the room's light level) with a
-   * stepper; add or remove one and the grid re-solves. Applying replaces the
-   * recessed lights already in the room with the new even grid.
+   * Lay out recessed / pot / high-bay lights in the selected area. You dial in
+   * the light level (footcandles), the fixture's lumens and the ceiling height;
+   * it recommends a count and even grid, and the stepper lets you add or remove
+   * one so the spacing re-solves. Settings are saved on the area, and Applying
+   * replaces the recessed lights already there with the new grid.
    */
   function potLightSheet(room) {
     const geo = roomGeo(room, d);
     const S = settings();
-    const target = LIGHT_TARGET_FC[room.type] ?? DEFAULT_TARGET_FC;
-    const lumens = S.potLightLumens;
-    const ceilingM = room.ceilingM ?? S.ceilingHeightM;
-    const solve = (count) => recessedLayout(geo, { ceilingM, targetFc: target, lumens, count });
-    const recommended = solve(0).layout;
+    let targetFc = Number(room.targetFc) > 0 ? Number(room.targetFc) : (LIGHT_TARGET_FC[room.type] ?? DEFAULT_TARGET_FC);
+    let lumens = Number(room.fixtureLumens) > 0 ? Number(room.fixtureLumens) : S.potLightLumens;
+    let ceilingM = room.ceilingM ?? S.ceilingHeightM;
     const existing = () => d.objects.filter((o) => o.symbol === 'light-recessed' && o.roomId === room.id);
-    let count = existing().length || recommended.count || 1;
+    let count = existing().length || 0; // 0 = use the recommendation
 
+    const field = (label, input, hint) => h('label', { class: 'field' }, h('span', null, label), input, hint ? h('small', { class: 'muted' }, hint) : null);
+    const fcIn = h('input', { class: 'input', type: 'number', min: 1, step: 1, value: String(Math.round(targetFc)) });
+    const lmIn = h('input', { class: 'input', type: 'number', min: 1, step: 50, value: String(Math.round(lumens)) });
+    const ceilIn = h('input', { class: 'input', value: fmt(ceilingM) });
     const nEl = h('strong', { class: 'cv-stepper-n' });
     const info = h('div', { class: 'cv-stepper-info' });
-    const draw = () => {
-      const layout = solve(count).layout;
-      nEl.textContent = String(count);
+
+    const layoutNow = () => recessedLayout(geo, { ceilingM, targetFc, lumens, count });
+    const effective = () => layoutNow().layout.count; // count, or the recommendation when count is 0
+
+    const recalc = () => {
+      const fc = Number(fcIn.value); if (fc > 0) targetFc = fc;
+      const lm = Number(lmIn.value); if (lm > 0) lumens = lm;
+      const cm = readLen(ceilIn.value); if (cm > 0.3) ceilingM = cm;
+      const layout = layoutNow().layout;
+      const rec = recessedLayout(geo, { ceilingM, targetFc, lumens, count: 0 }).layout;
+      nEl.textContent = String(layout.count);
       ui.clear(info);
-      const enough = layout.fc + 1e-6 >= target;
+      const enough = layout.fc + 1e-6 >= targetFc;
       info.append(
-        h('div', null, `${layout.cols} × ${layout.rows} · ${fmt(layout.spacingLenM)} apart · about ${Math.round(layout.fc)} fc`),
-        h('div', { class: enough ? 'muted' : 'cv-potlight-short' }, enough ? `Meets the ~${target} fc target for this room` : `Below the ~${target} fc target — add lights or use brighter cans`));
+        h('div', null, `${layout.cols} × ${layout.rows} · ${fmt(layout.spacingLenM)} × ${fmt(layout.spacingWidM)} apart · about ${Math.round(layout.fc)} fc`),
+        h('div', { class: enough ? 'muted' : 'cv-potlight-short' }, enough ? `Meets ${Math.round(targetFc)} fc` : `Below ${Math.round(targetFc)} fc — add lights or brighter fixtures`),
+        count ? ui.button(`Use recommended (${rec.count})`, { variant: 'ghost', onClick: () => { count = 0; recalc(); } }) : h('div', { class: 'muted' }, `Recommended for ${Math.round(targetFc)} fc`));
     };
-    draw();
+    recalc();
+    for (const el of [fcIn, lmIn, ceilIn]) el.addEventListener('input', recalc);
 
     const place = (close) => {
-      const { points, layout } = solve(count);
+      recalc();
+      const { points, layout } = layoutNow();
       api.checkpoint();
+      room.targetFc = Math.round(targetFc);
+      room.fixtureLumens = Math.round(lumens);
+      room.ceilingM = Math.round(ceilingM * 1000) / 1000;
       const layer = deviceLayer();
       d.objects = d.objects.filter((o) => !(o.symbol === 'light-recessed' && o.roomId === room.id));
       for (const [x, y] of points) d.objects.push({ id: uid(), layer, symbol: 'light-recessed', x, y, rotation: 0, scale: 1, roomId: room.id, auto: true, rules: ['NBC 9.34.2.2'] });
       api.changed();
-      ui.toast(`${points.length} pot light${points.length === 1 ? '' : 's'} placed · about ${Math.round(layout.fc)} fc`, 'success');
+      ui.toast(`${points.length} light${points.length === 1 ? '' : 's'} placed · ${Math.round(layout.fc)} fc. Drag any one to reposition.`, 'success');
       close();
     };
 
     const body = h('div', { class: 'stack' },
-      h('p', { class: 'muted', style: { margin: 0 } }, `${room.name}: ${roomSizeLabel(room, d, units())}, ceiling ${fmt(ceilingM)}. Recommended ${recommended.count} for a ~${target} fc room.`),
+      h('p', { class: 'muted', style: { margin: 0 } }, `${room.name} · ${roomSizeLabel(room, d, units())}. Set the light level and fixture, then fine-tune the count.`),
+      field('Target light level (fc)', fcIn, 'Shop ~50, office ~40, warehouse ~30, living ~20'),
+      field('Fixture output (lumens each)', lmIn, 'High-bay ~15,000–20,000 · troffer ~4,000 · 6″ can ~900'),
+      field('Ceiling height', ceilIn, 'Taller ceilings space the lights wider'),
       h('div', { class: 'cv-stepper' },
-        ui.button('', { icon: 'minus', title: 'One fewer', onClick: () => { count = Math.max(1, count - 1); draw(); } }),
+        ui.button('', { icon: 'minus', title: 'One fewer', onClick: () => { count = Math.max(1, effective() - 1); recalc(); } }),
         nEl,
-        ui.button('', { icon: 'plus', title: 'One more', onClick: () => { count += 1; draw(); } })),
+        ui.button('', { icon: 'plus', title: 'One more', onClick: () => { count = effective() + 1; recalc(); } })),
       info);
 
     const s = ui.openSheet({
-      title: 'Pot lights',
+      title: 'Lighting layout',
       body,
       actions: [
         ui.button('Cancel', { variant: 'ghost', onClick: () => s.close() }),

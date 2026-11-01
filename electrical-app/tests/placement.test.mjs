@@ -315,6 +315,26 @@ test('smoke and CO rules follow the settings', () => {
   assert.ok(rules(checkDrawing(drawing([r]), { codeOptions: { fuelBurning: true } })).includes('co'));
 });
 
+test('work area / shop: plugs around the walls at the company spacing, no 1.8 m dwelling rule, tighter when set', () => {
+  const door = { id: 'd1', kind: 'door', wall: 2, atM: 0.3, widthM: 0.91, hinge: 'start', swing: 'in' };
+  const shop = room('shop', 'workarea', 8, 6, [door]);
+  const d = drawing([shop]);
+  const recs = proposeRoom(d, 'shop').filter((p) => p.group === 'receptacle');
+  assert.ok(recs.length >= 6, `shop got ${recs.length} plugs`); // ~28 m usable wall at a plug every 3.6 m
+  for (const p of recs) {
+    assert.equal(p.symbol, 'receptacle');
+    assert.ok(p.ruleRefs.includes('shopPlug'));
+    assert.equal(p.flags.afci, false); // commercial, not the dwelling AFCI/TR rules
+    assert.equal(p.flags.tr, false);
+  }
+  d.objects = accept(recs);
+  assert.ok(worstWallDistance(d, shop) <= 1.8 + 1e-6, `every point within half the 3.6 m spacing`);
+  // a tighter per-room spacing drops more plugs
+  const tight = room('shop2', 'workarea', 8, 6, [door], { plugSpacingM: 1.8 });
+  const more = proposeRoom(drawing([tight]), 'shop2').filter((p) => p.group === 'receptacle');
+  assert.ok(more.length > recs.length, `tighter spacing: ${more.length} vs ${recs.length}`);
+});
+
 test('garage gets a receptacle per car space; unfinished basement at least one', () => {
   const g = room('g', 'garage', 6.5, 6.5, [], { carSpaces: 2 });
   const props = proposeRoom(drawing([g]), 'g').filter((p) => p.group === 'receptacle');

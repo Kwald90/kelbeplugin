@@ -595,10 +595,14 @@ export function proposeRoom(d, roomId, { settings, codeOptions = {}, model } = {
     }
   }
 
-  // 2) usable wall, 26-722 a) and c) (kitchens: d) vi) for the walls without counters).
+  // 2) usable wall receptacles. Dwellings: 26-722 a) and c) (kitchens: d) vi) for
+  //    the walls without counters). Work areas / shops don't follow the 1.8 m
+  //    dwelling rule, so they use a company spacing (room override, else setting).
   //    After the kitchen boxes, so a low wall box never stands in for the fridge's.
-  if (type.wallRule) {
-    const maxD = RULES.wallSpacing.maxM;
+  if (type.wallRule || type.workarea) {
+    const shop = !type.wallRule && type.workarea;
+    const spacingM = shop ? (Number(room.plugSpacingM) > 0 ? Number(room.plugSpacingM) : S.shopPlugSpacingM) : 0;
+    const maxD = shop ? spacingM / 2 : RULES.wallSpacing.maxM;
     const onWall = () => recPts.map(([x, y]) => projectToWalls(geo, x, y)).filter((p) => p && p.dist <= model.tolM);
     for (let run of runs) {
       if (run.len < RULES.usableWall.minM - EPS) continue; // a 600 mm stub is not usable wall space
@@ -613,8 +617,13 @@ export function proposeRoom(d, roomId, { settings, codeOptions = {}, model } = {
       fresh = nudgeOffCorners(run, geo, fresh, rel, maxD, S.cornerClearM);
       for (const r of fresh) {
         const p = runPoint(run, r);
-        addRec(p.x, p.y, { rotation: wallRotation(p.angle), rules: [type.kitchen ? 'kitchenWalls' : 'wallSpacing', 'usableWall', 'tamper', 'afci'],
-          reason: 'Usable wall: no point along the floor line more than 1.8 m from a receptacle' });
+        if (shop) {
+          addRec(p.x, p.y, { rotation: wallRotation(p.angle), exemptAfci: true, extra: { tr: false }, rules: ['shopPlug'],
+            reason: `Work area / shop: a receptacle about every ${Math.round(spacingM * 100) / 100} m around the walls (company setting, not the 1.8 m dwelling rule)` });
+        } else {
+          addRec(p.x, p.y, { rotation: wallRotation(p.angle), rules: [type.kitchen ? 'kitchenWalls' : 'wallSpacing', 'usableWall', 'tamper', 'afci'],
+            reason: 'Usable wall: no point along the floor line more than 1.8 m from a receptacle' });
+        }
       }
     }
   }
@@ -745,7 +754,11 @@ export function proposeRoom(d, roomId, { settings, codeOptions = {}, model } = {
   const lightPts = [];
   if (mode !== 'none' && mode !== 'switched-receptacle' && !objs.some(isLight)) {
     if (mode === 'recessed') {
-      const { points, layout } = recessedLayout(geo, { ceilingM: room.ceilingM ?? S.ceilingHeightM, targetFc: LIGHT_TARGET_FC[room.type] ?? DEFAULT_TARGET_FC, lumens: S.potLightLumens });
+      const { points, layout } = recessedLayout(geo, {
+        ceilingM: room.ceilingM ?? S.ceilingHeightM,
+        targetFc: Number(room.targetFc) > 0 ? Number(room.targetFc) : (LIGHT_TARGET_FC[room.type] ?? DEFAULT_TARGET_FC),
+        lumens: Number(room.fixtureLumens) > 0 ? Number(room.fixtureLumens) : S.potLightLumens,
+      });
       for (const [x, y] of points) lightPts.push(add({ symbol: 'light-recessed', x, y, group: 'light', ruleRefs: ['lighting'], reason: `Recessed lights spaced for a ${Math.round((room.ceilingM ?? S.ceilingHeightM) * 100) / 100} m ceiling (about ${layout.cols}×${layout.rows}, ${Math.round(layout.fc)} fc)` }));
     } else if (mode === 'wall') {
       for (const f of features.filter((q) => q.kind === 'door')) {
