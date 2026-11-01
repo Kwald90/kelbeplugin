@@ -16,6 +16,7 @@ import { session, savePref } from '../session.js';
 import { panelPrintSettings } from './panels.js';
 import { panelCircuitNames } from '../lib/panel-templates.js';
 import { WHEEL, wheelPrefs, saveWheelPrefs, resetWheelPrefs, orderWheel } from '../lib/wheel.js';
+import { pipelineStages, normalizeStages, openStages, newStageId, DEFAULT_STAGES } from '../lib/pipeline.js';
 
 export const APP_VERSION = '0.3.0';
 
@@ -249,6 +250,67 @@ export default {
         list, noHits, addForm);
     };
 
+    // sales pipeline: the lead stages (settings.pipeline.stages) and the sequence each one triggers.
+    // Open stages can be renamed, reordered, added and removed; Won and Lost are terminal and pinned
+    // at the end (only renamable). Each change saves immediately, like the modules switches.
+    const pipelineHost = h('div', { class: 'stack' });
+    const drawPipeline = () => {
+      ui.clear(pipelineHost);
+      const stages = pipelineStages(store.settings());
+      const open = openStages(stages);
+      const terminal = stages.filter((st) => st.kind !== 'open'); // Won then Lost
+      const sequences = store.list('sequences').sort((a, b) => a.name.localeCompare(b.name));
+      const save = (next) => { store.saveSettings({ pipeline: { stages: normalizeStages(next) } }); drawPipeline(); };
+
+      const seqSelect = (st) => h('select', { class: 'input', 'aria-label': `Follow-up for ${st.label}`,
+        onChange: (e) => save(stages.map((x) => (x.id === st.id ? { ...x, sequenceId: e.target.value || undefined } : x))) },
+        h('option', { value: '' }, 'No automatic follow-up'),
+        sequences.map((sq) => h('option', { value: sq.id, selected: sq.id === st.sequenceId }, sq.name)));
+      const nameInput = (st) => h('input', { class: 'input grow', value: st.label, maxlength: 40, 'aria-label': 'Stage name',
+        onChange: (e) => { const label = (e.target.value || '').trim().slice(0, 40); if (!label) return drawPipeline(); save(stages.map((x) => (x.id === st.id ? { ...x, label } : x))); } });
+
+      const move = (i, dir) => {
+        const arr = [...open];
+        const j = i + dir;
+        if (j < 0 || j >= arr.length) return;
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+        save([...arr, ...terminal]);
+      };
+      const removeStage = async (st) => {
+        const inUse = store.count('leads', (l) => l.stage === st.id);
+        if (inUse && !(await ui.confirmDialog(`${inUse} lead${inUse > 1 ? 's are' : ' is'} in “${st.label}”. Remove the stage anyway? Those leads keep it until you move them.`, { title: 'Remove stage', okLabel: 'Remove' }))) return;
+        save([...open.filter((x) => x.id !== st.id), ...terminal]);
+      };
+      const addStage = () => save([...open, { id: newStageId(stages), label: `Stage ${open.length + 1}`, kind: 'open' }, ...terminal]);
+
+      const openRow = (st, i) => h('div', { class: 'card flat pipeline-stage', dataset: { stage: st.id } },
+        h('div', { class: 'row' },
+          h('span', { class: `pipeline-dot pipeline-dot-${st.kind}` }),
+          nameInput(st),
+          ui.button('', { size: 'sm', variant: 'ghost', icon: 'chevron-up', title: `Move ${st.label} earlier`, disabled: i === 0, onClick: () => move(i, -1) }),
+          ui.button('', { size: 'sm', variant: 'ghost', icon: 'chevron-down', title: `Move ${st.label} later`, disabled: i === open.length - 1, onClick: () => move(i, 1) }),
+          ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: `Remove ${st.label}`, onClick: () => removeStage(st) })),
+        h('label', { class: 'field pipeline-trigger' }, h('span', { class: 'muted' }, 'When a lead enters this stage'), seqSelect(st)));
+      const termRow = (st) => h('div', { class: 'card flat pipeline-stage pipeline-terminal', dataset: { stage: st.id } },
+        h('div', { class: 'row' },
+          ui.badge(st.kind === 'won' ? 'Won' : 'Lost', st.kind === 'won' ? 'success' : 'danger'),
+          nameInput(st),
+          h('span', { class: 'muted pipeline-lock', title: 'Always the final stage' }, ui.icon('lock', 14))),
+        h('div', { class: 'muted pipeline-note' }, st.kind === 'won'
+          ? 'Marking a lead Won offers to create the job. Follow-up sequences stop.'
+          : 'Follow-up sequences stop when a lead is marked Lost.'));
+
+      pipelineHost.append(
+        h('div', { class: 'muted' }, 'The stages a lead moves through, from first enquiry to a won or lost job. Rename them to match how you work, add or remove stages, reorder with the arrows, and pick a follow-up sequence to start automatically when a lead reaches a stage.'),
+        !sequences.length ? h('div', { class: 'row muted', style: { flexWrap: 'nowrap', alignItems: 'flex-start' } }, ui.icon('info', 16),
+          h('span', null, 'Build follow-up sequences first under ', h('a', { href: '#/sequences' }, 'Sequences'), ', then you can trigger one from any stage.')) : null,
+        h('div', { class: 'stack pipeline-stages' }, ...open.map((st, i) => openRow(st, i)), ...terminal.map(termRow)),
+        h('div', { class: 'row' }, ui.button('Add stage', { icon: 'plus', onClick: addStage }), h('span', { class: 'grow' }),
+          ui.button('Reset to default', { variant: 'ghost', icon: 'undo', onClick: async () => {
+            if (await ui.confirmDialog('Reset the pipeline to the default six stages? Leads keep their current stage.', { title: 'Reset pipeline', okLabel: 'Reset', danger: false })) save(DEFAULT_STAGES.map((st) => ({ ...st })));
+          } })));
+    };
+
     // defaults
     const defaults = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
       { label: 'Labour rate (per hour)', name: 'labourRateCents', type: 'money', value: s.labourRateCents, hint: 'Estimates, and time & material jobs' },
@@ -475,7 +537,7 @@ export default {
       ? ui.badge('Memory only: data is lost on reload', 'danger')
       : store.persistent ? ui.badge('Persistent storage', 'success') : ui.badge('Browser may clear data when low on space', 'warning');
 
-    drawCode(); drawTax(); drawPlacement(); drawPanelPrint(); drawCircuitNames(); drawModules(); drawMaterials();
+    drawCode(); drawTax(); drawPlacement(); drawPanelPrint(); drawCircuitNames(); drawModules(); drawMaterials(); drawPipeline();
 
     // Extra search terms for a card, for words a person might type that aren't in its visible text.
     const tag = (el, keywords) => { if (el && keywords) el.dataset.keywords = keywords; return el; };
@@ -490,6 +552,9 @@ export default {
         tag(card('Sales tax', 'GST/HST and PST/RST for new estimates and invoices', taxHost), 'gst hst pst rst vat'),
       ]],
       ['Modules', [modulesCard]],
+      ['Sales', [
+        ctx.on?.('leads') !== false ? tag(card('Sales pipeline', 'The lead stages and the follow-up each one starts', pipelineHost), 'leads funnel crm stages pipeline kanban follow-up sequence lead flow') : null,
+      ]],
       ['Money & documents', [
         card('Defaults', 'Applied to new estimates and invoices', defaults, saveRow('Save defaults', saveDefaults)),
         card('Document numbering', 'The next number each new document gets', numbering, saveRow('Save numbering', saveNumbering)),

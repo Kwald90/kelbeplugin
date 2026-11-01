@@ -1,17 +1,29 @@
 // Leads & funnels (S13): kanban pipeline, conversion funnel, list, lead sheet.
 import { openClientSheet } from './clients.js';
 import { processSequences } from './sequences.js';
+import { pipelineStages, stageById, funnelOrder, reachedCounts, leadIsOpen } from '../lib/pipeline.js';
 
-export const STAGES = [
-  { id: 'new', label: 'New' },
-  { id: 'contacted', label: 'Contacted' },
-  { id: 'site-visit', label: 'Site visit' },
-  { id: 'quoted', label: 'Quoted' },
-  { id: 'won', label: 'Won' },
-  { id: 'lost', label: 'Lost' },
-];
-const OPEN = (l) => l.stage !== 'won' && l.stage !== 'lost';
+const OPEN = (l) => leadIsOpen(l.stage);
 const SOURCES = ['Website', 'Referral', 'Repeat', 'Google', 'Yard sign', 'Cold call', 'Social', 'Other'];
+
+/** The company's pipeline stages (editable in Settings → Sales pipeline). */
+const stagesOf = (store) => pipelineStages(store.settings());
+
+/** A badge coloured by stage kind — Won green, Lost red, open stages by their shared status tone. */
+function stageBadge(ui, stage) {
+  const tone = stage.kind === 'won' ? 'success' : stage.kind === 'lost' ? 'danger' : (ui.STATUS_TONE?.[stage.id] || 'info');
+  return ui.badge(stage.label, tone);
+}
+
+/** The stage label (and a matching badge) for a lead's stage id, for screens outside this module. */
+export function stageLabel(store, id) {
+  return stageById(stagesOf(store), id)?.label || String(id || '—').replace(/-/g, ' ');
+}
+export function leadStageBadge(ui, store, id) {
+  const stages = stagesOf(store);
+  const st = stageById(stages, id) || { id, label: String(id || '—').replace(/-/g, ' '), kind: 'open' };
+  return stageBadge(ui, st);
+}
 
 /** 'overdue' | 'today' | null for an open lead's next action. */
 export function leadDue(l, today) {
@@ -43,12 +55,24 @@ function createJobFromLead(ctx, lead) {
   nav('#/jobs/' + job.id);
 }
 
-/** Change a lead's stage; moving to won offers to create a job. */
+/** Change a lead's stage; moving to won offers to create a job, and a stage can start a sequence. */
 export async function setStage(ctx, lead, stage) {
   const { store, ui } = ctx;
   if (lead.stage === stage) return;
-  store.update('leads', lead.id, { stage }, { summary: `${lead.title}: ${lead.stage} → ${stage}` });
+  const stages = stagesOf(store);
+  const target = stageById(stages, stage);
+  const fromLabel = stageById(stages, lead.stage)?.label || lead.stage;
+  store.update('leads', lead.id, { stage }, { summary: `${lead.title}: ${fromLabel} → ${target?.label || stage}` });
   if (stage === 'won' || stage === 'lost') processSequences(store);
+  else if (target?.sequenceId && store.get('sequences', target.sequenceId)) {
+    // The stage triggers a follow-up: enrol the lead unless it is already active in that sequence.
+    const already = store.list('enrolments', (e) => e.leadId === lead.id && e.sequenceId === target.sequenceId && e.status === 'active').length;
+    if (!already) {
+      store.add('enrolments', { sequenceId: target.sequenceId, leadId: lead.id, startedAt: new Date().toISOString(), stepIndex: 0, status: 'active' });
+      const n = processSequences(store);
+      ui.toast(`Moved to ${target.label} · started ${store.get('sequences', target.sequenceId).name}${n ? ` · ${n} queued` : ''}`, 'success');
+    }
+  }
   if (stage === 'won') {
     ui.toast('Lead won', 'success');
     if (await ui.confirmDialog(`Create a job for "${lead.title}" now?`, { title: 'Lead won', okLabel: 'Create job', danger: false })) {
@@ -111,7 +135,7 @@ export function openLeadSheet(ctx, lead = null, { prefill = {} } = {}) {
       { label: 'Email', name: 'email', type: 'email', value: l.email },
       { label: 'Phone', name: 'phone', type: 'tel', value: l.phone },
       { label: 'Source', name: 'source', type: 'select', value: l.source || 'Website', options: sources },
-      { label: 'Stage', name: 'stage', type: 'select', value: l.stage, options: STAGES.map((s) => ({ value: s.id, label: s.label })) },
+      { label: 'Stage', name: 'stage', type: 'select', value: l.stage, options: stagesOf(store).map((s) => ({ value: s.id, label: s.label })) },
       { label: 'Estimated value', name: 'valueCents', type: 'money', value: l.valueCents ?? 0 },
       { label: 'Next action', name: 'nextActionAt', type: 'date', value: l.nextActionAt ? String(l.nextActionAt).slice(0, 10) : '' },
       { label: 'Notes', name: 'notes', type: 'textarea', value: l.notes, span: true },
@@ -139,7 +163,7 @@ export function openLeadSheet(ctx, lead = null, { prefill = {} } = {}) {
   return sheet;
 }
 
-function card(ctx, l, today) {
+function card(ctx, l, today, stages) {
   const { store, ui } = ctx;
   const { h } = ui;
   const due = leadDue(l, today);
@@ -147,7 +171,7 @@ function card(ctx, l, today) {
     class: 'crm-stage-select', 'aria-label': `Stage for ${l.title}`,
     onClick: (e) => e.stopPropagation(), onKeydown: (e) => e.stopPropagation(),
     onChange: (e) => setStage(ctx, l, e.target.value),
-  }, STAGES.map((s) => h('option', { value: s.id, selected: s.id === l.stage }, s.label)));
+  }, stages.map((s) => h('option', { value: s.id, selected: s.id === l.stage }, s.label)));
   return h('article', {
     class: ['kanban-card', 'crm-card', due === 'overdue' ? 'crm-due' : due === 'today' ? 'crm-due-today' : null], draggable: 'true', tabindex: 0,
     'aria-label': l.title,
@@ -165,15 +189,15 @@ function card(ctx, l, today) {
     h('span', { class: 'grow' }), select));
 }
 
-function kanban(ctx, leads, today) {
+function kanban(ctx, leads, today, stages) {
   const { store, ui } = ctx;
   const { h } = ui;
-  return h('div', { class: 'kanban crm-kanban' }, STAGES.map((s) => {
+  return h('div', { class: 'kanban crm-kanban' }, stages.map((s) => {
     const rows = leads.filter((l) => l.stage === s.id)
       .sort((a, b) => String(a.nextActionAt || '9').localeCompare(String(b.nextActionAt || '9')));
     const total = rows.reduce((sum, l) => sum + (Number(l.valueCents) || 0), 0);
     const col = h('section', {
-      class: ['kanban-col', `crm-col-${s.id}`], 'aria-label': s.label,
+      class: ['kanban-col', `crm-col-${s.kind}`], 'aria-label': s.label,
       onDragover: (e) => { e.preventDefault(); col.classList.add('drag-over'); },
       onDragleave: (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('drag-over'); },
       onDrop: (e) => {
@@ -182,32 +206,34 @@ function kanban(ctx, leads, today) {
         if (lead) setStage(ctx, lead, s.id);
       },
     },
-    h('header', null, ui.statusBadge(s.id), h('span', { class: 'muted crm-sub' }, String(rows.length)), h('span', { class: 'grow' }), h('span', { class: 'num crm-sub' }, ui.fmtMoney(total, { whole: true }))),
-    rows.length ? rows.map((l) => card(ctx, l, today)) : h('div', { class: 'crm-col-empty' }, 'Drop leads here'));
+    h('header', null, stageBadge(ui, s), h('span', { class: 'muted crm-sub' }, String(rows.length)), h('span', { class: 'grow' }), h('span', { class: 'num crm-sub' }, ui.fmtMoney(total, { whole: true }))),
+    rows.length ? rows.map((l) => card(ctx, l, today, stages)) : h('div', { class: 'crm-col-empty' }, 'Drop leads here'));
     return col;
   }));
 }
 
-function funnel(ctx, leads) {
+function funnel(ctx, leads, stages) {
   const { ui } = ctx;
   const { h } = ui;
   if (!leads.length) return ui.empty({ icon: 'funnel', title: 'No leads yet', text: 'The funnel fills in as leads move through stages.' });
-  const order = ['new', 'contacted', 'site-visit', 'quoted', 'won'];
-  // A lead has "reached" every stage up to its current one. Lost leads only count as reached "new":
-  // we don't know where they dropped out.
-  const reached = order.map((_, i) => leads.filter((l) => l.stage !== 'lost' ? order.indexOf(l.stage) >= i : i === 0).length);
+  // Open stages plus Won, in the company's order. A lead has "reached" every stage up to its
+  // current one; lost leads (and leads on a removed stage) count only at the top.
+  const order = funnelOrder(stages);
+  const reached = reachedCounts(leads, order);
   const top = reached[0] || 1;
   const won = leads.filter((l) => l.stage === 'won').length;
   const lost = leads.filter((l) => l.stage === 'lost').length;
   const closed = won + lost;
+  const wonIdx = order.findIndex((s) => s.kind === 'won');
+  const quoteIdx = wonIdx > 0 ? wonIdx - 1 : -1; // the last open stage before Won, whatever it is called
+  const quoteStage = quoteIdx >= 0 ? order[quoteIdx] : null;
 
-  const steps = h('div', { class: 'crm-funnel' }, order.map((id, i) => {
+  const steps = h('div', { class: 'crm-funnel' }, order.map((st, i) => {
     const pct = (reached[i] / top) * 100;
     const conv = i > 0 && reached[i - 1] ? Math.round((reached[i] / reached[i - 1]) * 100) : null;
-    const label = STAGES.find((s) => s.id === id).label;
     return h('div', { class: 'crm-funnel-row' },
-      h('div', { class: 'crm-funnel-label' }, label),
-      h('div', { class: 'crm-funnel-track' }, h('div', { class: ['crm-funnel-bar', id === 'won' ? 'won' : null], style: { width: `${Math.max(pct, 2)}%` } },
+      h('div', { class: 'crm-funnel-label' }, st.label),
+      h('div', { class: 'crm-funnel-track' }, h('div', { class: ['crm-funnel-bar', st.kind === 'won' ? 'won' : null], style: { width: `${Math.max(pct, 2)}%` } },
         h('span', { class: 'num' }, String(reached[i])))),
       h('div', { class: 'crm-funnel-conv num muted' }, conv == null ? '' : `${conv}%`));
   }));
@@ -230,20 +256,22 @@ function funnel(ctx, leads) {
   return h('div', { class: 'stack' },
     h('div', { class: 'grid' },
       ui.stat({ label: 'Win rate', value: closed ? `${Math.round((won / closed) * 100)}%` : '—', hint: `${won} won · ${lost} lost`, tone: 'success' }),
-      ui.stat({ label: 'Lead → quote', value: top ? `${Math.round((reached[3] / top) * 100)}%` : '—', hint: `${reached[3]} of ${reached[0]} reached quoted` }),
+      ui.stat({ label: quoteStage ? `Lead → ${quoteStage.label.toLowerCase()}` : 'Lead → quote',
+        value: quoteStage && top ? `${Math.round((reached[quoteIdx] / top) * 100)}%` : '—',
+        hint: quoteStage ? `${reached[quoteIdx]} of ${reached[0]} reached ${quoteStage.label.toLowerCase()}` : '' }),
       ui.stat({ label: 'Avg lead value', value: ui.fmtMoney(leads.reduce((s, l) => s + (Number(l.valueCents) || 0), 0) / leads.length, { whole: true }) })),
     h('div', { class: 'grid-2' },
       h('div', { class: 'card' }, h('h3', null, 'Conversion by stage'), h('p', { class: 'muted crm-sub crm-caption' }, 'Bar: leads that reached the stage. Right: % carried over from the stage above.'), steps),
       h('div', { class: 'card' }, h('h3', null, 'Pipeline value by source'), srcEl)));
 }
 
-function list(ctx, leads, today) {
+function list(ctx, leads, today, stages) {
   const { store, ui } = ctx;
   const { h } = ui;
   return ui.table({
     columns: [
       { key: 'title', label: 'Lead', sort: (r) => r.title.toLowerCase(), render: (r) => h('div', null, h('div', { style: { fontWeight: 600 } }, r.title), h('div', { class: 'muted crm-sub' }, clientName(store, r))) },
-      { key: 'stage', label: 'Stage', sort: (r) => STAGES.findIndex((s) => s.id === r.stage), render: (r) => ui.statusBadge(r.stage) },
+      { key: 'stage', label: 'Stage', sort: (r) => { const i = stages.findIndex((s) => s.id === r.stage); return i < 0 ? stages.length : i; }, render: (r) => leadStageBadge(ui, store, r.stage) },
       { key: 'source', label: 'Source', sort: (r) => r.source || '' },
       { key: 'valueCents', label: 'Value', align: 'right', sort: (r) => r.valueCents || 0, render: (r) => ui.fmtMoney(r.valueCents, { whole: true }) },
       { key: 'nextActionAt', label: 'Next action', sort: (r) => r.nextActionAt || '9', render: (r) => {
@@ -275,6 +303,7 @@ export default {
 
     const draw = () => {
       const today = ui.today();
+      const stages = stagesOf(store);
       const all = store.list('leads');
       const term = q.trim().toLowerCase();
       const leads = term ? all.filter((l) => [l.title, l.contactName, l.source, l.email, l.phone, clientName(store, l)].join(' ').toLowerCase().includes(term)) : all;
@@ -288,9 +317,9 @@ export default {
         ui.tabs([{ id: 'board', label: 'Pipeline' }, { id: 'funnel', label: 'Funnel' }, { id: 'list', label: 'List' }], view, (v) => { view = v; draw(); }));
       ui.clear(body);
       if (!all.length) body.append(ui.empty({ icon: 'funnel', title: 'No leads yet', text: 'Every enquiry starts here. Add one and drag it through the pipeline.', action: ui.button('Add lead', { variant: 'primary', icon: 'plus', onClick: () => openLeadSheet(ctx) }) }));
-      else if (view === 'funnel') body.append(funnel(ctx, leads));
-      else if (view === 'list') body.append(list(ctx, leads, today));
-      else body.append(kanban(ctx, leads, today));
+      else if (view === 'funnel') body.append(funnel(ctx, leads, stages));
+      else if (view === 'list') body.append(list(ctx, leads, today, stages));
+      else body.append(kanban(ctx, leads, today, stages));
     };
     root.append(ui.page({
       title: 'Leads & funnels',
@@ -299,6 +328,6 @@ export default {
     }, h('div', { class: 'stack' }, statsEl, tabsEl, body)));
     draw();
     if (ctx.query.new) openLeadSheet(ctx, null, { prefill: { clientId: ctx.query.clientId || null } });
-    return store.on('*', (e) => { if (['leads', 'clients', 'enrolments'].includes(e.coll)) draw(); });
+    return store.on('*', (e) => { if (['leads', 'clients', 'enrolments', 'settings'].includes(e.coll)) draw(); });
   },
 };

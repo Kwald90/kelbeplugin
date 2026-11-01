@@ -6,7 +6,7 @@ import { invoiceShown, docTotals } from '../lib/money.js';
 import { EXEMPT_BASES } from '../lib/exemption.js';
 import { PROVINCES, provincialTaxId, exemptNumberProblem } from '../lib/tax.js';
 import { printNode } from '../lib/doc-view.js';
-import { openLeadSheet } from './leads.js';
+import { openLeadSheet, leadStageBadge } from './leads.js';
 import { moduleOn } from '../lib/modules.js';
 import { BILLING_MODES } from '../lib/tm.js';
 import { lastEdited } from './drawings.js';
@@ -204,7 +204,7 @@ function detailView(root, ctx, id) {
       if (tab === 'leads') tabBody.append(ui.table({
         columns: [
           { key: 'title', label: 'Lead' },
-          { key: 'stage', label: 'Stage', render: (r) => ui.statusBadge(r.stage) },
+          { key: 'stage', label: 'Stage', render: (r) => leadStageBadge(ui, store, r.stage) },
           { key: 'value', label: 'Value', align: 'right', render: (r) => ui.fmtMoney(r.valueCents, { whole: true }) },
           { key: 'next', label: 'Next action', render: (r) => ui.fmtDate(r.nextActionAt) },
         ],

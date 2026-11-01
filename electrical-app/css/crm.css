@@ -37,6 +37,19 @@
 .crm-lead-extra select { flex: 1; min-width: 160px; }
 .crm-enrols { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 
+/* sales-pipeline editor (Settings -> Sales) */
+.pipeline-stages { gap: var(--s2); }
+.pipeline-stage { gap: var(--s2); padding: var(--s3); }
+.pipeline-stage .row { gap: var(--s2); align-items: center; }
+.pipeline-stage .field.pipeline-trigger { margin: 0; gap: 4px; }
+.pipeline-stage .field.pipeline-trigger select { width: 100%; }
+.pipeline-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--info); }
+.pipeline-dot-won { background: var(--success); }
+.pipeline-dot-lost { background: var(--danger); }
+.pipeline-terminal { border-style: dashed; }
+.pipeline-lock { display: inline-flex; align-items: center; }
+.pipeline-note { margin: 0; }
+
 /* funnel charts */
 .crm-funnel, .crm-sources { display: flex; flex-direction: column; gap: var(--s2); }
 .crm-funnel-row { display: grid; grid-template-columns: 96px 1fr auto; gap: var(--s3); align-items: center; }
