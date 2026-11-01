@@ -837,37 +837,62 @@ export function createRooms(api) {
     const geo = roomGeo(room, d);
     const S = settings();
     let targetFc = Number(room.targetFc) > 0 ? Number(room.targetFc) : (LIGHT_TARGET_FC[room.type] ?? DEFAULT_TARGET_FC);
-    let lumens = Number(room.fixtureLumens) > 0 ? Number(room.fixtureLumens) : S.potLightLumens;
+    // Shops/warehouses light with high-bays (~20,000 lm), not 650 lm cans, so the
+    // recommended count lands in the tens, not the hundreds.
+    const bigRoom = !!(ROOM_TYPES[room.type]?.workarea);
+    let lumens = Number(room.fixtureLumens) > 0 ? Number(room.fixtureLumens) : (bigRoom ? 20000 : S.potLightLumens);
     let ceilingM = room.ceilingM ?? S.ceilingHeightM;
     const existing = () => d.objects.filter((o) => o.symbol === 'light-recessed' && o.roomId === room.id);
     let count = existing().length || 0; // 0 = use the recommendation
 
     const field = (label, input, hint) => h('label', { class: 'field' }, h('span', null, label), input, hint ? h('small', { class: 'muted' }, hint) : null);
+    // A shop isn't always a 4" can — pick a fixture to set the lumens, or type any
+    // value. The picker shows "Custom" when the lumens don't match a preset.
+    const FIXTURES_UI = [
+      { label: 'High-bay (UFO) · 20,000 lm', lumens: 20000 },
+      { label: 'High-bay, large · 30,000 lm', lumens: 30000 },
+      { label: 'LED strip / linear 4 ft · 5,000 lm', lumens: 5000 },
+      { label: 'Wraparound / shop light · 3,500 lm', lumens: 3500 },
+      { label: 'Troffer 2×4 · 4,000 lm', lumens: 4000 },
+      { label: 'Troffer 2×2 · 3,000 lm', lumens: 3000 },
+      { label: '6″ can · 900 lm', lumens: 900 },
+      { label: '4″ can · 650 lm', lumens: 650 },
+    ];
     const fcIn = h('input', { class: 'input', type: 'number', min: 1, step: 1, value: String(Math.round(targetFc)) });
     const lmIn = h('input', { class: 'input', type: 'number', min: 1, step: 50, value: String(Math.round(lumens)) });
+    const fixSel = h('select', { class: 'input' },
+      h('option', { value: '' }, 'Custom (type the lumens)'),
+      ...FIXTURES_UI.map((f) => h('option', { value: String(f.lumens) }, f.label)));
+    const syncFixSel = () => { fixSel.value = FIXTURES_UI.some((f) => f.lumens === Math.round(lumens)) ? String(Math.round(lumens)) : ''; };
+    syncFixSel();
     const ceilIn = h('input', { class: 'input', value: fmt(ceilingM) });
-    const nEl = h('strong', { class: 'cv-stepper-n' });
+    const countIn = h('input', { class: 'input cv-stepper-n', type: 'number', min: 1, step: 1, inputmode: 'numeric', 'aria-label': 'Number of lights' });
     const info = h('div', { class: 'cv-stepper-info' });
 
     const layoutNow = () => recessedLayout(geo, { ceilingM, targetFc, lumens, count });
     const effective = () => layoutNow().layout.count; // count, or the recommendation when count is 0
 
-    const recalc = () => {
+    // fromCount: the number box itself changed, so don't overwrite what's being typed.
+    const recalc = (fromCount) => {
       const fc = Number(fcIn.value); if (fc > 0) targetFc = fc;
       const lm = Number(lmIn.value); if (lm > 0) lumens = lm;
       const cm = readLen(ceilIn.value); if (cm > 0.3) ceilingM = cm;
       const layout = layoutNow().layout;
       const rec = recessedLayout(geo, { ceilingM, targetFc, lumens, count: 0 }).layout;
-      nEl.textContent = String(layout.count);
+      if (!fromCount) countIn.value = String(layout.count);
       ui.clear(info);
       const enough = layout.fc + 1e-6 >= targetFc;
       info.append(
         h('div', null, `${layout.cols} × ${layout.rows} · ${fmt(layout.spacingLenM)} × ${fmt(layout.spacingWidM)} apart · about ${Math.round(layout.fc)} fc`),
-        h('div', { class: enough ? 'muted' : 'cv-potlight-short' }, enough ? `Meets ${Math.round(targetFc)} fc` : `Below ${Math.round(targetFc)} fc — add lights or brighter fixtures`),
-        count ? ui.button(`Use recommended (${rec.count})`, { variant: 'ghost', onClick: () => { count = 0; recalc(); } }) : h('div', { class: 'muted' }, `Recommended for ${Math.round(targetFc)} fc`));
+        h('div', { class: enough ? 'muted' : 'cv-potlight-short' }, enough ? `Meets ${Math.round(targetFc)} fc` : `Below ${Math.round(targetFc)} fc — type more lights, or use a brighter fixture`),
+        count ? ui.button(`Use recommended (${rec.count})`, { variant: 'ghost', onClick: () => { count = 0; recalc(); } }) : h('div', { class: 'muted' }, `Recommended for ${Math.round(targetFc)} fc — type a number to set your own`));
     };
     recalc();
-    for (const el of [fcIn, lmIn, ceilIn]) el.addEventListener('input', recalc);
+    fcIn.addEventListener('input', () => recalc());
+    ceilIn.addEventListener('input', () => recalc());
+    lmIn.addEventListener('input', () => { syncFixSel(); recalc(); });
+    fixSel.addEventListener('change', () => { const lm = Number(fixSel.value); if (lm > 0) { lumens = lm; lmIn.value = String(lm); } recalc(); });
+    countIn.addEventListener('input', () => { const n = Math.round(Number(countIn.value)); count = n >= 1 ? n : 0; recalc(true); });
 
     const place = (close) => {
       recalc();
@@ -885,14 +910,16 @@ export function createRooms(api) {
     };
 
     const body = h('div', { class: 'stack' },
-      h('p', { class: 'muted', style: { margin: 0 } }, `${room.name} · ${roomSizeLabel(room, d, units())}. Set the light level and fixture, then fine-tune the count.`),
-      field('Target light level (fc)', fcIn, 'Shop ~50, office ~40, warehouse ~30, living ~20'),
-      field('Fixture output (lumens each)', lmIn, 'High-bay ~15,000–20,000 · troffer ~4,000 · 6″ can ~900'),
+      h('p', { class: 'muted', style: { margin: 0 } }, `${room.name} · ${roomSizeLabel(room, d, units())}. Pick a fixture and light level, or just type how many lights you want.`),
+      field('Target light level (fc)', fcIn, 'Shop ~50, office ~40, warehouse ~20–30, living ~20'),
+      field('Fixture', fixSel, 'High-bay, strip, troffer, can… or Custom to type your own lumens'),
+      field('Fixture output (lumens each)', lmIn, 'The picker fills this; change it for any fixture'),
       field('Ceiling height', ceilIn, 'Taller ceilings space the lights wider'),
       h('div', { class: 'cv-stepper' },
         ui.button('', { icon: 'minus', title: 'One fewer', onClick: () => { count = Math.max(1, effective() - 1); recalc(); } }),
-        nEl,
+        countIn,
         ui.button('', { icon: 'plus', title: 'One more', onClick: () => { count = effective() + 1; recalc(); } })),
+      h('div', { class: 'muted', style: { textAlign: 'center' } }, 'Number of lights — tap to type the exact number you want'),
       info);
 
     const s = ui.openSheet({

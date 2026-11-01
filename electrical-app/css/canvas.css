@@ -419,7 +419,7 @@ body.canvas-open .toasts { bottom: calc(76px + env(safe-area-inset-bottom)); }
 
 /* Pot light sheet: a big +/- stepper for the light count and a live readout. */
 .cv-stepper { display: flex; align-items: center; gap: var(--s4); justify-content: center; }
-.cv-stepper-n { font-size: var(--fs-2xl, 2rem); font-weight: 700; min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
+.cv-stepper-n { font-size: var(--fs-2xl, 2rem); font-weight: 700; width: 5ch; min-width: 5ch; text-align: center; font-variant-numeric: tabular-nums; padding: var(--s2); }
 .cv-stepper-info { text-align: center; display: flex; flex-direction: column; gap: 2px; }
 .cv-potlight-short { color: var(--warning, #e07a1f); font-weight: 600; }
 
