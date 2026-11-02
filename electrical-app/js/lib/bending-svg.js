@@ -501,22 +501,22 @@ const shortTag = (m) => {
 };
 
 /**
- * A small upright hand bender (grey cast head + blue handle) for the mark layout — drawn under a
- * mark so you can see where to set the bender, the way field bending apps do. x is the mark's x;
- * yTop is the top of the head (it hooks up toward the pipe). Pure string; all values finite.
+ * A small upright hand bender for the mark layout — a grey cast head with a hook beak and a socket,
+ * and a blue handle — drawn under a mark so you can see where to set the bender and which way it
+ * faces, the way field bending apps do. The head is built hook-on-the-left around a centred handle;
+ * `flip` mirrors it (hook to the right) for a bend made the other way (mark.dir === 'down'). x is the
+ * mark's x; yTop is the top of the head. Pure string; all values finite.
  */
-function benderGlyph(x, yTop) {
-  const head = '<path class="bd-bender-head" d="'
-    + `M${n1(x - 11)},${n1(yTop + 10)} `
-    + `C${n1(x - 13)},${n1(yTop + 1)} ${n1(x - 7)},${n1(yTop - 4)} ${n1(x - 1)},${n1(yTop - 3)} `
-    + `C${n1(x + 6)},${n1(yTop - 2)} ${n1(x + 12)},${n1(yTop + 2)} ${n1(x + 12)},${n1(yTop + 10)} `
-    + `C${n1(x + 12)},${n1(yTop + 16)} ${n1(x + 6)},${n1(yTop + 18)} ${n1(x)},${n1(yTop + 17)} `
-    + `C${n1(x - 6)},${n1(yTop + 18)} ${n1(x - 11)},${n1(yTop + 16)} ${n1(x - 11)},${n1(yTop + 10)} Z"/>`;
-  const hole = `<circle class="bd-bender-hole" cx="${n1(x + 1)}" cy="${n1(yTop + 8)}" r="3.2"/>`;
-  const neck = `<rect class="bd-bender-neck" x="${n1(x - 3)}" y="${n1(yTop + 13)}" width="6" height="7" rx="1.5"/>`;
-  const handle = `<rect class="bd-bender-handle" x="${n1(x - 2.5)}" y="${n1(yTop + 18)}" width="5" height="34" rx="2.5"/>`;
-  const grip = `<rect class="bd-bender-grip" x="${n1(x - 2.5)}" y="${n1(yTop + 20)}" width="5" height="9" rx="2.5"/>`;
-  return head + hole + neck + handle + grip;
+function benderGlyph(x, yTop, flip = false) {
+  const head = '<path class="bd-bender-head" d="M-15,8 C-17,1 -12,-4 -5,-4 C0,-4 3,-1 4,3 '
+    + 'C10,3 14,6 14,11 C14,17 8,19 1,18 C-6,19 -13,16 -15,10 Z"/>';
+  const beak = '<path class="bd-bender-beak" d="M-15,8 C-17,1 -12,-4 -5,-4 C-8,-1 -9,4 -7,9 Z"/>';
+  const socket = '<circle class="bd-bender-socket" cx="0" cy="4" r="3.6"/>';
+  const neck = '<rect class="bd-bender-neck" x="-3" y="11" width="6" height="7" rx="1.5"/>';
+  const handle = '<rect class="bd-bender-handle" x="-2.5" y="16" width="5" height="34" rx="2.5"/>';
+  const grip = '<rect class="bd-bender-grip" x="-2.5" y="18" width="5" height="9" rx="2.5"/>';
+  const t = flip ? `translate(${n1(x)},${n1(yTop)}) scale(-1,1)` : `translate(${n1(x)},${n1(yTop)})`;
+  return `<g class="bd-bender" transform="${t}">${head}${beak}${socket}${neck}${handle}${grip}</g>`;
 }
 
 /**
@@ -605,7 +605,8 @@ export function marksSvg(result, { fmt = mmFmt, snap = (m) => m, width = 640 } =
       // a bender under each real bend mark — "set the bender here", like a field bending app
       const benderMarks = marks.filter((m) => ['arrow', 'star', 'notch'].includes(m.symbol) && m.angleDeg);
       const bandTop = chainY + 20;
-      for (const m of benderMarks) parts.push(benderGlyph(X(m.atM), bandTop));
+      // the bender faces the way the bend is made: 'down' bends mirror the head (hook to the right)
+      for (const m of benderMarks) parts.push(benderGlyph(X(m.atM), bandTop, m.dir === 'down'));
       y = benderMarks.length ? bandTop + 54 : chainY + 14;
     } else {
       const shots = marks.filter((m) => m.angleDeg);

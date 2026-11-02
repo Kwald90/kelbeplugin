@@ -206,7 +206,8 @@ select.bend-input { font-size: var(--fs-base); }
 
 /* Upright hand bender under each mark on the straight-pipe mark layout (grey head, blue handle) */
 .bd-bender-head { fill: #c3c8ce; stroke: #878d95; stroke-width: .8; stroke-linejoin: round; }
-.bd-bender-hole { fill: #e9edf1; stroke: #9aa0a7; stroke-width: .6; }
+.bd-bender-beak { fill: #aeb4bb; stroke: #878d95; stroke-width: .7; stroke-linejoin: round; }
+.bd-bender-socket { fill: #e7eaee; stroke: #9aa0a7; stroke-width: .6; }
 .bd-bender-neck { fill: #9aa0a7; }
 .bd-bender-handle { fill: #2f6fd0; }
 .bd-bender-grip { fill: #1f58ad; }
