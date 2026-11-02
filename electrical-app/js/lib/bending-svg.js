@@ -300,39 +300,90 @@ function directionArrow(L) {
 const svgWrap = (width, height, label, inner) =>
   `<svg class="bend-svg" viewBox="0 0 ${width} ${Math.round(height)}" width="${width}" height="${Math.round(height)}" role="img" aria-label="${esc(label)}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
 
-/** Gradients for the shaded bender (safe to repeat per-SVG: identical, so an id clash resolves the same). */
+/** Gradients and a soft-shadow blur for the shaded bender (identical per SVG, so an id clash resolves the same). */
 function benderDefs() {
   return '<defs>'
     + '<linearGradient id="bdShoe" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#aeb6bf"/><stop offset="0.45" stop-color="#6b747e"/><stop offset="1" stop-color="#394049"/></linearGradient>'
+    + '<radialGradient id="bdHead" cx="0.4" cy="0.35" r="0.85"><stop offset="0" stop-color="#c7ced6"/><stop offset="0.55" stop-color="#7d8791"/><stop offset="1" stop-color="#454c55"/></radialGradient>'
+    + '<linearGradient id="bdGroove" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22272d"/><stop offset="1" stop-color="#58616b"/></linearGradient>'
     + '<linearGradient id="bdHandle" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e7b654"/><stop offset="0.5" stop-color="#c0892b"/><stop offset="1" stop-color="#7f5a16"/></linearGradient>'
+    + '<filter id="bdSoft" x="-20%" y="-30%" width="140%" height="170%"><feGaussianBlur stdDeviation="2.2"/></filter>'
     + '</defs>';
 }
 
+/** Which mark of the shoe the bend is made on, and its label. */
+function benderMark(kind) {
+  if (kind === 'backToBack') return { shape: 'star', label: 'star' };
+  if (kind === 'saddle3' || kind === 'saddle4') return { shape: 'notch', label: 'notch' };
+  return { shape: 'arrow', label: 'arrow' };
+}
+
 /**
- * A shaded 2.5D bender (shoe, hook, handle) sitting on the pipe at the first bend, oriented along the
- * outgoing leg, hugging the inside of the swing — "put the bender here, facing this way". A first-cut
- * illustration to refine on device. Returns '' when the first bend has no angle/heading.
+ * A shaded 2.5D hand bender sitting on the pipe at the first bend: a cast head (shoe) with a deep
+ * curved groove the pipe runs in, a hook at the free end, and a long handle. It is oriented along the
+ * outgoing leg and hugs the inside of the swing — "put the bender here, facing this way". The shoe
+ * carries the mark for this bend (arrow, star or notch) and, when the result has the bender's take-up,
+ * that figure. Returns '' when the first bend has no angle/heading. Refined on device.
  */
-function benderParts(result, L, od) {
+function benderParts(result, L, od, fmt = mmFmt) {
   const b0 = L.main.bends[0];
   if (!b0 || !b0.bendDeg || !Number.isFinite(b0.headingDeg)) return '';
   const cx = L.X(b0.x), cy = L.Y(b0.y);
-  const u = Math.max(8, L.pipeW * 1.25);     // tool size, tied to the pipe
+  const pw = L.pipeW;
+  const u = Math.max(10, pw * 1.5);          // tool size, tied to the pipe
+  if (![cx, cy, pw, u].every(Number.isFinite)) return '';
   const rot = -b0.headingDeg;                // SVG degrees: align the handle with the outgoing leg
-  const sy = Math.sign(b0.bendDeg) || 1;     // the bend swings this way; the shoe hugs the inside
-  const shadow = `<ellipse class="bd-tool-shadow" cx="0" cy="${n1(sy * u * 0.8)}" rx="${n1(u * 2)}" ry="${n1(u * 0.5)}"/>`;
-  const shoe = '<path class="bd-tool-shoe" fill="url(#bdShoe)" d="'
-    + `M${n1(-u * 1.7)},${n1(-sy * u * 0.15)} `
-    + `C${n1(-u * 1.9)},${n1(-sy * u * 1.1)} ${n1(-u * 0.6)},${n1(-sy * u * 1.25)} ${n1(u * 0.2)},${n1(-sy * u * 1.15)} `
-    + `C${n1(u * 1.1)},${n1(-sy * u * 1.05)} ${n1(u * 1.6)},${n1(-sy * u * 0.55)} ${n1(u * 1.45)},${n1(sy * u * 0.2)} `
-    + `C${n1(u * 0.9)},${n1(sy * u * 0.55)} ${n1(-u * 0.5)},${n1(sy * u * 0.5)} ${n1(-u * 1.4)},${n1(sy * u * 0.35)} Z"/>`;
-  const groove = `<path class="bd-tool-groove" fill="none" d="M${n1(-u * 1.4)},${n1(sy * u * 0.3)} C${n1(-u * 0.4)},${n1(sy * u * 0.45)} ${n1(u * 0.8)},${n1(sy * u * 0.45)} ${n1(u * 1.4)},${n1(sy * u * 0.12)}"/>`;
-  const hook = `<path class="bd-tool-hook" fill="url(#bdShoe)" d="M${n1(-u * 1.7)},${n1(-sy * u * 0.15)} q${n1(-u * 0.5)},${n1(sy * u * 0.05)} ${n1(-u * 0.5)},${n1(sy * u * 0.6)} q0,${n1(sy * u * 0.35)} ${n1(u * 0.35)},${n1(sy * u * 0.4)} l0,${n1(-sy * u * 0.4)} q${n1(-u * 0.2)},0 ${n1(-u * 0.18)},${n1(-sy * u * 0.28)} Z"/>`;
-  const hlen = u * 3.6, hw = u * 0.62;
-  const handle = `<g transform="rotate(${n1(-sy * 20)},${n1(u * 0.6)},${n1(-sy * u * 0.4)})">`
-    + `<rect class="bd-tool-handle" x="${n1(u * 0.5)}" y="${n1(-sy * u * 0.4 - hw / 2)}" width="${n1(hlen)}" height="${n1(hw)}" rx="${n1(hw / 2)}" fill="url(#bdHandle)"/>`
-    + `<rect class="bd-tool-hi" x="${n1(u * 0.7)}" y="${n1(-sy * u * 0.4 - hw * 0.32)}" width="${n1(hlen - u * 0.5)}" height="${n1(hw * 0.22)}" rx="${n1(hw * 0.11)}"/></g>`;
-  return `<g class="bd-tool" transform="translate(${n1(cx)},${n1(cy)}) rotate(${n1(rot)})" opacity="0.93">${shadow}${shoe}${groove}${hook}${handle}</g>`;
+  const k = -(Math.sign(b0.bendDeg) || 1);   // +1/-1: the side of the pipe the shoe sits on (inside of the swing)
+  const R = u * 1.6;                         // shoe radius
+  const Cy = k * (R + pw / 2);               // the shoe's centre; its rim touches the pipe at the origin
+  // a point on the shoe: phi 0 is the contact with the pipe, negative toward the hook, positive toward the handle
+  const at = (phi, r) => { const a = (phi * Math.PI) / 180; return [r * Math.sin(a), Cy - k * r * Math.cos(a)]; };
+  const P = ([x, y]) => `${n1(x)},${n1(y)}`;
+  const sweep = k > 0 ? 1 : 0;
+  const arc = (r, a0, a1) => `M${P(at(a0, r))} A${n1(r)},${n1(r)} 0 ${Math.abs(a1 - a0) > 180 ? 1 : 0} ${sweep} ${P(at(a1, r))}`;
+  const body = `M${P([0, Cy])} L${P(at(-115, R))} A${n1(R)},${n1(R)} 0 1 ${sweep} ${P(at(115, R))} Z`;
+  // the hook: a beak at the free end that curls over the pipe
+  const hook = `M${P(at(-100, R * 0.78))} L${P(at(-112, R * 1.22))} Q${P(at(-96, R * 1.5))} ${P(at(-60, R * 1.3))} L${P(at(-66, R * 1.08))} Q${P(at(-84, R * 1.15))} ${P(at(-80, R * 0.9))} Z`;
+  // the handle: tapered, from the back of the head, with a grip band
+  const hx0 = R * 0.35, hlen = u * 5, w0 = u * 0.62, w1 = u * 0.44;
+  const hy = Cy;
+  const handle = `M${n1(hx0)},${n1(hy - w0 / 2)} L${n1(hx0 + hlen)},${n1(hy - w1 / 2)} A${n1(w1 / 2)},${n1(w1 / 2)} 0 0 1 ${n1(hx0 + hlen)},${n1(hy + w1 / 2)} L${n1(hx0)},${n1(hy + w0 / 2)} Z`;
+  const grip = `<rect class="bd-tool-grip" x="${n1(hx0 + hlen * 0.55)}" y="${n1(hy - w1 / 2 - 0.4)}" width="${n1(hlen * 0.4)}" height="${n1(w1 + 0.8)}" rx="${n1(w1 * 0.3)}"/>`;
+  const shadow = `<g transform="translate(${n1(cx + 2.5)},${n1(cy + 3.5)}) rotate(${n1(rot)})" filter="url(#bdSoft)"><path class="bd-tool-shadow" d="${body} ${handle}"/></g>`;
+  const mark = benderMark(result.kind);
+  // the mark, on the face of the head: arrow near the hook, star on the handle side, notch on the rim at the centreline
+  let glyph, mphi;
+  if (mark.shape === 'star') {
+    mphi = 55;
+    const [sx, sy2] = at(mphi, R * 0.72), o = u * 0.3, i = o * 0.42;
+    const pts = Array.from({ length: 10 }, (_, j) => { const a = (j * Math.PI) / 5 - Math.PI / 2, r = j % 2 ? i : o; return [sx + r * Math.cos(a), sy2 + r * Math.sin(a)]; });
+    glyph = `<polygon class="bd-tool-mark" points="${pts.map(P).join(' ')}"/>`;
+  } else if (mark.shape === 'notch') {
+    mphi = 0;
+    const [dx, dy] = at(0, R * 0.58);
+    glyph = `<path class="bd-tool-mark" d="M${P(at(-7, R))} L${P(at(0, R * 0.7))} L${P(at(7, R))} Z"/><circle class="bd-tool-mark" cx="${n1(dx)}" cy="${n1(dy)}" r="${n1(u * 0.13)}"/>`;
+  } else {
+    mphi = -55;
+    glyph = `<path class="bd-tool-mark" d="M${P(at(mphi, R * 0.95))} L${P(at(mphi - 9, R * 0.62))} L${P(at(mphi + 9, R * 0.62))} Z"/>`;
+  }
+  const rad = (rot * Math.PI) / 180, cr = Math.cos(rad), sr = Math.sin(rad);
+  const screen = ([x, y]) => [cx + x * cr - y * sr, cy + x * sr + y * cr];
+  // labels sit on the head in screen space (unrotated), so they stay upright whatever the heading
+  const lab = (p, s) => { const [x, y] = screen(p); return Number.isFinite(x + y) ? text(x, y, s, 'bd-tool-label', 'middle') : ''; };
+  const takeUp = Number.isFinite(result.takeUpM) && result.takeUpM > 0 ? lab(at(0, R * 0.18), `take-up ${fmt(result.takeUpM)}`) : '';
+  const labels = lab(at(mphi, R * 0.4), mark.label) + takeUp;
+  const tool = `<g class="bd-tool" transform="translate(${n1(cx)},${n1(cy)}) rotate(${n1(rot)})">`
+    + `<path class="bd-tool-handle" fill="url(#bdHandle)" d="${handle}"/>${grip}`
+    + `<rect class="bd-tool-hi" x="${n1(hx0 + u * 0.6)}" y="${n1(hy - w1 * 0.3)}" width="${n1(hlen - u * 0.9)}" height="${n1(w1 * 0.16)}" rx="${n1(w1 * 0.08)}"/>`
+    + `<path class="bd-tool-hook" fill="url(#bdShoe)" d="${hook}"/>`
+    + `<path class="bd-tool-shoe" fill="url(#bdHead)" d="${body}"/>`
+    + `<circle class="bd-tool-hole" cx="0" cy="${n1(Cy)}" r="${n1(R * 0.16)}"/>`
+    + `<path class="bd-tool-groove-bed" fill="none" stroke="url(#bdGroove)" stroke-width="${n1(u * 0.34)}" d="${arc(R - u * 0.17, -108, 108)}"/>`
+    + `<path class="bd-tool-groove" fill="none" d="${arc(R - u * 0.34, -104, 104)}"/>`
+    + `<path class="bd-tool-rim" fill="none" d="${arc(R * 0.9, -90, 40)}"/>`
+    + glyph
+    + '</g>';
+  return `<g class="bd-tool-wrap">${shadow}${tool}${labels}</g>`;
 }
 
 /**
@@ -348,7 +399,7 @@ export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight =
     ...backgroundParts(result, L, od),
     ...pipePolys(pipes, L),
     ...breakParts(pipes, L),
-    benderParts(result, L, od),
+    benderParts(result, L, od, fmt),
     ...foregroundParts(result, L, od, fmt, pipes),
   ];
   return svgWrap(width, L.height, 'Bent pipe with bender, side view', parts.join(''));
@@ -382,7 +433,7 @@ export function animatedBendSvg(result, { fmt = mmFmt, width = 640, odM = 0, max
       ...pipePolys(pipes, L),
       ...breakParts(finalPipes, L),
       directionArrow(L),
-      benderParts(result, L, od),
+      benderParts(result, L, od, fmt),
       ...foregroundParts(result, L, od, fmt, finalPipes),
     ];
     return svgWrap(width, L.height, 'Bent pipe with bender, side view', parts.join(''));
@@ -418,7 +469,7 @@ export function animatedBendSvg(result, { fmt = mmFmt, width = 640, odM = 0, max
   parts.push(...breakParts(finalPipes, L));
   parts.push(directionArrow(L));
   // the bender, dimensions and labels appear as the shape settles (base opacity 1, no script needed)
-  const fg = benderParts(result, L, od) + foregroundParts(result, L, od, fmt, finalPipes).join('');
+  const fg = benderParts(result, L, od, fmt) + foregroundParts(result, L, od, fmt, finalPipes).join('');
   parts.push(`<g class="bd-reveal" opacity="1"><animate class="bd-anim" attributeName="opacity" dur="${dur}" begin="indefinite" fill="freeze" calcMode="linear" keyTimes="0;0.55;1" values="0;0;1"/>${fg}</g>`);
   return svgWrap(width, L.height, 'Bend forming, side view', parts.join(''));
 }
