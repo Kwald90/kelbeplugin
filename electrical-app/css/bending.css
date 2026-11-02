@@ -179,3 +179,14 @@ select.bend-input { font-size: var(--fs-base); }
 .bend-sheet-warn { border: 1px solid var(--warning); padding: 4pt 8pt; margin-top: 8pt; }
 .bend-sheet-warn p { margin: 2pt 0; }
 .bend-sheet footer { margin-top: 10pt; border-top: 1px solid var(--border); padding-top: 4pt; }
+
+/* Phone bubble level / angle gauge (the Level sheet in bending) */
+.level { align-items: center; text-align: center; }
+.level-vial { position: relative; width: 160px; height: 160px; margin: var(--s2) auto 0; border-radius: 50%; border: 2px solid var(--border); background: var(--surface-2); overflow: hidden; }
+.level-vial.on { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.level-cross::before, .level-cross::after { content: ""; position: absolute; background: var(--border); }
+.level-cross::before { left: 50%; top: 12%; bottom: 12%; width: 1px; transform: translateX(-50%); }
+.level-cross::after { top: 50%; left: 12%; right: 12%; height: 1px; transform: translateY(-50%); }
+.level-bubble { position: absolute; left: 50%; top: 50%; width: 42px; height: 42px; border-radius: 50%; background: var(--accent-fill); opacity: .85; transform: translate(-50%, -50%); transition: transform .05s linear; }
+.level-vial.on .level-bubble { opacity: 1; }
+.level-read { font-size: var(--fs-2xl, 2rem); font-weight: 700; font-variant-numeric: tabular-nums; margin-top: var(--s2); }

@@ -5,8 +5,46 @@ import * as B from '../lib/bending.js';
 import * as P from '../lib/bending-profiles.js';
 import { bentSvg, animatedBendSvg, marksSvg, rollSvg, SYMBOL_NAMES } from '../lib/bending-svg.js';
 import { fmtLength, parseLength, getUnits, setUnits, inToM, mToIn } from '../lib/units.js';
+import * as Level from '../lib/level.js';
 
 let ui, h, store, ctx;
+
+/** A phone bubble level / angle gauge: lay the phone on a conduit leg to check plumb or read a bend. */
+function levelSheet() {
+  let zero = { beta: 0, gamma: 0 };
+  let last = { beta: 0, gamma: 0 };
+  let stop = null;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const big = h('div', { class: 'level-read' }, '—');
+  const sub = h('div', { class: 'muted level-sub' }, 'Lay the phone flat on the pipe, then tap Zero.');
+  const bubble = h('div', { class: 'level-bubble' });
+  const vial = h('div', { class: 'level-vial' }, h('div', { class: 'level-cross' }), bubble);
+  const paint = () => {
+    const r = Level.reading(last.beta, last.gamma, zero);
+    big.textContent = `${r.pitch.toFixed(1)}°`;
+    bubble.style.transform = `translate(calc(-50% + ${clamp(r.roll * 2.4, -46, 46)}px), calc(-50% + ${clamp(r.pitch * 2.4, -46, 46)}px))`;
+    vial.classList.toggle('on', Level.isLevel(r, 0.4));
+  };
+  const begin = async () => {
+    if (!Level.hasSensor()) { sub.textContent = 'This device has no tilt sensor.'; return; }
+    const ok = await Level.requestPermission();
+    if (!ok) { sub.textContent = 'Motion access is off — allow it in Settings → Safari → Motion & Orientation Access.'; return; }
+    sub.textContent = 'Lay the phone flat on the pipe, then tap Zero.';
+    stop?.(); stop = Level.listen((b, g) => { last = { beta: b || 0, gamma: g || 0 }; paint(); });
+  };
+  ui.openSheet({
+    title: 'Level',
+    body: h('div', { class: 'stack level' }, vial, big,
+      h('p', { class: 'muted', style: { margin: 0 } }, 'A bubble level and angle gauge — check a leg is plumb, or read a finished bend.'),
+      sub),
+    actions: [
+      ui.button('Zero here', { icon: 'ruler', onClick: () => { zero = { ...last }; paint(); } }),
+      ui.button('Enable sensor', { variant: 'primary', onClick: begin }),
+    ],
+    onClose: () => stop?.(),
+  });
+  begin();
+}
 
 // ---------------------------------------------------------------------------
 // Units: inches to the 1/16" or millimetres, per user
@@ -483,6 +521,7 @@ function calculatorView(root) {
     subtitle: state.editing ? `Editing "${state.editing.name}"` : 'Marks for the pipe, drawn to scale. Results update as you type.',
     actions: [
       unitsToggle(() => rerenderAll()),
+      ui.button('Level', { icon: 'ruler', onClick: () => levelSheet() }),
       ui.button('Saved bends', { icon: 'list', href: '#/bending/saved' }),
       ui.button('My benders', { icon: 'wrench', href: '#/bending/profiles' }),
     ],

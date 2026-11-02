@@ -96,6 +96,7 @@
   "./js/lib/job-overview.js",
   "./js/lib/job-standards.js",
   "./js/lib/kpis.js",
+  "./js/lib/level.js",
   "./js/lib/lighting.js",
   "./js/lib/location-policy.js",
   "./js/lib/location-ui.js",
