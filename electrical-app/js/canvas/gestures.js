@@ -11,6 +11,8 @@ export const GESTURE_ACTIONS = [
   { id: 'redo', label: 'Redo' },
   { id: 'wheel', label: 'Show tool wheel' },
   { id: 'lastTool', label: 'Toggle last tool' },
+  { id: 'duplicate', label: 'Duplicate selection' },
+  { id: 'picker', label: 'Symbol picker' },
   { id: 'fit', label: 'Zoom to fit' },
   { id: 'none', label: 'Nothing' },
 ];
@@ -50,6 +52,19 @@ export const actionLabel = (id) => GESTURE_ACTIONS.find((a) => a.id === id)?.lab
 /** Tap timing: fingers land within downMs of each other, each lifts within upMs, moving under slop px. */
 export const TAP = { downMs: 150, upMs: 250, slop: 12, holdMs: 550 };
 
+// How long a touch-and-hold must stay still before it fires — a per-device setting (localStorage).
+const HOLD_KEY = '_holdMs';
+export const HOLD_MIN = 200, HOLD_MAX = 1000;
+export function getHoldMs() {
+  const v = Number(readAll()[HOLD_KEY]);
+  return Number.isFinite(v) ? Math.min(HOLD_MAX, Math.max(HOLD_MIN, v)) : TAP.holdMs;
+}
+export function setHoldMs(ms) {
+  const v = Math.min(HOLD_MAX, Math.max(HOLD_MIN, Math.round(Number(ms) || TAP.holdMs)));
+  try { localStorage.setItem(LS_KEY, JSON.stringify({ ...readAll(), [HOLD_KEY]: v })); } catch { /* storage blocked */ }
+  return v;
+}
+
 /**
  * A detector for multi-finger taps and a one-finger hold, fed touch pointers in screen px and ms.
  *   down(id, x, y, t) / move(id, x, y, t) / up(id, t) -> 2 or 3 when the last finger of a tap lifts, else null
@@ -88,7 +103,8 @@ export function createTapDetector(opts = {}) {
     },
     cancel() { fingers.clear(); s = null; },
     holdDue(t) {
-      if (!s || !s.valid || s.held || s.count !== 1 || fingers.size !== 1 || t - s.first < o.holdMs) return false;
+      const holdMs = typeof o.holdMs === 'function' ? o.holdMs() : o.holdMs; // live, so the setting applies at once
+      if (!s || !s.valid || s.held || s.count !== 1 || fingers.size !== 1 || t - s.first < holdMs) return false;
       s.held = true;
       return true;
     },
@@ -125,5 +141,13 @@ export function gesturePanel(ui, save) {
           GESTURE_ACTIONS.map((a) => h('option', { value: a.id, selected: prefs[g.key] === a.id }, a.label))),
         g.hint ? h('span', { class: 'hint' }, g.hint) : null);
     }),
+    (() => {
+      const out = h('output', null, `${(getHoldMs() / 1000).toFixed(1)} s`);
+      return h('label', { class: 'field cv-range' }, h('span', null, 'Touch-and-hold time'),
+        h('input', {
+          type: 'range', min: HOLD_MIN, max: HOLD_MAX, step: 50, value: getHoldMs(), 'aria-label': 'Touch and hold activation time',
+          onInput: (e) => { setHoldMs(e.target.value); out.textContent = `${(Number(e.target.value) / 1000).toFixed(1)} s`; },
+        }), out);
+    })(),
     h('div', { class: 'muted' }, 'Taps never fire while the Pencil is on the glass, during a pinch or pan, or when your fingers move.'));
 }

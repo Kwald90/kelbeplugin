@@ -92,7 +92,7 @@ test('gesture prefs: defaults are undo / redo / nothing; choices are stored and 
   assert.equal(hasGestureChoice('twoFingerTap'), true);
   assert.throws(() => setGesture('twoFingerTap', 'explode'));
   assert.throws(() => setGesture('fourFingerTap', 'undo'));
-  assert.deepEqual(GESTURE_ACTION_IDS, ['undo', 'redo', 'wheel', 'lastTool', 'fit', 'none']);
+  assert.deepEqual(GESTURE_ACTION_IDS, ['undo', 'redo', 'wheel', 'lastTool', 'duplicate', 'picker', 'fit', 'none']);
   mem.set('ft.gestures', '{"threeFingerTap":"bogus"');
   assert.equal(getGesture('threeFingerTap'), 'redo', 'broken storage falls back to the default');
 });

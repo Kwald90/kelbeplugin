@@ -10,7 +10,7 @@ import { SYMBOLS, SYMBOL_ORDER, symbolPreview } from './symbols.js';
 import { createRooms, swallowNextClick, ROOM_ICON, CHECK_ICON, WAND_ICON } from './rooms.js';
 import { createStabilizer, clampSmooth } from './stabilizer.js';
 import { eraseStrokes, distToSeg, segSegDist } from './erase.js';
-import { createTapDetector, getGesture, actionLabel, gesturePanel, tapRollback, TAP } from './gestures.js';
+import { createTapDetector, getGesture, getHoldMs, actionLabel, gesturePanel, tapRollback, TAP } from './gestures.js';
 import { session, savePref } from '../session.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 import {
@@ -629,7 +629,7 @@ export function openEditor(root, ctx, id) {
   // any tap in progress. A tap's fingers start a pinch like any two fingers; if they turn out to
   // be a tap, the view goes back to where it was, and so does anything the first finger did with
   // the tool before the others landed (in finger-drawing mode: an erase, a symbol, a move).
-  const taps = createTapDetector();
+  const taps = createTapDetector({ holdMs: getHoldMs });
   let holdTimer = 0, tapView = null, tapMark = null;
 
   function takeBackTapFinger() {
@@ -651,6 +651,8 @@ export function openEditor(root, ctx, id) {
       if (!st.prevTool) msg = 'No other tool yet';
       else { setTool(st.prevTool); msg = ALL_TOOLS.find((t) => t.id === st.tool)?.label || msg; }
     } else if (act === 'fit') fit();
+    else if (act === 'duplicate') { if (!st.selection.length) msg = 'Nothing selected'; else duplicateSel(); }
+    else if (act === 'picker') symbolsSheet();
     ui.toast(msg, 'info', 1200);
     if (globalThis.kelbeCanvas?.d === d) globalThis.kelbeCanvas.lastGesture = { key, act };
   }
@@ -676,7 +678,7 @@ export function openEditor(root, ctx, id) {
       if (!taps.active) { tapView = st.view ? { ...st.view } : null; tapMark = { undo: undo.slice(), redo: redo.slice() }; }
       taps.down(e.pointerId, tx, ty, e.timeStamp);
       clearTimeout(holdTimer);
-      if (taps.active === 1 && getGesture('longPress') !== 'none') holdTimer = setTimeout(onHold, TAP.holdMs + 20);
+      if (taps.active === 1 && getGesture('longPress') !== 'none') holdTimer = setTimeout(onHold, getHoldMs() + 20);
     }
     if (pen) {
       st.penSeen = true;
@@ -1154,10 +1156,13 @@ export function openEditor(root, ctx, id) {
           onPointerdown: () => checkpoint(),
           onInput: (e) => { const k = Number(e.target.value) / 100; for (const w of selWires) { if (k) w.curve = k; else delete w.curve; } requestFrame(); },
           onChange: () => changed() })) : null;
+      // one tap to pull a bowed run straight again
+      const straightBtn = selWires.some((w) => w.curve) ? h('button', { class: 'cv-chip', type: 'button', title: 'Straighten the run', onClick: () => { checkpoint(); for (const w of selWires) delete w.curve; changed(); } }, 'Straighten') : null;
       parts.push(h('span', { class: 'cv-ctx-label' }, `${st.selection.length} selected`),
         st.selection.length === 1 ? collab.selectionInfo(findSel(st.selection[0])) : null,
         tbtn('copy', 'Duplicate (Ctrl+D)', duplicateSel),
         arcCtl,
+        straightBtn,
         hasObj ? tbtn(RAW.rotate, 'Rotate 45°', rotateSel) : null,
         hasObj ? tbtn(RAW.tag, 'Protection and height (GFCI, AFCI, TR)', () => rooms.deviceSheet(selObjs)) : null,
         hasSized ? tbtn(RAW.bigger, 'Bigger', () => scaleSel(1.2)) : null,
