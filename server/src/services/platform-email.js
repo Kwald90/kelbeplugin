@@ -15,6 +15,7 @@ import { sendMail as sendgridSend } from '../integrations/sendgrid.js';
 import { mailSettings } from '../email/config.js';
 import { createMailStore } from '../email/storage.js';
 import { savedSenderName, withSenderName } from './hq-settings.js';
+import { overlayPlatformSecrets } from './platform-secrets.js';
 
 const BATCH = 20;
 export const MAX_ATTEMPTS = 6;
@@ -120,6 +121,9 @@ export function createPlatformEmailHandlers(deps = {}) {
     async platform_email({ db, job }) {
       const at = deps.now ? deps.now() : new Date();
       try {
+        // Pick up a SendGrid/Resend key or From set in HQ since the worker started, without a
+        // restart: overlay the platform keys onto process.env each batch before reading the config.
+        if (deps.sealer && !deps.cfg) await overlayPlatformSecrets(db, deps.sealer);
         return await drainPlatformEmail(db, deps);
       } finally {
         if (!job?.payload?.once) {

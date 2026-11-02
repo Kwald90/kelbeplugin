@@ -27,6 +27,7 @@ const PAGES = [
   { id: 'developer', title: 'Developer', icon: 'wrench', load: () => import('./pages/developer.js') },
   { id: 'ai', title: 'AI', icon: 'star', load: () => import('./pages/ai.js') },
   { id: 'audit', title: 'Audit log', icon: 'list', load: () => import('./pages/audit.js') },
+  { id: 'platform-keys', title: 'Platform keys', icon: 'key', load: () => import('./pages/platform-keys.js') },
   { id: 'settings', title: 'Settings', icon: 'settings', load: () => import('./pages/settings.js') },
 ];
 

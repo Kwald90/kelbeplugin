@@ -15,7 +15,8 @@ import { HANDLERS, QBO_KIND_PATTERN, reclaimStuck, runOnce, scheduleRecurring } 
 import { INTEGRATION_HANDLERS, scheduleIntegrationJobs } from './integrations/jobs.js';
 import { createAiHandlers, scheduleAiJobs } from './ai/jobs.js';
 import { HQ_HANDLERS } from './services/hq-jobs.js';
-import { PLATFORM_EMAIL_HANDLERS, schedulePlatformEmail } from './services/platform-email.js';
+import { PLATFORM_EMAIL_HANDLERS, createPlatformEmailHandlers, schedulePlatformEmail } from './services/platform-email.js';
+import { overlayPlatformSecrets } from './services/platform-secrets.js';
 import { createNotificationHandlers, scheduleNotificationDigest } from './routes/v1/notifications.js';
 import { SIGNUP_HANDLERS, scheduleSignupCleanup } from './services/signup.js';
 import { FINANCE_HANDLERS, scheduleFinanceJobs } from './services/hq-finance.js';
@@ -40,10 +41,13 @@ async function main() {
   const db = createDb({ app: createPool(config.databaseUrl, { max: config.worker.concurrency + config.worker.qboConcurrency + 1, applicationName: 'fishtape-worker' }) });
   const workerId = `${hostname()}:${process.pid}`;
   const sealer = createSealer(config.secretsMasterKey);
+  // Platform keys set in HQ (SendGrid/Stripe) override env at boot; the email drain also re-reads
+  // them each batch (platform-email.js), so a newly saved key sends without restarting the worker.
+  await overlayPlatformSecrets(db, sealer);
   // With db, refused system writes are recorded in sync_rejections (r1-get-paid.md 2.6).
   const records = createRecords({ validator: createValidator(), config, db });
   // The QuickBooks alerts run in the general pool: they watch the QuickBooks pool and must not wait in it.
-  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }), ...createMaterialHandlers({ config }), ...QBO_ALERT_HANDLERS };
+  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }), ...createMaterialHandlers({ config }), ...QBO_ALERT_HANDLERS, ...createPlatformEmailHandlers({ sealer }) };
   const qboHandlers = {
     ...createQboHandlers({ sealer, config, records, workerId }),
     ...createQboPlatformHandlers({ sealer, config }),

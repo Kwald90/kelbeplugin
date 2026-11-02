@@ -156,6 +156,12 @@ lands in the default mailbox (Support).
 
 ## 9. Server settings
 
+**Easiest: set the keys in HQ.** HQ → **Platform keys** lets an HQ admin set the SendGrid API key,
+sender address, event-webhook key, inbound token and the Stripe keys without SSH. A value set there
+is stored encrypted and overrides the matching `.env` variable below; the email ones take effect
+within a minute, the Stripe ones on the next deploy. The `.env` values stay as the fallback, so you
+can still set them here instead — either works.
+
 Add to `deploy/production/.env` (and `deploy/staging/.env` with the staging values), then run the
 normal update (it creates `/var/lib/fishtape-<env>/mail` owned by uid 1000, mode 700):
 

@@ -2,6 +2,8 @@
 import { loadEnvFile, readConfig } from './config.js';
 import { createDb, createPool } from './db.js';
 import { buildApp } from './app.js';
+import { createSealer } from './lib/crypto.js';
+import { overlayPlatformSecrets } from './services/platform-secrets.js';
 
 /** Refuse to serve tenants through a database role that can see past RLS. */
 export async function checkAppRole(db, config, log) {
@@ -21,6 +23,9 @@ async function main() {
     app: createPool(config.databaseUrl, { max: config.dbPoolMax }),
     hq: config.hqDatabaseUrl ? createPool(config.hqDatabaseUrl, { max: 2, applicationName: 'fishtape-hq' }) : null,
   });
+  // Platform keys set in HQ (SendGrid/Stripe) override the matching env var. Read once at boot; a
+  // missing or empty table leaves the environment as-is, so this never blocks startup.
+  await overlayPlatformSecrets(db, createSealer(config.secretsMasterKey));
   const app = await buildApp({ config, db });
   try {
     await checkAppRole(db, config, app.log);

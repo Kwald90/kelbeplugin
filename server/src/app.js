@@ -29,6 +29,7 @@ import hqDeveloperRoutes from './routes/hq-developer.js';
 import hqAiRoutes from './routes/hq-ai.js';
 import hqFinanceRoutes from './routes/hq-finance.js';
 import hqSettingsRoutes from './routes/hq-settings.js';
+import hqPlatformKeysRoutes from './routes/hq-platform-keys.js';
 import hqRulesRoutes from './routes/hq-rules.js';
 import hqUserRoutes from './routes/hq-users.js';
 import hqAnnouncementRoutes from './routes/hq-announcements.js';
@@ -245,6 +246,7 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(publicSignupRoutes, deps);
   await app.register(hqFinanceRoutes, deps);
   await app.register(hqSettingsRoutes, deps);
+  await app.register(hqPlatformKeysRoutes, deps);
   await app.register(hqRulesRoutes, deps);
   await app.register(hqUserRoutes, deps);
   await app.register(hqAnnouncementRoutes, deps);
