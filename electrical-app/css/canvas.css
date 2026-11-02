@@ -331,11 +331,21 @@ body.canvas-open .toasts { bottom: calc(76px + env(safe-area-inset-bottom)); }
   .cv-top-left { max-width: calc(100vw - 212px); }
   .cv-title { max-width: 140px; padding-right: 8px; }
   .cv-btn { width: 38px; height: 38px; }
-  /* wrap the context bar on phones instead of scrolling it sideways: a horizontally scrollable
-     row eats the first tap on its buttons (iOS reads it as the start of a scroll), which made
-     Accept/Discard feel dead. Wrapping keeps every button a plain, reliable tap target. */
-  .cv-ctx { top: 64px; flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 16px); max-height: 44vh; overflow-x: visible; overflow-y: auto; row-gap: 4px; }
-  .cv-ctx .cv-chip { flex: none; }
+  /* On phones the context actions stack vertically down the LEFT side instead of a centred top
+     pill: the pill clumped into a ragged blob over the title, and a sideways-scrolling row ate the
+     first tap on its buttons (iOS reads it as a scroll). A left rail gives every action a full,
+     uniform, reliable tap target and leaves the room name and top toolbar clear. Capped to the top
+     half so it never collides with the shapes toolbar / wheel in the bottom-left. */
+  .cv-ctx {
+    top: 60px; left: var(--s3); right: auto; transform: none;
+    flex-direction: column; align-items: stretch; justify-content: flex-start;
+    max-width: min(66vw, 240px); max-height: 52vh; overflow-x: visible; overflow-y: auto;
+    gap: 4px; padding: 6px; border-radius: var(--r-lg);
+  }
+  .cv-ctx .cv-chip, .cv-ctx .cv-btn { flex: none; width: 100%; margin: 0; justify-content: center; }
+  .cv-ctx .cv-btn { height: 40px; border-radius: var(--r-pill); background: var(--surface-2); }
+  .cv-ctx .cv-ctx-label { width: 100%; padding: 2px 6px 4px; white-space: normal; text-align: center; }
+  .cv-ctx canvas { align-self: center; }
   .cv-wheel-tool { width: 34px; height: 34px; margin: -17px 0 0 -17px; }
   .cv-shapes { bottom: calc(var(--wheel) + var(--s4)); }
   .cv-shapes .cv-btn { width: 36px; height: 36px; }
