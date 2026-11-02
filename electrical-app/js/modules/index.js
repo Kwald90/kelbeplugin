@@ -20,7 +20,9 @@ import bending from './bending.js';
 import panels from './panels.js';
 import settings from './settings.js';
 import integrations from './integrations.js';
-import assistant from './assistant.js';
+// AI assistant hidden for now (removed from the registry below and from the Settings module picker).
+// Re-enable: uncomment this import, add `assistant` back to MODULES, and drop `hidden` in lib/modules.js.
+// import assistant from './assistant.js';
 import billing from './billing.js';
 import help from './help.js';
 import onboarding from './onboarding.js';
@@ -40,7 +42,7 @@ export const GROUPS = {
 };
 
 export const MODULES = [
-  dashboard, today, assistant, clients, leads, sequences, jobs, schedule, workplan, materials, drawings, wireruns, estimates, invoices, purchasing, quickbooks, books, inventory,
+  dashboard, today, clients, leads, sequences, jobs, schedule, workplan, materials, drawings, wireruns, estimates, invoices, purchasing, quickbooks, books, inventory,
   employees, time, sops, safety, compliance, security, calcs, bending, panels, settings, integrations, billing,
   importer, developer, onboarding, notifications, help,
 ];

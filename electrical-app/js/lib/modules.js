@@ -47,7 +47,10 @@ export const SWITCHES = [
   { id: 'clients', group: 'sales', label: 'Clients', desc: 'Customer list with jobs and balances.', modules: ['clients'], core: true },
   { id: 'leads', group: 'sales', label: 'Leads', desc: 'A pipeline for enquiries before they become jobs.', modules: ['leads'] },
   { id: 'sequences', group: 'sales', label: 'Follow-ups', desc: 'Automatic follow-up emails and texts.', modules: ['sequences'], needs: 'leads' },
-  { id: 'assistant', group: 'extras', label: 'AI assistant', desc: 'Drafts estimates and answers code questions.', modules: ['assistant'] },
+  // Hidden for now: kept here so module gating and tests stay intact, but filtered out of the
+  // Settings module picker and removed from the module registry (modules/index.js) so it does not
+  // appear in the app. Drop `hidden` and restore the registry entry to bring it back.
+  { id: 'assistant', group: 'extras', label: 'AI assistant', desc: 'Drafts estimates and answers code questions.', modules: ['assistant'], hidden: true },
   { id: 'integrations', group: 'extras', label: 'Integrations', desc: 'Card payments, email and texts from your own accounts.', modules: ['integrations'], core: true },
   { id: 'security', group: 'extras', label: 'Security checklist', desc: 'Device and account checks for the office.', modules: ['security'] },
 ];

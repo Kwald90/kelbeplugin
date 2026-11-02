@@ -370,7 +370,8 @@ export default {
       ui.clear(modulesHost);
       const cur = store.settings();
       const preset = presetOf(cur);
-      const on = SWITCHES.filter((sw) => switchOn(cur, sw.id)).length;
+      const shown = SWITCHES.filter((sw) => !sw.hidden); // hidden switches (e.g. the AI assistant, off for now) aren't offered here
+      const on = shown.filter((sw) => switchOn(cur, sw.id)).length;
       const apply = (id) => {
         keepPlace();
         store.saveSettings({ modules: presetModules(id) });
@@ -385,9 +386,9 @@ export default {
         h('div', { class: 'mod-presets', role: 'group', 'aria-label': 'Presets' }, Object.entries(PRESETS).map(([id, p]) => h('button', {
           type: 'button', class: 'mod-preset', 'aria-pressed': String(preset === id), dataset: { preset: id }, onClick: () => apply(id),
         }, h('strong', null, p.label), h('span', null, p.desc)))),
-        h('div', { class: 'muted' }, `${on} of ${SWITCHES.length} on${preset === 'custom' ? ' · your own mix' : ''}. Jobs, the dashboard and Settings are always on.`),
+        h('div', { class: 'muted' }, `${on} of ${shown.length} on${preset === 'custom' ? ' · your own mix' : ''}. Jobs, the dashboard and Settings are always on.`),
         ...SWITCH_GROUPS.map((g) => h('div', { class: 'mod-group' }, h('h4', null, g.label),
-          SWITCHES.filter((sw) => sw.group === g.id).map((sw) => {
+          shown.filter((sw) => sw.group === g.id).map((sw) => {
             const isOn = switchOn(cur, sw.id);
             const needs = sw.needs && !switchOn(cur, sw.needs) ? SWITCH_BY_ID[sw.needs]?.label : null;
             return h('label', { class: ['mod-row', isOn ? null : 'off'], dataset: { switch: sw.id } },
