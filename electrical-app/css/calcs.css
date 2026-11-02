@@ -340,8 +340,11 @@ html.is-printing .panel-print { page-break-inside: avoid; break-inside: avoid; }
    The table grows to fill the space left under the header; its rows share the extra height so a
    small panel reads as a full-page schedule, not a cramped block with dead space below. The
    pp-fit-* tiers still cap a large panel's natural height so it never spills to a second page. */
-@media print { .panel-print { display: flex; flex-direction: column; min-height: 9.4in; } }
-html.is-printing .panel-print { display: flex; flex-direction: column; min-height: 9.4in; }
+/* Fill the page but stay on ONE: 8.6in fits a Letter sheet even with the iOS app print's larger
+   default margins (the @page 10mm above only reaches the browser path, not html.is-printing), so the
+   directory no longer spills onto a second page in the app while still reading as a full sheet on web. */
+@media print { .panel-print { display: flex; flex-direction: column; min-height: 8.8in; } }
+html.is-printing .panel-print { display: flex; flex-direction: column; min-height: 8.2in; }
 .pp-table-wrap { flex: 1 1 auto; display: flex; flex-direction: column; }
 .pp-table-wrap .panel-print-table { flex: 1 1 auto; height: 100%; }
 .pp-table-wrap .panel-print-table tbody { height: 100%; }
