@@ -47,3 +47,22 @@
   .hq-filter, .hq-filter-wide { min-width: 0; flex: 1 1 140px; }
   .hq-md-input, .hq-md-preview { min-height: 260px; }
 }
+
+/* The HQ rail uses the console's own markup (icon + .tip label), not the app's newer labelled-nav
+   markup (.nav-label / .rail-destinations). The shared app.css therefore left HQ with hover-only
+   labels (invisible on touch) and overflow:hidden, so with every page listed the bottom items
+   (Settings) fell off with no way to scroll. Show the labels inline and let the rail scroll. */
+.app.hq .rail { overflow-y: auto; }
+.app.hq .rail-btn { min-height: 40px; }
+.app.hq .rail-btn .tip {
+  position: static; transform: none; opacity: 1; pointer-events: auto;
+  background: none; color: inherit; padding: 0; font-size: var(--fs-sm); font-weight: 550;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.app.hq .rail-btn[aria-current="page"] .tip { font-weight: 700; }
+/* On a phone the shared rail is a short horizontal bar; make it scroll sideways with its labels
+   shown, so every page (and Settings at the end) is reachable by swiping the bar. */
+@media (max-width: 760px) {
+  .app.hq .rail { overflow-x: auto; overflow-y: hidden; }
+  .app.hq .rail-btn { width: auto; flex: none; gap: var(--s2); padding: 6px 10px; }
+}
