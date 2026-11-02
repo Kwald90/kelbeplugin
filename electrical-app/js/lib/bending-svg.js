@@ -300,6 +300,41 @@ function directionArrow(L) {
 const svgWrap = (width, height, label, inner) =>
   `<svg class="bend-svg" viewBox="0 0 ${width} ${Math.round(height)}" width="${width}" height="${Math.round(height)}" role="img" aria-label="${esc(label)}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
 
+/** Gradients for the shaded bender (safe to repeat per-SVG: identical, so an id clash resolves the same). */
+function benderDefs() {
+  return '<defs>'
+    + '<linearGradient id="bdShoe" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#aeb6bf"/><stop offset="0.45" stop-color="#6b747e"/><stop offset="1" stop-color="#394049"/></linearGradient>'
+    + '<linearGradient id="bdHandle" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e7b654"/><stop offset="0.5" stop-color="#c0892b"/><stop offset="1" stop-color="#7f5a16"/></linearGradient>'
+    + '</defs>';
+}
+
+/**
+ * A shaded 2.5D bender (shoe, hook, handle) sitting on the pipe at the first bend, oriented along the
+ * outgoing leg, hugging the inside of the swing — "put the bender here, facing this way". A first-cut
+ * illustration to refine on device. Returns '' when the first bend has no angle/heading.
+ */
+function benderParts(result, L, od) {
+  const b0 = L.main.bends[0];
+  if (!b0 || !b0.bendDeg || !Number.isFinite(b0.headingDeg)) return '';
+  const cx = L.X(b0.x), cy = L.Y(b0.y);
+  const u = Math.max(8, L.pipeW * 1.25);     // tool size, tied to the pipe
+  const rot = -b0.headingDeg;                // SVG degrees: align the handle with the outgoing leg
+  const sy = Math.sign(b0.bendDeg) || 1;     // the bend swings this way; the shoe hugs the inside
+  const shadow = `<ellipse class="bd-tool-shadow" cx="0" cy="${n1(sy * u * 0.8)}" rx="${n1(u * 2)}" ry="${n1(u * 0.5)}"/>`;
+  const shoe = '<path class="bd-tool-shoe" fill="url(#bdShoe)" d="'
+    + `M${n1(-u * 1.7)},${n1(-sy * u * 0.15)} `
+    + `C${n1(-u * 1.9)},${n1(-sy * u * 1.1)} ${n1(-u * 0.6)},${n1(-sy * u * 1.25)} ${n1(u * 0.2)},${n1(-sy * u * 1.15)} `
+    + `C${n1(u * 1.1)},${n1(-sy * u * 1.05)} ${n1(u * 1.6)},${n1(-sy * u * 0.55)} ${n1(u * 1.45)},${n1(sy * u * 0.2)} `
+    + `C${n1(u * 0.9)},${n1(sy * u * 0.55)} ${n1(-u * 0.5)},${n1(sy * u * 0.5)} ${n1(-u * 1.4)},${n1(sy * u * 0.35)} Z"/>`;
+  const groove = `<path class="bd-tool-groove" fill="none" d="M${n1(-u * 1.4)},${n1(sy * u * 0.3)} C${n1(-u * 0.4)},${n1(sy * u * 0.45)} ${n1(u * 0.8)},${n1(sy * u * 0.45)} ${n1(u * 1.4)},${n1(sy * u * 0.12)}"/>`;
+  const hook = `<path class="bd-tool-hook" fill="url(#bdShoe)" d="M${n1(-u * 1.7)},${n1(-sy * u * 0.15)} q${n1(-u * 0.5)},${n1(sy * u * 0.05)} ${n1(-u * 0.5)},${n1(sy * u * 0.6)} q0,${n1(sy * u * 0.35)} ${n1(u * 0.35)},${n1(sy * u * 0.4)} l0,${n1(-sy * u * 0.4)} q${n1(-u * 0.2)},0 ${n1(-u * 0.18)},${n1(-sy * u * 0.28)} Z"/>`;
+  const hlen = u * 3.6, hw = u * 0.62;
+  const handle = `<g transform="rotate(${n1(-sy * 20)},${n1(u * 0.6)},${n1(-sy * u * 0.4)})">`
+    + `<rect class="bd-tool-handle" x="${n1(u * 0.5)}" y="${n1(-sy * u * 0.4 - hw / 2)}" width="${n1(hlen)}" height="${n1(hw)}" rx="${n1(hw / 2)}" fill="url(#bdHandle)"/>`
+    + `<rect class="bd-tool-hi" x="${n1(u * 0.7)}" y="${n1(-sy * u * 0.4 - hw * 0.32)}" width="${n1(hlen - u * 0.5)}" height="${n1(hw * 0.22)}" rx="${n1(hw * 0.11)}"/></g>`;
+  return `<g class="bd-tool" transform="translate(${n1(cx)},${n1(cy)}) rotate(${n1(rot)})" opacity="0.93">${shadow}${shoe}${groove}${hook}${handle}</g>`;
+}
+
 /**
  * The bent pipe, side view, to scale.
  * opts: { fmt(m) -> string, width (px), odM, maxHeight }
@@ -309,12 +344,14 @@ export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight =
   const od = odM || 0;
   const L = layoutFor(result, pipes, od, { width, maxHeight }, null);
   const parts = [
+    benderDefs(),
     ...backgroundParts(result, L, od),
     ...pipePolys(pipes, L),
     ...breakParts(pipes, L),
+    benderParts(result, L, od),
     ...foregroundParts(result, L, od, fmt, pipes),
   ];
-  return svgWrap(width, L.height, 'Bent pipe, side view', parts.join(''));
+  return svgWrap(width, L.height, 'Bent pipe with bender, side view', parts.join(''));
 }
 
 /**
@@ -340,13 +377,15 @@ export function animatedBendSvg(result, { fmt = mmFmt, width = 640, odM = 0, max
     const pipes = defs.map((d) => ({ path: traceScaled(d.segs, d.start, t), main: d.main, breaks: d.breaks }));
     const L = layoutFor(result, finalPipes, od, { width, maxHeight }, null);
     const parts = [
+      benderDefs(),
       ...backgroundParts(result, L, od),
       ...pipePolys(pipes, L),
       ...breakParts(finalPipes, L),
       directionArrow(L),
+      benderParts(result, L, od),
       ...foregroundParts(result, L, od, fmt, finalPipes),
     ];
-    return svgWrap(width, L.height, 'Bent pipe, side view', parts.join(''));
+    return svgWrap(width, L.height, 'Bent pipe with bender, side view', parts.join(''));
   }
 
   const N = Math.max(2, frames);
@@ -359,7 +398,7 @@ export function animatedBendSvg(result, { fmt = mmFmt, width = 640, odM = 0, max
   const L = layoutFor(result, finalPipes, od, { width, maxHeight }, bboxPts);
   const dur = `${(durMs / 1000).toFixed(2)}s`;
 
-  const parts = [...backgroundParts(result, L, od)];
+  const parts = [benderDefs(), ...backgroundParts(result, L, od)];
   defs.forEach((d, pi) => {
     const finalPts = finalPipes[pi].path.points;
     const count = finalPts.length;
@@ -378,8 +417,8 @@ export function animatedBendSvg(result, { fmt = mmFmt, width = 640, odM = 0, max
   });
   parts.push(...breakParts(finalPipes, L));
   parts.push(directionArrow(L));
-  // dimensions and labels appear as the shape settles (base opacity 1, so they show without script)
-  const fg = foregroundParts(result, L, od, fmt, finalPipes).join('');
+  // the bender, dimensions and labels appear as the shape settles (base opacity 1, no script needed)
+  const fg = benderParts(result, L, od) + foregroundParts(result, L, od, fmt, finalPipes).join('');
   parts.push(`<g class="bd-reveal" opacity="1"><animate class="bd-anim" attributeName="opacity" dur="${dur}" begin="indefinite" fill="freeze" calcMode="linear" keyTimes="0;0.55;1" values="0;0;1"/>${fg}</g>`);
   return svgWrap(width, L.height, 'Bend forming, side view', parts.join(''));
 }
