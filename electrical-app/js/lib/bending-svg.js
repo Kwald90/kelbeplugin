@@ -510,14 +510,18 @@ const shortTag = (m) => {
 function benderGlyph(x, yTop, flip = false) {
   // side profile of a hand bender head: a chunky hooked shoe (the beak catches the pipe) over a
   // socket boss, with the blue handle below. Hook opens to the left; `flip` mirrors it.
-  const hook = '<path class="bd-bender-head" fill="none" stroke-width="6" stroke-linecap="round" '
-    + 'stroke-linejoin="round" d="M2,20 L2,6 C2,-4 -7,-8 -12,-2 C-16,2 -14,10 -7,10"/>';
-  const socket = '<circle class="bd-bender-socket" cx="2" cy="15" r="4.2"/>';
-  const bolt = '<circle class="bd-bender-bolt" cx="2" cy="15" r="1.6"/>';
-  const handle = '<rect class="bd-bender-handle" x="-0.5" y="17" width="5" height="36" rx="2.5"/>';
-  const grip = '<rect class="bd-bender-grip" x="-0.5" y="19" width="5" height="10" rx="2.5"/>';
+  // a solid cast crescent shoe: the pipe wraps the outer (upper) curve; the beak hooks it on the left
+  const shoe = '<path class="bd-bender-head" d="M-11,2 '
+    + 'C-7,-7 4,-8 10,-1 C13,3 12,10 7,14 '      // outer curve (pipe wraps the top)
+    + 'C6,10 3,7 -1,6 C-5,5 -8,6 -9,4 '          // inner curve back toward the hook
+    + 'C-10,3 -11,3 -11,2 Z"/>';
+  const beak = '<path class="bd-bender-beak" d="M-11,2 C-14,-2 -13,-7 -8,-7 C-9,-4 -9,-1 -6,2 Z"/>';
+  const socket = '<circle class="bd-bender-socket" cx="5" cy="13" r="4"/>';
+  const bolt = '<circle class="bd-bender-bolt" cx="5" cy="13" r="1.5"/>';
+  const handle = '<rect class="bd-bender-handle" x="2.5" y="15" width="5" height="36" rx="2.5"/>';
+  const grip = '<rect class="bd-bender-grip" x="2.5" y="17" width="5" height="10" rx="2.5"/>';
   const t = flip ? `translate(${n1(x)},${n1(yTop)}) scale(-1,1)` : `translate(${n1(x)},${n1(yTop)})`;
-  return `<g class="bd-bender" transform="${t}">${hook}${socket}${bolt}${handle}${grip}</g>`;
+  return `<g class="bd-bender" transform="${t}">${shoe}${beak}${socket}${bolt}${handle}${grip}</g>`;
 }
 
 /**
