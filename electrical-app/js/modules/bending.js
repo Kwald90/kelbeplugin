@@ -6,8 +6,14 @@ import * as P from '../lib/bending-profiles.js';
 import { bentSvg, animatedBendSvg, marksSvg, rollSvg, SYMBOL_NAMES } from '../lib/bending-svg.js';
 import { fmtLength, parseLength, getUnits, setUnits, inToM, mToIn } from '../lib/units.js';
 import * as Level from '../lib/level.js';
+import { getArSupport, measurePath, isCancelled } from '../lib/ar-measure.js';
 
 let ui, h, store, ctx;
+
+// AR distance: resolved once per screen so the tap that starts WebXR keeps its user gesture.
+const ICON_AR = '<rect x="6.5" y="2.5" width="11" height="19" rx="2"/><path d="M12 8.5v7M8.5 12h7"/><circle cx="12" cy="12" r="1"/>';
+let arSupport = null;
+function primeAr() { getArSupport().then((s) => { arSupport = s; }).catch(() => { arSupport = { mode: 'none' }; }); }
 
 /** A phone bubble level / angle gauge: lay the phone on a conduit leg to check plumb or read a bend. */
 function levelSheet() {
@@ -44,6 +50,52 @@ function levelSheet() {
     onClose: () => stop?.(),
   });
   begin();
+}
+
+/**
+ * Measure a real-world length with the camera (native ARKit/LiDAR in the iOS app, WebXR on ARCore
+ * Android) and show it so it can be read or copied into a length field. Everything is guarded: on a
+ * plain browser or a device without AR it explains that the app on a LiDAR iPhone/iPad is needed.
+ * measurePath() is started straight from the tap below because WebXR needs the user's gesture.
+ */
+function openArMeasure() {
+  if (!arSupport) { ui.toast('Still checking for AR, try again in a moment'); return; }
+  if (arSupport.mode === 'none') {
+    const s = ui.openSheet({
+      title: 'AR measuring is not available here', dialog: true,
+      body: h('div', { class: 'stack' },
+        h('p', null, arSupport.reason || 'This device has no AR support.'),
+        h('p', { class: 'muted', style: { margin: 0 } }, 'AR measuring needs the Fishtape app on a LiDAR-equipped iPhone or iPad, or Chrome on an Android phone that supports ARCore. You can still type the length in.')),
+      actions: [ui.button('Close', { variant: 'ghost', onClick: () => s.close() })],
+    });
+    return;
+  }
+  measurePath({ units }).then((path) => showMeasured(path.totalM)).catch((e) => {
+    if (isCancelled(e)) return;
+    console.error(e);
+    ui.toast(e?.message || 'AR measuring stopped', 'error', 4500);
+  });
+}
+
+/** Show a measured length (metres) with its value in both unit systems and a copy button. */
+function showMeasured(totalM) {
+  if (!(Number(totalM) > 0)) { ui.toast('No length came back from AR', 'error'); return; }
+  const primary = fmt(totalM);
+  const s = ui.openSheet({
+    title: 'Measured length', dialog: true,
+    body: h('div', { class: 'stack' },
+      h('div', { class: 'level-read', style: { textAlign: 'center' } }, primary),
+      h('p', { class: 'muted', style: { margin: 0, textAlign: 'center' } }, fmtOther(totalM)),
+      h('p', { class: 'muted', style: { margin: 0 } }, 'Copy it, then paste it into any length field — or just read it off here. AR lengths are estimates; check critical cuts with a tape.')),
+    actions: [
+      ui.button('Close', { variant: 'ghost', onClick: () => s.close() }),
+      ui.button('Measure again', { icon: ICON_AR, onClick: () => { s.close(); openArMeasure(); } }),
+      ui.button('Copy length', { variant: 'primary', icon: 'copy', onClick: async () => {
+        try { await navigator.clipboard.writeText(primary); ui.toast('Copied', 'success'); s.close(); }
+        catch { ui.toast('Copying is blocked here; read the length instead', 'error'); }
+      } }),
+    ],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +566,7 @@ function resultsView(result, bender, width) {
 // ---------------------------------------------------------------------------
 
 function calculatorView(root) {
+  primeAr(); // resolve AR support now, so the Measure (AR) tap can start WebXR in the gesture
   const kind = state.kind;
   const body = h('div', { class: 'bend-body' });
   const page = ui.page({
@@ -522,6 +575,7 @@ function calculatorView(root) {
     actions: [
       unitsToggle(() => rerenderAll()),
       ui.button('Level', { icon: 'ruler', onClick: () => levelSheet() }),
+      ui.button('Measure (AR)', { icon: ICON_AR, onClick: () => openArMeasure() }),
       ui.button('Saved bends', { icon: 'list', href: '#/bending/saved' }),
       ui.button('My benders', { icon: 'wrench', href: '#/bending/profiles' }),
     ],
