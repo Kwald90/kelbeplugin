@@ -528,7 +528,12 @@ export function openEditor(root, ctx, id) {
     op = null; st.snap = null;
     if (pts.length >= 2) {
       checkpoint();
-      d.strokes.push({ ...cloneProto(), points: pts.map((p) => [p[0], p[1], 0.5]) });
+      const run = { ...cloneProto(), points: pts.map((p) => [p[0], p[1], 0.5]) };
+      d.strokes.push(run);
+      // select the finished run and switch to Select, so its arc slider, Straighten and length are
+      // right there — otherwise the wire tool just keeps drawing and the run can't be adjusted.
+      st.selection = [{ kind: 'stroke', id: run.id }];
+      setTool('select');
       changed();
     } else { updateChrome(); requestFrame(); }
   }
@@ -1158,7 +1163,10 @@ export function openEditor(root, ctx, id) {
           onChange: () => changed() })) : null;
       // one tap to pull a bowed run straight again
       const straightBtn = selWires.some((w) => w.curve) ? h('button', { class: 'cv-chip', type: 'button', title: 'Straighten the run', onClick: () => { checkpoint(); for (const w of selWires) delete w.curve; changed(); } }, 'Straighten') : null;
-      parts.push(h('span', { class: 'cv-ctx-label' }, `${st.selection.length} selected`),
+      // show the wire length right in the bar, so you can read how much wire the run needs
+      const wlen = selWires.length && d.scale > 0 ? fmtWorldLength(selWires.reduce((a, w) => a + wireLength(w.points), 0), d, units()) : null;
+      const selLabel = wlen ? `${selWires.length === 1 && st.selection.length === 1 ? 'Wire' : `${st.selection.length} selected`} · ${wlen}` : `${st.selection.length} selected`;
+      parts.push(h('span', { class: 'cv-ctx-label' }, selLabel),
         st.selection.length === 1 ? collab.selectionInfo(findSel(st.selection[0])) : null,
         tbtn('copy', 'Duplicate (Ctrl+D)', duplicateSel),
         arcCtl,
@@ -1468,7 +1476,7 @@ export function openEditor(root, ctx, id) {
           row('pointer', 'Finger gestures', `Two-finger tap: ${actionLabel(getGesture('twoFingerTap'))} · three-finger tap: ${actionLabel(getGesture('threeFingerTap'))}`, gesturesSheet),
           row('upload', 'Import plan', 'Image or PDF. A PDF with several pages becomes a plan set, one drawing per sheet', importUnderlay),
           d.planSet?.id ? row('layers', 'Sheets in this set', `${d.planSet.name}: jump to any sheet`, sheetsSheet) : null,
-          row('list', 'Takeoff', 'Count symbols and create an estimate', takeoffSheet),
+          row('list', 'Takeoff — counts & wire length', 'Symbol counts, total wire run length, and create an estimate', takeoffSheet),
           row('image', 'Export PNG', 'High-resolution image', exportPNG),
           row('download', 'Export SVG', 'Vector file for CAD and print', exportSVG),
           job ? row('briefcase', 'Open job', `${job.number} · ${job.title}`, () => { flushSave(); nav('#/jobs/' + job.id); }) : null,
