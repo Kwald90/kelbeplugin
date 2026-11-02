@@ -1,8 +1,13 @@
 // Minimum cover for underground wiring, from CEC Table 53 (Rule 12-012). Pure, offline, mm.
-// VERIFY: every figure below is entered from the 0-750 V columns of Table 53 as recalled from earlier
-// editions and has NOT been confirmed against the CEC 2024 (CSA C22.1:24) text. Table 53 also has
-// reduced-cover and concrete-encasement allowances and higher figures above 750 V; those are not modelled.
-// Check the printed table (and any provincial amendment) before you dig.
+// VERIFY — the 0-750 V figures below are NOT confirmed against the CEC 2024 (CSA C22.1:24) text, which
+// is paywalled. A 2026-11 web check of Canadian secondary sources corroborated the two main
+// non-vehicular values — direct-buried cable 600 mm and rigid PVC 450 mm — and that Rule 12-012 points
+// to Table 53. It did NOT confirm the vehicular-area figures (sources conflict: some read Table 53 as a
+// flat +150 mm over the base, others as up to 900 mm) or the rigid-metal-conduit value (the 150 mm here
+// is a US NEC figure, unconfirmed for Canada). Table 53 also has reduced-cover and concrete-encasement
+// allowances and higher figures above 750 V; those are not modelled. Confirm against the printed CSA
+// C22.1:24 Table 53 (and any provincial amendment) before you dig — especially the vehicular and
+// metal-conduit rows.
 
 export const MM_PER_IN = 25.4;
 

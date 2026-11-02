@@ -818,7 +818,8 @@ function burialTab() {
         label: 'Minimum cover', value: imperial() ? num(r.inches, 1) : num(r.mm, 0), unit: imperial() ? 'in' : 'mm',
         tone: 'warn', badge: 'VERIFY',
         sub: imperial() ? `${num(r.mm, 0)} mm` : `${num(r.inches, 1)} in`,
-        lines: [`${mLabel}, ${lLabel.toLowerCase()}.`, 'Measured from the top of the cable or conduit to finished grade.', 'Not confirmed against the CEC 2024 text. Check Table 53 and provincial amendments before you dig.'],
+        lines: [`${mLabel}, ${lLabel.toLowerCase()}.`, 'Measured from the top of the cable or conduit to finished grade.',
+          'Not confirmed against CSA C22.1:24. Cable (600 mm) and PVC (450 mm) in non-vehicular ground match Canadian sources; the vehicular-area and metal-conduit figures are the least certain — check Table 53 and provincial amendments before you dig.'],
       }),
       refs(`${BURIAL_SOURCE} (0-750 V)`, 'VERIFY against CSA C22.1:24', 'Reduced-cover and concrete-encasement allowances not modelled'),
     ];
