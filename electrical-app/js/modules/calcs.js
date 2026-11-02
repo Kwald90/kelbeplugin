@@ -8,7 +8,7 @@ import * as CEC from '../lib/cec/index.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 import { recommendBreakerKa, KA_OPTIONS, KA_REFERENCE } from '../lib/breaker-ka.js';
 import { BURIAL_METHODS, BURIAL_LOCATIONS, BURIAL_SOURCE, minimumCover } from '../lib/burial.js';
-import { CONDUIT_MATERIALS, FITTING_THRESHOLD_MM, MM_PER_IN as EXP_MM_PER_IN, expansionMm, needsExpansionFitting, deltaFtoC } from '../lib/conduit-expansion.js';
+import { CONDUIT_MATERIALS, FITTING_THRESHOLD_MM, FITTING_TRAVEL_MM, MM_PER_IN as EXP_MM_PER_IN, expansionMm, needsExpansionFitting, fittingsNeeded, deltaFtoC } from '../lib/conduit-expansion.js';
 import { FIXTURES, DEFAULT_LUMENS, TARGET_FC, DEFAULT_TARGET_FC, solveLayout } from '../lib/lighting.js';
 
 const FT2 = M_PER_FT * M_PER_FT; // m² per ft²
@@ -844,21 +844,23 @@ function expansionTab() {
     const mat = CONDUIT_MATERIALS.find((m) => m.value === x.material) || CONDUIT_MATERIALS[0];
     const mm = Math.abs(expansionMm({ material: mat.value, lengthM: L, deltaC: dC }));
     const fit = needsExpansionFitting(mm);
+    const count = fittingsNeeded(mm);
+    const travel = imperial() ? `${num(FITTING_TRAVEL_MM / EXP_MM_PER_IN, 1)} in` : `${FITTING_TRAVEL_MM} mm`;
     const move = imperial() ? `${num(mm / EXP_MM_PER_IN, 2)} in (${num(mm, 1)} mm)` : `${num(mm, 1)} mm (${num(mm / EXP_MM_PER_IN, 2)} in)`;
     return [
       result({
         label: 'Total movement', value: imperial() ? num(mm / EXP_MM_PER_IN, 2) : num(mm, 1), unit: imperial() ? 'in' : 'mm',
-        tone: fit ? 'warn' : 'pass', badge: fit ? 'Expansion fitting advised' : 'VERIFY',
+        tone: fit ? 'warn' : 'pass', badge: fit ? `${count} expansion fitting${count === 1 ? '' : 's'}` : 'VERIFY',
         sub: imperial() ? `${num(mm, 1)} mm` : `${num(mm / EXP_MM_PER_IN, 2)} in`,
         lines: [
           `${mat.label}: ${move} over ${len(L)} for a ${num(Math.abs(dT), 0)} ${tu} swing.`,
           fit
-            ? `Over about ${FITTING_THRESHOLD_MM} mm (1/4 in): fit an expansion joint, or let the run flex at offsets.`
+            ? `Needs ${count} expansion fitting${count === 1 ? '' : 's'} (about ${travel} of travel each), or let the run flex at offsets.`
             : `Under about ${FITTING_THRESHOLD_MM} mm (1/4 in): an expansion fitting is not normally needed.`,
-          'Threshold and coefficients not confirmed against the CEC 2024 text (VERIFY).',
+          'Fitting travel, threshold and coefficients not confirmed against the CEC 2024 text (VERIFY).',
         ],
       }),
-      h('div', { class: 'calc-minis' }, mini('Coefficient', `${num(mat.mmPerMC, 4)} mm/m/°C`), mini('Temperature swing', `${num(Math.abs(dT), 0)} ${tu}`)),
+      h('div', { class: 'calc-minis' }, mini('Expansion fittings', String(count)), mini('Coefficient', `${num(mat.mmPerMC, 4)} mm/m/°C`), mini('Temperature swing', `${num(Math.abs(dT), 0)} ${tu}`)),
       refs('ΔL = coefficient × length × ΔT', 'CEC Section 12 expansion rule (12-1014 area): VERIFY', 'PVC manufacturer guidance: fitting over ~6 mm'),
     ];
   });

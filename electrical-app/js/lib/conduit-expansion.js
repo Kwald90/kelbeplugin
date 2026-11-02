@@ -6,6 +6,9 @@
 
 export const MM_PER_IN = 25.4;
 export const FITTING_THRESHOLD_MM = 6; // about 1/4 inch
+// Usable travel of a standard deep-type PVC expansion coupling, ~6". VERIFY against the fitting's own
+// rating — expansion couplings vary (some handle more), and the opening is set at install per temp.
+export const FITTING_TRAVEL_MM = 152;
 
 /** Coefficients in mm per metre per degree C (1 mm/m/C = 1e-3 per C). PVC is 3.38e-5 in/in/F, the figure behind NEC Table 352.44 (4.06 in per 100 ft per 100 F); the equivalent is 0.0608 mm/m/C. */
 export const CONDUIT_MATERIALS = [
@@ -32,3 +35,14 @@ export function expansionMm({ material = 'pvc', lengthM, deltaC }) {
 
 /** True when the movement is large enough that an expansion fitting is advisable. */
 export const needsExpansionFitting = (mm) => Math.abs(mm) > FITTING_THRESHOLD_MM;
+
+/**
+ * How many expansion fittings the run needs: 0 below the threshold, otherwise one per `travelMm` of
+ * movement (a single coupling absorbs up to its travel; a longer run or bigger swing needs more).
+ * VERIFY — depends on the specific fitting's rated travel.
+ */
+export function fittingsNeeded(mm, travelMm = FITTING_TRAVEL_MM) {
+  const move = Math.abs(mm);
+  if (move <= FITTING_THRESHOLD_MM) return 0;
+  return Math.max(1, Math.ceil(move / travelMm));
+}

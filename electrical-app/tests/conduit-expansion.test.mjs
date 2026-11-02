@@ -1,7 +1,7 @@
 // Conduit thermal expansion (lib/conduit-expansion.js): dL = coefficient x length x dT.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expansionMm, needsExpansionFitting, inPerInF, deltaFtoC, CONDUIT_MATERIALS, FITTING_THRESHOLD_MM } from '../js/lib/conduit-expansion.js';
+import { expansionMm, needsExpansionFitting, fittingsNeeded, inPerInF, deltaFtoC, CONDUIT_MATERIALS, FITTING_THRESHOLD_MM, FITTING_TRAVEL_MM } from '../js/lib/conduit-expansion.js';
 
 const close = (a, b, e = 1e-6) => assert.ok(Math.abs(a - b) < e, `${a} vs ${b}`);
 
@@ -33,4 +33,13 @@ test('fitting threshold is about 6 mm', () => {
 test('bad input throws', () => {
   assert.throws(() => expansionMm({ material: 'x', lengthM: 1, deltaC: 1 }));
   assert.throws(() => expansionMm({ lengthM: -1, deltaC: 1 }));
+});
+
+test('fittingsNeeded: 0 below the threshold, then one per travel length', () => {
+  assert.equal(fittingsNeeded(4), 0);
+  assert.equal(fittingsNeeded(FITTING_THRESHOLD_MM), 0);
+  assert.equal(fittingsNeeded(20), 1);
+  assert.equal(fittingsNeeded(FITTING_TRAVEL_MM), 1);
+  assert.equal(fittingsNeeded(FITTING_TRAVEL_MM + 1), 2);
+  assert.equal(fittingsNeeded(-200), 2, 'contraction counts the same');
 });
