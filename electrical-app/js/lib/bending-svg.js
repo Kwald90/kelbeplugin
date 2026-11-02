@@ -501,6 +501,25 @@ const shortTag = (m) => {
 };
 
 /**
+ * A small upright hand bender (grey cast head + blue handle) for the mark layout — drawn under a
+ * mark so you can see where to set the bender, the way field bending apps do. x is the mark's x;
+ * yTop is the top of the head (it hooks up toward the pipe). Pure string; all values finite.
+ */
+function benderGlyph(x, yTop) {
+  const head = '<path class="bd-bender-head" d="'
+    + `M${n1(x - 11)},${n1(yTop + 10)} `
+    + `C${n1(x - 13)},${n1(yTop + 1)} ${n1(x - 7)},${n1(yTop - 4)} ${n1(x - 1)},${n1(yTop - 3)} `
+    + `C${n1(x + 6)},${n1(yTop - 2)} ${n1(x + 12)},${n1(yTop + 2)} ${n1(x + 12)},${n1(yTop + 10)} `
+    + `C${n1(x + 12)},${n1(yTop + 16)} ${n1(x + 6)},${n1(yTop + 18)} ${n1(x)},${n1(yTop + 17)} `
+    + `C${n1(x - 6)},${n1(yTop + 18)} ${n1(x - 11)},${n1(yTop + 16)} ${n1(x - 11)},${n1(yTop + 10)} Z"/>`;
+  const hole = `<circle class="bd-bender-hole" cx="${n1(x + 1)}" cy="${n1(yTop + 8)}" r="3.2"/>`;
+  const neck = `<rect class="bd-bender-neck" x="${n1(x - 3)}" y="${n1(yTop + 13)}" width="6" height="7" rx="1.5"/>`;
+  const handle = `<rect class="bd-bender-handle" x="${n1(x - 2.5)}" y="${n1(yTop + 18)}" width="5" height="34" rx="2.5"/>`;
+  const grip = `<rect class="bd-bender-grip" x="${n1(x - 2.5)}" y="${n1(yTop + 20)}" width="5" height="9" rx="2.5"/>`;
+  return head + hole + neck + handle + grip;
+}
+
+/**
  * The straight pipe with its marks, measured from the reference end.
  * opts: { fmt(m), snap(m) (round to what a tape reads), width }
  */
@@ -583,7 +602,11 @@ export function marksSvg(result, { fmt = mmFmt, snap = (m) => m, width = 640 } =
         parts.push(line(xa, chainY, xb, chainY, 'bd-dim'), line(xa, chainY - 4, xa, chainY + 4, 'bd-dim'), line(xb, chainY - 4, xb, chainY + 4, 'bd-dim'));
         if (xb - xa > 34) parts.push(text((xa + xb) / 2, chainY - 5, fmt(d), 'bd-dimtext'));
       }
-      y = chainY + 14;
+      // a bender under each real bend mark — "set the bender here", like a field bending app
+      const benderMarks = marks.filter((m) => ['arrow', 'star', 'notch'].includes(m.symbol) && m.angleDeg);
+      const bandTop = chainY + 20;
+      for (const m of benderMarks) parts.push(benderGlyph(X(m.atM), bandTop));
+      y = benderMarks.length ? bandTop + 54 : chainY + 14;
     } else {
       const shots = marks.filter((m) => m.angleDeg);
       if (shots.length > 1) parts.push(text(X(shots[0].atM), chainY - 4, `${shots.length} marks, every ${fmt(shots[1].atM - shots[0].atM)}`, 'bd-dimtext', 'start'));

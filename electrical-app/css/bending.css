@@ -203,3 +203,11 @@ select.bend-input { font-size: var(--fs-base); }
 .bd-tool-grip { fill: rgba(60, 38, 8, .45); stroke: none; }
 .bd-tool-mark { fill: #fff; stroke: #1c2127; stroke-width: .5; stroke-linejoin: round; }
 .bd-tool-label { font-size: 6.5px; font-weight: 700; fill: #fff; stroke: rgba(20, 24, 30, .75); stroke-width: 2; paint-order: stroke; pointer-events: none; }
+
+/* Upright hand bender under each mark on the straight-pipe mark layout (grey head, blue handle) */
+.bd-bender-head { fill: #c3c8ce; stroke: #878d95; stroke-width: .8; stroke-linejoin: round; }
+.bd-bender-hole { fill: #e9edf1; stroke: #9aa0a7; stroke-width: .6; }
+.bd-bender-neck { fill: #9aa0a7; }
+.bd-bender-handle { fill: #2f6fd0; }
+.bd-bender-grip { fill: #1f58ad; }
+@media print { .bd-bender-handle { fill: #2f6fd0; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
