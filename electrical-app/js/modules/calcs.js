@@ -7,6 +7,8 @@ import * as NEC from '../lib/nec.js';
 import * as CEC from '../lib/cec/index.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 import { recommendBreakerKa, KA_OPTIONS, KA_REFERENCE } from '../lib/breaker-ka.js';
+import { BURIAL_METHODS, BURIAL_LOCATIONS, BURIAL_SOURCE, minimumCover } from '../lib/burial.js';
+import { CONDUIT_MATERIALS, FITTING_THRESHOLD_MM, MM_PER_IN as EXP_MM_PER_IN, expansionMm, needsExpansionFitting, deltaFtoC } from '../lib/conduit-expansion.js';
 import { FIXTURES, DEFAULT_LUMENS, TARGET_FC, DEFAULT_TARGET_FC, solveLayout } from '../lib/lighting.js';
 
 const FT2 = M_PER_FT * M_PER_FT; // m² per ft²
@@ -24,6 +26,8 @@ const TABS = [
   { id: '3ph', label: '3-phase' },
   { id: 'ka', label: 'Breaker kA' },
   { id: 'potlight', label: 'Pot lights' },
+  { id: 'burial', label: 'Burial depth' },
+  { id: 'expansion', label: 'Conduit expansion' },
 ];
 
 const MATERIALS = [{ value: 'cu', label: 'Copper' }, { value: 'al', label: 'Aluminum' }];
@@ -798,9 +802,71 @@ function potlightTab(rerender) {
   }, { onChange: (vals, e) => { if (e?.target?.name === 'room' || e?.target?.name === 'fixture') { rerender(); return 'rerender'; } } });
 }
 
+// Burial depth: minimum cover for underground wiring from CEC Table 53 (lib/burial.js).
+// Every figure is VERIFY (not confirmed against the 2024 text).
+function burialTab() {
+  return liveCalc('burial', { method: 'cable', location: 'general' }, (v) => [
+    { label: 'Wiring method', name: 'method', type: 'select', value: v.method, options: BURIAL_METHODS },
+    { label: 'Location', name: 'location', type: 'select', value: v.location, options: BURIAL_LOCATIONS },
+  ], (x) => {
+    const r = minimumCover(x.method, x.location);
+    if (!r) return result({ label: 'Pick a method and location', tone: 'warn', lines: ['Choose the wiring method and where it is buried.'] });
+    const mLabel = BURIAL_METHODS.find((o) => o.value === r.method)?.label;
+    const lLabel = BURIAL_LOCATIONS.find((o) => o.value === r.location)?.label;
+    return [
+      result({
+        label: 'Minimum cover', value: imperial() ? num(r.inches, 1) : num(r.mm, 0), unit: imperial() ? 'in' : 'mm',
+        tone: 'warn', badge: 'VERIFY',
+        sub: imperial() ? `${num(r.mm, 0)} mm` : `${num(r.inches, 1)} in`,
+        lines: [`${mLabel}, ${lLabel.toLowerCase()}.`, 'Measured from the top of the cable or conduit to finished grade.', 'Not confirmed against the CEC 2024 text. Check Table 53 and provincial amendments before you dig.'],
+      }),
+      refs(`${BURIAL_SOURCE} (0-750 V)`, 'VERIFY against CSA C22.1:24', 'Reduced-cover and concrete-encasement allowances not modelled'),
+    ];
+  });
+}
+
+// Conduit thermal expansion: dL = coefficient x length x dT (lib/conduit-expansion.js).
+// The fitting threshold and the CEC rule reference are VERIFY.
+function expansionTab() {
+  const tu = imperial() ? '°F' : '°C';
+  const D = { material: 'pvc', length: 30, tmin: imperial() ? -20 : -30, tmax: imperial() ? 90 : 30 };
+  return liveCalc('expansion', D, (v) => [
+    { label: 'Conduit material', name: 'material', type: 'select', value: v.material, options: CONDUIT_MATERIALS },
+    { label: 'Run length', name: 'length', qty: 'length', value: v.length },
+    { label: `Lowest temperature (${tu})`, name: 'tmin', type: 'number', step: 'any', value: v.tmin },
+    { label: `Highest temperature (${tu})`, name: 'tmax', type: 'number', step: 'any', value: v.tmax, hint: 'Include sun heating on exposed runs' },
+  ], (x) => {
+    const L = x.length ?? 0;
+    if (!(L > 0)) return result({ label: 'Enter the run length', tone: 'warn', lines: ['Give the length of the straight run.'] });
+    if (x.tmin === '' || x.tmax === '' || x.tmin == null || x.tmax == null) return result({ label: 'Enter the temperatures', tone: 'warn', lines: ['Give the lowest and highest temperature the run will see.'] });
+    const dT = n(x.tmax) - n(x.tmin);
+    const dC = imperial() ? deltaFtoC(dT) : dT;
+    const mat = CONDUIT_MATERIALS.find((m) => m.value === x.material) || CONDUIT_MATERIALS[0];
+    const mm = Math.abs(expansionMm({ material: mat.value, lengthM: L, deltaC: dC }));
+    const fit = needsExpansionFitting(mm);
+    const move = imperial() ? `${num(mm / EXP_MM_PER_IN, 2)} in (${num(mm, 1)} mm)` : `${num(mm, 1)} mm (${num(mm / EXP_MM_PER_IN, 2)} in)`;
+    return [
+      result({
+        label: 'Total movement', value: imperial() ? num(mm / EXP_MM_PER_IN, 2) : num(mm, 1), unit: imperial() ? 'in' : 'mm',
+        tone: fit ? 'warn' : 'pass', badge: fit ? 'Expansion fitting advised' : 'VERIFY',
+        sub: imperial() ? `${num(mm, 1)} mm` : `${num(mm / EXP_MM_PER_IN, 2)} in`,
+        lines: [
+          `${mat.label}: ${move} over ${len(L)} for a ${num(Math.abs(dT), 0)} ${tu} swing.`,
+          fit
+            ? `Over about ${FITTING_THRESHOLD_MM} mm (1/4 in): fit an expansion joint, or let the run flex at offsets.`
+            : `Under about ${FITTING_THRESHOLD_MM} mm (1/4 in): an expansion fitting is not normally needed.`,
+          'Threshold and coefficients not confirmed against the CEC 2024 text (VERIFY).',
+        ],
+      }),
+      h('div', { class: 'calc-minis' }, mini('Coefficient', `${num(mat.mmPerMC, 4)} mm/m/°C`), mini('Temperature swing', `${num(Math.abs(dT), 0)} ${tu}`)),
+      refs('ΔL = coefficient × length × ΔT', 'CEC Section 12 expansion rule (12-1014 area): VERIFY', 'PVC manufacturer guidance: fitting over ~6 mm'),
+    ];
+  });
+}
+
 const VIEWS = {
-  'CEC-2024': { vd: cecVoltageDrop, wire: cecWire, conduit: cecConduit, box: cecBox, load: cecLoad, motor: cecMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab },
-  'NEC-2023': { vd: necVoltageDrop, wire: necWire, conduit: necConduit, box: necBox, load: necLoad, motor: necMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab },
+  'CEC-2024': { vd: cecVoltageDrop, wire: cecWire, conduit: cecConduit, box: cecBox, load: cecLoad, motor: cecMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab, burial: burialTab, expansion: expansionTab },
+  'NEC-2023': { vd: necVoltageDrop, wire: necWire, conduit: necConduit, box: necBox, load: necLoad, motor: necMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab, burial: burialTab, expansion: expansionTab },
 };
 
 export default {
