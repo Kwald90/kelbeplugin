@@ -64,10 +64,10 @@ const PAPERS = [{ id: 'none', label: 'Blank' }, { id: 'dots', label: 'Dots' }, {
 
 // smooth: the stabilizer's 0–100 (./stabilizer.js); eraser mode: 'area' cuts strokes, 'stroke' removes them whole
 const DEFAULT_OPTS = () => ({
-  pen: { size: 3, opacity: 1, color: '#1c1b19', smooth: 25 },
-  pencil: { size: 2, opacity: 1, color: '#5f5a51', smooth: 20 },
-  marker: { size: 7, opacity: 0.9, color: '#1f5fb8', smooth: 25 },
-  highlighter: { size: 20, opacity: 1, color: '#f5b301', smooth: 40 },
+  pen: { size: 3, opacity: 1, color: '#1c1b19', smooth: 55 },
+  pencil: { size: 2, opacity: 1, color: '#5f5a51', smooth: 45 },
+  marker: { size: 7, opacity: 0.9, color: '#1f5fb8', smooth: 55 },
+  highlighter: { size: 20, opacity: 1, color: '#f5b301', smooth: 60 },
   eraser: { size: 18, mode: 'area' },
   line: { size: 2.5, opacity: 1, color: '#1c1b19' },
   rect: { size: 2.5, opacity: 1, color: '#1c1b19' },
@@ -75,6 +75,14 @@ const DEFAULT_OPTS = () => ({
   text: { size: 18, opacity: 1, color: '#1c1b19' },
   measure: { size: 1.5, opacity: 1, color: '#1c1b19' },
 });
+
+/** Black or white, whichever reads better on a hex colour (sRGB luminance). */
+function readableOn(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if (!m) return '#ffffff';
+  const n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#1c1b19' : '#ffffff';
+}
 
 /**
  * Size range per tool. Pens, shapes and text are in world units (they scale with the drawing, and
@@ -376,6 +384,12 @@ export function openEditor(root, ctx, id) {
     const al = layerOf(st.activeLayer);
     g.globalAlpha = al?.opacity ?? 1;
     if (op?.stroke) drawStroke(g, op.pred ? { ...op.stroke, points: [...op.stroke.points, ...op.pred] } : op.stroke, d, { zoom: v.zoom, dark, units: units() });
+    // live length while measuring: read the real distance as you drag (needs a scale)
+    if (op?.type === 'shape' && op.stroke.tool === 'measure' && d.scale > 0 && op.stroke.points.length >= 2) {
+      g.globalAlpha = 1;
+      const p = op.stroke.points;
+      label(g, p[1], fmtWorldLength(segLen(p[0], p[1]), d, units()));
+    }
     if (op?.type === 'wire') {
       const pts = op.hover ? [...op.points, op.hover] : op.points;
       if (pts.length > 1) drawStroke(g, { ...op.proto, points: pts }, d, { zoom: v.zoom, dark, units: units() });
@@ -407,6 +421,16 @@ export function openEditor(root, ctx, id) {
     g.setLineDash([]);
     // rooms: drafts, handles, ghosts and code-check markers
     rooms.overlay(g);
+    // measure strokes stay on the plan as dimensions: show each one's real length
+    if (d.scale > 0) {
+      g.globalAlpha = 1;
+      for (const s of d.strokes) {
+        if (s.tool !== 'measure' || !s.points || s.points.length < 2) continue;
+        if (layerOf(s.layer)?.visible === false) continue;
+        const p0 = s.points[0], p1 = s.points[s.points.length - 1];
+        label(g, [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2], fmtWorldLength(segLen(p0, p1), d, units()));
+      }
+    }
     collab.overlay(g);
     // eraser cursor
     if (st.tool === 'eraser' && st.hover && !st.placing) {
@@ -1072,7 +1096,14 @@ export function openEditor(root, ctx, id) {
     titleBtn.textContent = d.name || 'Untitled';
     undoBtn.disabled = !undo.length && op?.type !== 'wire';
     redoBtn.disabled = !redo.length;
-    for (const [tid, b] of toolButtons) b.setAttribute('aria-pressed', String(tid === st.tool && !st.placing));
+    for (const [tid, b] of toolButtons) {
+      const active = tid === st.tool && !st.placing;
+      b.setAttribute('aria-pressed', String(active));
+      // Tint the active tool with the colour it draws in, so the wheel shows what you're inking with.
+      const col = tid === 'eraser' ? null : opts[tid]?.color;
+      b.style.background = active && col ? col : '';
+      b.style.color = active && col ? readableOn(col) : '';
+    }
     wrap.dataset.tool = st.placing ? 'place' : st.tool;
     paperBtn.title = `Paper: ${PAPERS.find((p) => p.id === d.paper)?.label}`;
     // wheel centre
