@@ -508,15 +508,16 @@ const shortTag = (m) => {
  * mark's x; yTop is the top of the head. Pure string; all values finite.
  */
 function benderGlyph(x, yTop, flip = false) {
-  const head = '<path class="bd-bender-head" d="M-15,8 C-17,1 -12,-4 -5,-4 C0,-4 3,-1 4,3 '
-    + 'C10,3 14,6 14,11 C14,17 8,19 1,18 C-6,19 -13,16 -15,10 Z"/>';
-  const beak = '<path class="bd-bender-beak" d="M-15,8 C-17,1 -12,-4 -5,-4 C-8,-1 -9,4 -7,9 Z"/>';
-  const socket = '<circle class="bd-bender-socket" cx="0" cy="4" r="3.6"/>';
-  const neck = '<rect class="bd-bender-neck" x="-3" y="11" width="6" height="7" rx="1.5"/>';
-  const handle = '<rect class="bd-bender-handle" x="-2.5" y="16" width="5" height="34" rx="2.5"/>';
-  const grip = '<rect class="bd-bender-grip" x="-2.5" y="18" width="5" height="9" rx="2.5"/>';
+  // side profile of a hand bender head: a chunky hooked shoe (the beak catches the pipe) over a
+  // socket boss, with the blue handle below. Hook opens to the left; `flip` mirrors it.
+  const hook = '<path class="bd-bender-head" fill="none" stroke-width="6" stroke-linecap="round" '
+    + 'stroke-linejoin="round" d="M2,20 L2,6 C2,-4 -7,-8 -12,-2 C-16,2 -14,10 -7,10"/>';
+  const socket = '<circle class="bd-bender-socket" cx="2" cy="15" r="4.2"/>';
+  const bolt = '<circle class="bd-bender-bolt" cx="2" cy="15" r="1.6"/>';
+  const handle = '<rect class="bd-bender-handle" x="-0.5" y="17" width="5" height="36" rx="2.5"/>';
+  const grip = '<rect class="bd-bender-grip" x="-0.5" y="19" width="5" height="10" rx="2.5"/>';
   const t = flip ? `translate(${n1(x)},${n1(yTop)}) scale(-1,1)` : `translate(${n1(x)},${n1(yTop)})`;
-  return `<g class="bd-bender" transform="${t}">${head}${beak}${socket}${neck}${handle}${grip}</g>`;
+  return `<g class="bd-bender" transform="${t}">${hook}${socket}${bolt}${handle}${grip}</g>`;
 }
 
 /**
