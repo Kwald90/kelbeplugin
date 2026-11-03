@@ -518,21 +518,28 @@ const shortTag = (m) => {
  * `flip` mirrors it (hook to the right) for a bend made the other way (mark.dir === 'down'). x is the
  * mark's x; yTop is the top of the head. Pure string; all values finite.
  */
-function benderGlyph(x, yTop, flip = false) {
-  // side profile of a hand bender head: a chunky hooked shoe (the beak catches the pipe) over a
-  // socket boss, with the blue handle below. Hook opens to the left; `flip` mirrors it.
-  // a solid cast crescent shoe: the pipe wraps the outer (upper) curve; the beak hooks it on the left
-  const shoe = '<path class="bd-bender-head" d="M-11,2 '
-    + 'C-7,-7 4,-8 10,-1 C13,3 12,10 7,14 '      // outer curve (pipe wraps the top)
-    + 'C6,10 3,7 -1,6 C-5,5 -8,6 -9,4 '          // inner curve back toward the hook
-    + 'C-10,3 -11,3 -11,2 Z"/>';
-  const beak = '<path class="bd-bender-beak" d="M-11,2 C-14,-2 -13,-7 -8,-7 C-9,-4 -9,-1 -6,2 Z"/>';
-  const socket = '<circle class="bd-bender-socket" cx="5" cy="13" r="4"/>';
-  const bolt = '<circle class="bd-bender-bolt" cx="5" cy="13" r="1.5"/>';
-  const handle = '<rect class="bd-bender-handle" x="2.5" y="15" width="5" height="36" rx="2.5"/>';
-  const grip = '<rect class="bd-bender-grip" x="2.5" y="17" width="5" height="10" rx="2.5"/>';
+export function benderGlyph(x, yTop, flip = false) {
+  // Side profile of a conduit hand bender: a thick cast hook whose open mouth (top) cups the pipe,
+  // a lip that curls over to catch it, a socket boss, and a long blue handle. Built from two
+  // concentric arcs so it reads as a real sickle-shaped shoe, not a blob. `flip` mirrors it.
+  // Solid cast head: a hook lip rises on the left, the pipe nestles in the concave cradle on top,
+  // and the body bulges down to the handle socket. The pipe sits at ~y=-2 (just above the origin).
+  const head = '<path class="bd-bender-head" d="'
+    + 'M-13,-4 '                 // left lip tip
+    + 'Q-13,-9 -8,-8 '           // lip curls up over the pipe end (the hook)
+    + 'Q-4,-7 -2,-3 '            // down the inner face of the lip
+    + 'Q1,0 4,-3 '              // the cradle: a dip the pipe rests in, up to the right rim
+    + 'Q7,-6 10,-4 '            // right rim
+    + 'C14,-1 14,8 8,13 '       // right side bulges down to the handle
+    + 'C4,16 -2,16 -6,13 '      // bottom
+    + 'C-11,10 -15,2 -13,-4 Z"/>';
+  const cradle = '<path class="bd-bender-cradle" d="M-2,-3 Q1,0.5 4,-3"/>'; // groove highlight
+  const socket = '<circle class="bd-bender-socket" cx="1" cy="13" r="3.4"/>';
+  const bolt = '<circle class="bd-bender-bolt" cx="1" cy="13" r="1.3"/>';
+  const handle = '<rect class="bd-bender-handle" x="-1.5" y="15" width="5" height="34" rx="2.5"/>';
+  const grip = '<rect class="bd-bender-grip" x="-1.5" y="17" width="5" height="9" rx="2.5"/>';
   const t = flip ? `translate(${n1(x)},${n1(yTop)}) scale(-1,1)` : `translate(${n1(x)},${n1(yTop)})`;
-  return `<g class="bd-bender" transform="${t}">${shoe}${beak}${socket}${bolt}${handle}${grip}</g>`;
+  return `<g class="bd-bender" transform="${t}">${head}${cradle}${socket}${bolt}${handle}${grip}</g>`;
 }
 
 /**
