@@ -21,6 +21,14 @@ export const MAX_GROUPS = 40;
 /** Where a transcript came from (for the report footer + to know if it can be re-run). */
 export const TRANSCRIPT_SOURCES = ['ios-speech', 'gemini', 'manual'];
 
+/**
+ * The video's handoff state. 'local': recorded, bytes on the device only. 'uploading': being sent
+ * to the server. 'processing': uploaded, the server is transcoding it. 'ready': the optimised MP4
+ * is playable from the server. 'failed': the server could not process it (the device copy, if any,
+ * still plays).
+ */
+export const VIDEO_STATUSES = ['local', 'uploading', 'processing', 'ready', 'failed'];
+
 const newId = (p) => (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`);
 const clampStr = (s, n) => String(s ?? '').slice(0, n);
 
@@ -136,18 +144,46 @@ export function groupsWithCaptures(w) {
   return out;
 }
 
-/** Attach / replace the device-local video recording reference. Returns a patch. */
-export function setRecording({ localId, durationMs = 0, mimeType = 'video/mp4', startedAt = null } = {}) {
-  if (!localId) return { recording: null };
-  return { recording: { localId, durationMs: Math.max(0, Math.round(durationMs)), mimeType, startedAt: startedAt || new Date().toISOString() } };
+/**
+ * Attach / replace the video recording reference. Returns a patch. A recording starts life with a
+ * device-local blob (localId, status 'local'); once uploaded it also carries the server mediaId and
+ * its status moves to 'processing' then 'ready'. Either id alone is enough to keep the reference.
+ */
+export function setRecording({ localId = null, mediaId = null, status = null, bytes = 0, durationMs = 0, mimeType = 'video/mp4', startedAt = null } = {}) {
+  if (!localId && !mediaId) return { recording: null };
+  return {
+    recording: {
+      localId: localId || null,
+      mediaId: mediaId || null,
+      status: VIDEO_STATUSES.includes(status) ? status : (mediaId ? 'processing' : 'local'),
+      bytes: Math.max(0, Math.round(bytes || 0)),
+      durationMs: Math.max(0, Math.round(durationMs || 0)),
+      mimeType: mimeType || 'video/mp4',
+      startedAt: startedAt || new Date().toISOString(),
+    },
+  };
 }
+
+/** Merge fields into an existing recording (e.g. the upload moving local -> uploading -> ready). Returns a patch. */
+export function mergeRecording(w, patch = {}) {
+  const r = w?.recording;
+  if (!r) return { recording: null };
+  const next = { ...r, ...patch };
+  if (patch.status != null && !VIDEO_STATUSES.includes(patch.status)) next.status = r.status;
+  return { recording: next };
+}
+
+/** The video's current status, or null when there is no recording. */
+export const videoStatus = (w) => (w?.recording ? (w.recording.status || (w.recording.mediaId ? 'processing' : 'local')) : null);
+/** Can this device still play the recording straight from its own blob store? */
+export const hasLocalVideo = (w) => Boolean(w?.recording?.localId);
 
 /** Set the transcript and where it came from. Returns a patch. */
 export function setTranscript(text, source = 'manual') {
   return { transcript: clampStr(text, 60000), transcriptSource: TRANSCRIPT_SOURCES.includes(source) ? source : 'manual' };
 }
 
-export const hasVideo = (w) => Boolean(w?.recording?.localId);
+export const hasVideo = (w) => Boolean(w?.recording && (w.recording.localId || w.recording.mediaId));
 export const hasTranscript = (w) => Boolean(String(w?.transcript || '').trim());
 export const captureCount = (w) => caps(w).length;
 

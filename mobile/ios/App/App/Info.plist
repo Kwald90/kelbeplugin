@@ -80,7 +80,9 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Allow "Always" so Fishtape can notice when you arrive at or leave a job site with the app closed, and record your travel time. Only while you are clocked in; clocking out stops it.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Fishtape uses the camera to measure wire runs along walls and conduit, and to take photos for your jobs.</string>
+	<string>Fishtape uses the camera to measure wire runs along walls and conduit, to take photos for your jobs, and to record a video walkthrough of the site.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Fishtape records audio while you film a site walkthrough, so your spoken notes are captured and transcribed with the video.</string>
 	<!-- Saved PDFs and CSVs go to the app's Documents folder, shown in the Files app under Fishtape. -->
 	<key>UIFileSharingEnabled</key>
 	<true/>

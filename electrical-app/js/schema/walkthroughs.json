@@ -46,9 +46,12 @@
     },
     "recording": {
       "type": ["object", "null"],
-      "description": "Reference to the device-local video of the walk. The bytes are not in the record.",
+      "description": "Reference to the video of the walk. The bytes are not in the record: they live on the device (recording.localId) and, once uploaded, on the server (recording.mediaId -> /api/v1/walkthrough-media). status tracks that handoff.",
       "properties": {
         "localId": { "type": ["string", "null"], "maxLength": 128 },
+        "mediaId": { "type": ["string", "null"], "maxLength": 64, "description": "Server walkthrough_media row id once uploaded." },
+        "status": { "enum": ["local", "uploading", "processing", "ready", "failed", null] },
+        "bytes": { "type": ["number", "null"] },
         "durationMs": { "type": ["number", "null"] },
         "mimeType": { "type": ["string", "null"], "maxLength": 80 },
         "startedAt": {

@@ -5,6 +5,13 @@
 // Returns a controller the module drives; the module owns where the blob and stills are stored.
 // Everything degrades: when recording isn't available the module falls back to adding photos.
 
+// Compression targets so the clip is small enough to upload (the server caps a video at 70 MB and
+// nginx at 72 MB). ~2 Mbps video + 96 kbps audio is ~0.26 MB/s, so ~4 minutes fits comfortably; the
+// server then re-encodes to an optimised 720p MP4 for fast, universal playback.
+export const TARGET_VIDEO_BPS = 2_000_000;
+export const TARGET_AUDIO_BPS = 96_000;
+export const MAX_UPLOAD_BYTES = 70 * 1024 * 1024;
+
 export function recordingSupported() {
   return typeof navigator !== 'undefined'
     && !!navigator.mediaDevices?.getUserMedia
@@ -40,7 +47,11 @@ export async function startRecording({ facingMode = 'environment' } = {}) {
   try { await previewEl.play(); } catch { /* autoplay may need a user gesture; the stream still records */ }
 
   const mimeType = pickMime();
-  const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  // Cap the bitrate so the recording compresses on the device and stays under the upload limit.
+  const recOpts = { videoBitsPerSecond: TARGET_VIDEO_BPS, audioBitsPerSecond: TARGET_AUDIO_BPS, ...(mimeType ? { mimeType } : {}) };
+  let rec;
+  try { rec = new MediaRecorder(stream, recOpts); }
+  catch { rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream); }
   const chunks = [];
   rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
   const startedAt = Date.now();

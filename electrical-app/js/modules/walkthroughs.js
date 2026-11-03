@@ -10,11 +10,13 @@
 import {
   newWalkthrough, newCapture, progress, canShare, walkthroughLabel, legacyCaptures,
   withCapture, withoutCapture, assignCapture, relabelCapture, withGroup, renameGroup, withoutGroup,
-  groupsWithCaptures, setRecording, setTranscript, hasVideo, hasTranscript, captureCount, MAX_CAPTURES,
+  groupsWithCaptures, setRecording, mergeRecording, setTranscript, hasVideo, hasLocalVideo, videoStatus,
+  hasTranscript, captureCount, MAX_CAPTURES,
 } from '../lib/walkthroughs.js';
 import { pickImages, downscaleImage } from '../lib/safety-capture.js';
-import { recordingSupported, startRecording, fmtClock } from '../lib/walkthrough-recorder.js';
-import { putBlob, blobUrl, deleteBlob } from '../lib/local-blobs.js';
+import { recordingSupported, startRecording, fmtClock, MAX_UPLOAD_BYTES } from '../lib/walkthrough-recorder.js';
+import { putBlob, getBlob, blobUrl, deleteBlob } from '../lib/local-blobs.js';
+import { uploadWalkthroughVideo, fetchWalkthroughMedia, deleteWalkthroughMedia, mediaUrl } from '../lib/walkthrough-upload.js';
 import { liveDictationSupported, startLiveDictation, appendPhrase } from '../lib/transcribe.js';
 
 function loadCss() {
@@ -145,6 +147,53 @@ function detailView(root, ctx, id) {
   let rec = null; // active recorder controller
   let tick = null; // elapsed-clock interval
   let dictation = null;
+  let serverPoll = null;  // interval polling the server while a video transcodes
+  let lastMedia = null;   // last media view fetched from the server { id, status, url, posterUrl }
+
+  // Keep the record's video status in step with the server, and resolve playback urls.
+  async function refreshMedia() {
+    const mid = w.recording?.mediaId;
+    if (!mid) { lastMedia = null; return null; }
+    try {
+      const m = await fetchWalkthroughMedia(mid);
+      lastMedia = m;
+      if (m?.status && m.status !== w.recording?.status) save(mergeRecording(w, { status: m.status }));
+      return m;
+    } catch { return lastMedia; }
+  }
+  function stopMediaPolling() { if (serverPoll) { clearInterval(serverPoll); serverPoll = null; } }
+  function startMediaPolling() {
+    stopMediaPolling();
+    if (!['uploading', 'processing'].includes(videoStatus(w))) return;
+    serverPoll = setInterval(async () => {
+      const m = await refreshMedia();
+      if (!m || ['ready', 'failed'].includes(m.status)) { stopMediaPolling(); drawRec(); }
+    }, 4000);
+  }
+
+  // Send the recorded blob to the server store (so it plays fast and syncs across devices).
+  async function uploadVideo({ silent = false } = {}) {
+    const r = w.recording;
+    if (!r || !r.localId) return; // nothing local to send (already server-only)
+    save(mergeRecording(w, { status: 'uploading' })); drawRec();
+    try {
+      const blob = await getBlob(r.localId);
+      if (!blob || !blob.size) throw Object.assign(new Error('The recording is no longer on this device.'), { code: 'no_video' });
+      if (blob.size > MAX_UPLOAD_BYTES) throw Object.assign(new Error('That recording is too long to upload. Record a shorter walk.'), { code: 'too_large' });
+      const resp = await uploadWalkthroughVideo(blob, { walkthroughId: id, durationMs: r.durationMs });
+      lastMedia = resp;
+      save(mergeRecording(w, { mediaId: resp.id, status: resp.status || 'processing', bytes: blob.size }));
+      if (!silent) ui.toast(resp.status === 'ready' ? 'Video uploaded.' : 'Video uploaded — optimising for fast playback.', 'success', 2500);
+      startMediaPolling();
+    } catch (e) {
+      save(mergeRecording(w, { status: w.recording?.mediaId ? 'processing' : 'failed' }));
+      if (!silent) {
+        const msg = e?.code === 'offline' ? 'Saved on this device. It will upload when you tap Upload with a connection.' : (e?.message || 'Upload failed.');
+        ui.toast(msg, 'warning', 5000);
+      }
+    }
+    drawRec();
+  }
 
   function drawRec() {
     ui.clear(recHost);
@@ -178,16 +227,40 @@ function detailView(root, ctx, id) {
   }
 
   function videoCard() {
+    const r = w.recording || {};
+    const status = videoStatus(w);
     const card = h('div', { class: 'wt-video card' });
-    const meta = h('div', { class: 'wt-video-meta muted' }, `Video · ${fmtClock(w.recording?.durationMs || 0)}${w.recording?.startedAt ? ` · ${ui.fmtDate(w.recording.startedAt)}` : ''}`);
-    const play = ui.button('Play video', { size: 'sm', icon: 'play', onClick: async () => {
-      const url = await blobUrl(w.recording?.localId);
-      ui.clear(card);
-      if (!url) { card.append(meta, h('div', { class: 'hint' }, 'The video was recorded on another device, so it isn’t stored here. Photos and the transcript are still available.')); return; }
-      const v = h('video', { class: 'wt-video-el', controls: true, src: url, playsInline: true });
-      card.append(v, meta);
-    } });
-    card.append(h('div', { class: 'row' }, h('span', { class: 'wt-video-ico' }, ui.icon('play', 20)), meta, h('span', { class: 'grow' }), play));
+    const badge = status === 'ready' ? ui.badge('on server', 'success')
+      : status === 'processing' ? ui.badge('optimising…', 'warning')
+      : status === 'uploading' ? ui.badge('uploading…', 'warning')
+      : status === 'failed' ? ui.badge('upload failed', 'danger')
+      : ui.badge('on this device', 'info');
+    const meta = h('div', { class: 'wt-video-meta muted' }, `Video · ${fmtClock(r.durationMs || 0)}${r.startedAt ? ` · ${ui.fmtDate(r.startedAt)}` : ''}`);
+    const header = () => {
+      const row = h('div', { class: 'row wt-video-head' }, h('span', { class: 'wt-video-ico' }, ui.icon('play', 20)), meta, badge, h('span', { class: 'grow' }));
+      row.append(ui.button('Play video', { size: 'sm', icon: 'play', onClick: () => playInto() }));
+      if (!readOnly && r.localId && (status === 'failed' || status === 'local')) {
+        row.append(ui.button('Upload to server', { size: 'sm', variant: 'ghost', onClick: () => uploadVideo() }));
+      }
+      return row;
+    };
+    const playInto = async () => {
+      let src = '';
+      let poster;
+      const m = r.mediaId ? ((lastMedia && lastMedia.id === r.mediaId) ? lastMedia : await refreshMedia()) : null;
+      if (m && m.url) { src = mediaUrl(m.url); if (m.posterUrl) poster = mediaUrl(m.posterUrl); }
+      if (!src && r.localId) src = await blobUrl(r.localId);
+      ui.clear(card); card.append(header());
+      if (!src) {
+        card.append(h('div', { class: 'hint' }, status === 'processing'
+          ? 'The video is still being optimised on the server — try again in a moment.'
+          : 'The video was recorded on another device and isn’t stored here. Photos and the transcript are still available.'));
+        return;
+      }
+      card.append(h('video', { class: 'wt-video-el', controls: true, src, playsInline: true, ...(poster ? { poster } : {}) }));
+    };
+    card.append(header());
+    if (status === 'failed' && r.error) card.append(h('div', { class: 'hint' }, 'The server couldn’t process this video; it still plays from this device. You can try Upload again.'));
     return card;
   }
 
@@ -222,12 +295,17 @@ function detailView(root, ctx, id) {
     let out;
     try { out = await controller.stop(); } catch { out = null; }
     if (out && out.blob && out.blob.size) {
+      const prevMediaId = w.recording?.mediaId;
       try {
         const localId = await putBlob(out.blob);
         const prev = w.recording?.localId;
-        save(setRecording({ localId, durationMs: out.durationMs, mimeType: out.mimeType }));
+        save(setRecording({ localId, durationMs: out.durationMs, mimeType: out.mimeType, bytes: out.blob.size, status: 'local' }));
         if (prev && prev !== localId) deleteBlob(prev);
+        if (prevMediaId) deleteWalkthroughMedia(prevMediaId).catch(() => {}); // a re-record replaces the old server video
         ui.toast('Walk recorded', 'success');
+        drawRec();
+        uploadVideo({ silent: true }); // send it up in the background so it plays fast everywhere
+        return;
       } catch { ui.toast('Recorded, but this device can’t store the video. Photos and transcript were kept.', 'warning', 5000); }
     }
     drawRec();
@@ -402,7 +480,7 @@ function detailView(root, ctx, id) {
       ui.button('Report', { icon: 'printer', variant: 'ghost', onClick: () => printReport(w, ctx) }),
       ui.button(w.status === 'complete' ? 'Reopen' : 'Mark complete', { variant: w.status === 'complete' ? 'ghost' : 'primary', onClick: complete }),
       office ? ui.button('', { variant: 'ghost danger', icon: 'x', title: 'Delete walkthrough', onClick: async () => {
-        if (await ui.confirmDialog('Delete this walkthrough and its photos?', { okLabel: 'Delete' })) { if (w.recording?.localId) deleteBlob(w.recording.localId); store.remove('walkthroughs', id); nav('#/walkthroughs'); }
+        if (await ui.confirmDialog('Delete this walkthrough and its photos?', { okLabel: 'Delete' })) { if (w.recording?.localId) deleteBlob(w.recording.localId); if (w.recording?.mediaId) deleteWalkthroughMedia(w.recording.mediaId).catch(() => {}); store.remove('walkthroughs', id); nav('#/walkthroughs'); }
       } }) : null);
   }
 
@@ -421,9 +499,11 @@ function detailView(root, ctx, id) {
   drawRec();
   drawTrans();
   drawCaps();
+  // If the video is still uploading/processing from a previous visit, resume watching the server.
+  startMediaPolling();
 
-  // stop the camera/dictation if the user navigates away mid-record
-  return () => { if (rec) rec.cancel(); clearInterval(tick); stopDictation(); };
+  // stop the camera/dictation/poller if the user navigates away mid-record
+  return () => { if (rec) rec.cancel(); clearInterval(tick); stopDictation(); stopMediaPolling(); };
 }
 
 // ---------- printable / shareable report ----------

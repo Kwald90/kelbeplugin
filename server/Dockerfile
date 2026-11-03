@@ -29,6 +29,14 @@ ENV NODE_ENV=production \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_CACHE=/tmp/.npm
+
+# ffmpeg transcodes uploaded walkthrough videos to a web-friendly 720p MP4 (the worker runs it;
+# services/walkthrough-media.js). --no-install-recommends keeps the extra layer small, and this
+# stays above the code COPYs so it is cached across ordinary code changes.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app/server
 
 # Code is owned by root and read-only to the runtime user. Same layout as the repo, so the

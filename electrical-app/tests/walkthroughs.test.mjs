@@ -3,8 +3,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   newWalkthrough, newCapture, newGroup, withCapture, withoutCapture, assignCapture, relabelCapture,
-  withGroup, renameGroup, withoutGroup, groupsWithCaptures, setRecording, setTranscript, progress,
-  canShare, captureCount, hasVideo, hasTranscript, walkthroughLabel, legacyCaptures, MAX_CAPTURES, MAX_GROUPS,
+  withGroup, renameGroup, withoutGroup, groupsWithCaptures, setRecording, mergeRecording, setTranscript, progress,
+  canShare, captureCount, hasVideo, hasLocalVideo, videoStatus, hasTranscript, walkthroughLabel, legacyCaptures,
+  MAX_CAPTURES, MAX_GROUPS,
 } from '../js/lib/walkthroughs.js';
 import { appendPhrase } from '../js/lib/transcribe.js';
 
@@ -104,6 +105,33 @@ test('recording and transcript patches', () => {
   // an unknown source is coerced to manual
   w = { ...w, ...setTranscript('x', 'bogus') };
   assert.equal(w.transcriptSource, 'manual');
+});
+
+test('a recording starts device-local, then tracks its upload to the server', () => {
+  let w = newWalkthrough({ job });
+  // Fresh recording from the device: local blob, status 'local', still plays here.
+  w = { ...w, ...setRecording({ localId: 'blob-1', durationMs: 42000, mimeType: 'video/mp4', bytes: 1024 }) };
+  assert.equal(videoStatus(w), 'local');
+  assert.equal(hasVideo(w), true);
+  assert.equal(hasLocalVideo(w), true);
+  assert.equal(w.recording.bytes, 1024);
+  // Upload begins, then the server accepts it and starts transcoding.
+  w = { ...w, ...mergeRecording(w, { status: 'uploading' }) };
+  assert.equal(videoStatus(w), 'uploading');
+  w = { ...w, ...mergeRecording(w, { mediaId: 'srv-9', status: 'processing' }) };
+  assert.equal(w.recording.mediaId, 'srv-9');
+  assert.equal(videoStatus(w), 'processing');
+  assert.equal(hasLocalVideo(w), true, 'the device copy is still there while the server transcodes');
+  // Transcode done.
+  w = { ...w, ...mergeRecording(w, { status: 'ready' }) };
+  assert.equal(videoStatus(w), 'ready');
+  // A record synced from another device has only the server id and still counts as having video.
+  const remote = { ...newWalkthrough({ job }), recording: { mediaId: 'srv-9', status: 'ready', localId: null } };
+  assert.equal(hasVideo(remote), true);
+  assert.equal(hasLocalVideo(remote), false);
+  // An unknown status is ignored; a missing recording merges to null.
+  assert.equal(mergeRecording(w, { status: 'bogus' }).recording.status, 'ready');
+  assert.deepEqual(mergeRecording(newWalkthrough({ job }), { status: 'ready' }), { recording: null });
 });
 
 test('sharing needs a client plus something to show; no client = no share', () => {

@@ -158,6 +158,7 @@
   "./js/lib/trial.js",
   "./js/lib/units.js",
   "./js/lib/walkthrough-recorder.js",
+  "./js/lib/walkthrough-upload.js",
   "./js/lib/walkthroughs.js",
   "./js/lib/wheel.js",
   "./js/lib/wireruns.js",
