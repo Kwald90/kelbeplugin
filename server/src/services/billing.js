@@ -5,23 +5,25 @@
 //
 // The Stripe client is injected (config.billing.stripe) so tests never touch the network.
 import Stripe from 'stripe';
-import { PLANS, PLAN_IDS, EXTRA_USER_CENTS, CURRENCY, monthlyCents } from '../../../electrical-app/js/plans.js';
+import { PLANS, PLAN_IDS, EXTRA_USER_CENTS, CURRENCY, monthlyCents, priceCents, periodOf } from '../../../electrical-app/js/plans.js';
 import { ApiError, badRequest } from '../errors.js';
 import { isUuid } from '../db.js';
 import { appendAudit } from './audit.js';
 import { AFTER_TRIAL_PLAN, effectivePlan, tenantEntitlements } from './entitlements.js';
 import { billingSettings } from './hq-common.js';
 
-/** Price lookup keys, one per priced tier plus the extra-user price. Monthly, CAD. */
+/** Stripe recurring interval for each tier, from its plans.js billing period. */
+const intervalOf = (id) => (periodOf(id) === 'year' ? 'year' : 'month');
+/** Price lookup keys, one per priced tier plus the extra-user price. Suffix is the tier's period. */
 export const PRICE_KEYS = {
-  starter: 'fishtape_starter_monthly_cad',
-  pro: 'fishtape_pro_monthly_cad',
-  business: 'fishtape_business_monthly_cad',
+  starter: `fishtape_starter_${intervalOf('starter')}ly_cad`,
+  pro: `fishtape_pro_${intervalOf('pro')}ly_cad`,
+  business: `fishtape_business_${intervalOf('business')}ly_cad`,
   extra_user: 'fishtape_extra_user_monthly_cad',
 };
 /** Stripe lets us choose product ids, which makes set-up idempotent. */
 export const PRODUCT_IDS = { starter: 'fishtape_starter', pro: 'fishtape_pro', business: 'fishtape_business', extra_user: 'fishtape_extra_user' };
-/** Tiers a company can buy itself (Enterprise is "Let's talk"). */
+/** Tiers a company can buy itself. */
 export const SELF_SERVE_PLANS = PLAN_IDS.filter((id) => PLANS[id].priceCents != null);
 
 const TIER_BY_KEY = Object.fromEntries(SELF_SERVE_PLANS.map((id) => [PRICE_KEYS[id], id]));
@@ -32,11 +34,11 @@ const STRIPE_ACTOR = { type: 'system', id: 'stripe', label: 'Stripe billing' };
 export function catalog() {
   const items = SELF_SERVE_PLANS.map((id) => ({
     key: id, productId: PRODUCT_IDS[id], name: `Fishtape ${PLANS[id].name}`, description: PLANS[id].blurb,
-    lookupKey: PRICE_KEYS[id], unitAmount: PLANS[id].priceCents,
+    lookupKey: PRICE_KEYS[id], unitAmount: PLANS[id].priceCents, interval: intervalOf(id),
   }));
   items.push({
     key: 'extra_user', productId: PRODUCT_IDS.extra_user, name: 'Fishtape extra user',
-    description: "Each user beyond your plan's included users", lookupKey: PRICE_KEYS.extra_user, unitAmount: EXTRA_USER_CENTS,
+    description: "Each user beyond your plan's included users", lookupKey: PRICE_KEYS.extra_user, unitAmount: EXTRA_USER_CENTS, interval: 'month',
   });
   return items;
 }
@@ -66,16 +68,16 @@ export async function ensureStripeCatalog(stripe, { dryRun = false, log = () => 
     }
     const existing = (await stripe.prices.list({ lookup_keys: [item.lookupKey], limit: 1 })).data[0] || null;
     const matches = existing && existing.active !== false && existing.unit_amount === item.unitAmount && existing.currency === currency
-      && existing.recurring?.interval === 'month' && productOf(existing) === item.productId;
+      && existing.recurring?.interval === item.interval && productOf(existing) === item.productId;
     if (matches) {
       log(`ok ${item.lookupKey} (${existing.id})`);
       out.push({ key: item.key, action: 'unchanged', priceId: existing.id });
       continue;
     }
-    log(`${existing ? 'replace' : 'create'} price ${item.lookupKey} ${item.unitAmount} ${currency}/month`);
+    log(`${existing ? 'replace' : 'create'} price ${item.lookupKey} ${item.unitAmount} ${currency}/${item.interval}`);
     if (dryRun) { out.push({ key: item.key, action: existing ? 'would-replace' : 'would-create' }); continue; }
     const price = await stripe.prices.create({
-      product: item.productId, currency, unit_amount: item.unitAmount, recurring: { interval: 'month' },
+      product: item.productId, currency, unit_amount: item.unitAmount, recurring: { interval: item.interval },
       lookup_key: item.lookupKey, transfer_lookup_key: true, tax_behavior: 'exclusive', metadata: { fishtape_key: item.key },
     });
     if (existing && existing.active !== false) await stripe.prices.update(existing.id, { active: false });
@@ -105,8 +107,10 @@ export async function seatsUsed(q, tenantId) {
 }
 
 export function extraSeats(plan, seats) {
-  const inc = PLANS[plan]?.includedUsers;
-  return inc == null ? 0 : Math.max(0, seats - inc);
+  const p = PLANS[plan];
+  // Only tiers with a per-seat price (Full Power) bill beyond their included users.
+  if (!p || p.includedUsers == null || !p.extraUserCents) return 0;
+  return Math.max(0, seats - p.includedUsers);
 }
 
 /**
@@ -164,6 +168,8 @@ export function createBilling({ config, db, settings = billingSettings(config) }
       cancelAtPeriodEnd: t.cancel_at_period_end,
       seats: { used: seats, included, extra: extraSeats(plan, seats), billed: t.billed_seats },
       monthlyCents: monthlyCents(t.billing_plan || plan, seats),
+      priceCents: priceCents(t.billing_plan || plan, seats),
+      period: periodOf(t.billing_plan || plan),
       currency: CURRENCY,
       hasSubscription: Boolean(t.stripe_subscription_id),
       hasCustomer: Boolean(t.stripe_customer_id),
@@ -191,7 +197,7 @@ export function createBilling({ config, db, settings = billingSettings(config) }
    * @returns {Promise<{ url: string } | { changed: true, plan: string }>}
    */
   async function checkout(tenantId, plan, { email } = {}) {
-    if (!SELF_SERVE_PLANS.includes(plan)) throw badRequest('Pick Starter, Pro or Business. Enterprise is set up with us directly.');
+    if (!SELF_SERVE_PLANS.includes(plan)) throw badRequest('Pick Live Wire, Fully Loaded or Full Power.');
     const s = needStripe();
     const t = await tenantRow(db, tenantId);
     if (!t) throw new ApiError(404, 'not_found', 'No such company.');

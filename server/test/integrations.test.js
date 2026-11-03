@@ -174,7 +174,7 @@ describe('connecting keys', { skip }, () => {
     await t.superPool.query("UPDATE tenants SET plan = 'starter' WHERE id = $1", [B.tenantId]);
     const list = (await call(app, { url: '/api/v1/integrations', token: B.token })).body.data;
     assert.ok(list.every((c) => c.entitled === false));
-    assert.equal(list.find((c) => c.provider === 'stripe').planName, 'Pro');
+    assert.equal(list.find((c) => c.provider === 'stripe').planName, 'Fully Loaded');
     assert.equal(list.find((c) => c.provider === 'twilio').plan, 'business');
     for (const p of ['stripe', 'resend', 'twilio', 'facebook', 'anthropic']) {
       const r = await put(B, p, { secrets: {} });

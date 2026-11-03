@@ -42,47 +42,50 @@ async function deliver(type, object, { secret, header } = {}) {
 }
 
 describe('plan entitlements on the API', { skip }, () => {
-  test('a trial company has Business features', async () => {
-    const r = await call(app, { method: 'POST', url: '/api/v1/drawings', token: A.token, body: { id: 'd-1', name: 'Ground floor' } });
-    assert.equal(r.status, 201);
+  test('a trial company has Full Power features', async () => {
+    assert.equal((await call(app, { method: 'POST', url: '/api/v1/drawings', token: A.token, body: { id: 'd-1', name: 'Ground floor' } })).status, 201);
+    assert.equal((await call(app, { method: 'POST', url: '/api/v1/clients', token: A.token, body: { id: 'c-1', name: 'Trial client' } })).status, 201);
   });
 
-  test('on Starter, writes to Pro modules are refused but reads stay open', async () => {
+  test('on Live Wire, writes to Fully Loaded modules are refused but reads stay open', async () => {
     await setPlan(A.tenantId, { plan: 'starter' });
-    const w = await call(app, { method: 'POST', url: '/api/v1/drawings', token: A.token, body: { id: 'd-2', name: 'Basement' } });
+    // Live Wire has the calculators and concept drawings.
+    assert.equal((await call(app, { method: 'POST', url: '/api/v1/drawings', token: A.token, body: { id: 'd-2', name: 'Basement' } })).status, 201);
+    // The business app (clients, inventory, …) is Fully Loaded.
+    const w = await call(app, { method: 'POST', url: '/api/v1/clients', token: A.token, body: { name: 'New client' } });
     assert.equal(w.status, 403);
     assert.equal(w.body.error.code, 'feature_not_in_plan');
-    assert.deepEqual(w.body.error.details, { feature: 'drawings', plan: 'pro' });
-    assert.equal((await call(app, { method: 'PATCH', url: '/api/v1/drawings/d-1', token: A.token, body: { name: 'x' } })).body.error.code, 'feature_not_in_plan');
-    assert.equal((await call(app, { method: 'DELETE', url: '/api/v1/drawings/d-1', token: A.token })).body.error.code, 'feature_not_in_plan');
-    const list = await call(app, { url: '/api/v1/drawings', token: A.token });
+    assert.deepEqual(w.body.error.details, { feature: 'clients', plan: 'pro' });
+    assert.equal((await call(app, { method: 'PATCH', url: '/api/v1/clients/c-1', token: A.token, body: { name: 'x' } })).body.error.code, 'feature_not_in_plan');
+    assert.equal((await call(app, { method: 'DELETE', url: '/api/v1/clients/c-1', token: A.token })).body.error.code, 'feature_not_in_plan');
+    const list = await call(app, { url: '/api/v1/clients', token: A.token });
     assert.equal(list.status, 200);
-    assert.deepEqual(list.body.data.map((d) => d.id), ['d-1'], 'existing data is still readable');
-    assert.equal((await call(app, { url: '/api/v1/drawings/d-1', token: A.token })).status, 200);
-    // Starter modules and settings keep working.
-    assert.equal((await call(app, { method: 'POST', url: '/api/v1/clients', token: A.token, body: { name: 'Starter client' } })).status, 201);
-    assert.equal((await call(app, { method: 'POST', url: '/api/v1/settings', token: A.token, body: { id: 'settings', currency: 'CAD' } })).status, 201);
+    assert.ok(list.body.data.some((c) => c.id === 'c-1'), 'existing data is still readable');
+    assert.equal((await call(app, { url: '/api/v1/clients/c-1', token: A.token })).status, 200);
     assert.equal((await call(app, { method: 'POST', url: '/api/v1/items', token: A.token, body: { name: 'Box' } })).body.error.code, 'feature_not_in_plan');
+    // Settings keep working on every plan.
+    assert.equal((await call(app, { method: 'POST', url: '/api/v1/settings', token: A.token, body: { id: 'settings', currency: 'CAD' } })).status, 201);
   });
 
   test('sync push refuses each out-of-plan mutation on its own; pull still returns everything', async () => {
     const r = await call(app, { method: 'POST', url: '/api/v1/sync/push', token: A.token, body: { mutations: [
       { mid: 'm-1', collection: 'drawings', id: 'd-3', op: 'upsert', baseVersion: null, data: { name: 'Attic' } },
       { mid: 'm-2', collection: 'clients', id: 'c-9', op: 'upsert', baseVersion: null, data: { name: 'Synced client' } },
-      { mid: 'm-3', collection: 'panels', id: 'p-1', op: 'upsert', baseVersion: null, data: { name: 'Panel A' } },
-      { mid: 'm-4', collection: 'drawings', id: 'd-1', op: 'delete', baseVersion: 1, data: {} },
+      { mid: 'm-3', collection: 'jobs', id: 'j-1', op: 'upsert', baseVersion: null, data: { name: 'Synced job' } },
+      { mid: 'm-4', collection: 'drawings', id: 'd-5', op: 'upsert', baseVersion: null, data: { name: 'Roof' } },
     ] } });
     assert.equal(r.status, 200);
-    assert.deepEqual(r.body.results.map((x) => x.status), ['rejected', 'ok', 'rejected', 'rejected']);
-    assert.equal(r.body.results[0].error.code, 'feature_not_in_plan');
-    assert.equal(r.body.results[2].error.details.feature, 'panels');
+    assert.deepEqual(r.body.results.map((x) => x.status), ['ok', 'rejected', 'rejected', 'ok']);
+    assert.equal(r.body.results[1].error.code, 'feature_not_in_plan');
+    assert.equal(r.body.results[1].error.details.feature, 'clients');
+    assert.equal(r.body.results[2].error.details.feature, 'jobs');
     const pull = await call(app, { url: '/api/v1/sync/pull?since=0', token: A.token });
-    assert.ok(pull.body.changes.some((c) => c.collection === 'drawings' && c.id === 'd-1'));
+    assert.ok(pull.body.changes.some((c) => c.collection === 'drawings' && c.id === 'd-3'));
   });
 
   test('HQ overrides win over the plan, both ways', async () => {
-    await setPlan(A.tenantId, { overrides: { drawings: true } });
-    assert.equal((await call(app, { method: 'POST', url: '/api/v1/drawings', token: A.token, body: { id: 'd-4', name: 'Garage' } })).status, 201);
+    await setPlan(A.tenantId, { overrides: { clients: true } });
+    assert.equal((await call(app, { method: 'POST', url: '/api/v1/clients', token: A.token, body: { name: 'Unlocked client' } })).status, 201);
     await setPlan(A.tenantId, { plan: 'business', overrides: { panels: false } });
     assert.equal((await call(app, { method: 'POST', url: '/api/v1/panels', token: A.token, body: { name: 'Panel B' } })).body.error.code, 'feature_not_in_plan');
     await setPlan(A.tenantId, { plan: 'trial', overrides: {} });
@@ -99,9 +102,9 @@ describe('plan entitlements on the API', { skip }, () => {
     await setPlan(A.tenantId, { plan: 'trial' });
   });
 
-  test('an expired trial drops to Starter', async () => {
+  test('an expired trial drops to Live Wire', async () => {
     await setPlan(B.tenantId, { trialEndsAt: new Date(Date.now() - 1000).toISOString() });
-    assert.equal((await call(app, { method: 'POST', url: '/api/v1/drawings', token: B.token, body: { name: 'x' } })).body.error.code, 'feature_not_in_plan');
+    assert.equal((await call(app, { method: 'POST', url: '/api/v1/clients', token: B.token, body: { name: 'x' } })).body.error.code, 'feature_not_in_plan');
     await setPlan(B.tenantId, { trialEndsAt: null });
   });
 });
@@ -122,9 +125,9 @@ describe('billing for owners and admins', { skip }, () => {
   });
 
   test('checkout creates one customer and a session with extra users beyond the plan', async () => {
-    for (let i = 0; i < 2; i++) await addMember(t, app, A.tenantId, { role: 'electrician', signIn: false });
-    // 4 members on Starter (2 included) -> 2 extra users
-    const r = await call(app, { method: 'POST', url: '/api/v1/billing/checkout', token: A.token, body: { plan: 'starter' } });
+    for (let i = 0; i < 5; i++) await addMember(t, app, A.tenantId, { role: 'electrician', signIn: false });
+    // owner + office + 5 electricians = 7 members on Full Power (5 included) -> 2 extra users
+    const r = await call(app, { method: 'POST', url: '/api/v1/billing/checkout', token: A.token, body: { plan: 'business' } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.match(r.body.url, /^https:\/\/checkout\.stripe\.test\//);
     const s = stripe.state.checkoutSessions.at(-1);
@@ -133,7 +136,9 @@ describe('billing for owners and admins', { skip }, () => {
     assert.equal(s.line_items.length, 2);
     assert.equal(s.line_items[1].quantity, 2);
     assert.match(s.success_url, /#\/billing\?checkout=done$/);
+    // Fully Loaded has a fixed seat count, so no extra-user line item.
     await call(app, { method: 'POST', url: '/api/v1/billing/checkout', token: A.token, body: { plan: 'pro' } });
+    assert.equal(stripe.state.checkoutSessions.at(-1).line_items.length, 1);
     assert.equal(stripe.state.customers.size, 1, 'the customer is created once');
     assert.equal((await call(app, { method: 'POST', url: '/api/v1/billing/checkout', token: A.token, body: { plan: 'enterprise' } })).status, 400);
     const ev = await t.superPool.query("SELECT 1 FROM audit_events WHERE tenant_id = $1 AND action = 'billing.checkout_started'", [A.tenantId]);
@@ -192,17 +197,17 @@ describe('platform Stripe webhook', { skip }, () => {
   });
 
   test('seats: extra users beyond the plan are billed', async () => {
-    // Business includes 25; move to Starter (2 included) with 4 members -> 2 extra.
-    await call(app, { method: 'POST', url: '/api/v1/billing/checkout', token: A.token, body: { plan: 'starter' } });
+    // Full Power includes 5; A has 7 members -> 2 extra.
+    await call(app, { method: 'POST', url: '/api/v1/billing/checkout', token: A.token, body: { plan: 'business' } });
     const live = stripe.state.subscriptions.get(sub.id);
     const extra = live.items.data.find((i) => i.price.lookup_key === 'fishtape_extra_user_monthly_cad');
     assert.equal(extra.quantity, 2);
     await addMember(t, app, A.tenantId, { role: 'apprentice', signIn: false });
     const s = await call(app, { method: 'POST', url: '/api/v1/billing/seats/sync', token: A.token });
-    assert.deepEqual({ seats: s.body.seats, extra: s.body.extra, changed: s.body.changed }, { seats: 5, extra: 3, changed: true });
+    assert.deepEqual({ seats: s.body.seats, extra: s.body.extra, changed: s.body.changed }, { seats: 8, extra: 3, changed: true });
     const info = await call(app, { url: '/api/v1/billing', token: A.token });
-    assert.deepEqual(info.body.seats, { used: 5, included: 2, extra: 3, billed: 5 });
-    assert.equal(info.body.monthlyCents, 4900 + 3 * 1500);
+    assert.deepEqual(info.body.seats, { used: 8, included: 5, extra: 3, billed: 8 });
+    assert.equal(info.body.monthlyCents, 34900 + 3 * 4700);
   });
 
   test('a failed payment starts the grace period; after it the company falls back; a payment restores it', async () => {
@@ -214,17 +219,17 @@ describe('platform Stripe webhook', { skip }, () => {
     assert.equal(row.billing_status, 'past_due');
     const days = (new Date(row.grace_ends_at) - Date.now()) / 86_400_000;
     assert.ok(days > 6.9 && days < 7.1, `grace ${days} days`);
-    assert.equal((await call(app, { method: 'POST', url: '/api/v1/drawings', token: A.token, body: { name: 'During grace' } })).status, 201, 'features stay on during grace');
+    assert.equal((await call(app, { method: 'POST', url: '/api/v1/clients', token: A.token, body: { name: 'During grace' } })).status, 201, 'features stay on during grace');
 
     await t.superPool.query("UPDATE tenants SET grace_ends_at = now() - interval '1 minute' WHERE id = $1", [A.tenantId]);
-    assert.equal((await call(app, { method: 'POST', url: '/api/v1/drawings', token: A.token, body: { name: 'After grace' } })).body.error.code, 'feature_not_in_plan');
+    assert.equal((await call(app, { method: 'POST', url: '/api/v1/clients', token: A.token, body: { name: 'After grace' } })).body.error.code, 'feature_not_in_plan');
     assert.equal((await call(app, { url: '/api/v1/billing', token: A.token })).body.plan, 'starter');
 
     await deliver('invoice.paid', { id: 'in_1', object: 'invoice', customer: cust, amount_paid: 12900, currency: 'cad' });
     row = await tenant(A.tenantId);
     assert.equal(row.billing_status, 'active');
     assert.equal(row.grace_ends_at, null);
-    assert.equal((await call(app, { method: 'POST', url: '/api/v1/drawings', token: A.token, body: { name: 'Paid again' } })).status, 201);
+    assert.equal((await call(app, { method: 'POST', url: '/api/v1/clients', token: A.token, body: { name: 'Paid again' } })).status, 201);
     const log = await call(app, { url: '/api/v1/auditLog?action=billing.payment_failed', token: A.token });
     assert.equal(log.body.data.length, 1, 'the owner sees it in their log');
   });

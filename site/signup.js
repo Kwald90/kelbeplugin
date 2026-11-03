@@ -2,7 +2,7 @@
 // Checkout URL (14-day trial + $1 deposit charged now). Stripe sends people back here with
 // ?done=1 (check your email) or ?cancelled=1 (nothing charged; the form is filled in again).
 // Tiers and prices come from the app's plans.js, the trial length and deposit from the API.
-import { PLANS, EXTRA_USER_CENTS, CURRENCY, monthlyCents } from '/js/plans.js';
+import { PLANS, CURRENCY, priceCents, periodOf, extraUserCents } from '/js/plans.js';
 import { BRAND } from '/js/brand.js';
 import { wireAppLinks } from '/site/app-link.js';
 
@@ -71,8 +71,8 @@ function startForm() {
     if (id === wanted) input.checked = true;
     return el('label', { class: 'su-plan', for: `su-plan-${id}` }, input,
       el('span', { class: 'su-plan-body' },
-        el('span', { class: 'su-plan-top' }, el('strong', {}, p.name), el('span', { class: 'su-plan-price' }, money(p.priceCents), el('small', {}, '/month'))),
-        el('span', { class: 'su-plan-meta' }, `${p.includedUsers} users included · ${p.blurb}`)));
+        el('span', { class: 'su-plan-top' }, el('strong', {}, p.name), el('span', { class: 'su-plan-price' }, money(p.priceCents), el('small', {}, periodOf(id) === 'year' ? '/year' : '/month'))),
+        el('span', { class: 'su-plan-meta' }, `${p.includedUsers} user${p.includedUsers === 1 ? '' : 's'} included · ${p.blurb}`)));
   }));
   const planValue = () => form.querySelector('input[name="plan"]:checked')?.value || '';
 
@@ -80,10 +80,14 @@ function startForm() {
     const plan = planValue() || 'pro';
     const p = PLANS[plan];
     const users = Math.max(1, Math.min(500, Number.parseInt(fields.users.value, 10) || 1));
-    const extra = Math.max(0, users - p.includedUsers);
+    const seat = extraUserCents(plan);
+    const extra = seat ? Math.max(0, users - p.includedUsers) : 0;
+    const unit = periodOf(plan) === 'year' ? '/year' : '/month';
     for (const n of document.querySelectorAll('[data-plan-name]')) n.textContent = p.name;
-    $('su-price').textContent = `${money(monthlyCents(plan, users))}/month${extra ? ` (${p.name} plus ${extra} extra user${extra === 1 ? '' : 's'} at ${money(EXTRA_USER_CENTS)})` : ''}`;
-    $('su-users-hint').textContent = `${p.name} includes ${p.includedUsers} users; more are ${money(EXTRA_USER_CENTS)}/month each. Office and field staff together; you can change this any time.`;
+    $('su-price').textContent = `${money(priceCents(plan, users))}${unit}${extra ? ` (${p.name} plus ${extra} extra user${extra === 1 ? '' : 's'} at ${money(seat)})` : ''}`;
+    $('su-users-hint').textContent = seat
+      ? `${p.name} includes ${p.includedUsers} users; more are ${money(seat)}/month each. Office and field staff together; you can change this any time.`
+      : `${p.name} includes ${p.includedUsers} user${p.includedUsers === 1 ? '' : 's'}. Need more seats? ${PLANS.business.name} adds them at ${money(extraUserCents('business'))}/month each.`;
   }
   function drawOptions() {
     for (const n of document.querySelectorAll('[data-trial-days]')) n.textContent = String(opts.trialDays);

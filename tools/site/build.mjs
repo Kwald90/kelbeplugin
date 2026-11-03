@@ -46,7 +46,8 @@ function pricingCards() {
     const p = PLANS[id];
     const contact = p.contactSales || p.priceCents == null;
     const feats = added(id).filter((f) => FEATURE_LABELS[f]).slice(0, 7);
-    return str(html`<article class="site-plan"><h2>${p.name}</h2><p class="site-price">${contact ? 'Custom' : html`${money(p.priceCents)}<small> /month</small>`}</p><p class="site-muted">${p.blurb}</p><p class="site-users">${p.includedUsers == null ? 'Users to suit you' : `${p.includedUsers} users included`}</p><ul>${i > 0 ? html`<li class="site-muted">Everything in ${PLANS[PLAN_IDS[i - 1]].name}, plus:</li>` : ''}${feats.map((f) => html`<li>${FEATURE_LABELS[f]}</li>`)}</ul>${contact ? html`<a class="site-btn ghost" href="#talk">Let's talk</a>` : html`<a class="site-btn" href="/signup?plan=${id}">Start a free trial</a>`}</article>`);
+    const users = p.includedUsers == null ? 'Users to suit you' : `${p.includedUsers} user${p.includedUsers === 1 ? '' : 's'} included${p.extraUserCents ? `, then ${money(p.extraUserCents)}/user` : ''}`;
+    return str(html`<article class="site-plan"><h2>${p.name}</h2><p class="site-price">${contact ? 'Custom' : html`${money(p.priceCents)}<small> ${p.period === 'year' ? '/year' : '/month'}</small>`}</p><p class="site-muted">${p.blurb}</p><p class="site-users">${users}</p><ul>${i > 0 ? html`<li class="site-muted">Everything in ${PLANS[PLAN_IDS[i - 1]].name}, plus:</li>` : ''}${feats.map((f) => html`<li>${FEATURE_LABELS[f]}</li>`)}</ul>${contact ? html`<a class="site-btn ghost" href="#talk">Let's talk</a>` : html`<a class="site-btn" href="/signup?plan=${id}">Start a free trial</a>`}</article>`);
   }).join('\n      ');
 }
 
@@ -66,7 +67,7 @@ function teaserCards() {
   return PLAN_IDS.map((id) => {
     const p = PLANS[id];
     const contact = p.contactSales || p.priceCents == null;
-    return str(html`<article class="site-plan"><h3>${p.name}</h3><p class="site-price">${contact ? 'Custom' : html`${money(p.priceCents)}<small> /month</small>`}</p><p class="site-muted">${p.blurb}</p><p class="site-users">${p.includedUsers == null ? 'Users to suit you' : `${p.includedUsers} users included`}</p><a class="${contact ? 'site-btn ghost' : 'site-btn'}" href="${contact ? '/pricing#talk' : `/signup?plan=${id}`}">${contact ? "Let's talk" : 'Start free trial'}</a></article>`);
+    return str(html`<article class="site-plan"><h3>${p.name}</h3><p class="site-price">${contact ? 'Custom' : html`${money(p.priceCents)}<small> ${p.period === 'year' ? '/year' : '/month'}</small>`}</p><p class="site-muted">${p.blurb}</p><p class="site-users">${p.includedUsers == null ? 'Users to suit you' : `${p.includedUsers} user${p.includedUsers === 1 ? '' : 's'} included`}</p><a class="${contact ? 'site-btn ghost' : 'site-btn'}" href="${contact ? '/pricing#talk' : `/signup?plan=${id}`}">${contact ? "Let's talk" : 'Start free trial'}</a></article>`);
   }).join('\n          ');
 }
 
@@ -99,7 +100,7 @@ function handWritten(page, source) {
   s = fillMarker(s, 'plans', `      ${pricingCards()}`);
   s = fillMarker(s, 'feature-table', featureTable());
   s = fillMarker(s, 'teaser', `          ${teaserCards()}`);
-  s = fillMarker(s, 'extra-users', `      More users than your plan includes? Each extra user is ${money(plans.EXTRA_USER_CENTS)}/month. Taxes are added at checkout for your province.`);
+  s = fillMarker(s, 'extra-users', `      ${plans.PLANS.business.name} includes ${plans.PLANS.business.includedUsers} users; add as many more as you need at ${money(plans.EXTRA_USER_CENTS)}/user per month. Taxes are added at checkout for your province.`);
   return s;
 }
 

@@ -60,7 +60,7 @@ document.getElementById('land-plans').replaceChildren(...PLAN_IDS.map((id) => {
   const contact = p.contactSales || p.priceCents == null;
   const card = el('article', 'site-plan');
   const price = el('p', 'site-price', contact ? 'Custom' : money(p.priceCents));
-  if (!contact) price.append(el('small', null, ' /month'));
+  if (!contact) price.append(el('small', null, p.period === 'year' ? ' /year' : ' /month'));
   const cta = el('a', contact ? 'site-btn ghost' : 'site-btn', contact ? "Let's talk" : 'Start free trial');
   cta.href = localHref(contact ? '/pricing#talk' : `/signup?plan=${encodeURIComponent(id)}`, location.hostname);
   card.append(el('h3', null, p.name), price, el('p', 'site-muted', p.blurb),

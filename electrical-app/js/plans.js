@@ -1,45 +1,72 @@
 // Plans and what each one unlocks. Shared by the PWA (locked modules, upgrade prompts),
-// the server (entitlement checks on the API, sync, AI and integrations) and HQ.
-// Prices are placeholders in CAD cents until Kelvin sets them; HQ can override per company.
+// the server (entitlement checks on the API, sync and integrations) and HQ.
+// One source of truth for names, prices, billing period and seats; HQ can override per company.
+//
+// Three self-serve tiers (internal ids kept stable for the database and Stripe):
+//   starter  -> Live Wire   $40/year   calculators and concept drawings, solo
+//   pro      -> Fully Loaded $149/month the whole app, CRM and a lead-capture website (1-2 users)
+//   business -> Full Power   $349/month everything, 5 users included, extra seats $47/user/month
+// 'enterprise' is retired as a self-serve tier (Full Power's seat slider covers large crews) but
+// stays a valid stored value for any older company and for HQ.
 
-export const PLAN_IDS = ['starter', 'pro', 'business', 'enterprise'];
+export const PLAN_IDS = ['starter', 'pro', 'business'];
 
 export const PLANS = {
-  starter: { name: 'Starter', priceCents: 4900, includedUsers: 2, blurb: 'For a solo electrician or a two-person crew' },
-  pro: { name: 'Pro', priceCents: 12900, includedUsers: 10, blurb: 'Plans, takeoff and permits for a growing crew' },
-  business: { name: 'Business', priceCents: 27900, includedUsers: 25, blurb: 'AI, automation and integrations for a busy shop' },
-  enterprise: { name: 'Enterprise', priceCents: null, includedUsers: null, contactSales: true, blurb: "Custom limits, SSO and setup done for you. Let's talk." },
+  starter: {
+    name: 'Live Wire', priceCents: 4000, period: 'year',
+    includedUsers: 1, extraUserCents: 0,
+    blurb: 'Calculators and concept drawings for the solo sparky',
+  },
+  pro: {
+    name: 'Fully Loaded', priceCents: 14900, period: 'month',
+    includedUsers: 2, extraUserCents: 0,
+    blurb: 'The whole app, CRM and a lead-capture website for a small shop',
+  },
+  business: {
+    name: 'Full Power', priceCents: 34900, period: 'month',
+    includedUsers: 5, extraUserCents: 4700,
+    blurb: 'Everything, with seats you add as the crew grows',
+  },
 };
 
-export const EXTRA_USER_CENTS = 1500;
+// Kept for callers that import a single extra-seat price: the only tier with paid extra seats.
+export const EXTRA_USER_CENTS = PLANS.business.extraUserCents;
 export const CURRENCY = 'CAD';
+
+/** Billing period for a plan: 'year' or 'month'. */
+export const periodOf = (planId) => PLANS[planId]?.period || 'month';
+
+/** Extra-seat price for a plan (0 for tiers with a fixed seat count). */
+export const extraUserCents = (planId) => PLANS[planId]?.extraUserCents ?? 0;
 
 /** Lowest plan that includes each module (by module id) or feature key. Anything missing is in every plan. */
 export const FEATURE_PLAN = {
-  // modules
-  dashboard: 'starter', clients: 'starter', leads: 'starter', jobs: 'starter', schedule: 'starter',
-  estimates: 'starter', invoices: 'starter', employees: 'starter', time: 'starter', sops: 'starter',
-  calcs: 'starter', bending: 'starter', wireruns: 'starter', settings: 'starter', integrations: 'starter', billing: 'starter', help: 'starter',
-  drawings: 'pro', panels: 'pro', inventory: 'pro', compliance: 'pro', sequences: 'pro', security: 'pro',
-  assistant: 'business',
-  onboarding: 'starter', import: 'starter', notifications: 'starter', developer: 'business',
-  // Safety (FLHAs, toolbox talks, incidents, inspections) is in every plan.
-  safety: 'starter',
-  // work plans: every worker's "My day" is in every plan; planning, meetings and KPIs are Pro
-  today: 'starter', workplan: 'pro', kpis: 'pro',
-  // material requests from the crew, sent to the office once a day
-  materials: 'starter',
-  // QuickBooks Online two-way sync, and supplier bills, receipts and purchase orders
-  quickbooks: 'pro', purchasing: 'pro',
-  // Release 1 (docs/releases/r1-get-paid.md 2.11), generous per Kelvin: the books (period lock,
-  // payroll runs, rules table, cost codes), signed field tickets and job costing are in every plan;
-  // the WIP report and the month-end cutoff export are Pro.
-  books: 'starter', tickets: 'starter', reports: 'starter', 'reports.wip': 'pro', monthend: 'pro',
+  // Live Wire (starter): calculators and concept drawings, plus the shell every account needs.
+  calcs: 'starter', bending: 'starter', wireruns: 'starter', drawings: 'starter', panels: 'starter',
+  dashboard: 'starter', settings: 'starter', billing: 'starter', help: 'starter',
+  onboarding: 'starter', import: 'starter', notifications: 'starter',
+  today: 'starter',
+
+  // Fully Loaded (pro): the whole business app, CRM and a lead-capture website.
+  clients: 'pro', leads: 'pro', jobs: 'pro', schedule: 'pro', estimates: 'pro', invoices: 'pro',
+  employees: 'pro', time: 'pro', sops: 'pro', safety: 'pro', materials: 'pro',
+  inventory: 'pro', compliance: 'pro', sequences: 'pro', security: 'pro', integrations: 'pro',
+  workplan: 'pro', kpis: 'pro', quickbooks: 'pro', purchasing: 'pro',
+  books: 'pro', tickets: 'pro', reports: 'pro', 'reports.wip': 'pro', monthend: 'pro',
   // features inside modules
-  'drawings.rooms': 'pro', 'wireruns.trace': 'pro', portal: 'pro', 'payments.online': 'pro', 'integrations.email': 'pro',
-  'ai.assistant': 'business', 'ai.cec': 'business', 'ai.background': 'business', api: 'business', mcp: 'business',
-  'integrations.sms': 'business', 'integrations.facebook': 'business', 'locations.multi': 'business',
-  sso: 'enterprise', 'setup.service': 'enterprise',
+  'drawings.rooms': 'pro', 'wireruns.trace': 'pro', portal: 'pro', leadsite: 'pro',
+  'payments.online': 'pro', 'integrations.email': 'pro',
+
+  // Full Power (business): scale and integrations for a growing crew.
+  api: 'business', 'integrations.sms': 'business', 'integrations.facebook': 'business',
+  'locations.multi': 'business', developer: 'business',
+  sso: 'business', 'setup.service': 'business',
+  // Hidden for now (lib/modules.js), kept so re-enabling is one edit; no label, so it never
+  // shows on the pricing page. See the AI-assistant switch in modules/index.js.
+  assistant: 'business',
+  // AI is off the pricing surface (no labels in billing.js, so it shows nowhere), but the keys
+  // stay so the server's AI/MCP routes keep their gate instead of becoming open to every plan.
+  'ai.assistant': 'business', 'ai.cec': 'business', 'ai.background': 'business', mcp: 'business',
 };
 
 export const planRank = (id) => PLAN_IDS.indexOf(id);
@@ -64,9 +91,19 @@ export function entitlements(planId, overrides = {}) {
   return Object.keys(FEATURE_PLAN).filter((f) => hasFeature(planId, f, overrides));
 }
 
-/** Monthly price in cents for a plan and head count, or null for Enterprise. */
-export function monthlyCents(planId, users = 1) {
+/** Price in cents for a plan's own billing period and head count, or null if the plan is unknown. */
+export function priceCents(planId, users = 1) {
   const p = PLANS[planId];
   if (!p || p.priceCents == null) return null;
-  return p.priceCents + Math.max(0, users - p.includedUsers) * EXTRA_USER_CENTS;
+  return p.priceCents + Math.max(0, users - (p.includedUsers ?? 0)) * (p.extraUserCents ?? 0);
+}
+
+/**
+ * Monthly-equivalent price in cents (a yearly plan divided by twelve), for MRR and comparisons.
+ * Use priceCents + periodOf for anything a customer sees.
+ */
+export function monthlyCents(planId, users = 1) {
+  const c = priceCents(planId, users);
+  if (c == null) return null;
+  return periodOf(planId) === 'year' ? Math.round(c / 12) : c;
 }

@@ -83,13 +83,14 @@ export function plansWith(feature, { PLANS, PLAN_IDS, FEATURE_PLAN }) {
   return PLAN_IDS.slice(from).map((id) => PLANS[id].name);
 }
 
-/** "$129/month" from plans.js, or "Custom" for Enterprise. */
+/** "$149/month" or "$40/year" from plans.js, or "Custom". */
 export function planPrice(id, { PLANS, CURRENCY }) {
   const p = PLANS[id];
   if (!p) return '';
   if (p.contactSales || p.priceCents == null) return 'Custom';
   const cents = p.priceCents;
-  return `${(cents / 100).toLocaleString('en-CA', { style: 'currency', currency: CURRENCY, maximumFractionDigits: cents % 100 ? 2 : 0 })}/month`;
+  const amount = (cents / 100).toLocaleString('en-CA', { style: 'currency', currency: CURRENCY, maximumFractionDigits: cents % 100 ? 2 : 0 });
+  return `${amount}/${p.period === 'year' ? 'year' : 'month'}`;
 }
 
 /** Services a "Talk to us" button can name (server/src/routes/hq-leads.js keeps the same list). */

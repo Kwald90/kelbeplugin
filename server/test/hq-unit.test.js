@@ -30,10 +30,10 @@ test('every collection maps to modules that exist in plans.js', () => {
 
 test('collection writes follow the plan, overrides and grace period', () => {
   const starter = { plan: 'starter', plan_overrides: {} };
-  assert.doesNotThrow(() => assertCollectionWritable(starter, 'clients', { kind: 'session' }));
+  assert.doesNotThrow(() => assertCollectionWritable(starter, 'drawings', { kind: 'session' }));
   assert.doesNotThrow(() => assertCollectionWritable(starter, 'settings', { kind: 'session' }));
   assert.doesNotThrow(() => assertCollectionWritable(starter, 'auditLog', { kind: 'session' }));
-  assert.throws(() => assertCollectionWritable(starter, 'drawings', { kind: 'session' }), (e) => e.code === 'feature_not_in_plan' && e.details.plan === 'pro');
+  assert.throws(() => assertCollectionWritable(starter, 'clients', { kind: 'session' }), (e) => e.code === 'feature_not_in_plan' && e.details.plan === 'pro');
   assert.doesNotThrow(() => assertCollectionWritable({ plan: 'starter', plan_overrides: { security: true } }, 'checklists', {}), 'either module unlocks a shared collection');
   assert.throws(() => assertCollectionWritable({ plan: 'pro', plan_overrides: {} }, 'clients', { kind: 'api_key' }), (e) => e.details.feature === 'api');
   assert.throws(() => assertCollectionWritable(null, 'clients', {}), (e) => e.code === 'feature_not_in_plan');
@@ -265,19 +265,20 @@ test('environments: parsed from env, fetched with a timeout, failures reported',
 });
 
 test('billing helpers: catalogue, seats, plan from a subscription, MRR', () => {
-  assert.deepEqual(catalog().map((c) => c.lookupKey), ['fishtape_starter_monthly_cad', 'fishtape_pro_monthly_cad', 'fishtape_business_monthly_cad', 'fishtape_extra_user_monthly_cad']);
-  assert.equal(extraSeats('starter', 5), 3);
+  assert.deepEqual(catalog().map((c) => c.lookupKey), ['fishtape_starter_yearly_cad', 'fishtape_pro_monthly_cad', 'fishtape_business_monthly_cad', 'fishtape_extra_user_monthly_cad']);
+  assert.equal(extraSeats('business', 8), 3);
   assert.equal(extraSeats('pro', 5), 0);
+  assert.equal(extraSeats('starter', 5), 0);
   assert.equal(extraSeats('enterprise', 500), 0);
   assert.equal(planFromSubscription({ items: { data: [{ price: { lookup_key: 'fishtape_extra_user_monthly_cad' } }, { price: { lookup_key: 'fishtape_pro_monthly_cad' } }] } }), 'pro');
   assert.equal(planFromSubscription({ items: { data: [] }, metadata: { plan: 'business' } }), 'business');
   assert.equal(planFromSubscription({ items: { data: [] }, metadata: { plan: 'free-forever' } }), null);
   assert.equal(estimateMrrCents([
-    { billing_status: 'active', billing_plan: 'starter', billed_seats: 5, plan: 'starter' },
+    { billing_status: 'active', billing_plan: 'business', billed_seats: 8, plan: 'business' },
     { billing_status: 'past_due', billing_plan: 'pro', billed_seats: 10, plan: 'pro' },
     { billing_status: 'canceled', billing_plan: null, plan: 'starter' },
     { billing_status: 'none', plan: 'trial' },
-  ]), 4900 + 3 * 1500 + 12900);
+  ]), (34900 + 3 * 4700) + 14900);
 });
 
 test('lead limiter: per key and global, sliding hour', () => {

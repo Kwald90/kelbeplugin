@@ -38,7 +38,8 @@ describe('safety contracts (no database)', () => {
     assert.ok(!canWrite(p('apprentice'), 'jobSafety'), 'emergency info is manager-written');
     assert.ok(!canWrite(p('electrician'), 'siteOrientations'));
     for (const c of SAFETY) assert.deepEqual(COLLECTION_FEATURES[c], ['safety']);
-    assert.ok(hasFeature('starter', 'safety'));
+    assert.ok(!hasFeature('starter', 'safety'), 'safety is part of the full app (Fully Loaded)');
+    assert.ok(hasFeature('pro', 'safety'));
   });
 
   test('non-managers: own FLHA, own signature, own report, own action', () => {

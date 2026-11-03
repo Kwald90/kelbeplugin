@@ -45,14 +45,14 @@ test('links: clean on the marketing hosts, /site/*.html elsewhere, the apex from
 });
 
 test('plan labels come from plans.js', () => {
-  assert.equal(planLabel('calcs', plans), 'Every plan');
-  assert.equal(planLabel('drawings', plans), `${plans.PLANS.pro.name} and up`);
-  assert.equal(planLabel('ai.assistant', plans), `${plans.PLANS.business.name} and up`);
-  assert.equal(planLabel('sso', plans), plans.PLANS.enterprise.name);
+  assert.equal(planLabel('calcs', plans), 'Every plan'); // Live Wire has the calculators and drawings
+  assert.equal(planLabel('drawings', plans), 'Every plan');
+  assert.equal(planLabel('clients', plans), `${plans.PLANS.pro.name} and up`);
+  assert.equal(planLabel('sso', plans), plans.PLANS.business.name); // top tier: just the name
   assert.equal(planLabel('not-a-feature', plans), 'Every plan');
-  assert.deepEqual(plansWith('drawings', plans), ['pro', 'business', 'enterprise'].map((id) => plans.PLANS[id].name));
-  assert.equal(planPrice('enterprise', plans), 'Custom');
-  assert.match(planPrice('starter', plans), /^\$\d[\d,]*(\.\d\d)?\/month$/);
+  assert.deepEqual(plansWith('clients', plans), ['pro', 'business'].map((id) => plans.PLANS[id].name));
+  assert.match(planPrice('starter', plans), /^\$\d[\d,]*(\.\d\d)?\/year$/);
+  assert.match(planPrice('pro', plans), /^\$\d[\d,]*(\.\d\d)?\/month$/);
   // Every feature page's plan key is a real plans.js feature (or a module every plan has).
   for (const f of FEATURES) for (const [key] of f.plans) assert.ok(key in plans.FEATURE_PLAN, `${f.slug}: ${key}`);
 });
@@ -125,7 +125,7 @@ test('the generated site is up to date (run node tools/site/build.mjs)', () => {
 });
 
 test('every page: one h1, title, description, canonical and Open Graph on fishtapehq.com, shared header and footer', () => {
-  assert.ok(pages.length >= 35);
+  assert.ok(pages.length >= 34);
   for (const { file, path, content } of pages) {
     const h1s = [...content.matchAll(/<h1\b/g)].length;
     assert.ok(file === 'signup.html' ? h1s === 2 : h1s === 1, `${file}: ${h1s} h1`); // signup: the form's and the hidden "check your email"

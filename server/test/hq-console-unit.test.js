@@ -27,10 +27,10 @@ function scenario() {
   ];
   const o = { now };
   const subscriptions = [
-    sub('sub_a', 'cus_a', 'active', [subItem('fishtape_starter_monthly_cad', 4900), subItem('fishtape_extra_user_monthly_cad', 1500, 2)], { ...o, periodEndInDays: 20 }),
+    sub('sub_a', 'cus_a', 'active', [subItem('fishtape_starter_yearly_cad', 4900), subItem('fishtape_extra_user_monthly_cad', 1500, 2)], { ...o, periodEndInDays: 20 }),
     sub('sub_d', 'cus_d', 'active', [subItem('fishtape_pro_monthly_cad', 12900)], { ...o, periodEndInDays: 5 }),
     { ...sub('sub_b', 'cus_b', 'trialing', [subItem('fishtape_business_monthly_cad', 27900)], { ...o, periodEndInDays: 3 }), trial_end: Math.floor(at(3) / 1000) },
-    sub('sub_x', 'cus_x', 'canceled', [subItem('fishtape_starter_monthly_cad', 4900)], { ...o, createdDaysAgo: 100, canceledDaysAgo: 5 }),
+    sub('sub_x', 'cus_x', 'canceled', [subItem('fishtape_starter_yearly_cad', 4900)], { ...o, createdDaysAgo: 100, canceledDaysAgo: 5 }),
     sub('sub_e', 'cus_e', 'active', [subItem('fishtape_pro_yearly_cad', 120000, 1, 'year')], { ...o, periodEndInDays: 200 }),
   ];
   subscriptions[3].metadata = { tenant_id: 'X' };
@@ -151,8 +151,8 @@ test('announcement targeting by plan, trial and province', () => {
   assert.equal(matchesAudience({ target_plans: [], target_provinces: [] }, alpha), true);
   assert.equal(matchesAudience({ target_plans: ['pro'], target_provinces: [] }, alpha), true);
   assert.equal(matchesAudience({ target_plans: ['starter'], target_provinces: [] }, alpha), false);
-  assert.equal(matchesAudience({ target_plans: ['trial'], target_provinces: [] }, trial), true);
-  assert.equal(matchesAudience({ target_plans: ['business'], target_provinces: [] }, trial), true, 'a running trial has Business');
+  assert.equal(matchesAudience({ target_plans: ['trial'], target_provinces: [] }, trial, NOW), true);
+  assert.equal(matchesAudience({ target_plans: ['business'], target_provinces: [] }, trial, NOW), true, 'a running trial has Business');
   assert.equal(matchesAudience({ target_plans: ['trial'], target_provinces: [] }, selfServeTrial), true);
   assert.equal(matchesAudience({ target_plans: [], target_provinces: ['ON', 'MB'] }, alpha), true);
   assert.equal(matchesAudience({ target_plans: ['pro'], target_provinces: ['BC'] }, alpha), false);

@@ -39,7 +39,7 @@ before(async () => {
   stripe = financeStripe({
     account: { id: 'acct_1TCB', settings: { dashboard: { display_name: 'True Collar Built' } }, country: 'CA', default_currency: 'cad', charges_enabled: true, payouts_enabled: true },
     prices: [
-      { id: 'price_s', lookup_key: 'fishtape_starter_monthly_cad', unit_amount: 4900, currency: 'cad', active: true, recurring: { interval: 'month' } },
+      { id: 'price_s', lookup_key: 'fishtape_starter_yearly_cad', unit_amount: 4000, currency: 'cad', active: true, recurring: { interval: 'year' } },
       { id: 'price_p', lookup_key: 'fishtape_pro_monthly_cad', unit_amount: 9999, currency: 'cad', active: true, recurring: { interval: 'month' } },
     ],
     webhookEndpoints: [{ id: 'we_1', url: 'https://app.fishtape.test/api/v1/webhooks/platform-stripe', status: 'enabled', enabled_events: ['invoice.paid', 'invoice.payment_failed'] }],
@@ -48,9 +48,11 @@ before(async () => {
       sub('sub_tcb', 'cus_tcb', 'active', [subItem('tcb_maintenance_plan', 99900)], { now }),
     ],
     invoices: [
-      invoice('in_alpha_paid', 'cus_alpha', 'paid', { amountPaid: 12900, daysAgo: 3, paymentIntent: 'pi_alpha', now }),
+      // daysAgo 0 so both land in the current calendar month regardless of the day the suite runs
+      // (a few-days-ago offset straddles the month boundary in the first days of a month).
+      invoice('in_alpha_paid', 'cus_alpha', 'paid', { amountPaid: 12900, daysAgo: 0, paymentIntent: 'pi_alpha', now }),
       invoice('in_alpha_open', 'cus_alpha', 'open', { amountDue: 12900, amountRemaining: 12900, attempts: 1, daysAgo: 1, now }),
-      invoice('in_bravo_paid', 'cus_bravo', 'paid', { amountPaid: 4900, daysAgo: 2, now }),
+      invoice('in_bravo_paid', 'cus_bravo', 'paid', { amountPaid: 4900, daysAgo: 0, now }),
       invoice('in_tcb_paid', 'cus_tcb', 'paid', { amountPaid: 99900, daysAgo: 2, paymentIntent: 'pi_tcb', now }),
     ],
     refunds: [],
@@ -241,7 +243,7 @@ describe('settings and legal', { skip }, () => {
   test('Stripe check names the account and finds price and webhook problems', async () => {
     const r = await hq(staff.token, '/api/hq/settings/stripe');
     assert.equal(r.body.account.name, 'True Collar Built');
-    assert.equal(r.body.prices.find((p) => p.key === 'fishtape_starter_monthly_cad').ok, true);
+    assert.equal(r.body.prices.find((p) => p.key === 'fishtape_starter_yearly_cad').ok, true);
     assert.equal(r.body.prices.find((p) => p.key === 'fishtape_pro_monthly_cad').ok, false, 'amount differs from plans.js');
     assert.equal(r.body.prices.find((p) => p.key === 'fishtape_business_monthly_cad').found, false);
     assert.equal(r.body.webhook.endpoint.status, 'enabled');

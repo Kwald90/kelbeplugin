@@ -114,7 +114,8 @@ describe('reports', { skip }, () => {
       const gated = await get(office.token, '/api/v1/reports/wip?asOf=2026-09-30');
       assert.equal(gated.status, 403);
       assert.equal(gated.body.error.code, 'feature_not_in_plan');
-      assert.equal((await get(office.token, '/api/v1/reports/job-profit?to=2026-09-30')).status, 200, 'job profit is in every plan');
+      // Job costing reports are part of the full app (Fully Loaded), not Live Wire.
+      assert.equal((await get(office.token, '/api/v1/reports/job-profit?to=2026-09-30')).status, 403);
     } finally {
       await t.superPool.query("UPDATE tenants SET plan = 'trial' WHERE id = $1", [A.tenantId]);
     }

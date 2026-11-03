@@ -125,7 +125,7 @@ describe('the sign-up form', { skip }, () => {
 
   test('a valid form stores a pending sign-up (hashed password, no company) and opens Checkout', async () => {
     const before = (await q('SELECT count(*)::int AS n FROM tenants'))[0].n;
-    const r = await post(form({ users: 12 }));
+    const r = await post(form({ plan: 'business', users: 12 }));
     assert.equal(r.statusCode, 201, r.body);
     const s = stripe.state.checkoutSessions.at(-1);
     assert.equal(json(r).url, s.url);
@@ -144,23 +144,23 @@ describe('the sign-up form', { skip }, () => {
     const price = (key) => stripe.state.prices.find((p) => p.lookup_key === key).id;
     assert.equal(s.mode, 'subscription');
     assert.deepEqual(s.line_items, [
-      { price: price('fishtape_pro_monthly_cad'), quantity: 1 },
-      { price: price('fishtape_extra_user_monthly_cad'), quantity: 2 }, // 12 users, Pro includes 10
+      { price: price('fishtape_business_monthly_cad'), quantity: 1 },
+      { price: price('fishtape_extra_user_monthly_cad'), quantity: 7 }, // 12 users, Full Power includes 5
       { price: price(DEPOSIT_LOOKUP_KEY), quantity: 1 },
     ]);
     assert.equal(s.subscription_data.trial_period_days, 14);
-    assert.deepEqual(s.subscription_data.metadata, { fishtape_signup_id: row.id, plan: 'pro' });
-    assert.deepEqual(s.metadata, { fishtape_signup_id: row.id, plan: 'pro' });
+    assert.deepEqual(s.subscription_data.metadata, { fishtape_signup_id: row.id, plan: 'business' });
+    assert.deepEqual(s.metadata, { fishtape_signup_id: row.id, plan: 'business' });
     assert.equal(s.client_reference_id, `signup_${row.id}`);
     assert.deepEqual(s.payment_method_types, ['card']);
     assert.equal(s.customer_email, PII.email.toLowerCase());
     assert.equal(s.success_url, `${ORIGIN}/site/signup.html?done=1`);
-    assert.equal(s.cancel_url, `${ORIGIN}/site/signup.html?plan=pro&cancelled=1`);
+    assert.equal(s.cancel_url, `${ORIGIN}/site/signup.html?plan=business&cancelled=1`);
     const mins = (s.expires_at * 1000 - Date.now()) / 60_000;
     assert.ok(mins > 31 && mins <= 60, `expires in ${mins} min`);
     assert.match(s.custom_text.submit.message, /CA\$1\.00 today/);
     const ev = await q("SELECT summary, meta FROM audit_events WHERE action = 'signup.started'");
-    assert.equal(ev[0].summary, 'Self-serve sign-up started (Pro)');
+    assert.equal(ev[0].summary, 'Self-serve sign-up started (Full Power)');
   });
 
   test('trying again with the same email replaces the open sign-up', async () => {
@@ -259,7 +259,7 @@ describe('Checkout -> company (signed platform webhook)', { skip }, () => {
 
     const audit = await q("SELECT action, summary FROM audit_events WHERE tenant_id = $1 ORDER BY seq", [tenant.id]);
     assert.deepEqual(audit.map((a) => a.action), ['tenant.create', 'billing.subscription', 'signup.completed', 'billing.deposit_credited']);
-    assert.match(audit[2].summary, /Pro trial until \d{4}-\d{2}-\d{2}; CA\$1\.00 deposit paid/);
+    assert.match(audit[2].summary, /Fully Loaded trial until \d{4}-\d{2}-\d{2}; CA\$1\.00 deposit paid/);
   });
 
   test('replays are no-ops: the same event, or another event for the same session', async () => {

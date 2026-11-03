@@ -1,6 +1,6 @@
 // Pricing page: tiers and the features table come from the app's plans.js (one source of
 // truth with the server's entitlements); the Enterprise form posts to the public lead API.
-import { PLANS, PLAN_IDS, FEATURE_PLAN, EXTRA_USER_CENTS, CURRENCY, planRank } from '/js/plans.js';
+import { PLANS, PLAN_IDS, FEATURE_PLAN, EXTRA_USER_CENTS, CURRENCY, planRank, periodOf } from '/js/plans.js';
 import { FEATURE_LABELS } from '/js/modules/billing.js';
 import { BRAND } from '/js/brand.js';
 import { wireAppLinks } from '/site/app-link.js';
@@ -31,18 +31,19 @@ plansHost.replaceChildren(...PLAN_IDS.map((id, i) => {
   const p = PLANS[id];
   const contact = p.contactSales || p.priceCents == null;
   const feats = added(id).filter((f) => FEATURE_LABELS[f]).slice(0, 7);
+  const users = p.includedUsers == null ? 'Users to suit you' : `${p.includedUsers} user${p.includedUsers === 1 ? '' : 's'} included${p.extraUserCents ? `, then ${money(p.extraUserCents)}/user` : ''}`;
   return el('article', { class: 'site-plan' },
     el('h2', {}, p.name),
-    el('p', { class: 'site-price' }, contact ? 'Custom' : [money(p.priceCents), el('small', {}, ' /month')]),
+    el('p', { class: 'site-price' }, contact ? 'Custom' : [money(p.priceCents), el('small', {}, periodOf(id) === 'year' ? ' /year' : ' /month')]),
     el('p', { class: 'site-muted' }, p.blurb),
-    el('p', { class: 'site-users' }, p.includedUsers == null ? 'Users to suit you' : `${p.includedUsers} users included`),
+    el('p', { class: 'site-users' }, users),
     el('ul', {}, i > 0 ? el('li', { class: 'site-muted' }, `Everything in ${PLANS[PLAN_IDS[i - 1]].name}, plus:`) : null,
       feats.map((f) => el('li', {}, FEATURE_LABELS[f]))),
     contact
       ? el('a', { class: 'site-btn ghost', href: '#talk' }, "Let's talk")
       : el('a', { class: 'site-btn', href: localHref(`/signup?plan=${id}`, location.hostname) }, 'Start a free trial'));
 }));
-document.getElementById('extra-users').textContent = `More users than your plan includes? Each extra user is ${money(EXTRA_USER_CENTS)}/month. Taxes are added at checkout for your province.`;
+document.getElementById('extra-users').textContent = `${PLANS.business.name} includes ${PLANS.business.includedUsers} users; add as many more as you need at ${money(EXTRA_USER_CENTS)}/user per month. Taxes are added at checkout for your province.`;
 
 // ---- features table -------------------------------------------------------------
 const table = document.getElementById('feature-table');

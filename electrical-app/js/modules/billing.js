@@ -2,7 +2,7 @@
 // to subscribe or change plan, and the Stripe customer portal. Owners and admins only
 // (the server checks too). Prices and tiers come from plans.js; Enterprise is "Let's talk".
 // No DOM work at import time: the public pricing page imports FEATURE_LABELS from here.
-import { PLANS, PLAN_IDS, FEATURE_PLAN, EXTRA_USER_CENTS, monthlyCents, planRank } from '../plans.js';
+import { PLANS, PLAN_IDS, FEATURE_PLAN, priceCents, periodOf, extraUserCents, planRank } from '../plans.js';
 import { apiFetch } from '../session.js';
 import { openExternal } from '../lib/native.js';
 import { trialDaysLeft } from '../lib/trial.js';
@@ -11,10 +11,10 @@ import { trialDaysLeft } from '../lib/trial.js';
 export const FEATURE_LABELS = {
   dashboard: 'Dashboard', clients: 'Clients', leads: 'Leads pipeline', jobs: 'Jobs', schedule: 'Schedule', estimates: 'Estimates',
   invoices: 'Invoices', employees: 'Employees', time: 'Time clock', sops: 'SOPs', calcs: 'CEC calculators', bending: 'Pipe bending',
-  wireruns: 'Wire runs', settings: 'Settings', billing: 'Billing', help: 'Help center and support', drawings: 'Drawings and takeoff', panels: 'Panel schedules', inventory: 'Inventory',
+  wireruns: 'Wire runs', settings: 'Settings', billing: 'Billing', help: 'Help center and support', drawings: 'Concept drawings and takeoff', panels: 'Panel schedules', inventory: 'Inventory',
   compliance: 'Permits and inspections', sequences: 'Follow-up sequences', security: 'Security audit', 'drawings.rooms': 'Auto-place boxes in rooms',
-  'wireruns.trace': 'Trace wire runs on drawings', portal: 'Client portal', 'payments.online': 'Online invoice payments', 'integrations.email': 'Email (Resend)',
-  'ai.assistant': 'AI assistant', 'ai.cec': 'AI code helper', 'ai.background': 'Background AI agents', api: 'API access', mcp: 'MCP server for AI tools',
+  'wireruns.trace': 'Trace wire runs on drawings', portal: 'Client portal', leadsite: 'Lead-capture website', 'payments.online': 'Online invoice payments', 'integrations.email': 'Email (Resend)',
+  api: 'API access',
   'integrations.sms': 'SMS (Twilio)', 'integrations.facebook': 'Facebook Lead Ads', 'locations.multi': 'Multiple stock locations',
   sso: 'Single sign-on', 'setup.service': 'Setup done for you',
   quickbooks: 'QuickBooks Online sync', purchasing: 'Supplier bills and purchase orders',
@@ -59,6 +59,7 @@ export default {
     let timer = null;
 
     const fmt = (cents) => ui.fmtMoney(cents, { whole: cents % 100 === 0 });
+    const per = (plan) => (periodOf(plan) === 'year' ? '/year' : '/month');
 
     async function load() {
       try {
@@ -82,23 +83,23 @@ export default {
       if (i.graceEndsAt) {
         body.append(h('div', { class: 'billing-banner danger' }, ui.icon('alert', 20), h('div', null,
           h('strong', null, 'Your last payment failed'),
-          h('span', null, ` Update your card before ${ui.fmtDate(i.graceEndsAt)} to keep ${i.planName}. After that the account drops to Starter (your data stays).`),
+          h('span', null, ` Update your card before ${ui.fmtDate(i.graceEndsAt)} to keep ${i.planName}. After that the account drops to ${PLANS.starter.name} (your data stays).`),
           i.hasCustomer ? h('div', null, ui.button('Update payment method', { size: 'sm', variant: 'danger solid', onClick: portal })) : null)));
       } else if (i.onTrial && i.trialEndsAt) {
         // Same count as the app-wide trial banner (lib/trial.js); -1 once the trial has ended.
         const left = new Date(i.trialEndsAt) > new Date() ? trialDaysLeft(i) : -1;
         body.append(h('div', { class: ['billing-banner', left <= 7 ? 'warning' : 'info'] }, ui.icon('clock', 20), h('div', null,
           h('strong', null, left >= 0 ? `Free trial: ${left} day${left === 1 ? '' : 's'} left` : 'Your trial has ended'),
-          h('span', null, left < 0 ? ' You are on Starter features. Pick a plan to unlock the rest.'
+          h('span', null, left < 0 ? ` You are on ${PLANS.starter.name} features. Pick a plan to unlock the rest.`
             // Self-serve sign-up: a trialing subscription that bills when the trial ends.
-            : i.hasSubscription ? ` You have ${i.planName} features. On ${ui.fmtDate(i.trialEndsAt)} your card is charged ${i.monthlyCents == null ? 'for your plan' : `${fmt(i.monthlyCents)} plus tax`}${i.deposit?.cents ? `, less your ${fmt(i.deposit.cents)} deposit` : ''}. Change plan or cancel before then.`
+            : i.hasSubscription ? ` You have ${i.planName} features. On ${ui.fmtDate(i.trialEndsAt)} your card is charged ${i.priceCents == null ? 'for your plan' : `${fmt(i.priceCents)} ${i.period === 'year' ? '/year' : '/month'} plus tax`}${i.deposit?.cents ? `, less your ${fmt(i.deposit.cents)} deposit` : ''}. Change plan or cancel before then.`
               : ` You have ${i.planName} features until ${ui.fmtDate(i.trialEndsAt)}. Pick a plan to keep going.`))));
       }
 
       body.append(h('div', { class: 'grid' },
         ui.stat({ label: 'Plan', value: i.planName, hint: i.onTrial ? 'Trial' : i.status === 'none' ? 'Not subscribed' : `Subscription ${i.status.replace(/_/g, ' ')}${i.cancelAtPeriodEnd ? ', cancels at period end' : ''}` }),
-        ui.stat({ label: 'Users', value: `${i.seats.used}${i.seats.included != null ? ` / ${i.seats.included}` : ''}`, hint: i.seats.extra ? `${i.seats.extra} extra user${i.seats.extra === 1 ? '' : 's'} at ${fmt(EXTRA_USER_CENTS)}/month each` : 'Included in your plan' }),
-        ui.stat({ label: 'Monthly', value: i.monthlyCents == null ? 'Custom' : fmt(i.monthlyCents), hint: `${i.currency}, before tax` }),
+        ui.stat({ label: 'Users', value: `${i.seats.used}${i.seats.included != null ? ` / ${i.seats.included}` : ''}`, hint: i.seats.extra ? `${i.seats.extra} extra user${i.seats.extra === 1 ? '' : 's'} at ${fmt(extraUserCents(i.plan))}/month each` : 'Included in your plan' }),
+        ui.stat({ label: i.period === 'year' ? 'Yearly' : 'Monthly', value: i.priceCents == null ? 'Custom' : fmt(i.priceCents), hint: `${i.currency}, before tax` }),
         ui.stat({ label: i.currentPeriodEnd ? 'Renews' : 'Billing', value: i.currentPeriodEnd ? ui.fmtDate(i.currentPeriodEnd) : '—', hint: i.hasCustomer ? 'Invoices in the billing portal' : 'No payment method yet' })));
 
       const actions = [];
@@ -111,7 +112,7 @@ export default {
       if (!i.stripeConfigured) body.append(h('p', { class: 'muted' }, 'Online payment is not switched on for this server yet. Contact Fishtape to change plans.'));
 
       body.append(...ui.section('Plans', h('div', { class: 'billing-plans' }, PLAN_IDS.map((id) => planCard(id)))));
-      body.append(h('p', { class: 'muted billing-fine' }, `Prices in ${i.currency} per month, before GST/HST/PST. Each plan includes a number of users; more users are ${fmt(EXTRA_USER_CENTS)}/month each. Downgrading never deletes data: you keep reading everything.`));
+      body.append(h('p', { class: 'muted billing-fine' }, `Prices in ${i.currency}, before GST/HST/PST. ${PLANS.business.name} includes ${PLANS.business.includedUsers} users; more are ${fmt(extraUserCents('business'))}/month each. Downgrading never deletes data: you keep reading everything.`));
     }
 
     function planCard(id) {
@@ -129,10 +130,10 @@ export default {
       });
       return h('article', { class: ['card', 'billing-plan', current ? 'current' : null] },
         h('h3', null, p.name),
-        h('div', { class: 'billing-price' }, contact ? 'Custom' : h('span', null, fmt(p.priceCents), h('small', null, ' /month'))),
+        h('div', { class: 'billing-price' }, contact ? 'Custom' : h('span', null, fmt(p.priceCents), h('small', null, ` ${per(id)}`))),
         h('p', { class: 'muted' }, p.blurb),
-        h('p', { class: 'billing-users' }, p.includedUsers == null ? 'Users to suit you' : `${p.includedUsers} users included, then ${fmt(EXTRA_USER_CENTS)}/user`),
-        !contact && i.seats.used > (p.includedUsers ?? Infinity) ? h('p', { class: 'muted billing-users' }, `With your ${i.seats.used} users: ${fmt(monthlyCents(id, i.seats.used))}/month`) : null,
+        h('p', { class: 'billing-users' }, p.includedUsers == null ? 'Users to suit you' : `${p.includedUsers} user${p.includedUsers === 1 ? '' : 's'} included${extraUserCents(id) ? `, then ${fmt(extraUserCents(id))}/user` : ''}`),
+        !contact && extraUserCents(id) && i.seats.used > (p.includedUsers ?? Infinity) ? h('p', { class: 'muted billing-users' }, `With your ${i.seats.used} users: ${fmt(priceCents(id, i.seats.used))}${per(id)}`) : null,
         added.length ? h('ul', { class: 'billing-feats' }, id !== 'starter' ? h('li', { class: 'muted' }, `Everything in ${PLANS[PLAN_IDS[planRank(id) - 1]].name}, plus:`) : null, added.map((f) => h('li', null, ui.icon('check', 14), FEATURE_LABELS[f] || f))) : null,
         h('div', { class: 'billing-action' }, action));
     }

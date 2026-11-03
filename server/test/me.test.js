@@ -15,7 +15,7 @@ before(async () => {
   ({ app } = await startApp(t));
   A = await ownerTenant(t, app, 'Me Electric A');
   B = await ownerTenant(t, app, 'Me Electric B');
-  // B is on Starter (no drawings); A stays on its trial (Business).
+  // B is on Live Wire (no clients/CRM); A stays on its trial (Full Power).
   await t.superPool.query("UPDATE tenants SET plan = 'starter' WHERE id = $1", [B.tenantId]);
 });
 after(async () => { await app?.close(); await t?.close(); });
@@ -71,7 +71,7 @@ describe('GET /api/v1/me', { skip }, () => {
     assert.ok(!a.raw.body.includes(B.tenantId) && !a.raw.body.includes('Me Electric B'));
     assert.ok(!b.raw.body.includes(A.tenantId) && !b.raw.body.includes(A.email));
     assert.equal(b.body.entitlements.plan, 'starter');
-    assert.ok(!b.body.entitlements.features.includes('drawings'));
+    assert.ok(!b.body.entitlements.features.includes('clients'));
   });
 
   test('before MFA enrolment /me answers, says what is needed, and holds back entitlements', async () => {

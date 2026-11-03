@@ -15,8 +15,8 @@ test('a running trial gets the trial plan; an expired one drops to starter', () 
 });
 
 test('overrides from HQ win over the plan', () => {
-  assert.equal(tenantHas({ plan: 'starter', plan_overrides: {} }, 'drawings', now), false);
-  assert.equal(tenantHas({ plan: 'starter', plan_overrides: { drawings: true } }, 'drawings', now), true);
+  assert.equal(tenantHas({ plan: 'starter', plan_overrides: {} }, 'clients', now), false);
+  assert.equal(tenantHas({ plan: 'starter', plan_overrides: { clients: true } }, 'clients', now), true);
   assert.equal(tenantHas({ plan: 'business', plan_overrides: { 'ai.assistant': false } }, 'ai.assistant', now), false);
 });
 
@@ -25,7 +25,7 @@ test('tenantEntitlements reports plan, trial state and features', () => {
   assert.equal(e.plan, TRIAL_PLAN);
   assert.equal(e.onTrial, true);
   assert.ok(e.features.includes('ai.assistant'));
-  assert.ok(!e.features.includes('sso'));
+  assert.ok(e.features.includes('sso')); // Full Power (trial) now includes SSO
 });
 
 test('assertFeature and requireFeature refuse with feature_not_in_plan', async () => {
