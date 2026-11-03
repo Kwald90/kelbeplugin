@@ -82,7 +82,31 @@
       "type": [
         "number",
         "null"
-      ]
+      ],
+      "description": "Minimum on hand: low-stock alert and auto-reorder fire below this total."
+    },
+    "maxStock": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Restock-to level: auto-reorder tops the item back up to this (falls back to reorderPoint)."
+    },
+    "barcode": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 64,
+      "description": "Scanned barcode / QR payload for this item (UPC, Code128 or your own)."
+    },
+    "preferredVendorId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "description": "Default supplier for auto-reorder purchase orders."
     },
     "stock": {
       "type": [

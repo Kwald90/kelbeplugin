@@ -267,7 +267,8 @@ function drawApprentices(host, ctx) {
           const sel = h('select', { class: 'input lv-level-select', 'aria-label': `Level for ${p.name || 'crew'}` },
             h('option', { value: '', selected: !p.levelId }, '—'),
             levels.map((l) => h('option', { value: l.id, selected: p.levelId === l.id }, l.name)));
-          sel.addEventListener('change', (ev) => setLevel(p, ev.target.value));
+          // Defer so iOS WKWebView fully commits the native picker before any DOM work runs.
+          sel.addEventListener('change', (ev) => { const v = ev.target.value; setTimeout(() => setLevel(p, v), 0); });
           return sel;
         } },
       ],

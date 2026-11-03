@@ -12,7 +12,11 @@ import { reopenAfterUndo } from '../lib/materials.js';
 import { ownUseJob, OWN_USE_REASONS, OWN_USE_REASON_LABEL } from '../lib/rst.js';
 import { countSheet, countAdjustments, countProblems, countProgress, valuationByLocation, COUNT_STATUS_LABEL } from '../lib/stock-counts.js';
 import { isLocked, locksFrom, zoneFor, REVERSAL_ACTION } from '../lib/closing.js';
-import { receiveSheet } from './purchasing.js';
+import { receiveSheet, takePoNumber } from './purchasing.js';
+import { newPurchaseOrder } from '../lib/purchasing.js';
+import { reorderSuggestions, ordersFromReorder } from '../lib/reorder.js';
+import { qrSvgNode } from '../lib/qr.js';
+import { BRAND } from '../brand.js';
 
 /** Stock (shop, vans, moves) can be turned off while the price book stays (Settings → Modules). */
 const stockOn = (store) => switchOn(store.settings(), 'inventory');
@@ -53,13 +57,15 @@ export default {
     const seesMoney = auth.seesMoney?.() ?? true;
     const tabs = stockOn(store) ? TABS.filter((t) => t.id !== 'valuation' || seesMoney) : TABS.filter((t) => t.id === 'book');
     let tab = tabs.some((t) => t.id === ctx.params[0]) ? ctx.params[0] : ctx.query.tab && tabs.some((t) => t.id === ctx.query.tab) ? ctx.query.tab : 'book';
-    let q = '', lowOnly = ctx.query.low === '1';
+    let q = ctx.query.q || '', lowOnly = ctx.query.low === '1';
+    let labelsView = null; // 'items' | 'bins' when the printable label sheet is open
     const tabHost = h('div');
     const actions = h('div', { class: 'row' });
     const body = h('div', { class: 'stack' });
 
     const draw = () => {
       ui.clear(tabHost); ui.clear(actions); ui.clear(body);
+      if (labelsView) { drawLabels(labelsView); return; }
       if (tabs.length > 1) tabHost.append(ui.tabs(tabs, tab, (t) => { tab = t; q = ''; history.replaceState(null, '', '#/inventory/' + t); draw(); }));
       if (tab === 'book') drawBook();
       else if (tab === 'stock') drawStock();
@@ -75,6 +81,7 @@ export default {
     function drawBook() {
       actions.append(
         ui.button('Export CSV', { icon: 'download', onClick: exportCsv }),
+        ui.button('Print labels', { icon: 'qr', onClick: () => { labelsView = 'items'; draw(); } }),
         ui.button('New item', { variant: 'primary', icon: 'plus', onClick: () => editItem() }));
       const items = store.list('items');
       const tableHost = h('div');
@@ -110,7 +117,8 @@ export default {
     function editItem(item) {
       const s = store.settings();
       const isNew = !item;
-      const it = item || { sku: '', name: '', category: '', unit: 'ea', costCents: 0, priceCents: 0, labourHours: 0, reorderPoint: 0, stock: {}, symbol: null };
+      const it = item || { sku: '', name: '', category: '', unit: 'ea', costCents: 0, priceCents: 0, labourHours: 0, reorderPoint: 0, maxStock: 0, barcode: '', preferredVendorId: '', stock: {}, symbol: null };
+      const vendors = store.list('vendors', (v) => v.active !== false).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       const suggest = ui.button(`Suggest price (cost + ${s.markupPct ?? 0}%)`, { size: 'sm', icon: 'zap', onClick: () => {
         const form = suggest.closest('form');
         const cost = ui.parseMoney(form.querySelector('[name=costCents]').value);
@@ -127,13 +135,16 @@ export default {
           { label: 'Cost', name: 'costCents', type: 'money', value: it.costCents },
           { label: 'Sell price', name: 'priceCents', type: 'money', value: it.priceCents, hint: 'Installed price shown on estimates' },
           { label: 'Labour hours per unit', name: 'labourHours', type: 'number', step: '0.05', min: '0', value: it.labourHours },
-          { label: 'Reorder point', name: 'reorderPoint', type: 'number', step: '1', min: '0', value: it.reorderPoint, hint: 'Low-stock alert below this total' },
+          { label: 'Reorder point (min)', name: 'reorderPoint', type: 'number', step: '1', min: '0', value: it.reorderPoint, hint: 'Low-stock alert and auto-reorder below this total' },
+          { label: 'Restock to (max)', name: 'maxStock', type: 'number', step: '1', min: '0', value: it.maxStock, hint: 'Auto-reorder tops up to here; blank = back to the min' },
+          { label: 'Barcode', name: 'barcode', value: it.barcode, hint: 'UPC / Code128 / your own; scan or type' },
+          { label: 'Preferred supplier', name: 'preferredVendorId', type: 'select', value: it.preferredVendorId || '', options: [{ value: '', label: '— none —' }, ...vendors.map((vd) => ({ value: vd.id, label: vd.name || vd.companyName || 'Supplier' }))], hint: 'Default supplier for auto-reorder POs' },
           { label: 'Canvas symbol (for takeoff)', name: 'symbol', type: 'select', value: it.symbol || '', options: [{ value: '', label: '— none —' }, ...SYMBOL_IDS.map((x) => ({ value: x, label: x }))] },
         ],
         extra: h('div', { class: 'row' }, suggest),
         danger: isNew ? null : { label: 'Delete item', onClick: () => deleteItem(it) },
         onSubmit: (v) => {
-          const rec = { ...v, symbol: v.symbol || null, labourHours: v.labourHours || 0, reorderPoint: v.reorderPoint || 0 };
+          const rec = { ...v, symbol: v.symbol || null, labourHours: v.labourHours || 0, reorderPoint: v.reorderPoint || 0, maxStock: v.maxStock || 0, barcode: (v.barcode || '').trim() || null, preferredVendorId: v.preferredVendorId || null };
           if (isNew) { store.add('items', { ...rec, stock: {} }); ui.toast('Item added', 'success'); }
           else { store.update('items', it.id, rec); ui.toast('Item saved', 'success'); }
         },
@@ -158,6 +169,8 @@ export default {
     function drawStock() {
       actions.append(
         ui.button('Receive', { icon: 'box', onClick: () => receiveSheet(ctx, {}) }),
+        ui.button('Reorder low', { icon: 'receipt', onClick: () => draftRestock() }),
+        ui.button('Print labels', { icon: 'qr', onClick: () => { labelsView = 'items'; draw(); } }),
         ui.button('Record move', { variant: 'primary', icon: 'truck', onClick: () => recordMove() }));
       const locs = store.list('locations').sort((a, b) => a.name.localeCompare(b.name));
       const items = store.list('items');
@@ -331,7 +344,9 @@ export default {
 
     // ----- locations -----
     function drawLocations() {
-      actions.append(ui.button('New location', { variant: 'primary', icon: 'plus', onClick: () => editLocation() }));
+      actions.append(
+        ui.button('Print bin labels', { icon: 'qr', onClick: () => { labelsView = 'bins'; draw(); } }),
+        ui.button('New location', { variant: 'primary', icon: 'plus', onClick: () => editLocation() }));
       const locs = store.list('locations').sort((a, b) => a.name.localeCompare(b.name));
       const items = store.list('items');
       body.append(locs.length ? h('div', { class: 'grid' }, locs.map((l) => {
@@ -364,6 +379,75 @@ export default {
       }
       store.remove('locations', l.id);
       ui.toast('Location deleted');
+    }
+
+    // ----- auto-reorder: low stock -> draft purchase orders -----
+    async function draftRestock() {
+      const suggestions = reorderSuggestions(store.list('items'), { onHandTotal: itemTotal });
+      if (!suggestions.length) { ui.toast('Nothing is below its reorder point', 'info'); return; }
+      const groups = ordersFromReorder(suggestions);
+      const noSupplier = groups.some((g) => !g.vendorId);
+      if (!(await ui.confirmDialog(
+        `Draft ${groups.length} purchase order${groups.length === 1 ? '' : 's'} to restock ${suggestions.length} low item${suggestions.length === 1 ? '' : 's'}, grouped by preferred supplier?`
+        + (noSupplier ? ' Items with no supplier set go on one PO you can assign.' : ''),
+        { title: 'Draft restock POs', okLabel: 'Draft POs', danger: false }))) return;
+      const made = [];
+      for (const g of groups) made.push(store.add('purchaseOrders', { ...newPurchaseOrder({ number: takePoNumber(store), vendorId: g.vendorId, today: ui.today() }), status: 'draft', lines: g.lines }));
+      store.log('create', `Drafted ${made.length} restock PO(s) for ${suggestions.length} low item(s)`, 'purchaseOrders');
+      ui.toast(`Drafted ${made.length} PO${made.length === 1 ? '' : 's'} — review in Purchasing`, 'success', 3500);
+      ctx.nav('#/purchasing');
+    }
+
+    // ----- printable QR stickers for bins (locations) and items -----
+    function ensureLabelStyles() {
+      if (typeof document === 'undefined' || document.querySelector('link[href$="css/inventory-labels.css"]')) return;
+      const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = 'css/inventory-labels.css'; document.head.append(link);
+    }
+    function invUrl(hashPath) {
+      let base = BRAND.appOrigin || '';
+      if (!base && typeof location !== 'undefined' && location.origin && location.origin !== 'null') base = location.origin;
+      return `${String(base || '').replace(/\/+$/, '')}/${String(hashPath).replace(/^\/+/, '')}`;
+    }
+    function drawLabels(kind) {
+      ensureLabelStyles();
+      let itemFilter = 'stocked'; // all | stocked | low
+      const labelCard = (payload, name, sub) => h('div', { class: 'inv-label' },
+        qrSvgNode(payload, { label: name }),
+        h('div', { class: 'inv-label-txt' }, h('div', { class: 'inv-label-name' }, name), sub ? h('div', { class: 'inv-label-sub' }, sub) : null));
+      const grid = h('div', { class: 'inv-labels' });
+      const drawGrid = () => {
+        ui.clear(grid);
+        if (kind === 'bins') {
+          const locs = store.list('locations').sort((a, b) => a.name.localeCompare(b.name));
+          if (!locs.length) { grid.append(ui.empty({ icon: 'map-pin', title: 'No locations', text: 'Add a shop, van or bin first.' })); return; }
+          grid.append(...locs.map((l) => labelCard(invUrl('#/inventory/stock?loc=' + encodeURIComponent(l.id)), l.name, (l.kind || 'location'))));
+        } else {
+          let items = store.list('items');
+          if (itemFilter === 'stocked') items = items.filter((i) => itemTotal(i) > 0);
+          else if (itemFilter === 'low') items = items.filter(isLow);
+          items = items.sort((a, b) => a.name.localeCompare(b.name));
+          if (!items.length) { grid.append(ui.empty({ icon: 'box', title: 'No items', text: 'Nothing matches this filter.' })); return; }
+          grid.append(...items.map((i) => labelCard(invUrl('#/inventory/book?q=' + encodeURIComponent(i.barcode || i.sku || i.name)), i.name, i.barcode || i.sku || '')));
+        }
+      };
+      const filterSel = () => {
+        const sel = h('select', { class: 'input', 'aria-label': 'Which items' },
+          h('option', { value: 'stocked', selected: true }, 'In stock'),
+          h('option', { value: 'low' }, 'Low stock'),
+          h('option', { value: 'all' }, 'All items'));
+        sel.addEventListener('change', (e) => { itemFilter = e.target.value; drawGrid(); });
+        return sel;
+      };
+      body.append(
+        h('div', { class: 'row wt-toolbar no-print' },
+          ui.button('', { variant: 'ghost', icon: 'chevron-left', title: 'Back', onClick: () => { labelsView = null; draw(); } }),
+          h('strong', null, kind === 'bins' ? 'Bin labels' : 'Item labels'),
+          h('span', { class: 'grow' }),
+          kind === 'items' ? filterSel() : null,
+          ui.button('Print', { variant: 'primary', icon: 'printer', onClick: () => window.print() })),
+        h('p', { class: 'hint no-print' }, 'Each sticker’s QR opens that item or bin in Fishtape when scanned. Stick them on bins, shelves and reels.'),
+        grid);
+      drawGrid();
     }
 
     root.append(ui.page(stockOn(store)

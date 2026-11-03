@@ -1,0 +1,17 @@
+/* Printable QR stickers for bins and items (modules/inventory.js drawLabels). On screen it's a
+   preview grid; on print the app chrome is hidden (app.css @media print / html.is-printing) and the
+   labels lay out as a sticker sheet, each kept whole across page breaks. */
+.inv-labels { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-top: 8px; }
+.inv-label { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); break-inside: avoid; }
+.inv-label svg { width: 64px; height: 64px; flex: none; }
+.inv-label-txt { min-width: 0; }
+.inv-label-name { font-weight: 650; font-size: 14px; line-height: 1.2; }
+.inv-label-sub { margin-top: 2px; color: var(--text-muted); font-size: 12px; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+
+@media print {
+  .inv-labels { grid-template-columns: repeat(3, 1fr); gap: 6mm; }
+  .inv-label { border-color: #bbb; padding: 4mm; }
+  .inv-label svg { width: 24mm; height: 24mm; }
+  .inv-label-name { font-size: 11pt; }
+  .inv-label-sub { font-size: 8pt; }
+}
