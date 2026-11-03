@@ -231,3 +231,7 @@ select.bend-input { font-size: var(--fs-base); }
 .bd-bender-handle { fill: #2f6fd0; }
 .bd-bender-grip { fill: #1f58ad; }
 @media print { .bd-bender-handle { fill: #2f6fd0; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+
+/* photos attached to a saved bend, shown in the printable report */
+.bend-print-photos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.bend-print-photos img { width: 160px; height: 120px; object-fit: cover; border: 1px solid var(--border); border-radius: 6px; }

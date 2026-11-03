@@ -7,6 +7,13 @@ import { bentSvg, animatedBendSvg, marksSvg, rollSvg, SYMBOL_NAMES } from '../li
 import { fmtLength, parseLength, getUnits, setUnits, inToM, mToIn } from '../lib/units.js';
 import * as Level from '../lib/level.js';
 import { getArSupport, measurePath, isCancelled } from '../lib/ar-measure.js';
+import { photoStrip } from '../lib/safety-capture.js';
+
+/** Load the shared photo-strip styles (css/safety.css) the first time a bend photo UI is shown. */
+function ensureSafetyStyles() {
+  if (typeof document === 'undefined' || document.querySelector('link[href$="css/safety.css"]')) return;
+  const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = 'css/safety.css'; document.head.append(link);
+}
 
 let ui, h, store, ctx;
 
@@ -151,7 +158,7 @@ const KIND_LIST = [
   ] },
   { id: 'saddle3', label: '3-point saddle', blurb: 'Over a pipe or round obstruction: one centre bend, two side bends.', fields: [
     { type: 'len', name: 'heightM', label: 'Obstruction height + clearance', def: [2, 50] },
-    { type: 'choice', name: 'centerAngleDeg', label: 'Bends', def: '45', options: [{ value: '45', label: '45° centre, 22.5° sides' }, { value: '60', label: '60° centre, 30° sides' }] },
+    { type: 'choice', name: 'centerAngleDeg', label: 'Bends', def: '45', options: [{ value: '20', label: '20° centre, 10° sides' }, { value: '30', label: '30° centre, 15° sides' }, { value: '45', label: '45° centre, 22.5° sides' }, { value: '60', label: '60° centre, 30° sides' }] },
     { type: 'len', name: 'centerM', label: 'End to the centre of the obstruction', optional: true, def: [24, 600], hint: 'Leave empty to space the marks from mark 1.' },
     { type: 'len', name: 'runM', label: 'Overall run', optional: true, hint: 'For a cut length.' },
   ] },
@@ -711,6 +718,10 @@ function saveSheet({ asNew = false } = {}) {
   if (!current) { ui.toast('Fix the inputs first', 'error'); return; }
   const ed = state.editing;
   const suggested = ed && !asNew ? ed.name : `${kindLabel(current.kind)} ${current.input.riseM ? fmt(current.input.riseM) : ''}`.trim();
+  // Per-bend photos: seed from the saved record (a copy gets its own), edited in place by photoStrip.
+  ensureSafetyStyles();
+  const existing = ed && !asNew ? store.get('bends', ed.id) : null;
+  const photos = structuredClone(existing?.photos || []);
   ui.formSheet({
     title: asNew ? 'Save as a new bend' : ed ? 'Save changes' : 'Save bend',
     submitLabel: 'Save',
@@ -719,8 +730,9 @@ function saveSheet({ asNew = false } = {}) {
       { label: 'Job', name: 'jobId', type: 'select', value: ed?.jobId || ctx.query.jobId || '', options: jobOptions(), span: true },
       { label: 'Notes', name: 'notes', type: 'textarea', value: ed?.notes || '', rows: 3, span: true },
     ],
+    extra: ui.h('label', { class: 'field span-2' }, ui.h('span', null, 'Photos (the pipe, the obstruction, the finished bend)'), photoStrip({ photos, max: 4, toast: ui.toast })),
     onSubmit: (v) => {
-      const rec = record(current, v);
+      const rec = { ...record(current, v), photos };
       let saved;
       if (ed && !asNew && store.get('bends', ed.id)) saved = store.update('bends', ed.id, rec);
       else saved = store.add('bends', rec);
@@ -864,6 +876,7 @@ function bendSheet(cur, meta) {
     h('h2', null, 'How to bend it'),
     h('ol', null, r.steps.map((t) => h('li', null, t))),
     meta?.notes ? h('p', null, h('strong', null, 'Notes: '), meta.notes) : null,
+    meta?.photos?.length ? h('div', { class: 'bend-print-photos' }, meta.photos.map((p) => h('img', { src: p.dataUrl, alt: p.caption || 'Bend photo' }))) : null,
     h('footer', { class: 'bend-sheet-small' }, 'Check every mark against your own bender before you bend. Bender values vary by make, model and wear.'));
 }
 
