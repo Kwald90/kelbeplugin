@@ -52,6 +52,11 @@
     "fieldTickets": "./fieldTickets.json",
     "equipment": "./equipment.json",
     "equipmentUse": "./equipmentUse.json",
-    "stockCounts": "./stockCounts.json"
+    "stockCounts": "./stockCounts.json",
+    "walkthroughs": "./walkthroughs.json",
+    "assemblies": "./assemblies.json",
+    "serviceAgreements": "./serviceAgreements.json",
+    "assets": "./assets.json",
+    "commissioningTests": "./commissioningTests.json"
   }
 }

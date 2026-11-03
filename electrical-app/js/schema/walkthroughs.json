@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/walkthroughs.json",
+  "title": "Site walkthrough",
+  "description": "A guided, room-by-room photo record of a job site (the CompanyCam-style walkthrough). Belongs to a job; carries the job's clientId so a shared one can reach the client portal. Photos are downscaled JPEG data URLs until object storage lands. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "createdAt": {
+      "type": ["string", "null"],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "updatedAt": {
+      "type": ["string", "null"],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "jobId": {
+      "type": ["string", "null"],
+      "maxLength": 128
+    },
+    "clientId": {
+      "type": ["string", "null"],
+      "maxLength": 128
+    },
+    "title": {
+      "type": ["string", "null"],
+      "maxLength": 200
+    },
+    "templateId": {
+      "type": ["string", "null"],
+      "maxLength": 128
+    },
+    "status": {
+      "enum": ["active", "complete", null]
+    },
+    "date": {
+      "type": ["string", "null"],
+      "maxLength": 10,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "sharedWithClient": {
+      "type": ["boolean", "null"]
+    },
+    "sharedAt": {
+      "type": ["string", "null"],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "sharedBy": {
+      "type": ["string", "null"],
+      "maxLength": 128
+    },
+    "startedAt": {
+      "type": ["string", "null"],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "completedAt": {
+      "type": ["string", "null"],
+      "maxLength": 40,
+      "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+    },
+    "createdBy": {
+      "type": ["string", "null"],
+      "maxLength": 128
+    },
+    "stops": {
+      "type": ["array", "null"],
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": ["string", "null"],
+            "maxLength": 128
+          },
+          "name": {
+            "type": ["string", "null"],
+            "maxLength": 200
+          },
+          "note": {
+            "type": ["string", "null"],
+            "maxLength": 2000
+          },
+          "doneAt": {
+            "type": ["string", "null"],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "photos": {
+            "type": ["array", "null"],
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": ["string", "null"],
+                  "maxLength": 128
+                },
+                "dataUrl": {
+                  "type": ["string", "null"],
+                  "maxLength": 450000,
+                  "pattern": "^data:image/(jpeg|png|webp);base64,",
+                  "description": "Downscaled to ~300 KB. Moves to object storage later."
+                },
+                "caption": {
+                  "type": ["string", "null"],
+                  "maxLength": 300
+                },
+                "takenAt": {
+                  "type": ["string", "null"],
+                  "maxLength": 40,
+                  "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+                },
+                "width": {
+                  "type": ["number", "null"]
+                },
+                "height": {
+                  "type": ["number", "null"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

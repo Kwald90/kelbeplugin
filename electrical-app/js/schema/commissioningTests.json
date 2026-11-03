@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/commissioningTests.json",
+  "title": "Test & commissioning report",
+  "description": "Readings that prove an install is safe and works (megger, bonding, GFCI trip, torque), against limits, with the test instrument and its calibration date. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "assetId": { "type": ["string", "null"], "maxLength": 128 },
+    "title": { "type": ["string", "null"], "maxLength": 200 },
+    "type": { "enum": ["insulation-resistance", "continuity", "ground-bond", "gfci-trip", "loop-impedance", "torque", "polarity", "phase-rotation", "functional", "other", null] },
+    "date": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "technician": { "type": ["string", "null"], "maxLength": 200 },
+    "instrument": { "type": ["string", "null"], "maxLength": 200 },
+    "instrumentCalDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "result": { "enum": ["pass", "fail", "conditional", null] },
+    "notes": { "type": ["string", "null"], "maxLength": 2000 },
+    "signatureId": { "type": ["string", "null"], "maxLength": 128 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 },
+    "readings": {
+      "type": ["array", "null"],
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "point": { "type": ["string", "null"], "maxLength": 200 },
+          "value": { "type": ["number", "null"] },
+          "unit": { "type": ["string", "null"], "maxLength": 20 },
+          "limit": { "type": ["number", "null"] },
+          "direction": { "enum": ["min", "max", null] },
+          "pass": { "type": ["boolean", "null"] }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

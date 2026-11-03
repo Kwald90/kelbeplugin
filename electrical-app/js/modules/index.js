@@ -5,9 +5,12 @@ import leads from './leads.js';
 import sequences from './sequences.js';
 import jobs from './jobs.js';
 import schedule from './schedule.js';
+import service from './service.js';
 import drawings from './drawings.js';
 import wireruns from './wireruns.js';
 import estimates from './estimates.js';
+import assemblies from './assemblies.js';
+import pricelists from './pricelists.js';
 import invoices from './invoices.js';
 import inventory from './inventory.js';
 import employees from './employees.js';
@@ -18,6 +21,8 @@ import security from './security.js';
 import calcs from './calcs.js';
 import bending from './bending.js';
 import panels from './panels.js';
+import walkthroughs from './walkthroughs.js';
+import testing from './testing.js';
 import settings from './settings.js';
 import integrations from './integrations.js';
 // AI assistant hidden for now (removed from the registry below and from the Settings module picker).
@@ -42,7 +47,7 @@ export const GROUPS = {
 };
 
 export const MODULES = [
-  dashboard, today, clients, leads, sequences, jobs, schedule, workplan, materials, drawings, wireruns, estimates, invoices, purchasing, quickbooks, books, inventory,
-  employees, time, sops, safety, compliance, security, calcs, bending, panels, settings, integrations, billing,
+  dashboard, today, clients, leads, sequences, jobs, schedule, service, workplan, materials, drawings, wireruns, estimates, assemblies, invoices, purchasing, quickbooks, books, inventory, pricelists,
+  employees, time, sops, safety, compliance, security, calcs, bending, panels, walkthroughs, testing, settings, integrations, billing,
   importer, developer, onboarding, notifications, help,
 ];

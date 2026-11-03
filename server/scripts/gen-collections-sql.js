@@ -17,10 +17,12 @@ export const OUT = fileURLToPath(new URL('../migrations/0003_collections.sql', i
 export function tableSql(def) {
   const t = def.table;
   const gen = def.gen.map((x) => `  ${x.col.padEnd(11)} text GENERATED ALWAYS AS (data->>'${x.field}') STORED,`).join('\n');
-  // Portal sessions: read only their client's rows, never write.
+  // Portal sessions: read only their client's rows, never write. 'clientShared' narrows that to
+  // rows the company has marked shared (data.sharedWithClient), so internal records stay internal.
   let portalRead = 'app_portal_client_id() IS NULL';
   if (def.portal === 'client') portalRead = '(app_portal_client_id() IS NULL OR client_id = app_portal_client_id())';
   if (def.portal === 'self') portalRead = '(app_portal_client_id() IS NULL OR id = app_portal_client_id())';
+  if (def.portal === 'clientShared') portalRead = "(app_portal_client_id() IS NULL OR (client_id = app_portal_client_id() AND coalesce(data->>'sharedWithClient', '') = 'true'))";
   const idx = def.gen.map((x) => `CREATE INDEX ${t}_${x.col}_idx ON ${t} (tenant_id, ${x.col}) WHERE ${x.col} IS NOT NULL;`).join('\n');
   return `
 -- ${def.name} ----------------------------------------------------------------
@@ -150,7 +152,7 @@ GRANT SELECT ON record_history, sync_mutations TO fishtape_hq;
 }
 
 /** Later migrations that create collection tables: version -> file name. */
-export const LATER = { '0100': '0100_workplan.sql', '0110': '0110_safety.sql', '0130': '0130_material_requests.sql', '0141': '0141_location.sql', '0151': '0151_purchasing.sql', '0161': '0161_r1_collections.sql' };
+export const LATER = { '0100': '0100_workplan.sql', '0110': '0110_safety.sql', '0130': '0130_material_requests.sql', '0141': '0141_location.sql', '0151': '0151_purchasing.sql', '0161': '0161_r1_collections.sql', '0164': '0164_walkthroughs.sql', '0165': '0165_assemblies.sql', '0166': '0166_service.sql', '0167': '0167_commissioning.sql' };
 export const laterFile = (version) => fileURLToPath(new URL(`../migrations/${LATER[version]}`, import.meta.url));
 
 /** The tables of the collections whose registry entry says `migration: version`, made exactly like 0003's. */

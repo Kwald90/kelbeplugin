@@ -134,6 +134,15 @@ export const COLLECTION_FEATURES = {
   equipment: null,
   equipmentUse: null,
   stockCounts: ['inventory'],
+  // Site walkthroughs are part of the full app (Fully Loaded and up).
+  walkthroughs: ['walkthroughs'],
+  // Assembly estimating rides with Estimates (Fully Loaded and up).
+  assemblies: ['assemblies'],
+  // Service management (Fully Loaded and up): recurring agreements and the site asset registry.
+  serviceAgreements: ['service'],
+  assets: ['service'],
+  // Test & commissioning reports (Fully Loaded and up).
+  commissioningTests: ['testing'],
 };
 
 /**

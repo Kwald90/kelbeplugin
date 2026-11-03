@@ -37,6 +37,7 @@ export const COLLECTIONS = [
   'locationPoints', 'locationConsents',
   'vendors', 'bills', 'purchaseOrders',
   'costCodes', 'rules', 'payrollRuns', 'signatures', 'fieldTickets', 'equipment', 'equipmentUse', 'stockCounts',
+  'walkthroughs', 'assemblies', 'serviceAgreements', 'assets', 'commissioningTests',
 ];
 
 export const DEFAULT_SETTINGS = {

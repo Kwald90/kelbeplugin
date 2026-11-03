@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/serviceAgreements.json",
+  "title": "Service agreement",
+  "description": "A recurring maintenance agreement for a client: a frequency, a next-due date and a visit history. Office data (carries a price). Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "title": { "type": ["string", "null"], "maxLength": 200 },
+    "frequency": { "enum": ["monthly", "quarterly", "semi-annual", "annual", "custom", null] },
+    "intervalMonths": { "type": ["integer", "null"], "minimum": 1, "maximum": 120 },
+    "priceCents": { "type": ["integer", "null"] },
+    "billing": { "enum": ["per-visit", "monthly", "annual", null] },
+    "status": { "enum": ["active", "paused", "ended", null] },
+    "startDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "nextDueDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "lastVisitAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "assetIds": { "type": ["array", "null"], "maxItems": 200, "items": { "type": "string", "maxLength": 128 } },
+    "notes": { "type": ["string", "null"], "maxLength": 2000 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 },
+    "visits": {
+      "type": ["array", "null"],
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "at": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+          "jobId": { "type": ["string", "null"], "maxLength": 128 },
+          "note": { "type": ["string", "null"], "maxLength": 500 }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

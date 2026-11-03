@@ -7,6 +7,7 @@ import { moduleOn } from '../lib/modules.js';
 import { qboBadge, noTaxReasonPicker, lookupAction, docEditor } from '../lib/qbo-ui.js';
 import { buildSignature, signatureSheet, emailAcceptanceSheet, queueSignatureFirst } from '../lib/esign.js';
 import { residentialEssentials } from '../lib/panel-templates.js';
+import { activeAssemblies, explodeAssembly, materialUnitCents, labourUnitHours } from '../lib/assemblies.js';
 
 const STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'];
 
@@ -336,6 +337,38 @@ function renderDetail(root, ctx, id) {
     });
   };
 
+  // Count assemblies (reusable kits) onto the quote: each explodes into a material line and, when it
+  // has labour hours, a labour line at this estimate's labour rate (js/lib/assemblies.js).
+  const assemblyPicker = () => {
+    if (readOnly) return;
+    const all = activeAssemblies(store.list('assemblies')).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const counts = {};
+    const body = all.length ? h('div', { class: 'asm-pick' }, all.map((a) => {
+      const inp = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: '0', step: '1', value: '', placeholder: '0', 'aria-label': `Count of ${a.name}` });
+      inp.addEventListener('input', () => { counts[a.id] = Number(inp.value) || 0; });
+      return h('div', { class: 'asm-pick-row' },
+        h('div', null, h('strong', null, a.name || 'Untitled'),
+          h('div', { class: 'meta' }, `${money(materialUnitCents(a))} material${labourUnitHours(a) ? ` · ${labourUnitHours(a)} h labour` : ''}${a.category ? ` · ${a.category}` : ''}`)),
+        inp);
+    })) : h('div', { class: 'stack' }, h('p', { class: 'muted' }, 'No assemblies yet. Build reusable kits of material and labour, then count them here.'), ui.button('Create assemblies', { variant: 'primary', icon: 'plus', href: '#/assemblies' }));
+    const s = ui.openSheet({
+      title: 'Add assemblies', body,
+      actions: all.length ? [
+        ui.button('Cancel', { variant: 'ghost', onClick: () => s.close() }),
+        ui.button('Add to quote', { variant: 'primary', icon: 'plus', onClick: () => {
+          const chosen = all.filter((a) => counts[a.id] > 0);
+          if (!chosen.length) { s.close(); return; }
+          doc.lines = doc.lines || [];
+          let added = 0;
+          for (const a of chosen) { for (const line of explodeAssembly(a, counts[a.id], { labourRateCents: doc.labourRateCents || 0 })) { doc.lines.push(line); added++; } }
+          changed(); save.flush(); redraw();
+          ui.toast(`Added ${chosen.length} assembl${chosen.length === 1 ? 'y' : 'ies'} (${added} line${added === 1 ? '' : 's'})`, 'success');
+          s.close();
+        } }),
+      ] : [ui.button('Close', { variant: 'ghost', onClick: () => s.close() })],
+    });
+  };
+
   const preview = () => { save.flush(); previewDocument({ kind: 'Estimate', doc, store, readOnly }); };
   const linkedJob = () => {
     const latest = store.get('estimates', id);
@@ -510,6 +543,7 @@ function renderDetail(root, ctx, id) {
         h('section', { class: 'card' }, h('h3', null, 'Customer & work'), header),
         h('section', { class: 'card' },
           h('div', { class: 'row' }, h('h3', { class: 'grow' }, 'Scope & line items'),
+            !readOnly && on('assemblies') ? ui.button('Assemblies', { size: 'sm', variant: 'ghost', icon: 'layers', onClick: assemblyPicker }) : null,
             !readOnly ? ui.button('Residential circuits', { size: 'sm', variant: 'ghost', icon: 'home', onClick: residentialChecklist }) : null),
           editor),
         h('section', { class: 'card' }, h('h3', null, 'Customer notes'), h('div', { class: 'form-grid' }, notes)),

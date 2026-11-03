@@ -1,0 +1,64 @@
+/* Site walkthroughs (modules/walkthroughs.js). Tokens only. Loaded by the module. */
+.wt-toolbar { align-items: center; gap: var(--s2); margin-bottom: var(--s2); }
+.wt-jobpick { width: auto; min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-input); border-radius: var(--r-sm); background: var(--surface); color: inherit; font: inherit; }
+.wt-head-actions { gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
+.wt-foot { margin-top: var(--s3, var(--s2)); }
+
+/* progress */
+.wt-bar { margin: var(--s2) 0; }
+.wt-progress { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.wt-progress > span { display: block; height: 100%; background: var(--accent); transition: width .2s ease; }
+.wt-progress-meta { margin-top: 6px; font-size: var(--fs-sm); }
+
+/* share row */
+.wt-share { display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s2); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); margin-bottom: var(--s2); }
+.wt-share input { margin-top: 3px; }
+.wt-share span { display: flex; flex-direction: column; }
+.wt-share .hint { color: var(--text-muted); font-size: var(--fs-xs); }
+
+/* stops */
+.wt-stops { display: flex; flex-direction: column; gap: var(--s2); }
+.wt-stop { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); padding: var(--s2); }
+.wt-stop.is-done { border-color: var(--success); }
+.wt-stop-head { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s2); }
+.wt-stop-n { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--text-muted); font-size: var(--fs-sm); font-weight: 650; }
+.wt-stop-name { font-weight: 650; }
+.wt-stop-sub { font-size: var(--fs-xs); }
+.wt-stop-tools { display: flex; gap: 4px; align-items: center; }
+.wt-note { width: 100%; margin-top: var(--s2); border: 1px solid var(--border-input); border-radius: var(--r-sm); background: var(--surface); color: inherit; font: inherit; padding: 8px 10px; }
+.wt-addstop { display: inline-flex; align-items: center; gap: 6px; padding: 10px var(--s2); border: 1px dashed var(--border-input); border-radius: var(--r-md); background: var(--surface-2); color: var(--text-muted); font: inherit; cursor: pointer; }
+.wt-addstop:hover { color: var(--text); }
+
+/* the photo strip (shared with Safety; kept here so the screen stands alone) */
+.sf-photos { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.sf-photo { position: relative; margin: 0; width: 96px; height: 96px; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--border); }
+.sf-photo img { width: 100%; height: 100%; object-fit: cover; }
+.sf-photo-x { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: var(--scrim); color: #ffffff; font-size: 18px; line-height: 1; cursor: pointer; }
+.sf-photo-add { width: 96px; height: 96px; border-radius: var(--r-md); border: 1px dashed var(--border-input); background: var(--surface-2); color: var(--text-muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
+
+@media (max-width: 640px) {
+  .wt-stop-tools { flex-wrap: wrap; justify-content: flex-end; }
+}
+
+/* ---------- printable report ---------- */
+.wt-print { display: none; }
+.wt-print-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 2px solid #111; padding-bottom: 8px; }
+.wt-print-head h1 { margin: 0 0 4px; font-size: 20px; }
+.wt-print-sub { color: #444; font-size: 13px; }
+.wt-print-co { text-align: right; font-size: 13px; font-weight: 650; }
+.wt-print-meta { color: #444; font-size: 12px; margin: 8px 0 4px; }
+.wt-print-stop { page-break-inside: avoid; break-inside: avoid; margin-top: 14px; }
+.wt-print-stop h2 { font-size: 15px; margin: 0 0 4px; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
+.wt-print-note { margin: 4px 0 8px; font-size: 13px; white-space: pre-wrap; }
+.wt-print-photos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.wt-print-photos figure { margin: 0; page-break-inside: avoid; break-inside: avoid; }
+.wt-print-photos img { width: 100%; height: auto; border: 1px solid #ccc; }
+.wt-print-photos figcaption { font-size: 12px; color: #444; margin-top: 3px; }
+
+@media print {
+  body.printing-walkthrough > *:not(.wt-print) { display: none !important; }
+  body.printing-walkthrough .wt-print { display: block; color: #111; background: #fff; }
+}
+/* iOS app print path (app.css adds html.is-printing; see lib/native.js nativePrint). */
+html.is-printing body.printing-walkthrough > *:not(.wt-print) { display: none !important; }
+html.is-printing .wt-print { display: block; color: #111; background: #fff; }

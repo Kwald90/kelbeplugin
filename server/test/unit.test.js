@@ -132,6 +132,75 @@ describe('contracts shared with the PWA', () => {
     assert.notEqual(validator.validate('wireRuns', { ...run, wiringMethod: 'tube' }), null);
   });
 
+  test('site walkthroughs as the screen stores them', () => {
+    const photo = { id: 'p1', dataUrl: 'data:image/jpeg;base64,' + 'A'.repeat(300_000), caption: 'Panel', takenAt: new Date().toISOString(), width: 1280, height: 960 };
+    const w = {
+      id: 'w1', jobId: 'j1', clientId: 'c1', title: 'Panel change', templateId: 'builtin:panel', status: 'active',
+      date: '2026-11-02', sharedWithClient: false, sharedAt: null, sharedBy: null, startedAt: new Date().toISOString(),
+      completedAt: null, createdBy: 'u1',
+      stops: [{ id: 's1', name: 'Existing panel', note: 'surface rust', doneAt: null, photos: [photo] }],
+    };
+    assert.equal(validator.validate('walkthroughs', w), null);
+    assert.ok(Buffer.byteLength(JSON.stringify(w)) < collectionDef('walkthroughs').maxBytes);
+    const tiny = { id: 'p', dataUrl: 'data:image/jpeg;base64,AAA' };
+    const stop = (photos) => ({ id: 's', name: 'Stop', note: '', doneAt: null, photos });
+    assert.equal(validator.validate('walkthroughs', { ...w, stops: Array.from({ length: 20 }, () => stop([tiny, tiny])) }), null, '20 stops is allowed');
+    assert.notEqual(validator.validate('walkthroughs', { ...w, stops: Array.from({ length: 21 }, () => stop([])) }), null, '20 stops at most');
+    assert.equal(validator.validate('walkthroughs', { ...w, stops: [stop(Array.from({ length: 6 }, () => tiny))] }), null, 'six photos per stop is allowed');
+    assert.notEqual(validator.validate('walkthroughs', { ...w, stops: [stop(Array.from({ length: 7 }, () => tiny))] }), null, 'six photos per stop at most');
+    assert.notEqual(validator.validate('walkthroughs', { ...w, status: 'draft' }), null, 'status is active or complete');
+    assert.notEqual(validator.validate('walkthroughs', { ...w, stops: [stop([{ id: 'p', dataUrl: 'https://example.com/x.jpg' }])] }), null, 'photos are data URLs');
+  });
+
+  test('estimating assemblies as the library stores them', () => {
+    const a = {
+      id: 'asm1', name: 'Duplex receptacle', category: 'Devices', description: '', unit: 'each', labourHours: 0.35, archived: false, createdBy: 'u1',
+      components: [
+        { id: 'c1', itemId: 'box', sku: 'B1', description: 'Device box', qty: 1, unitCents: 180 },
+        { id: 'c2', itemId: null, sku: '', description: '14/2 NMD90', qty: 12, unitCents: 35 },
+      ],
+    };
+    assert.equal(validator.validate('assemblies', a), null);
+    assert.equal(validator.validate('assemblies', { ...a, components: Array.from({ length: 60 }, () => a.components[0]) }), null, '60 components allowed');
+    assert.notEqual(validator.validate('assemblies', { ...a, components: Array.from({ length: 61 }, () => a.components[0]) }), null, '60 components at most');
+    assert.notEqual(validator.validate('assemblies', { ...a, labourHours: -1 }), null, 'labour hours are not negative');
+  });
+
+  test('service agreements and site assets as the screens store them', () => {
+    const sa = {
+      id: 'sa1', clientId: 'c1', jobId: null, title: 'Quarterly generator PM', frequency: 'quarterly', intervalMonths: 3,
+      priceCents: 45000, billing: 'per-visit', status: 'active', startDate: '2026-11-01', nextDueDate: '2026-11-01',
+      lastVisitAt: null, assetIds: ['as1'], notes: '', createdBy: 'u1',
+      visits: [{ id: 'v1', at: '2026-08-01T15:00:00.000Z', jobId: 'j1', note: 'ran load bank' }],
+    };
+    assert.equal(validator.validate('serviceAgreements', sa), null);
+    assert.notEqual(validator.validate('serviceAgreements', { ...sa, frequency: 'weekly' }), null, 'frequency is a known enum');
+    assert.notEqual(validator.validate('serviceAgreements', { ...sa, status: 'cancelled' }), null);
+    const asset = {
+      id: 'as1', clientId: 'c1', jobId: 'j1', name: 'Main panel', type: 'panel', location: 'Mechanical room',
+      make: 'Square D', model: 'QO142M200', serial: 'SN123', specs: '200 A 120/240 V', installedAt: '2020-06-01',
+      warrantyUntil: '2030-06-01', lastServiceAt: null, status: 'in-service', notes: '', createdBy: 'u1',
+      photos: [{ id: 'p', dataUrl: 'data:image/jpeg;base64,AAA', caption: 'Nameplate', takenAt: '2026-11-02T00:00:00.000Z', width: 800, height: 600 }],
+    };
+    assert.equal(validator.validate('assets', asset), null);
+    assert.notEqual(validator.validate('assets', { ...asset, type: 'spaceship' }), null, 'asset type is a known enum');
+    assert.notEqual(validator.validate('assets', { ...asset, photos: Array.from({ length: 5 }, () => asset.photos[0]) }), null, 'four nameplate photos at most');
+  });
+
+  test('test & commissioning reports as the screen stores them', () => {
+    const r = {
+      id: 'tc1', jobId: 'j1', clientId: 'c1', assetId: 'as1', title: 'Insulation resistance (megger)', type: 'insulation-resistance',
+      date: '2026-11-02', technician: 'A. Sparky', instrument: 'Fluke 1587', instrumentCalDate: '2026-02-01', result: 'pass',
+      notes: '', signatureId: null, createdBy: 'u1',
+      readings: [{ id: 'r1', point: 'Ckt 3 L-G', value: 500, unit: 'MΩ', limit: 1, direction: 'min', pass: true }],
+    };
+    assert.equal(validator.validate('commissioningTests', r), null);
+    assert.notEqual(validator.validate('commissioningTests', { ...r, type: 'vibes' }), null, 'type is a known enum');
+    assert.notEqual(validator.validate('commissioningTests', { ...r, result: 'maybe' }), null);
+    assert.notEqual(validator.validate('commissioningTests', { ...r, readings: [{ id: 'x', direction: 'between' }] }), null, 'direction is min/max');
+    assert.notEqual(validator.validate('commissioningTests', { ...r, readings: Array.from({ length: 101 }, () => r.readings[0]) }), null, '100 readings at most');
+  });
+
   test('new collections follow the BUILD-PLAN enums', () => {
     assert.equal(validator.validate('bends', { id: 'b', kind: 'saddle3', conduit: { type: 'PVC', tradeSize: '27' }, result: { marks: [{ label: 'A', atM: 0.3 }], shrinkM: 0.01, developedLengthM: 1, warnings: [] } }), null);
     assert.notEqual(validator.validate('bends', { id: 'b', conduit: { type: 'EMT', tradeSize: '3/4' } }), null);

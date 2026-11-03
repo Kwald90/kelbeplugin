@@ -1,0 +1,8 @@
+/* Service management (modules/service.js). Tokens only. Loaded by the module. */
+.sv-tabs { margin-bottom: var(--s2); }
+.sv-toolbar { align-items: center; margin-bottom: var(--s2); }
+.sv-makejob { display: flex; gap: var(--s2); align-items: center; }
+.sv-body .list { display: flex; flex-direction: column; gap: var(--s1); }
+.sv-body .list-row { display: flex; align-items: center; gap: var(--s2); padding: var(--s2); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+.sv-body .list-row .title { font-weight: 650; }
+.sv-body .list-row .meta { font-size: var(--fs-sm); color: var(--text-muted); }

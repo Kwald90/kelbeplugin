@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/assets.json",
+  "title": "Site asset",
+  "description": "A piece of equipment installed at a customer site (panel, generator, EV charger) with make/model/serial, warranty and service history. Site documentation. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "name": { "type": ["string", "null"], "maxLength": 200 },
+    "type": { "enum": ["panel", "service", "generator", "transfer-switch", "ev-charger", "ups", "lighting", "motor", "hvac-electrical", "fire-alarm", "other", null] },
+    "location": { "type": ["string", "null"], "maxLength": 200 },
+    "make": { "type": ["string", "null"], "maxLength": 120 },
+    "model": { "type": ["string", "null"], "maxLength": 120 },
+    "serial": { "type": ["string", "null"], "maxLength": 120 },
+    "specs": { "type": ["string", "null"], "maxLength": 1000 },
+    "installedAt": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "warrantyUntil": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "lastServiceAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "status": { "enum": ["in-service", "needs-attention", "retired", null] },
+    "notes": { "type": ["string", "null"], "maxLength": 2000 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 },
+    "photos": {
+      "type": ["array", "null"],
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "dataUrl": { "type": ["string", "null"], "maxLength": 450000, "pattern": "^data:image/(jpeg|png|webp);base64," },
+          "caption": { "type": ["string", "null"], "maxLength": 300 },
+          "takenAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+          "width": { "type": ["number", "null"] },
+          "height": { "type": ["number", "null"] }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

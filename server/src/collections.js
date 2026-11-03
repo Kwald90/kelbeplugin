@@ -15,6 +15,7 @@ export const COLLECTIONS = [
   'locationPoints', 'locationConsents',
   'vendors', 'bills', 'purchaseOrders',
   'costCodes', 'rules', 'payrollRuns', 'signatures', 'fieldTickets', 'equipment', 'equipmentUse', 'stockCounts',
+  'walkthroughs', 'assemblies', 'serviceAgreements', 'assets', 'commissioningTests',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -170,6 +171,40 @@ const DEFS = {
   // A van's owner counts it on their phone (no inventory permission): 'today' lets them in, the van-owner
   // rule (services/write-guards.js) limits them to their own van's draft and counted sheets.
   stockCounts: { table: 'stock_counts', gen: [g('location_id', 'locationId'), STATUS, DAY], read: ['inventory', 'today'], write: ['inventory', 'today'], portal: null, maxBytes: 512 * KB, migration: '0161' },
+  // Site walkthroughs (migration 0162, the CompanyCam-style photo walkthrough). A walkthrough is
+  // job documentation everyone on the job may capture (read/write 'jobs', which every role holds).
+  // Internal by default; a shared one reaches the client portal only when sharedWithClient is true
+  // (portal: 'clientShared', client_id must match too). Photos are downscaled JPEG data URLs for now
+  // (up to 20 stops x 6 photos x ~300 KB); they move to object storage later.
+  walkthroughs: {
+    table: 'walkthroughs', gen: [JOB, CLIENT, STATUS], read: ['jobs'], write: ['jobs'],
+    portal: 'clientShared', maxBytes: 64 * MB, migration: '0164',
+  },
+  // Assembly estimating (migration 0163): the company's reusable kits (components + labour units).
+  // Office/estimating data only (read/write 'estimates', so owner/admin/office) — it carries material
+  // costs, kept away from field roles. No photos; small records.
+  assemblies: {
+    table: 'assemblies', gen: [g('category', 'category')], read: ['estimates'], write: ['estimates'],
+    portal: null, maxBytes: 256 * KB, migration: '0165',
+  },
+  // Service management (migration 0164): recurring maintenance agreements and a per-site asset
+  // registry. Agreements carry a price, so they are office data (read/write 'clients' = owner/admin/
+  // office). Assets are site documentation everyone on the job may view and add (read/write 'jobs');
+  // a nameplate photo or two per asset, so a few MB.
+  serviceAgreements: {
+    table: 'service_agreements', gen: [CLIENT, STATUS], read: ['clients'], write: ['clients'],
+    portal: null, maxBytes: 256 * KB, migration: '0166',
+  },
+  assets: {
+    table: 'assets', gen: [CLIENT, JOB, g('asset_type', 'type')], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 4 * MB, migration: '0166',
+  },
+  // Test & commissioning reports (migration 0165): the readings that prove an install (megger,
+  // bonding, GFCI trip, torque). Field documentation on a job; everyone on it reads and writes ('jobs').
+  commissioningTests: {
+    table: 'commissioning_tests', gen: [JOB, g('asset_id', 'assetId'), g('result', 'result')], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 256 * KB, migration: '0167',
+  },
 };
 
 /** @type {Map<string, CollectionDef>} */

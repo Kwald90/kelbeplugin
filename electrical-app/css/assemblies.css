@@ -1,0 +1,23 @@
+/* Assembly estimating (modules/assemblies.js). Tokens only. Loaded by the module. */
+.asm-hint { margin: 0 0 var(--s2); font-size: var(--fs-sm); }
+.asm-totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s2); }
+.asm-rows { display: flex; flex-direction: column; gap: var(--s2); }
+.asm-rowhead, .asm-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.4fr) 90px 110px 40px; gap: var(--s2); align-items: center; }
+.asm-rowhead { font-size: var(--fs-xs); padding: 0 2px; }
+.asm-rowhead .num, .asm-row .num { text-align: right; }
+.asm-row .input { min-height: 40px; padding: 6px 10px; border: 1px solid var(--border-input); border-radius: var(--r-sm); background: var(--surface); color: inherit; font: inherit; width: 100%; }
+.asm-addrow { display: inline-flex; align-items: center; gap: 6px; padding: 10px var(--s2); border: 1px dashed var(--border-input); border-radius: var(--r-md); background: var(--surface-2); color: var(--text-muted); font: inherit; cursor: pointer; }
+.asm-addrow:hover { color: var(--text); }
+
+/* assembly picker inside the estimate builder */
+.asm-pick { display: flex; flex-direction: column; gap: var(--s2); }
+.asm-pick-row { display: grid; grid-template-columns: minmax(0, 1fr) 84px; gap: var(--s2); align-items: center; padding: var(--s2); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+.asm-pick-row .meta { font-size: var(--fs-xs); color: var(--text-muted); }
+.asm-pick-row .input { min-height: 40px; padding: 6px 10px; border: 1px solid var(--border-input); border-radius: var(--r-sm); background: var(--surface); color: inherit; font: inherit; width: 100%; text-align: right; }
+
+@media (max-width: 640px) {
+  .asm-totals { grid-template-columns: 1fr; }
+  .asm-rowhead { display: none; }
+  .asm-row { grid-template-columns: 1fr 1fr; }
+  .asm-row .input:nth-child(2) { grid-column: 1 / -1; }
+}

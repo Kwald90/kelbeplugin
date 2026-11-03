@@ -12,6 +12,7 @@ export const FEATURE_LABELS = {
   dashboard: 'Dashboard', clients: 'Clients', leads: 'Leads pipeline', jobs: 'Jobs', schedule: 'Schedule', estimates: 'Estimates',
   invoices: 'Invoices', employees: 'Employees', time: 'Time clock', sops: 'SOPs', calcs: 'CEC calculators', bending: 'Pipe bending',
   wireruns: 'Wire runs', settings: 'Settings', billing: 'Billing', help: 'Help center and support', drawings: 'Concept drawings and takeoff', panels: 'Panel schedules', inventory: 'Inventory',
+  walkthroughs: 'Site photo walkthroughs', assemblies: 'Assembly estimating', service: 'Service agreements & site assets', testing: 'Test & commissioning reports', pricelists: 'Supplier price-list import',
   compliance: 'Permits and inspections', sequences: 'Follow-up sequences', security: 'Security audit', 'drawings.rooms': 'Auto-place boxes in rooms',
   'wireruns.trace': 'Trace wire runs on drawings', portal: 'Client portal', leadsite: 'Lead-capture website', 'payments.online': 'Online invoice payments', 'integrations.email': 'Email (Resend)',
   api: 'API access',
