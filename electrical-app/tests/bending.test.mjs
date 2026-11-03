@@ -545,9 +545,9 @@ test('animated bend: the picture reflects the inputs (the measured rise is drawn
   assert.notEqual(steep, shallowA, 'the angle changes the drawing');
 });
 
-test('animated bend: one animated pipe (outline + core) per drawn pipe', () => {
+test('animated bend: every shade layer of every pipe animates together', () => {
   const r = B.compute('parallel', animCases.parallel, { fmt: fmtIn });
   const svg = S.animatedBendSvg(r, { fmt: fmtIn, width: 480 });
   const pointAnims = (svg.match(/attributeName="points"/g) || []).length;
-  assert.equal(pointAnims, r.pipes.length * 2, 'outline + core animate for each of the 3 pipes');
+  assert.equal(pointAnims, r.pipes.length * S.pipeLayers(10).length, 'each shade layer animates for each pipe');
 });

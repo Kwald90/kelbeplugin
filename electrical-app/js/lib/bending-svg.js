@@ -165,7 +165,7 @@ function layoutFor(result, pipes, od, { width, maxHeight }, bboxPts) {
   const X = (x) => offX + (x - minX) * s;
   const Y = (y) => offY + (maxY - y) * s;
   const P = ([x, y]) => [X(x), Y(y)];
-  const pipeW = Math.max(4, od * s);
+  const pipeW = Math.max(9, od * s * 1.1); // bold enough to read as a tube, not a wire
   return { main, dims, obstacle, step, lowest, minX, maxX, minY, maxY, s, X, Y, P, pipeW, height };
 }
 
@@ -191,12 +191,24 @@ function backgroundParts(result, L, od) {
   return parts;
 }
 
-/** The pipe as a tube (outline + lighter core), static. */
+/**
+ * Stroke layers that shade the pipe like a convex steel tube: a dark edge under a mid body under a
+ * light band under a thin highlight. Centred strokes of shrinking width read as a round cylinder.
+ * Widest first (drawn underneath). Shared by the static and animated renderers so they stay in step.
+ */
+export const pipeLayers = (w) => [
+  ['bd-pipe', w + 2],
+  ['bd-pipe-2', w],
+  ['bd-pipe-3', Math.max(2, w * 0.56)],
+  ['bd-pipe-hi', Math.max(1, w * 0.22)],
+];
+
+/** The pipe as a shaded tube, static. */
 function pipePolys(pipes, L) {
   const parts = [];
   for (const p of pipes) {
     const pts = p.path.points.map(L.P);
-    parts.push(poly(pts, 'bd-pipe', L.pipeW + 2), poly(pts, 'bd-pipe-core', Math.max(1.5, L.pipeW - 3)));
+    for (const [cls, w] of pipeLayers(L.pipeW)) parts.push(poly(pts, cls, w));
   }
   return parts;
 }
@@ -461,7 +473,7 @@ export function animatedBendSvg(result, { fmt = mmFmt, width = 640, odM = 0, max
     });
     const base = frameVals[frameVals.length - 1];
     const values = frameVals.join(';');
-    for (const [cls, w] of [['bd-pipe', L.pipeW + 2], ['bd-pipe-core', Math.max(1.5, L.pipeW - 3)]]) {
+    for (const [cls, w] of pipeLayers(L.pipeW)) {
       parts.push(`<polyline class="${cls}" stroke-width="${n1(w)}" points="${base}"><animate class="bd-anim" attributeName="points" dur="${dur}" begin="indefinite" fill="freeze" calcMode="linear" values="${values}"/></polyline>`);
     }
   });
@@ -560,8 +572,11 @@ export function marksSvg(result, { fmt = mmFmt, snap = (m) => m, width = 640 } =
       above.push({ m, x, level });
     });
     const pipeY = topY + 10;
-    // pipe body, shaded where heat goes or a bend is
-    parts.push(`<rect class="bd-straight" x="${L}" y="${pipeY}" width="${n1(X(last) + tail * k - L)}" height="${pipeH}" rx="3"/>`);
+    // pipe body as a shaded bar (dark edge, mid body, light highlight band) to match the hero tube
+    const barW = n1(X(last) + tail * k - L);
+    parts.push(`<rect class="bd-pipebar-edge" x="${L}" y="${pipeY}" width="${barW}" height="${pipeH}" rx="3"/>`);
+    parts.push(`<rect class="bd-pipebar-body" x="${L}" y="${n1(pipeY + 1.5)}" width="${barW}" height="${n1(pipeH - 3)}" rx="2"/>`);
+    parts.push(`<rect class="bd-pipebar-hi" x="${L}" y="${n1(pipeY + 2)}" width="${barW}" height="${n1(Math.max(2, pipeH * 0.28))}" rx="2"/>`);
     const startM = marks.find((m) => /^(Start of|Pipe \d+ start)/.test(m.label));
     const endM = marks.find((m) => /(End of|end of bend)/.test(m.label));
     if (endM) {

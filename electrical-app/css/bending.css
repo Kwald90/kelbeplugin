@@ -124,8 +124,18 @@ select.bend-input { font-size: var(--fs-base); }
 /* ---------- diagrams (SVG from js/lib/bending-svg.js) ---------- */
 .bend-svg { display: block; max-width: 100%; height: auto; font-family: var(--font-sans); }
 .bend-svg text { font-size: 12px; fill: var(--text); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
-.bend-svg .bd-pipe { fill: none; stroke: var(--text-muted); stroke-linejoin: round; stroke-linecap: butt; }
-.bend-svg .bd-pipe-core { fill: none; stroke: var(--surface-2); stroke-linejoin: round; stroke-linecap: butt; }
+/* The pipe as a shaded steel tube: stacked strokes from a dark edge to a light highlight read as a
+   round cylinder. Colours are pipe-specific (galvanized grey) so the tube looks solid in both themes. */
+.bend-svg { --pipe-edge: #6c747c; --pipe-body: #9aa2aa; --pipe-light: #c4cbd1; --pipe-hi: #eef1f4; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .bend-svg { --pipe-edge: #2b3137; --pipe-body: #4a525a; --pipe-light: #6d757e; --pipe-hi: #9ba3ac; }
+}
+:root[data-theme="dark"] .bend-svg { --pipe-edge: #2b3137; --pipe-body: #4a525a; --pipe-light: #6d757e; --pipe-hi: #9ba3ac; }
+.bend-svg .bd-pipe, .bend-svg .bd-pipe-2, .bend-svg .bd-pipe-3, .bend-svg .bd-pipe-hi { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.bend-svg .bd-pipe { stroke: var(--pipe-edge); }
+.bend-svg .bd-pipe-2 { stroke: var(--pipe-body); }
+.bend-svg .bd-pipe-3 { stroke: var(--pipe-light); }
+.bend-svg .bd-pipe-hi { stroke: var(--pipe-hi); }
 .bend-svg .bd-surface { stroke: var(--border-input); stroke-width: 2; stroke-dasharray: 6 4; }
 .bend-svg .bd-obst { fill: var(--danger-soft); stroke: var(--danger); stroke-width: 1.5; }
 .bend-svg .bd-end { fill: var(--accent-fill); stroke: var(--text); stroke-width: 1.5; }
@@ -142,6 +152,9 @@ select.bend-input { font-size: var(--fs-base); }
 .bend-svg .bd-break { stroke: var(--text-muted); stroke-width: 1.5; }
 .bend-svg .bd-gap { fill: var(--surface); }
 .bend-svg .bd-straight { fill: var(--surface-2); stroke: var(--text-muted); stroke-width: 1.5; }
+.bend-svg .bd-pipebar-edge { fill: var(--pipe-edge); }
+.bend-svg .bd-pipebar-body { fill: var(--pipe-body); }
+.bend-svg .bd-pipebar-hi { fill: var(--pipe-light); opacity: .85; }
 .bend-svg .bd-bendzone { fill: var(--accent-soft); }
 .bend-svg .bd-heatzone { fill: var(--danger-soft); }
 .bend-svg .bd-endcap { stroke: var(--text); stroke-width: 4; stroke-linecap: round; }
