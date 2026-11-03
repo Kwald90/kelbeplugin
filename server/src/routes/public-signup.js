@@ -47,6 +47,8 @@ export default async function publicSignupRoutes(app, { config, db, email }) {
           plan: { type: 'string', enum: SELF_SERVE_PLANS },
           users: { type: 'integer', minimum: 1, maximum: MAX_USERS },
           acceptTerms: { type: 'boolean' },
+          // A tracked marketing link (services/marketing.js): sets the trial length and attribution.
+          code: { type: 'string', maxLength: 64, pattern: '^[a-z0-9][a-z0-9_-]{0,63}$' },
           // Honeypot: hidden from people, so anything in it came from a bot.
           website: { type: 'string', maxLength: 500 },
         },

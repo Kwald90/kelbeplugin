@@ -28,6 +28,7 @@ const PAGES = [
   { id: 'ai', title: 'AI', icon: 'star', load: () => import('./pages/ai.js') },
   { id: 'audit', title: 'Audit log', icon: 'list', load: () => import('./pages/audit.js') },
   { id: 'platform-keys', title: 'Platform keys', icon: 'key', load: () => import('./pages/platform-keys.js') },
+  { id: 'marketing', title: 'Marketing', icon: 'link', load: () => import('./pages/marketing.js') },
   { id: 'settings', title: 'Settings', icon: 'settings', load: () => import('./pages/settings.js') },
 ];
 

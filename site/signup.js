@@ -14,7 +14,9 @@ const $ = (id) => document.getElementById(id);
 const money = (cents) => (cents / 100).toLocaleString('en-CA', { style: 'currency', currency: CURRENCY, minimumFractionDigits: cents % 100 ? 2 : 0, maximumFractionDigits: 2 });
 
 const params = new URLSearchParams(location.search);
-const opts = { open: true, trialDays: 14, depositCents: 100 };
+// A tracked marketing link (?code=…) can carry a longer trial and pre-pick a plan.
+const CODE = (() => { const c = (params.get('code') || '').toLowerCase(); return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(c) ? c : ''; })();
+const opts = { open: true, trialDays: 14, depositCents: 100, campaignDays: null };
 
 function el(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
@@ -90,7 +92,7 @@ function startForm() {
       : `${p.name} includes ${p.includedUsers} user${p.includedUsers === 1 ? '' : 's'}. Need more seats? ${PLANS.business.name} adds them at ${money(extraUserCents('business'))}/month each.`;
   }
   function drawOptions() {
-    for (const n of document.querySelectorAll('[data-trial-days]')) n.textContent = String(opts.trialDays);
+    for (const n of document.querySelectorAll('[data-trial-days]')) n.textContent = String(opts.campaignDays || opts.trialDays);
     // Always with cents ("$1.00"), so it reads as a deposit rather than a price.
     for (const n of document.querySelectorAll('[data-deposit]')) n.textContent = (opts.depositCents / 100).toLocaleString('en-CA', { style: 'currency', currency: CURRENCY });
   }
@@ -127,6 +129,20 @@ function startForm() {
       }
     })
     .catch(() => { /* the POST reports problems */ });
+
+  // ---- tracked marketing link: longer trial + pre-picked plan ----
+  if (CODE) {
+    fetch(`${API}/api/v1/public/campaign/${encodeURIComponent(CODE)}`, { credentials: 'omit', cache: 'no-store', headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c) => {
+        if (!c) return;
+        opts.campaignDays = c.trialDays;
+        drawOptions();
+        showNotice(`Your ${c.trialDays}-day free trial${c.label ? ` (${c.label})` : ''} is applied — it'll be set when you continue to checkout.`, 'info');
+        if (!params.get('plan') && SELF_SERVE.includes(c.plan)) { const r = $(`su-plan-${c.plan}`); if (r) { r.checked = true; drawSummary(); } }
+      })
+      .catch(() => { /* an unknown code just falls back to the standard trial */ });
+  }
 
   // ---- validation (the server checks the same things) ----
   function showNotice(text, tone) {
@@ -166,6 +182,7 @@ function startForm() {
       email: fields.email.value.trim(), password: fields.password.value, plan: planValue(),
       users: Number.parseInt(fields.users.value, 10), acceptTerms: fields.acceptTerms.checked,
       website: form.elements.website.value,
+      ...(CODE ? { code: CODE } : {}),
     };
   }
 

@@ -47,6 +47,7 @@ import { hashSecret, passwordProblem } from '../auth/passwords.js';
 import { appendAudit } from './audit.js';
 import { PRICE_KEYS, SELF_SERVE_PLANS, createBilling, extraSeats } from './billing.js';
 import { hqSettings, hqUrl } from './hq-common.js';
+import { resolveCampaign } from './marketing.js';
 import { enqueue } from './queue.js';
 import { EMAIL_RE, PROVINCES, insertTenantWithOwner, normaliseEmail, trialDays } from './tenants.js';
 
@@ -245,16 +246,20 @@ export function createSignups({ config, db, email, billing = createBilling({ con
     await cleanupSignups(db).catch(() => {});
     await releasePending(f.email);
     const id = randomUUID();
-    const days = trialDays();
+    // A tracked marketing link can carry a longer trial (e.g. the 75-day wholesaler offer). An
+    // unknown or switched-off code just falls back to the default; the link never changes the plan.
+    const campaign = await resolveCampaign(db, typeof body.code === 'string' ? body.code.toLowerCase() : null).catch(() => null);
+    const days = campaign ? campaign.trialDays : trialDays();
+    const campaignCode = campaign ? campaign.code : null;
     const expiresAt = new Date(Date.now() + settings.checkoutMinutes * 60_000);
     const passwordHash = await hashSecret(f.password);
     const legal = await legalVersions();
     try {
       await db.query(
         `INSERT INTO signups (id, email, display_name, password_hash, company_name, province, plan, user_count, trial_days,
-                              terms_version, terms_accepted_at, deposit_cents, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), $11, $12)`,
-        [id, f.email, f.name.slice(0, 200), passwordHash, f.companyName.slice(0, 200), f.province, f.plan, f.users, days, legal.terms, DEPOSIT_CENTS, expiresAt]);
+                              terms_version, terms_accepted_at, deposit_cents, expires_at, campaign_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), $11, $12, $13)`,
+        [id, f.email, f.name.slice(0, 200), passwordHash, f.companyName.slice(0, 200), f.province, f.plan, f.users, days, legal.terms, DEPOSIT_CENTS, expiresAt, campaignCode]);
     } catch (e) {
       if (e.code === '23505') throw new ApiError(409, 'signup_pending', 'A sign-up with this email is already in progress. Try again in a minute.');
       throw e;
@@ -287,7 +292,7 @@ export function createSignups({ config, db, email, billing = createBilling({ con
     }
     await db.query('UPDATE signups SET stripe_checkout_session_id = $2, updated_at = now() WHERE id = $1', [id, session.id]);
     await db.tx((c) => appendAudit(c, null, {
-      actor: ACTOR, action: 'signup.started', collection: 'signups', recordId: id, summary: `Self-serve sign-up started (${PLANS[f.plan].name})`, request,
+      actor: ACTOR, action: 'signup.started', collection: 'signups', recordId: id, summary: `Self-serve sign-up started (${PLANS[f.plan].name}${campaignCode ? `, via ${campaignCode}, ${days}-day trial` : ''})`, request,
     }));
     return { id, url: session.url };
   }
@@ -535,7 +540,7 @@ export async function listSignups(c, { status = null, limit = 200 } = {}) {
   const { rows } = await c.query(
     `SELECT s.id, s.status, s.email, s.display_name, s.company_name, s.province, s.plan, s.user_count, s.trial_days,
             s.deposit_cents, s.deposit_paid_cents, s.deposit_paid_at, s.credited_at, s.credit_error, s.tenant_id, s.trial_ends_at,
-            s.welcome_used_at, s.failure, s.expires_at, s.created_at, s.completed_at, t.billing_status
+            s.welcome_used_at, s.failure, s.expires_at, s.created_at, s.completed_at, s.campaign_code, t.billing_status
        FROM signups s LEFT JOIN tenants t ON t.id = s.tenant_id
       WHERE ($1::text IS NULL OR s.status = $1) ORDER BY s.created_at DESC LIMIT $2`, [status, limit]);
   const iso = (d) => (d ? new Date(d).toISOString() : null);
@@ -545,6 +550,7 @@ export async function listSignups(c, { status = null, limit = 200 } = {}) {
     depositPaidCents: s.deposit_paid_cents, depositCredited: Boolean(s.credited_at), creditError: s.credit_error,
     tenantId: s.tenant_id, billingStatus: s.billing_status || null, trialEndsAt: iso(s.trial_ends_at), emailVerified: Boolean(s.welcome_used_at),
     failure: s.failure, expiresAt: iso(s.expires_at), createdAt: iso(s.created_at), completedAt: iso(s.completed_at),
+    campaign: s.campaign_code || null,
   }));
 }
 

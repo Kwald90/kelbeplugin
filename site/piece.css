@@ -1,0 +1,66 @@
+/* Published marketing piece (site/piece.html + piece.js). A responsive web version of the catalog,
+   co-brandable through --mk-accent (set by piece.js from the CSSOM). Self-hosted fonts, same files
+   as the print catalog, so the page stays CSP-clean (font-src 'self', no CDN). */
+@font-face { font-family: "Oswald"; font-style: normal; font-weight: 600; font-display: swap; src: url("fonts/oswald-600.woff2") format("woff2"); }
+@font-face { font-family: "Oswald"; font-style: normal; font-weight: 700; font-display: swap; src: url("fonts/oswald-700.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/plex-400.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("fonts/plex-600.woff2") format("woff2"); }
+
+:root {
+  --mk-accent: #1f6feb;
+  --ink: #15181d;
+  --ink-soft: #4a5157;
+  --paper: #ffffff;
+  --paper-tint: #f4f6f9;
+  --line: #d9dee6;
+  --head: "Oswald", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #eef1f5; --ink-soft: #aab3bf; --paper: #14171c; --paper-tint: #1b1f26; --line: #2c333d;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font-family: var(--body); font-size: 17px; line-height: 1.5;
+}
+.mk { max-width: 960px; margin: 0 auto; padding: 0 16px 72px; }
+.mk-loading { color: var(--ink-soft); padding: 64px 0; text-align: center; }
+
+h1, h2, h3 { font-family: var(--head); font-weight: 700; line-height: 1.1; margin: 0; }
+
+.mk-cover {
+  text-align: center; padding: 72px 8px 56px; border-bottom: 1px solid var(--line);
+}
+.mk-cover h1 { font-size: clamp(32px, 7vw, 56px); letter-spacing: -0.01em; }
+.mk-partner { font-family: var(--head); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; font-size: 14px; color: var(--mk-accent); margin: 0 0 16px; }
+.mk-sub { font-size: clamp(17px, 2.4vw, 21px); color: var(--ink-soft); max-width: 640px; margin: 20px auto 0; }
+.mk-tagline { font-family: var(--head); font-weight: 600; font-size: 18px; margin: 16px auto 0; max-width: 560px; }
+
+.mk-section { padding: 48px 0; border-bottom: 1px solid var(--line); }
+.mk-section:last-child { border-bottom: 0; }
+.mk-section h2 { font-size: clamp(24px, 4vw, 34px); letter-spacing: -0.01em; }
+.mk-intro { color: var(--ink-soft); font-size: 18px; max-width: 680px; margin: 14px 0 0; }
+
+.mk-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 28px; }
+@media (max-width: 620px) { .mk-grid { grid-template-columns: 1fr; } }
+.mk-card {
+  background: var(--paper-tint); border: 1px solid var(--line); border-radius: 12px;
+  padding: 20px 20px 22px; border-top: 3px solid var(--mk-accent);
+}
+.mk-card h3 { font-family: var(--head); font-weight: 600; font-size: 19px; }
+.mk-card p { margin: 8px 0 0; color: var(--ink-soft); font-size: 16px; }
+
+.mk-cta-block { text-align: center; }
+.mk-cta-block .mk-intro { margin-left: auto; margin-right: auto; }
+.mk-cta {
+  display: inline-block; margin-top: 28px; padding: 14px 28px; border-radius: 999px;
+  background: var(--mk-accent); color: #fff; text-decoration: none;
+  font-family: var(--head); font-weight: 600; font-size: 18px;
+}
+.mk-cta:hover { filter: brightness(0.94); }
+.mk-foot { margin-top: 24px; color: var(--ink-soft); font-size: 14px; }
