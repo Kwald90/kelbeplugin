@@ -3,7 +3,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_DIMENSION, mediaRowView, parseProbe, posterArgs, randomMediaName, transcodeArgs,
+  MAX_DIMENSION, audioArgs, mediaRowView, parseProbe, posterArgs, randomMediaName, transcodeArgs,
 } from '../src/services/walkthrough-media.js';
 
 describe('walkthrough media views', () => {
@@ -34,6 +34,19 @@ describe('walkthrough media views', () => {
     const v2 = mediaRowView({ ...base, status: 'failed', error: null });
     assert.match(v2.error, /could not be processed/);
   });
+
+  test('transcript fields: ready exposes the text; failed exposes a message', () => {
+    const ready = mediaRowView({ ...base, status: 'ready', output_file: 'a'.repeat(32) + '.mp4', transcript: 'Walked the panel room.', transcribe_status: 'ready', transcribed_at: '2026-11-03T00:00:00Z' });
+    assert.equal(ready.transcript, 'Walked the panel room.');
+    assert.equal(ready.transcribeStatus, 'ready');
+    assert.equal(ready.transcribeError, null);
+    assert.equal(ready.transcribedAt, '2026-11-03T00:00:00.000Z');
+    const failed = mediaRowView({ ...base, status: 'ready', output_file: 'a'.repeat(32) + '.mp4', transcribe_status: 'failed', transcribe_error: 'too long' });
+    assert.equal(failed.transcribeError, 'too long');
+    const none = mediaRowView({ ...base, status: 'ready', output_file: 'a'.repeat(32) + '.mp4' });
+    assert.equal(none.transcript, null);
+    assert.equal(none.transcribeStatus, null);
+  });
 });
 
 describe('ffmpeg argument building', () => {
@@ -51,6 +64,15 @@ describe('ffmpeg argument building', () => {
     const args = posterArgs('/m/out.mp4', '/m/p.jpg');
     assert.ok(args.includes('-frames:v') && args[args.indexOf('-frames:v') + 1] === '1');
     assert.ok(args.includes('/m/p.jpg'));
+  });
+
+  test('audio extraction drops video and makes a small mono 16 kHz Opus clip', () => {
+    const args = audioArgs('/m/out.mp4', '/m/a.ogg');
+    assert.ok(args.includes('-vn'), 'no video');
+    assert.equal(args[args.indexOf('-ac') + 1], '1'); // mono
+    assert.equal(args[args.indexOf('-ar') + 1], '16000'); // 16 kHz
+    assert.ok(args.includes('libopus'));
+    assert.ok(args.includes('/m/out.mp4') && args.includes('/m/a.ogg'));
   });
 });
 

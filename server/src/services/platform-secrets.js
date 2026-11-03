@@ -28,6 +28,7 @@ export const PLATFORM_SECRETS = {
   'resend.api_key': { provider: 'resend', label: 'Resend API key', env: 'RESEND_API_KEY' },
   'stripe.secret_key': { provider: 'stripe', label: 'Stripe secret key', env: 'STRIPE_SECRET_KEY', hintNote: 'sk_live_… or sk_test_…' },
   'stripe.webhook_secret': { provider: 'stripe', label: 'Stripe webhook signing secret', env: 'STRIPE_WEBHOOK_SECRET', hintNote: 'whsec_…' },
+  'gemini.api_key': { provider: 'gemini', label: 'Gemini API key', env: 'GEMINI_API_KEY', hintNote: 'Google AI Studio key — powers walkthrough transcription' },
 };
 
 /** Providers in the order the HQ page shows them. */
@@ -36,6 +37,7 @@ export const PLATFORM_PROVIDERS = [
   { id: 'sendgrid', label: 'SendGrid' },
   { id: 'resend', label: 'Resend' },
   { id: 'stripe', label: 'Stripe (subscriptions)' },
+  { id: 'gemini', label: 'Gemini (transcription)' },
 ];
 
 export function isPlatformSecret(name) {

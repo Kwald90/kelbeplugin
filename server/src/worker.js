@@ -48,7 +48,7 @@ async function main() {
   // With db, refused system writes are recorded in sync_rejections (r1-get-paid.md 2.6).
   const records = createRecords({ validator: createValidator(), config, db });
   // The QuickBooks alerts run in the general pool: they watch the QuickBooks pool and must not wait in it.
-  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }), ...createMaterialHandlers({ config }), ...createWalkthroughMediaHandlers({ config }), ...QBO_ALERT_HANDLERS, ...createPlatformEmailHandlers({ sealer }) };
+  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }), ...createMaterialHandlers({ config }), ...createWalkthroughMediaHandlers({ config, sealer }), ...QBO_ALERT_HANDLERS, ...createPlatformEmailHandlers({ sealer }) };
   const qboHandlers = {
     ...createQboHandlers({ sealer, config, records, workerId }),
     ...createQboPlatformHandlers({ sealer, config }),

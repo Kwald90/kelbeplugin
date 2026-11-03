@@ -12,6 +12,7 @@ import { ApiError, forbidden, notFound } from '../../errors.js';
 import { canWrite, canRead } from '../../auth/access.js';
 import { requireFeature } from '../../services/entitlements.js';
 import { enqueue } from '../../services/queue.js';
+import { geminiConfigured } from '../../services/gemini.js';
 import { errorResponses, tenantCtx } from '../util.js';
 import {
   MAX_MEDIA_PER_TENANT, WALKTHROUGH_UPLOAD_TYPES, mediaRowView, receiveWalkthroughUpload,
@@ -96,7 +97,35 @@ export default async function walkthroughMediaRoutes(app, { db, config }) {
     if (!canRead(p, 'walkthroughs')) throw forbidden('You cannot read walkthrough video.');
     const row = await inTenant(req, async (tx) => (await tx.query('SELECT * FROM walkthrough_media WHERE id = $1', [req.params.id])).rows[0]);
     if (!row) throw notFound('No such video.');
-    return mediaRowView(row);
+    return { ...mediaRowView(row), aiTranscription: await geminiConfigured(db) };
+  });
+
+  app.post('/api/v1/walkthrough-media/:id/transcribe', {
+    config: { auth: 'tenant' },
+    preHandler: requireFeature(db, 'walkthroughs'),
+    schema: {
+      tags, summary: 'AI-transcribe a walkthrough video (Gemini); poll GET for the result',
+      description: 'Queues a worker job that extracts the audio and sends it to Gemini using the HQ platform key. Returns the media row with transcribe_status "processing".',
+      params: uuidParam, response: errorResponses,
+    },
+  }, async (req) => {
+    const p = req.principal;
+    if (!canWrite(p, 'walkthroughs')) throw forbidden('You cannot transcribe walkthrough video.');
+    needMedia();
+    if (!(await geminiConfigured(db))) throw new ApiError(400, 'not_configured', 'AI transcription is not set up. An administrator adds the Gemini key in HQ → Platform keys.');
+    const row = await inTenant(req, async (tx) => {
+      const r = (await tx.query('SELECT * FROM walkthrough_media WHERE id = $1', [req.params.id])).rows[0];
+      if (!r) return null;
+      if (!r.output_file && !r.original_file) throw new ApiError(409, 'no_video', 'There is no stored video to transcribe.');
+      if (r.transcribe_status === 'processing') return r; // already queued; just report it
+      const updated = (await tx.query(
+        "UPDATE walkthrough_media SET transcribe_status = 'processing', transcribe_error = NULL, updated_at = now() WHERE id = $1 RETURNING *",
+        [req.params.id])).rows[0];
+      await enqueue(tx, { kind: 'walkthrough_transcribe', payload: { mediaId: req.params.id }, tenantId: p.tenantId, maxAttempts: 1, dedupeKey: `wt-transcribe:${req.params.id}` });
+      return updated;
+    }, { write: true });
+    if (!row) throw notFound('No such video.');
+    return { ...mediaRowView(row), aiTranscription: true };
   });
 
   app.delete('/api/v1/walkthrough-media/:id', {

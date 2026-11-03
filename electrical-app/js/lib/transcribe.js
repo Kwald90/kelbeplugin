@@ -37,12 +37,17 @@ export function startLiveDictation({ lang = 'en-CA', onText, onInterim, onError 
   return { stop() { stopped = true; try { rec.stop(); } catch { /* already stopped */ } } };
 }
 
-/**
- * Whether AI transcription of a recorded clip is wired up for this install. Kept false until the
- * server transcription endpoint (Gemini via the platform key) is deployed; flip here then.
- */
+// Whether AI transcription is available is decided by the server (is a Gemini key set in HQ?).
+// The walkthrough-media responses carry an `aiTranscription` flag; the walkthroughs module calls
+// setAiTranscription() with it, and the UI gates the "Transcribe with AI" button on this.
+let aiAvailable = false;
+
+/** Record what the server reported about AI transcription availability. */
+export function setAiTranscription(available) { aiAvailable = !!available; }
+
+/** Whether AI transcription of a recorded clip is wired up and configured for this install. */
 export function aiTranscriptionAvailable() {
-  return false;
+  return aiAvailable;
 }
 
 /** Append a settled phrase to a transcript, spacing it sensibly. */

@@ -63,6 +63,20 @@ export async function fetchWalkthroughMedia(mediaId) {
   return readJson(res);
 }
 
+/**
+ * Ask the server to AI-transcribe a stored video (Gemini). Returns the media row with
+ * transcribeStatus "processing"; poll fetchWalkthroughMedia() for the finished transcript.
+ */
+export async function transcribeWalkthroughVideo(mediaId) {
+  let res;
+  try {
+    res = await apiFetch(`${PATH}/${encodeURIComponent(mediaId)}/transcribe`, {
+      method: 'POST', headers: { 'X-Fishtape': '1', Accept: 'application/json' }, credentials: 'include', cache: 'no-store',
+    });
+  } catch { throw new ApiError(0, 'offline', "Can't reach the server to transcribe."); }
+  return readJson(res);
+}
+
 /** Delete an uploaded video (its files and row). */
 export async function deleteWalkthroughMedia(mediaId) {
   let res;

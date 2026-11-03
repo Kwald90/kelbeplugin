@@ -8,9 +8,10 @@
 // tests; the route and the worker handler wire them to HTTP, the DB and ffmpeg.
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { stat, unlink } from 'node:fs/promises';
+import { readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { mediaPath, mediaSettings, receiveUpload } from './promotions.js';
+import { geminiSettings, resolveGeminiKey, transcribeAudio } from './gemini.js';
 
 /** Only video; posters are produced by ffmpeg, not uploaded. octet-stream is sniffed by bytes. */
 export const WALKTHROUGH_UPLOAD_TYPES = ['video/mp4', 'video/webm', 'application/octet-stream'];
@@ -64,6 +65,11 @@ export function mediaRowView(row) {
   } else if (row.status === 'processing' && row.original_mime === 'video/mp4' && row.original_file) {
     out.url = `/media/${row.original_file}`; // iOS-recorded MP4 plays immediately while we optimise it
   }
+  // AI transcription (migration 0170): the transcript, if any, and the poll state.
+  out.transcript = row.transcript || null;
+  out.transcribeStatus = row.transcribe_status || null;
+  out.transcribeError = row.transcribe_status === 'failed' ? (row.transcribe_error || 'The transcription failed.') : null;
+  out.transcribedAt = row.transcribed_at ? new Date(row.transcribed_at).toISOString() : null;
   return out;
 }
 
@@ -90,6 +96,37 @@ export function transcodeArgs(input, output, { maxDim = MAX_DIMENSION } = {}) {
 /** ffmpeg args to grab a single poster frame from `input` to `output` (a JPEG). */
 export function posterArgs(input, output) {
   return ['-y', '-nostdin', '-ss', '0', '-i', input, '-frames:v', '1', '-q:v', '4', output];
+}
+
+/**
+ * ffmpeg args to pull a small speech-grade audio track out of `input` into `output`: mono, 16 kHz,
+ * low-bitrate Opus in an Ogg container. Gemini downsamples audio to 16 kHz anyway, so this keeps a
+ * long walk well under the 20 MB inline-request cap (~24 kbps ≈ 10 MB/hour). Exported for a test.
+ */
+export function audioArgs(input, output) {
+  return ['-y', '-nostdin', '-i', input, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'libopus', '-b:a', '24k', output];
+}
+
+/**
+ * Extract the audio of a stored video to a temporary Ogg/Opus file in `dir`. Returns its name,
+ * path, size and MIME type. The caller reads it, sends it to Gemini, then removes it. Throws if
+ * ffmpeg fails or produces nothing.
+ * @param {{ dir: string, inputFile: string }} o
+ */
+export async function extractAudio({ dir, inputFile }) {
+  const input = mediaPath(dir, inputFile);
+  if (!input) throw new Error('bad input file name');
+  const outFile = randomMediaName('ogg');
+  const out = join(dir, outFile);
+  try {
+    await execFileP(FFMPEG, audioArgs(input, out), { timeout: TRANSCODE_TIMEOUT_MS });
+    const s = await stat(out);
+    if (!s.size) throw new Error('ffmpeg produced no audio');
+    return { file: outFile, path: out, bytes: s.size, mimeType: 'audio/ogg' };
+  } catch (e) {
+    await unlink(out).catch(() => {});
+    throw e;
+  }
 }
 
 /** Pull duration (ms) and the video stream's dimensions out of ffprobe -show_format -show_streams JSON. */
@@ -165,12 +202,13 @@ export async function removeMediaFiles(dir, row) {
 // ---- worker ----------------------------------------------------------------------------------
 
 /**
- * Worker handler for `walkthrough_transcode` jobs (queued by the upload route). Transcodes the
- * uploaded original into an optimised MP4 + poster and marks the row `ready`; on failure the row
- * is marked `failed` and the job is retried a couple of times. Runs in the general pool.
- * @param {{ config: object }} deps
+ * Worker handlers: `walkthrough_transcode` (optimise an upload to MP4 + poster) and
+ * `walkthrough_transcribe` (AI-transcribe its audio with Gemini). Both run in the general pool.
+ * The sealer lets the transcribe job resolve the HQ-set Gemini key per run, so a key saved after
+ * the worker booted works without a restart.
+ * @param {{ config: object, sealer?: object }} deps
  */
-export function createWalkthroughMediaHandlers({ config }) {
+export function createWalkthroughMediaHandlers({ config, sealer = null }) {
   const media = walkthroughMediaSettings(config);
   return {
     walkthrough_transcode: async ({ db, job, log }) => {
@@ -204,6 +242,51 @@ export function createWalkthroughMediaHandlers({ config }) {
         await db.withTenant({ tenantId }, async (tx) =>
           tx.query("UPDATE walkthrough_media SET status = 'failed', error = $2, updated_at = now() WHERE id = $1 AND status <> 'ready'", [mediaId, message]), { write: true }).catch(() => {});
         throw e; // retried by the queue; after max_attempts the row stays `failed`
+      }
+    },
+
+    // AI-transcribe a stored walkthrough's audio with Gemini (queued by the transcribe route).
+    // Marks transcribe_status ready|failed on the row; the client polls GET for the result. A
+    // failure is recorded, not re-thrown: it's deterministic (config/too-long) or the user can
+    // simply press Transcribe again, so there's nothing to gain from an automatic retry.
+    walkthrough_transcribe: async ({ db, job, log }) => {
+      if (media.problem) throw new Error(`walkthrough media store unavailable: ${media.problem}`);
+      const tenantId = job.tenant_id;
+      const mediaId = job.payload?.mediaId;
+      if (!tenantId || !mediaId) return { skipped: 'missing tenant or media id' };
+      const row = await db.withTenant({ tenantId }, async (tx) =>
+        (await tx.query('SELECT * FROM walkthrough_media WHERE id = $1', [mediaId])).rows[0]);
+      if (!row) return { skipped: 'row gone' };
+      // Prefer the optimised MP4; fall back to the original while it is still being optimised.
+      const inputFile = (row.status === 'ready' && row.output_file) ? row.output_file : row.original_file;
+      const fail = (message) => db.withTenant({ tenantId }, async (tx) =>
+        tx.query("UPDATE walkthrough_media SET transcribe_status = 'failed', transcribe_error = $2, updated_at = now() WHERE id = $1",
+          [mediaId, String(message).slice(0, 1000)]), { write: true }).catch(() => {});
+      if (!inputFile) { await fail('No video to transcribe.'); return { skipped: 'no file' }; }
+      const settings = geminiSettings(config);
+      let audio = null;
+      try {
+        const apiKey = await resolveGeminiKey(db, sealer);
+        if (!apiKey) { await fail('AI transcription is not configured.'); return { skipped: 'not configured' }; }
+        audio = await extractAudio({ dir: media.dir, inputFile });
+        if (audio.bytes > settings.maxInlineBytes) {
+          await fail('This recording is too long for AI transcription. Trim it or transcribe in sections.');
+          return { skipped: 'too long' };
+        }
+        const audioBase64 = (await readFile(audio.path)).toString('base64');
+        const text = await transcribeAudio({ ...settings, apiKey, audioBase64, mimeType: audio.mimeType });
+        await db.withTenant({ tenantId }, async (tx) => tx.query(
+          `UPDATE walkthrough_media SET transcript = $2, transcribe_status = 'ready', transcribe_error = NULL,
+                  transcribed_at = now(), updated_at = now() WHERE id = $1`,
+          [mediaId, text]), { write: true });
+        log?.info?.(`walkthrough_transcribe ready ${mediaId} (${text.length} chars)`);
+        return { ok: true, chars: text.length };
+      } catch (e) {
+        await fail(e?.message || e);
+        log?.warn?.(`walkthrough_transcribe failed ${mediaId}: ${String(e?.message || e).slice(0, 200)}`);
+        return { failed: true };
+      } finally {
+        if (audio?.path) await unlink(audio.path).catch(() => {});
       }
     },
   };

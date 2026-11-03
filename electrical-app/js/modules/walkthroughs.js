@@ -16,8 +16,8 @@ import {
 import { pickImages, downscaleImage } from '../lib/safety-capture.js';
 import { recordingSupported, startRecording, fmtClock, MAX_UPLOAD_BYTES } from '../lib/walkthrough-recorder.js';
 import { putBlob, getBlob, blobUrl, deleteBlob } from '../lib/local-blobs.js';
-import { uploadWalkthroughVideo, fetchWalkthroughMedia, deleteWalkthroughMedia, mediaUrl } from '../lib/walkthrough-upload.js';
-import { liveDictationSupported, startLiveDictation, appendPhrase } from '../lib/transcribe.js';
+import { uploadWalkthroughVideo, fetchWalkthroughMedia, deleteWalkthroughMedia, transcribeWalkthroughVideo, mediaUrl } from '../lib/walkthrough-upload.js';
+import { liveDictationSupported, startLiveDictation, appendPhrase, aiTranscriptionAvailable, setAiTranscription } from '../lib/transcribe.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/walkthroughs.css"]')) return;
@@ -149,6 +149,8 @@ function detailView(root, ctx, id) {
   let dictation = null;
   let serverPoll = null;  // interval polling the server while a video transcodes
   let lastMedia = null;   // last media view fetched from the server { id, status, url, posterUrl }
+  let transPoll = null;   // interval polling while an AI transcription runs
+  let transcribing = false;
 
   // Keep the record's video status in step with the server, and resolve playback urls.
   async function refreshMedia() {
@@ -157,6 +159,7 @@ function detailView(root, ctx, id) {
     try {
       const m = await fetchWalkthroughMedia(mid);
       lastMedia = m;
+      if (typeof m?.aiTranscription === 'boolean') setAiTranscription(m.aiTranscription);
       if (m?.status && m.status !== w.recording?.status) save(mergeRecording(w, { status: m.status }));
       return m;
     } catch { return lastMedia; }
@@ -167,7 +170,7 @@ function detailView(root, ctx, id) {
     if (!['uploading', 'processing'].includes(videoStatus(w))) return;
     serverPoll = setInterval(async () => {
       const m = await refreshMedia();
-      if (!m || ['ready', 'failed'].includes(m.status)) { stopMediaPolling(); drawRec(); }
+      if (!m || ['ready', 'failed'].includes(m.status)) { stopMediaPolling(); drawRec(); drawTrans(); }
     }, 4000);
   }
 
@@ -335,12 +338,44 @@ function detailView(root, ctx, id) {
   }
   function stopDictation() { if (dictation) { dictation.stop(); dictation = null; } }
 
+  function stopTransPoll() { if (transPoll) { clearInterval(transPoll); transPoll = null; } }
+  function startTransPoll(mid) {
+    stopTransPoll();
+    transPoll = setInterval(async () => {
+      let m; try { m = await fetchWalkthroughMedia(mid); } catch { return; }
+      if (!m || m.transcribeStatus === 'processing') return;
+      stopTransPoll(); transcribing = false;
+      if (m.transcribeStatus === 'ready') {
+        if (m.transcript) save(setTranscript(m.transcript, 'gemini'));
+        ui.toast('Transcribed', 'success', 1500);
+      } else if (m.transcribeStatus === 'failed') {
+        ui.toast(m.transcribeError || 'The transcription failed.', 'error', 5000);
+      }
+      drawTrans();
+    }, 4000);
+  }
+  async function runAiTranscribe() {
+    const mid = w.recording?.mediaId;
+    if (!mid || transcribing) return;
+    if (w.transcript && !(await ui.confirmDialog('Replace the current transcript with the AI transcription?', { title: 'Transcribe with AI', okLabel: 'Replace', danger: false }))) return;
+    transcribing = true; drawTrans();
+    try {
+      await transcribeWalkthroughVideo(mid);
+      startTransPoll(mid);
+    } catch (e) {
+      transcribing = false; drawTrans();
+      ui.toast(e.message || 'Could not start transcription.', 'error', 4000);
+    }
+  }
+
   function drawTrans() {
     ui.clear(transHost);
+    const canAi = !readOnly && aiTranscriptionAvailable() && w.recording?.mediaId && videoStatus(w) === 'ready';
     const head = h('div', { class: 'row wt-trans-head' },
       h('strong', null, 'Transcript'),
       w.transcriptSource ? ui.badge(w.transcriptSource === 'gemini' ? 'AI' : w.transcriptSource === 'ios-speech' ? 'voice' : 'typed', 'info') : null,
       h('span', { class: 'grow' }),
+      canAi ? ui.button(transcribing ? 'Transcribing…' : 'Transcribe with AI', { size: 'sm', variant: 'ghost', icon: 'star', disabled: transcribing, onClick: runAiTranscribe }) : null,
     );
     if (readOnly) {
       transHost.append(head, w.transcript ? h('p', { class: 'wt-trans-ro' }, w.transcript) : h('div', { class: 'hint' }, 'No transcript.'));
@@ -501,9 +536,12 @@ function detailView(root, ctx, id) {
   drawCaps();
   // If the video is still uploading/processing from a previous visit, resume watching the server.
   startMediaPolling();
+  // Fetch the video row once on load (even when ready) so the AI-transcription flag is known and
+  // the "Transcribe with AI" button can show.
+  if (w.recording?.mediaId) refreshMedia().then(() => drawTrans());
 
-  // stop the camera/dictation/poller if the user navigates away mid-record
-  return () => { if (rec) rec.cancel(); clearInterval(tick); stopDictation(); stopMediaPolling(); };
+  // stop the camera/dictation/pollers if the user navigates away mid-record
+  return () => { if (rec) rec.cancel(); clearInterval(tick); stopDictation(); stopMediaPolling(); stopTransPoll(); };
 }
 
 // ---------- printable / shareable report ----------
