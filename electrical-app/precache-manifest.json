@@ -85,6 +85,7 @@
   "./js/lib/cec/provinces.js",
   "./js/lib/cec/systems.js",
   "./js/lib/cec/voltage-drop.js",
+  "./js/lib/certified-payroll.js",
   "./js/lib/clock.js",
   "./js/lib/closeout.js",
   "./js/lib/closing.js",

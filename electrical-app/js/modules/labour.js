@@ -7,11 +7,12 @@
 // Pure logic: js/lib/labour-levels.js. Office-only (perm 'employees'): it shows pay rates.
 import {
   levelsOf, activeLevels, normalizeLevels, newLevel, baselineLevel, LEVEL_KINDS,
-  labourByLevel, apprenticeHours,
+  labourByLevel, apprenticeHours, levelById,
 } from '../lib/labour-levels.js';
 import { labourUnitHours } from '../lib/assemblies.js';
 import { moneyFormatter } from '../lib/money.js';
 import { entryMinutes, localDay, addDays } from '../lib/timesheet.js';
+import { certifiedRows, certifiedCsv } from '../lib/certified-payroll.js';
 
 const KIND_LABEL = { apprentice: 'Apprentice', journeyman: 'Journeyman', foreman: 'Foreman', other: 'Other' };
 const dollars = (cents) => (Math.round(cents || 0) / 100).toFixed(2);
@@ -225,6 +226,22 @@ function drawApprentices(host, ctx) {
     render();
   };
 
+  // Certified / prevailing-wage CSV: hours by project x worker x classification for the range.
+  const exportCertified = () => {
+    const empById = new Map(store.list('employees').map((e) => [e.id, e]));
+    const jobsMap = new Map(store.list('jobs').map((j) => [j.id, j]));
+    const levelOf = (empId) => levelById(store.settings(), employeeLevel[empId]);
+    const rateFor = (empId, level) => Number(empById.get(empId)?.rateCents) || (level?.costCents || 0);
+    const entries = store.list('timeEntries')
+      .filter((e) => e.kind !== 'correction' && e.employeeId)
+      .map((e) => ({ employeeId: e.employeeId, jobId: e.jobId || null, minutes: entryMinutes(e), day: e.clockIn ? localDay(e.clockIn) : null }))
+      .filter((e) => e.minutes > 0 && e.day && e.day >= from && e.day <= to);
+    const rows = certifiedRows(entries, { people: empById, jobs: jobsMap, levelOf, rateFor });
+    if (!rows.length) { ui.toast('No hours in this range to export', 'info'); return; }
+    ui.download(`certified-payroll-${from}-to-${to}.csv`, certifiedCsv(rows, { from, to }), 'text/csv');
+    ui.toast('Certified payroll exported', 'success', 1500);
+  };
+
   const out = h('div', { class: 'stack' });
   const render = () => {
     ui.clear(out);
@@ -274,7 +291,8 @@ function drawApprentices(host, ctx) {
       ],
       rows: people,
     }),
-    h('div', { class: 'row wt-toolbar' }, h('label', { class: 'hint' }, 'From'), fromI, h('label', { class: 'hint' }, 'To'), toI),
+    h('div', { class: 'row wt-toolbar' }, h('label', { class: 'hint' }, 'From'), fromI, h('label', { class: 'hint' }, 'To'), toI,
+      h('span', { class: 'grow' }), ui.button('Certified payroll CSV', { icon: 'download', onClick: exportCertified })),
     out,
   );
   render();
