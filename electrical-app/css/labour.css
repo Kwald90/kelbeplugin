@@ -1,0 +1,12 @@
+/* Labour levels & apprentice hours (js/modules/labour.js). */
+.lv-baseline { align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.lv-hours { max-width: 8rem; }
+
+.lv-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 4px 0 12px; }
+.lv-stat { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface, var(--bg)); }
+.lv-stat b { display: block; font-size: 1.5rem; line-height: 1.1; color: var(--text); }
+.lv-stat span { font-size: .78rem; color: var(--text); opacity: .62; }
+
+@media (max-width: 640px) {
+  .lv-stats { grid-template-columns: 1fr 1fr; }
+}

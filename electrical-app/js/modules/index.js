@@ -10,6 +10,7 @@ import drawings from './drawings.js';
 import wireruns from './wireruns.js';
 import estimates from './estimates.js';
 import assemblies from './assemblies.js';
+import labour from './labour.js';
 import pricelists from './pricelists.js';
 import invoices from './invoices.js';
 import inventory from './inventory.js';
@@ -48,6 +49,6 @@ export const GROUPS = {
 
 export const MODULES = [
   dashboard, today, clients, leads, sequences, jobs, schedule, service, workplan, materials, drawings, wireruns, estimates, assemblies, invoices, purchasing, quickbooks, books, inventory, pricelists,
-  employees, time, sops, safety, compliance, security, calcs, bending, panels, walkthroughs, testing, settings, integrations, billing,
+  employees, time, labour, sops, safety, compliance, security, calcs, bending, panels, walkthroughs, testing, settings, integrations, billing,
   importer, developer, onboarding, notifications, help,
 ];

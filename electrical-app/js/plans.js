@@ -49,7 +49,7 @@ export const FEATURE_PLAN = {
 
   // Fully Loaded (pro): the whole business app, CRM and a lead-capture website.
   clients: 'pro', leads: 'pro', jobs: 'pro', schedule: 'pro', estimates: 'pro', invoices: 'pro',
-  employees: 'pro', time: 'pro', sops: 'pro', safety: 'pro', materials: 'pro',
+  employees: 'pro', time: 'pro', labour: 'pro', sops: 'pro', safety: 'pro', materials: 'pro',
   inventory: 'pro', compliance: 'pro', sequences: 'pro', security: 'pro', integrations: 'pro',
   workplan: 'pro', kpis: 'pro', quickbooks: 'pro', purchasing: 'pro',
   books: 'pro', tickets: 'pro', reports: 'pro', 'reports.wip': 'pro', monthend: 'pro',

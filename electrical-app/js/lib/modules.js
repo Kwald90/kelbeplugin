@@ -46,6 +46,7 @@ export const SWITCHES = [
   { id: 'monthend', group: 'money', label: 'Month-end', desc: 'The month-end cutoff export for your accountant and inventory valuation.', modules: ['monthend'] },
   { id: 'time', group: 'people', label: 'Time clock', desc: 'Clock in and out against jobs; weekly timesheets.', modules: ['time'], core: true },
   { id: 'employees', group: 'people', label: 'Employees', desc: 'Crew records, licences and pay rates.', modules: ['employees'], core: true },
+  { id: 'labour', group: 'people', label: 'Labour levels & apprentice hours', desc: 'Crew levels with cost, charge and productivity; assembly time by level; apprentice hours by level and ratio.', modules: ['labour'], core: true },
   { id: 'safety', group: 'people', label: 'Safety', desc: 'Hazard assessments, toolbox talks and incidents.', modules: ['safety'], core: true },
   { id: 'sops', group: 'people', label: 'SOPs', desc: 'Procedures the crew read and sign.', modules: ['sops'] },
   { id: 'compliance', group: 'people', label: 'Permits and compliance', desc: 'Permits, inspections and certifications.', modules: ['compliance'] },
