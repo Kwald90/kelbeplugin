@@ -8,6 +8,7 @@ import { qboBadge, noTaxReasonPicker, lookupAction, docEditor } from '../lib/qbo
 import { buildSignature, signatureSheet, emailAcceptanceSheet, queueSignatureFirst } from '../lib/esign.js';
 import { residentialEssentials } from '../lib/panel-templates.js';
 import { activeAssemblies, explodeAssembly, materialUnitCents, labourUnitHours } from '../lib/assemblies.js';
+import { activeLevels, levelById, baselineLevel } from '../lib/labour-levels.js';
 
 const STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'];
 
@@ -343,7 +344,17 @@ function renderDetail(root, ctx, id) {
     if (readOnly) return;
     const all = activeAssemblies(store.list('assemblies')).sort((a, b) => String(a.name).localeCompare(String(b.name)));
     const counts = {};
-    const body = all.length ? h('div', { class: 'asm-pick' }, all.map((a) => {
+    // Opt-in crew productivity: default "Standard" = this quote's labour rate (no change). Pick a
+    // level and each assembly's labour bills that level's time (productivity) and rate instead.
+    let crewLevelId = '';
+    const levels = activeLevels(store.settings());
+    const crewSel = h('select', { class: 'input', 'aria-label': 'Crew doing this work' },
+      h('option', { value: '', selected: true }, 'Standard — this quote’s labour rate'),
+      levels.map((l) => h('option', { value: l.id }, `${l.name} (${l.productivityPct}% speed)`)));
+    crewSel.addEventListener('change', (e) => { crewLevelId = e.target.value; });
+    const crewField = h('label', { class: 'field asm-crew' }, h('span', null, 'Crew doing this work'), crewSel,
+      h('span', { class: 'hint' }, 'A slower crew takes more hours and bills at its own rate — a 1st-year apprentice is slower than a journeyman. “Standard” leaves the quote exactly as before.'));
+    const list = all.length ? h('div', { class: 'asm-pick' }, all.map((a) => {
       const inp = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: '0', step: '1', value: '', placeholder: '0', 'aria-label': `Count of ${a.name}` });
       inp.addEventListener('input', () => { counts[a.id] = Number(inp.value) || 0; });
       return h('div', { class: 'asm-pick-row' },
@@ -351,6 +362,7 @@ function renderDetail(root, ctx, id) {
           h('div', { class: 'meta' }, `${money(materialUnitCents(a))} material${labourUnitHours(a) ? ` · ${labourUnitHours(a)} h labour` : ''}${a.category ? ` · ${a.category}` : ''}`)),
         inp);
     })) : h('div', { class: 'stack' }, h('p', { class: 'muted' }, 'No assemblies yet. Build reusable kits of material and labour, then count them here.'), ui.button('Create assemblies', { variant: 'primary', icon: 'plus', href: '#/assemblies' }));
+    const body = all.length ? h('div', { class: 'stack' }, crewField, list) : list;
     const s = ui.openSheet({
       title: 'Add assemblies', body,
       actions: all.length ? [
@@ -359,8 +371,15 @@ function renderDetail(root, ctx, id) {
           const chosen = all.filter((a) => counts[a.id] > 0);
           if (!chosen.length) { s.close(); return; }
           doc.lines = doc.lines || [];
+          const settings = store.settings();
+          const level = crewLevelId ? levelById(settings, crewLevelId) : null;
+          const opts = { labourRateCents: doc.labourRateCents || 0 };
+          if (level) {
+            opts.hoursFactor = (baselineLevel(settings)?.productivityPct || 100) / (level.productivityPct || 100);
+            opts.labourRateOverrideCents = level.chargeCents;
+          }
           let added = 0;
-          for (const a of chosen) { for (const line of explodeAssembly(a, counts[a.id], { labourRateCents: doc.labourRateCents || 0 })) { doc.lines.push(line); added++; } }
+          for (const a of chosen) { for (const line of explodeAssembly(a, counts[a.id], opts)) { doc.lines.push(line); added++; } }
           changed(); save.flush(); redraw();
           ui.toast(`Added ${chosen.length} assembl${chosen.length === 1 ? 'y' : 'ies'} (${added} line${added === 1 ? '' : 's'})`, 'success');
           s.close();

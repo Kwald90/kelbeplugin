@@ -42,6 +42,20 @@ test('no labour line when the assembly has no hours or no rate is given', () => 
   assert.equal(explodeAssembly(receptacle(), 10, {}).length, 1, 'no rate: material only');
 });
 
+test('crew productivity: slower crew bills more hours at its own rate; default is unchanged', () => {
+  const a = receptacle(); // 0.35 h/unit
+  // a 1st-year apprentice at 55% speed vs a 100% baseline: hoursFactor = 100/55 = 1.818…
+  const lines = explodeAssembly(a, 40, { labourRateCents: 9500, hoursFactor: 100 / 55, labourRateOverrideCents: 6500 });
+  const [mat, lab] = lines;
+  assert.equal(mat.labourHours, 0.64, '0.35 x 1.818 ≈ 0.64 h/unit for scheduling');
+  assert.equal(lab.qty, 25.45, '0.636 h x 40 ≈ 25.45 h');
+  assert.equal(lab.unitCents, 6500, 'bills at the apprentice charge rate, not the estimate rate');
+  // defaults (no factor / no override) match the original behaviour exactly
+  const plain = explodeAssembly(a, 40, { labourRateCents: 9500 });
+  assert.equal(plain[1].qty, 14);
+  assert.equal(plain[1].unitCents, 9500);
+});
+
 test('unit sell applies material markup and labour rate', () => {
   const s = unitSellCents(receptacle(), { labourRateCents: 10000, markupPct: 20 });
   assert.equal(s.materialCents, Math.round(900 * 1.2)); // 1080

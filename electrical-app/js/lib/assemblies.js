@@ -53,15 +53,22 @@ export const labourUnitHours = (a) => Number(a?.labourHours) || 0;
  * Explode an assembly at a count into estimate/invoice lines: one material line (priced,
  * carrying labour hours for scheduling) and, when the assembly has labour and a rate is given,
  * one labour line priced at that rate. Lines carry assemblyId so they can be traced back.
+ *
+ * Optional crew productivity (opt-in from the estimate): `hoursFactor` scales the labour hours (a
+ * slower crew takes more), and `labourRateOverrideCents` bills at that crew's own rate instead of
+ * the estimate's. Both default to the standard behaviour, so existing callers are unchanged.
  */
-export function explodeAssembly(a, count = 1, { labourRateCents = 0 } = {}) {
+export function explodeAssembly(a, count = 1, { labourRateCents = 0, hoursFactor = 1, labourRateOverrideCents = null } = {}) {
   const n = Math.max(0, Number(count) || 0);
   const matUnit = materialUnitCents(a);
-  const hours = labourUnitHours(a);
+  const f = Number(hoursFactor) > 0 ? Number(hoursFactor) : 1;
+  const rawHours = labourUnitHours(a) * f;      // per-unit crew hours, full precision for the totals
+  const hours = round2(rawHours);               // rounded only for the scheduling display
+  const rate = labourRateOverrideCents != null ? Math.max(0, Math.round(labourRateOverrideCents)) : Math.round(labourRateCents);
   const name = a?.name || 'Assembly';
   const lines = [{ itemId: null, description: name, qty: n, unitCents: matUnit, labourHours: hours, kind: 'material', assemblyId: a?.id || null }];
-  if (hours > 0 && labourRateCents > 0) {
-    lines.push({ itemId: null, description: `${name} — labour`, qty: round2(hours * n), unitCents: Math.round(labourRateCents), labourHours: 0, kind: 'labour', assemblyId: a?.id || null });
+  if (rawHours > 0 && rate > 0) {
+    lines.push({ itemId: null, description: `${name} — labour`, qty: round2(rawHours * n), unitCents: rate, labourHours: 0, kind: 'labour', assemblyId: a?.id || null });
   }
   return lines;
 }
