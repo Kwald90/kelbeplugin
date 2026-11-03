@@ -133,6 +133,11 @@ select.bend-input { font-size: var(--fs-base); }
 .bend-svg .bd-angle { font-weight: 750; fill: var(--accent); font-size: 13px; }
 .bend-svg .bd-dim { stroke: var(--text-muted); stroke-width: 1; }
 .bend-svg .bd-dimtext { fill: var(--text-muted); font-weight: 600; }
+/* colour-coded dimensions, like a field bending app: green = bend spacing, blue = offset depth */
+.bend-svg .bd-dim-span { stroke: var(--success); stroke-width: 1.25; }
+.bend-svg .bd-spantext { fill: var(--success); font-weight: 750; }
+.bend-svg .bd-dim-rise { stroke: var(--info); stroke-width: 1.25; }
+.bend-svg .bd-risetext { fill: var(--info); font-weight: 750; }
 .bend-svg .bd-true { stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
 .bend-svg .bd-break { stroke: var(--text-muted); stroke-width: 1.5; }
 .bend-svg .bd-gap { fill: var(--surface); }

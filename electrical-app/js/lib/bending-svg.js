@@ -18,17 +18,17 @@ function line(x1, y1, x2, y2, cls) {
 const poly = (pts, cls, w) => `<polyline class="${cls}" points="${pts.map(([x, y]) => `${n1(x)},${n1(y)}`).join(' ')}"${w ? ` stroke-width="${n1(w)}"` : ''}/>`;
 
 /** A dimension line with end ticks and a label in the middle. */
-function dim(x1, y1, x2, y2, label, side = 'right') {
+function dim(x1, y1, x2, y2, label, side = 'right', lineCls = 'bd-dim', textCls = 'bd-dimtext') {
   const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
   const vertical = Math.abs(x2 - x1) < Math.abs(y2 - y1);
   const t = 5;
   const ticks = vertical
-    ? line(x1 - t, y1, x1 + t, y1, 'bd-dim') + line(x2 - t, y2, x2 + t, y2, 'bd-dim')
-    : line(x1, y1 - t, x1, y1 + t, 'bd-dim') + line(x2, y2 - t, x2, y2 + t, 'bd-dim');
+    ? line(x1 - t, y1, x1 + t, y1, lineCls) + line(x2 - t, y2, x2 + t, y2, lineCls)
+    : line(x1, y1 - t, x1, y1 + t, lineCls) + line(x2, y2 - t, x2, y2 + t, lineCls);
   const lab = vertical
-    ? (side === 'left' ? text(mx - 8, my + 4, label, 'bd-dimtext', 'end') : text(mx + 8, my + 4, label, 'bd-dimtext', 'start'))
-    : text(mx, my - 6, label, 'bd-dimtext');
-  return line(x1, y1, x2, y2, 'bd-dim') + ticks + lab;
+    ? (side === 'left' ? text(mx - 8, my + 4, label, textCls, 'end') : text(mx + 8, my + 4, label, textCls, 'start'))
+    : text(mx, my - 6, label, textCls);
+  return line(x1, y1, x2, y2, lineCls) + ticks + lab;
 }
 
 /** Two slanted lines across the pipe: this stretch is not drawn to scale. */
@@ -250,13 +250,13 @@ function foregroundParts(result, L, od, fmt, pipes) {
     if (d.type === 'rise' && main.bends.length >= 2) {
       const yA = main.points[0][1], yB = main.bends[1].y;
       const x = X(maxX) + 12;
-      parts.push(dim(x, Y(yA), x, Y(yB), fmt(d.label)));
+      parts.push(dim(x, Y(yA), x, Y(yB), fmt(d.label), 'right', 'bd-dim-rise', 'bd-risetext'));
     } else if (d.type === 'kick' && main.bends.length) {
       const x = X(minX) - 14;
-      parts.push(dim(x, Y(0), x, Y(main.bends[0].y), fmt(d.label), 'left'));
+      parts.push(dim(x, Y(0), x, Y(main.bends[0].y), fmt(d.label), 'left', 'bd-dim-rise', 'bd-risetext'));
     } else if (d.type === 'stub') {
       const x = X(minX) - 14;
-      parts.push(dim(x, Y(0), x, Y(lowest - od / 2), fmt(d.label), 'left'));
+      parts.push(dim(x, Y(0), x, Y(lowest - od / 2), fmt(d.label), 'left', 'bd-dim-rise', 'bd-risetext'));
     } else if (d.type === 'leg' || d.type === 'backToBack') {
       const y = Y(lowest - od / 2) + gap;
       parts.push(dim(X(-od / 2), y, X(main.end[0] + (d.type === 'backToBack' ? od / 2 : 0)), y, fmt(d.label)));
@@ -399,10 +399,10 @@ export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight =
     ...backgroundParts(result, L, od),
     ...pipePolys(pipes, L),
     ...breakParts(pipes, L),
-    benderParts(result, L, od, fmt),
+    directionArrow(L),
     ...foregroundParts(result, L, od, fmt, pipes),
   ];
-  return svgWrap(width, L.height, 'Bent pipe with bender, side view', parts.join(''));
+  return svgWrap(width, L.height, 'Bent pipe, side view, to scale', parts.join(''));
 }
 
 /**
@@ -433,10 +433,9 @@ export function animatedBendSvg(result, { fmt = mmFmt, width = 640, odM = 0, max
       ...pipePolys(pipes, L),
       ...breakParts(finalPipes, L),
       directionArrow(L),
-      benderParts(result, L, od, fmt),
       ...foregroundParts(result, L, od, fmt, finalPipes),
     ];
-    return svgWrap(width, L.height, 'Bent pipe with bender, side view', parts.join(''));
+    return svgWrap(width, L.height, 'Bent pipe, side view, to scale', parts.join(''));
   }
 
   const N = Math.max(2, frames);
@@ -468,8 +467,8 @@ export function animatedBendSvg(result, { fmt = mmFmt, width = 640, odM = 0, max
   });
   parts.push(...breakParts(finalPipes, L));
   parts.push(directionArrow(L));
-  // the bender, dimensions and labels appear as the shape settles (base opacity 1, no script needed)
-  const fg = benderParts(result, L, od, fmt) + foregroundParts(result, L, od, fmt, finalPipes).join('');
+  // the dimensions and labels appear as the shape settles (base opacity 1, no script needed)
+  const fg = foregroundParts(result, L, od, fmt, finalPipes).join('');
   parts.push(`<g class="bd-reveal" opacity="1"><animate class="bd-anim" attributeName="opacity" dur="${dur}" begin="indefinite" fill="freeze" calcMode="linear" keyTimes="0;0.55;1" values="0;0;1"/>${fg}</g>`);
   return svgWrap(width, L.height, 'Bend forming, side view', parts.join(''));
 }
@@ -604,8 +603,8 @@ export function marksSvg(result, { fmt = mmFmt, snap = (m) => m, width = 640 } =
         const d = snap(b) - snap(a);
         if (d <= 0) continue;
         const xa = X(a), xb = X(b);
-        parts.push(line(xa, chainY, xb, chainY, 'bd-dim'), line(xa, chainY - 4, xa, chainY + 4, 'bd-dim'), line(xb, chainY - 4, xb, chainY + 4, 'bd-dim'));
-        if (xb - xa > 34) parts.push(text((xa + xb) / 2, chainY - 5, fmt(d), 'bd-dimtext'));
+        parts.push(line(xa, chainY, xb, chainY, 'bd-dim-span'), line(xa, chainY - 4, xa, chainY + 4, 'bd-dim-span'), line(xb, chainY - 4, xb, chainY + 4, 'bd-dim-span'));
+        if (xb - xa > 34) parts.push(text((xa + xb) / 2, chainY - 5, fmt(d), 'bd-spantext'));
       }
       // a bender under each real bend mark — "set the bender here", like a field bending app
       const benderMarks = marks.filter((m) => ['arrow', 'star', 'notch'].includes(m.symbol) && m.angleDeg);
