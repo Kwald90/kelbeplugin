@@ -32,7 +32,7 @@ export const SWITCHES = [
   { id: 'panels', group: 'work', label: 'Panel schedules', desc: 'Circuits, loads and printable directories.', modules: ['panels'] },
   { id: 'bending', group: 'work', label: 'Pipe bending', desc: 'Offsets, saddles and kicks with marks.', modules: ['bending'] },
   { id: 'tickets', group: 'work', label: 'Field tickets', desc: 'Signed extra work and T&M tickets on the phone, priced by the office.', modules: ['tickets'], core: true },
-  { id: 'walkthroughs', group: 'work', label: 'Site walkthroughs', desc: 'Guided photo walkthroughs of the job site, by room or checkpoint.', modules: ['walkthroughs'], core: true },
+  { id: 'walkthroughs', group: 'work', label: 'Site walkthroughs', desc: 'Record a video+audio walk of the job site, grab photos as you go, transcribe and organise them.', modules: ['walkthroughs'], core: true },
   { id: 'service', group: 'work', label: 'Service agreements', desc: 'Recurring maintenance contracts and a per-site registry of the gear you look after.', modules: ['service'], core: true },
   { id: 'testing', group: 'work', label: 'Test & commissioning', desc: 'Record megger, bonding, GFCI trip and torque readings with pass/fail and the instrument used.', modules: ['testing'], core: true },
   { id: 'estimates', group: 'money', label: 'Estimates', desc: 'Quotes from the price book and drawing takeoffs.', modules: ['estimates'], core: true },

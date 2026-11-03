@@ -1,13 +1,21 @@
-// Site walkthroughs (#/walkthroughs): a guided, room-by-room photo record of a job site — the
-// "CompanyCam walkthrough". Anyone on the job captures it on the phone, offline; it syncs like
-// everything else. Internal by default; the office can mark one visible to the client (it reaches
-// the client portal) and print or hand over a photo report.
+// Site walkthroughs (#/walkthroughs): a free-form video + photo record of a job site — the
+// "CompanyCam walkthrough". You walk the site talking; it records video + audio and you grab stills
+// as you go, then divide them into groups you name afterwards. No fixed room list — every job is
+// different. Internal by default; the office can mark one visible to the client and print a report.
 //   #/walkthroughs              the list (filter by job)
-//   #/walkthroughs/new?jobId=   start one (pick a job and a checkpoint template)
-//   #/walkthroughs/:id          walk the site: photos, notes and done per stop; share; report
-// Pure logic: js/lib/walkthroughs.js. Camera and downscaling: js/lib/safety-capture.js.
-import { newWalkthrough, templatesFrom, templateById, newStop, progress, canShare, allStopsDone, walkthroughLabel, MAX_STOPS, MAX_PHOTOS_PER_STOP } from '../lib/walkthroughs.js';
-import { photoStrip } from '../lib/safety-capture.js';
+//   #/walkthroughs/new?jobId=   start one (pick a job + title)
+//   #/walkthroughs/:id          record, capture stills, transcribe, organise, share, report
+// Pure logic: js/lib/walkthroughs.js. Camera/stills: lib/safety-capture.js; video: lib/walkthrough-
+// recorder.js + lib/local-blobs.js (device-local); transcript: lib/transcribe.js.
+import {
+  newWalkthrough, newCapture, progress, canShare, walkthroughLabel, legacyCaptures,
+  withCapture, withoutCapture, assignCapture, relabelCapture, withGroup, renameGroup, withoutGroup,
+  groupsWithCaptures, setRecording, setTranscript, hasVideo, hasTranscript, captureCount, MAX_CAPTURES,
+} from '../lib/walkthroughs.js';
+import { pickImages, downscaleImage } from '../lib/safety-capture.js';
+import { recordingSupported, startRecording, fmtClock } from '../lib/walkthrough-recorder.js';
+import { putBlob, blobUrl, deleteBlob } from '../lib/local-blobs.js';
+import { liveDictationSupported, startLiveDictation, appendPhrase } from '../lib/transcribe.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/walkthroughs.css"]')) return;
@@ -58,19 +66,27 @@ function listView(root, ctx) {
           { key: 'date', label: 'Date', render: (w) => ui.fmtDate(w.date || w.createdAt), sort: (w) => w.date || w.createdAt },
           { key: 'title', label: 'Walkthrough', render: (w) => w.title || 'Walkthrough' },
           { key: 'job', label: 'Job', render: (w) => jobLabel(jobs.get(w.jobId)) },
-          { key: 'stops', label: 'Stops', align: 'right', render: (w) => { const p = progress(w); return `${p.done}/${p.total}`; } },
-          { key: 'photos', label: 'Photos', align: 'right', render: (w) => progress(w).photos },
+          { key: 'media', label: 'Captured', align: 'right', render: (w) => mediaSummary(w) },
           { key: 'state', label: 'Status', render: (w) => (w.status === 'complete' ? ui.badge('complete', 'success') : ui.badge('in progress', 'warning')) },
           { key: 'shared', label: 'Client', render: (w) => (w.sharedWithClient ? ui.badge('shared', 'info') : '') },
         ],
         rows: all, onRowClick: (w) => nav(`walkthroughs/${w.id}`),
-      }) : ui.empty({ icon: 'image', title: 'No walkthroughs yet', text: 'Walk a job site room by room, snapping photos as you go. Great for a before/after record, inspections and handing a visual report to the client.', action: ui.button('New walkthrough', { variant: 'primary', icon: 'plus', href: '#/walkthroughs/new' }) }));
+      }) : ui.empty({ icon: 'image', title: 'No walkthroughs yet', text: 'Walk a job site talking as you go — it records video and audio, you grab photos along the way, and afterwards you divide them into sections you name. Great for a before/after record, inspections and handing a visual report to the client.', action: ui.button('New walkthrough', { variant: 'primary', icon: 'plus', href: '#/walkthroughs/new' }) }));
   };
 
-  root.append(ui.page({ title: 'Site walkthroughs', subtitle: 'Guided photo walkthroughs of the job site' }, host));
+  root.append(ui.page({ title: 'Site walkthroughs', subtitle: 'Video + photo walkthroughs of the job site' }, host));
   draw();
   const off = store.on('walkthroughs', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
   return off;
+}
+
+function mediaSummary(w) {
+  const n = captureCount(w) + (legacyCaptures(w)?.captures.length || 0);
+  const bits = [];
+  if (hasVideo(w)) bits.push('video');
+  bits.push(`${n} photo${n === 1 ? '' : 's'}`);
+  if (hasTranscript(w)) bits.push('transcript');
+  return bits.join(' · ');
 }
 
 // ---------- start a new one ----------
@@ -79,22 +95,19 @@ function startNew(ctx) {
   const jobs = store.list('jobs').filter((j) => (j.status || 'active') !== 'archived')
     .sort((a, b) => String(b.number).localeCompare(String(a.number)));
   if (!jobs.length) { ui.toast('Add a job first, then start a walkthrough for it.', 'info', 4000); nav('#/walkthroughs'); return; }
-  const templates = templatesFrom(store.settings());
   const preJob = ctx.query.jobId && jobs.some((j) => j.id === ctx.query.jobId) ? ctx.query.jobId : jobs[0].id;
 
   ui.formSheet({
     title: 'New walkthrough',
     fields: [
       { label: 'Job', name: 'jobId', type: 'select', required: true, value: preJob, options: jobs.map((j) => ({ value: j.id, label: jobLabel(j) })) },
-      { label: 'Checkpoints', name: 'templateId', type: 'select', value: templates[0]?.id || '', hint: 'A starting list of stops. You can add, rename or remove stops after.', options: templates.map((t) => ({ value: t.id, label: `${t.name}${t.stops?.length ? ` (${t.stops.length})` : ''}` })) },
-      { label: 'Title', name: 'title', placeholder: 'Site walkthrough', span: true },
+      { label: 'Title', name: 'title', placeholder: 'Site walkthrough', span: true, hint: 'e.g. "Service call — 12 Main St" or "Rough-in walk".' },
     ],
     submitLabel: 'Start',
     onSubmit: (v) => {
       const job = store.get('jobs', v.jobId);
       if (!job) { ui.toast('Pick a job', 'error'); return false; }
-      const template = templateById(store.settings(), v.templateId);
-      const w = newWalkthrough({ job, template, title: v.title, by: store.actorId, date: ui.today() });
+      const w = newWalkthrough({ job, title: v.title, by: store.actorId, date: ui.today() });
       store.add('walkthroughs', w);
       nav(`#/walkthroughs/${w.id}`);
     },
@@ -102,124 +115,315 @@ function startNew(ctx) {
   });
 }
 
-// ---------- walk the site ----------
+// ---------- the walkthrough ----------
 function detailView(root, ctx, id) {
   const { store, ui, auth, nav } = ctx;
   const { h } = ui;
   let w = store.get('walkthroughs', id);
   if (!w) { ui.toast('That walkthrough is gone.', 'error'); nav('#/walkthroughs'); return; }
   const office = auth.can('invoices') || auth.isManager();
+  const readOnly = w.status === 'complete';
 
-  // Persist a patch and keep the local copy in step (last writer wins; one person walks the site).
+  // One person walks a site; last-writer-wins is fine. Keep the local copy in step with each save.
   const save = (patch) => { w = store.update('walkthroughs', id, patch); };
-  const saveStops = () => save({ stops: w.stops });
+
+  // One-time migration of an old room-by-room walkthrough into the free-form model.
+  if (!captureCount(w) && !hasVideo(w)) {
+    const legacy = legacyCaptures(w);
+    if (legacy) save({ groups: legacy.groups, captures: legacy.captures, stops: null });
+  }
 
   const job = store.get('jobs', w.jobId);
   const cName = clientName(store, w.clientId);
 
-  const bar = h('div', { class: 'wt-bar' });
-  const stopsHost = h('div', { class: 'wt-stops' });
+  const recHost = h('div', { class: 'wt-rec' });
+  const capsHost = h('div', { class: 'wt-caps' });
+  const transHost = h('div', { class: 'wt-trans' });
+  const actionsHost = h('div', { class: 'row wt-head-actions' });
 
-  const drawBar = () => {
-    const p = progress(w);
-    ui.clear(bar).append(
-      h('div', { class: 'wt-progress', role: 'progressbar', 'aria-valuenow': p.pct }, h('span', { style: { width: `${p.pct}%` } })),
-      h('div', { class: 'wt-progress-meta muted' }, `${p.done} of ${p.total} stops · ${p.photos} photo${p.photos === 1 ? '' : 's'}`));
-  };
+  // ---- recording ----
+  let rec = null; // active recorder controller
+  let tick = null; // elapsed-clock interval
+  let dictation = null;
 
-  const shareRow = () => {
+  function drawRec() {
+    ui.clear(recHost);
+    if (readOnly) { if (hasVideo(w)) recHost.append(videoCard()); return; }
+
+    if (rec) {
+      const clock = h('span', { class: 'wt-rec-clock', role: 'timer' }, '0:00');
+      tick = setInterval(() => { clock.textContent = fmtClock(rec.elapsedMs()); }, 500);
+      const interim = h('div', { class: 'wt-rec-interim muted' });
+      recHost.append(
+        h('div', { class: 'wt-rec-live' },
+          rec.previewEl,
+          h('div', { class: 'wt-rec-badge' }, h('span', { class: 'wt-rec-dot' }), 'REC ', clock),
+        ),
+        h('div', { class: 'row wt-rec-controls' },
+          ui.button('Snap photo', { variant: 'primary', icon: 'image', onClick: snap }),
+          ui.button('Stop', { variant: 'ghost danger', icon: 'x', onClick: stopRec }),
+        ),
+        liveDictationSupported() ? interim : h('div', { class: 'hint' }, 'Audio is recorded with the video; transcript can be added after.'),
+      );
+      if (liveDictationSupported()) startDictation(interim);
+    } else {
+      if (hasVideo(w)) recHost.append(videoCard());
+      const canRec = recordingSupported();
+      recHost.append(h('div', { class: 'row wt-capture-actions' },
+        canRec ? ui.button(hasVideo(w) ? 'Record again' : 'Record walk', { variant: 'primary', icon: 'play', onClick: startRec }) : null,
+        ui.button('Add photos', { variant: canRec ? 'ghost' : 'primary', icon: 'image', onClick: addPhotos }),
+      ));
+      if (!canRec) recHost.append(h('div', { class: 'hint' }, 'Video recording needs camera access in the app; you can still add photos from the camera or library.'));
+    }
+  }
+
+  function videoCard() {
+    const card = h('div', { class: 'wt-video card' });
+    const meta = h('div', { class: 'wt-video-meta muted' }, `Video · ${fmtClock(w.recording?.durationMs || 0)}${w.recording?.startedAt ? ` · ${ui.fmtDate(w.recording.startedAt)}` : ''}`);
+    const play = ui.button('Play video', { size: 'sm', icon: 'play', onClick: async () => {
+      const url = await blobUrl(w.recording?.localId);
+      ui.clear(card);
+      if (!url) { card.append(meta, h('div', { class: 'hint' }, 'The video was recorded on another device, so it isn’t stored here. Photos and the transcript are still available.')); return; }
+      const v = h('video', { class: 'wt-video-el', controls: true, src: url, playsInline: true });
+      card.append(v, meta);
+    } });
+    card.append(h('div', { class: 'row' }, h('span', { class: 'wt-video-ico' }, ui.icon('play', 20)), meta, h('span', { class: 'grow' }), play));
+    return card;
+  }
+
+  async function startRec() {
+    try {
+      rec = await startRecording();
+      drawRec();
+    } catch (e) {
+      rec = null;
+      const msg = /denied|NotAllowed/i.test(String(e)) ? 'Camera/mic permission was blocked. Allow it for the app, or use Add photos.' : 'Couldn’t start the camera. You can still add photos.';
+      ui.toast(msg, 'error', 4500);
+      drawRec();
+    }
+  }
+
+  async function snap() {
+    if (!rec) return;
+    try {
+      const atMs = rec.elapsedMs();
+      const shot = await rec.grabStill();
+      save({ captures: withCapture(w, newCapture({ photo: shot.dataUrl, atMs })) });
+      drawCaps();
+      ui.toast('Photo grabbed', 'success', 1200);
+    } catch { ui.toast('Couldn’t grab that frame', 'error'); }
+  }
+
+  async function stopRec() {
+    if (!rec) return;
+    const controller = rec; rec = null;
+    clearInterval(tick); tick = null;
+    stopDictation();
+    let out;
+    try { out = await controller.stop(); } catch { out = null; }
+    if (out && out.blob && out.blob.size) {
+      try {
+        const localId = await putBlob(out.blob);
+        const prev = w.recording?.localId;
+        save(setRecording({ localId, durationMs: out.durationMs, mimeType: out.mimeType }));
+        if (prev && prev !== localId) deleteBlob(prev);
+        ui.toast('Walk recorded', 'success');
+      } catch { ui.toast('Recorded, but this device can’t store the video. Photos and transcript were kept.', 'warning', 5000); }
+    }
+    drawRec();
+  }
+
+  async function addPhotos() {
+    const room = MAX_CAPTURES - captureCount(w);
+    if (room <= 0) { ui.toast('That’s the most photos one walkthrough can hold.', 'info'); return; }
+    const files = await pickImages({ multiple: room > 1 });
+    let added = 0;
+    for (const f of files.slice(0, room)) {
+      try { const p = await downscaleImage(f); save({ captures: withCapture(w, newCapture({ photo: p.dataUrl })) }); added++; }
+      catch { ui.toast(`Couldn’t read ${f.name}`, 'error'); }
+    }
+    if (added) { drawCaps(); ui.toast(`${added} photo${added === 1 ? '' : 's'} added`, 'success', 1500); }
+  }
+
+  // ---- transcript ----
+  function startDictation(interimEl) {
+    stopDictation();
+    let t = null;
+    dictation = startLiveDictation({
+      onText: (phrase) => { save({ transcript: appendPhrase(w.transcript, phrase), transcriptSource: w.transcriptSource || 'ios-speech' }); if (interimEl) interimEl.textContent = ''; drawTrans(); },
+      onInterim: (txt) => { if (interimEl) interimEl.textContent = txt; },
+      onError: () => { /* unsupported or a transient engine hiccup — manual transcript still works */ },
+    });
+  }
+  function stopDictation() { if (dictation) { dictation.stop(); dictation = null; } }
+
+  function drawTrans() {
+    ui.clear(transHost);
+    const head = h('div', { class: 'row wt-trans-head' },
+      h('strong', null, 'Transcript'),
+      w.transcriptSource ? ui.badge(w.transcriptSource === 'gemini' ? 'AI' : w.transcriptSource === 'ios-speech' ? 'voice' : 'typed', 'info') : null,
+      h('span', { class: 'grow' }),
+    );
+    if (readOnly) {
+      transHost.append(head, w.transcript ? h('p', { class: 'wt-trans-ro' }, w.transcript) : h('div', { class: 'hint' }, 'No transcript.'));
+      return;
+    }
+    const ta = h('textarea', { class: 'input wt-trans-ta', rows: 4, placeholder: liveDictationSupported() ? 'Dictated as you record where the phone supports it — edit here, or type your own notes.' : 'Type what you walked through, or dictate on a device that supports it.', value: w.transcript || '' });
+    let t = null;
+    ta.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => save(setTranscript(ta.value, 'manual')), 600); });
+    ta.addEventListener('blur', () => { clearTimeout(t); save(setTranscript(ta.value, w.transcriptSource === 'manual' || !w.transcriptSource ? 'manual' : w.transcriptSource)); });
+    transHost.append(head, ta);
+  }
+
+  // ---- captures / organise ----
+  function drawCaps() {
+    ui.clear(capsHost);
+    const total = captureCount(w);
+    if (!total) {
+      capsHost.append(h('div', { class: 'wt-caps-empty hint' }, readOnly ? 'No photos were captured.' : 'Snap photos while you record, or add them from the camera. You can group them after.'));
+      return;
+    }
+    const sections = groupsWithCaptures(w);
+    capsHost.append(h('div', { class: 'row wt-caps-head' },
+      h('strong', null, `${total} photo${total === 1 ? '' : 's'}`),
+      h('span', { class: 'grow' }),
+      readOnly ? null : ui.button('New group', { size: 'sm', variant: 'ghost', icon: 'plus', onClick: addGroup })));
+    for (const sec of sections) capsHost.append(groupSection(sec));
+  }
+
+  function groupSection({ group, captures }) {
+    const title = group
+      ? h('div', { class: 'row wt-grp-head' },
+          h('strong', null, group.name || 'Group'),
+          h('span', { class: 'muted' }, `${captures.length}`),
+          h('span', { class: 'grow' }),
+          readOnly ? null : ui.button('', { size: 'sm', variant: 'ghost', icon: 'pen', title: 'Rename group', onClick: () => renameGrp(group) }),
+          readOnly ? null : ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'x', title: 'Remove group', onClick: () => removeGrp(group) }))
+      : (captures.length && groupsWithCaptures(w).length > 1 ? h('div', { class: 'row wt-grp-head' }, h('strong', { class: 'muted' }, 'Ungrouped')) : null);
+    const grid = h('div', { class: 'wt-grid' }, captures.map((c) => captureTile(c)));
+    return h('div', { class: 'wt-grp' }, title, grid);
+  }
+
+  function captureTile(c) {
+    const img = h('img', { class: 'wt-tile-img', src: c.photo, alt: c.label || 'Photo', loading: 'lazy' });
+    const tile = h('figure', { class: 'wt-tile' }, img);
+    if (c.atMs != null) tile.append(h('span', { class: 'wt-tile-ts' }, fmtClock(c.atMs)));
+    if (!readOnly) {
+      const label = h('input', { class: 'input wt-tile-label', placeholder: 'Label', value: c.label || '', 'aria-label': 'Photo label' });
+      let t = null;
+      label.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => save({ captures: relabelCapture(w, c.id, label.value) }), 500); });
+      label.addEventListener('blur', () => { clearTimeout(t); save({ captures: relabelCapture(w, c.id, label.value) }); });
+      tile.append(h('figcaption', { class: 'wt-tile-cap' }, label,
+        h('div', { class: 'row wt-tile-tools' },
+          ui.button('', { size: 'sm', variant: 'ghost', icon: 'layers', title: 'Move to a group', onClick: () => moveCapture(c) }),
+          ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: 'Delete photo', onClick: () => delCapture(c) }))));
+    } else if (c.label) {
+      tile.append(h('figcaption', { class: 'wt-tile-cap' }, c.label));
+    }
+    return tile;
+  }
+
+  function addGroup() {
+    ui.promptDialog('Name this group (a room, an area, "before", "after"…)', { title: 'New group', okLabel: 'Add' }).then((name) => {
+      if (name == null) return;
+      const groups = withGroup(w, name);
+      if (groups.length === (w.groups || []).length) { ui.toast('Give the group a name.', 'info'); return; }
+      save({ groups }); drawCaps();
+    });
+  }
+  function renameGrp(group) {
+    ui.promptDialog('Group name', { title: 'Rename group', value: group.name || '', okLabel: 'Save' }).then((name) => {
+      if (name == null) return;
+      save({ groups: renameGroup(w, group.id, name) }); drawCaps();
+    });
+  }
+  async function removeGrp(group) {
+    if (!(await ui.confirmDialog(`Remove the group "${group.name}"? Its photos move back to ungrouped.`, { okLabel: 'Remove' }))) return;
+    save(withoutGroup(w, group.id)); drawCaps();
+  }
+  function moveCapture(c) {
+    const groups = w.groups || [];
+    const opts = [
+      { label: '— Ungrouped —', value: '' },
+      ...groups.map((g) => ({ label: g.name || 'Group', value: g.id })),
+      { label: '＋ New group…', value: '__new' },
+    ];
+    ui.openSheet({
+      title: 'Move photo',
+      body: (close) => h('div', { class: 'stack wt-move' }, opts.map((o) => ui.button(o.label, {
+        variant: (c.groupId || '') === o.value ? 'primary' : 'ghost', full: true,
+        onClick: () => {
+          close();
+          if (o.value === '__new') { addThenAssign(c); return; }
+          save({ captures: assignCapture(w, c.id, o.value || null) }); drawCaps();
+        },
+      }))),
+    });
+  }
+  function addThenAssign(c) {
+    ui.promptDialog('Name the new group', { title: 'New group', okLabel: 'Add' }).then((name) => {
+      if (name == null) return;
+      const groups = withGroup(w, name);
+      if (groups.length === (w.groups || []).length) return;
+      const g = groups[groups.length - 1];
+      save({ groups }); save({ captures: assignCapture(w, c.id, g.id) }); drawCaps();
+    });
+  }
+  async function delCapture(c) {
+    if (!(await ui.confirmDialog('Delete this photo?', { okLabel: 'Delete' }))) return;
+    save({ captures: withoutCapture(w, c.id) }); drawCaps();
+  }
+
+  // ---- share / complete / report ----
+  function shareRow() {
     const can = canShare(w) || w.sharedWithClient;
-    const cb = h('input', { type: 'checkbox', checked: !!w.sharedWithClient, disabled: !office || (!w.clientId), onChange: (e) => {
+    const cb = h('input', { type: 'checkbox', checked: !!w.sharedWithClient, disabled: !office || !w.clientId, onChange: (e) => {
       const on = e.target.checked;
       save(on ? { sharedWithClient: true, sharedAt: new Date().toISOString(), sharedBy: store.actorId } : { sharedWithClient: false });
       ui.toast(on ? 'This walkthrough is now visible to the client.' : 'No longer shared with the client.', on ? 'success' : 'info');
     } });
     const note = !w.clientId ? 'This job has no client, so there is nobody to share with.'
       : !office ? 'The office decides what the client sees.'
-      : !can ? 'Add at least one photo, then you can share it.'
+      : !can ? 'Capture a photo or the video first, then you can share it.'
       : 'Shared walkthroughs appear in the client’s portal; you can also print or hand over the report.';
     return h('label', { class: 'wt-share check' }, cb, h('span', null, h('strong', null, 'Visible to client'), h('span', { class: 'hint' }, note)));
-  };
-
-  const drawStops = () => {
-    ui.clear(stopsHost);
-    (w.stops || []).forEach((stop, i) => stopsHost.append(stopCard(stop, i)));
-    if ((w.stops || []).length < MAX_STOPS) {
-      stopsHost.append(h('button', { type: 'button', class: 'wt-addstop', onClick: addStop }, ui.icon('plus', 16), 'Add a stop'));
-    }
-  };
-
-  function stopCard(stop, i) {
-    const done = !!stop.doneAt;
-    const head = h('div', { class: 'wt-stop-head' },
-      h('div', { class: 'wt-stop-n' }, String(i + 1)),
-      h('div', { class: 'grow' }, h('div', { class: 'wt-stop-name' }, stop.name || `Stop ${i + 1}`),
-        h('div', { class: 'wt-stop-sub muted' }, `${(stop.photos || []).length} photo${(stop.photos || []).length === 1 ? '' : 's'}`)),
-      done ? ui.badge('done', 'success') : null,
-      h('div', { class: 'wt-stop-tools' },
-        ui.button('', { variant: 'ghost', size: 'sm', icon: 'pen', title: 'Rename', onClick: () => renameStop(stop) }),
-        ui.button(done ? 'Undo' : 'Done', { size: 'sm', variant: done ? 'ghost' : 'primary', onClick: () => { stop.doneAt = done ? null : new Date().toISOString(); saveStops(); drawStops(); drawBar(); } }),
-        ui.button('', { variant: 'ghost danger', size: 'sm', icon: 'x', title: 'Remove stop', onClick: () => removeStop(stop) })));
-
-    const photos = photoStrip({ photos: stop.photos, max: MAX_PHOTOS_PER_STOP, label: 'Add photo', toast: ui.toast, onChange: () => { saveStops(); drawBar(); } });
-    const note = h('textarea', { class: 'input wt-note', rows: 2, placeholder: 'Note (optional)', value: stop.note || '' });
-    let t = null;
-    note.addEventListener('input', () => { stop.note = note.value.slice(0, 2000); clearTimeout(t); t = setTimeout(saveStops, 600); });
-    note.addEventListener('blur', () => { clearTimeout(t); stop.note = note.value.slice(0, 2000); saveStops(); });
-
-    return h('div', { class: ['wt-stop', done ? 'is-done' : null] }, head, photos, note);
   }
 
-  function addStop() {
-    ui.promptDialog('Name this stop (room or checkpoint)', { title: 'Add a stop', okLabel: 'Add' }).then((name) => {
-      if (name == null) return;
-      w.stops = [...(w.stops || []), newStop(name)];
-      saveStops(); drawStops(); drawBar();
-    });
-  }
-  function renameStop(stop) {
-    ui.promptDialog('Stop name', { title: 'Rename stop', value: stop.name || '', okLabel: 'Save' }).then((name) => {
-      if (name == null) return;
-      stop.name = String(name).slice(0, 200); saveStops(); drawStops();
-    });
-  }
-  async function removeStop(stop) {
-    if ((stop.photos || []).length && !(await ui.confirmDialog('Remove this stop and its photos?', { okLabel: 'Remove' }))) return;
-    w.stops = (w.stops || []).filter((s) => s.id !== stop.id);
-    saveStops(); drawStops(); drawBar();
+  function complete() {
+    if (w.status === 'complete') { save({ status: 'active', completedAt: null }); ui.toast('Reopened.', 'info'); nav(`#/walkthroughs/${id}`); return; }
+    if (!captureCount(w) && !hasVideo(w)) { ui.toast('Record or capture something first.', 'error'); return; }
+    save({ status: 'complete', completedAt: new Date().toISOString() });
+    ui.toast('Walkthrough complete.', 'success');
+    nav(`#/walkthroughs/${id}`);
   }
 
-  const complete = () => {
-    if (w.status === 'complete') { save({ status: 'active', completedAt: null }); ui.toast('Reopened.', 'info'); }
-    else {
-      if (!allStopsDone(w) && !progress(w).photos) { ui.toast('Add some photos first.', 'error'); return; }
-      save({ status: 'complete', completedAt: new Date().toISOString() });
-      ui.toast('Walkthrough complete.', 'success');
-    }
-    rerenderHead();
-  };
-
-  // header actions
-  const actionsHost = h('div', { class: 'row wt-head-actions' });
-  const rerenderHead = () => {
+  function drawActions() {
     ui.clear(actionsHost).append(
       ui.button('Report', { icon: 'printer', variant: 'ghost', onClick: () => printReport(w, ctx) }),
       ui.button(w.status === 'complete' ? 'Reopen' : 'Mark complete', { variant: w.status === 'complete' ? 'ghost' : 'primary', onClick: complete }),
       office ? ui.button('', { variant: 'ghost danger', icon: 'x', title: 'Delete walkthrough', onClick: async () => {
-        if (await ui.confirmDialog('Delete this walkthrough and its photos?', { okLabel: 'Delete' })) { store.remove('walkthroughs', id); nav('#/walkthroughs'); }
+        if (await ui.confirmDialog('Delete this walkthrough and its photos?', { okLabel: 'Delete' })) { if (w.recording?.localId) deleteBlob(w.recording.localId); store.remove('walkthroughs', id); nav('#/walkthroughs'); }
       } }) : null);
-  };
+  }
 
   root.append(ui.page({
     title: walkthroughLabel(w),
     subtitle: [jobLabel(job), cName].filter(Boolean).join(' · ') || 'Walkthrough',
   },
-    actionsHost, bar, shareRow(), stopsHost,
+    actionsHost,
+    h('section', { class: 'wt-section' }, h('h3', { class: 'wt-h' }, 'Record the walk'), recHost),
+    h('section', { class: 'wt-section' }, transHost),
+    h('section', { class: 'wt-section' }, h('h3', { class: 'wt-h' }, 'Photos'), capsHost),
+    h('div', { class: 'wt-section' }, shareRow()),
     h('div', { class: 'row wt-foot' }, ui.button('Back to walkthroughs', { variant: 'ghost', href: '#/walkthroughs' }))));
 
-  rerenderHead();
-  drawBar();
-  drawStops();
+  drawActions();
+  drawRec();
+  drawTrans();
+  drawCaps();
+
+  // stop the camera/dictation if the user navigates away mid-record
+  return () => { if (rec) rec.cancel(); clearInterval(tick); stopDictation(); };
 }
 
 // ---------- printable / shareable report ----------
@@ -229,18 +433,19 @@ function printReport(w, ctx) {
   const job = store.get('jobs', w.jobId);
   const company = store.settings().company || {};
   const cName = clientName(store, w.clientId);
-  const p = progress(w);
+  const sections = groupsWithCaptures(w);
+  const n = captureCount(w);
 
   const node = h('div', { class: 'wt-print' },
     h('header', { class: 'wt-print-head' },
       h('div', null, h('h1', null, w.title || 'Site walkthrough'),
         h('div', { class: 'wt-print-sub' }, [jobLabel(job), cName, ui.fmtDate(w.date || w.createdAt)].filter(Boolean).join(' · '))),
       h('div', { class: 'wt-print-co' }, company.name || '', company.phone ? h('div', null, company.phone) : null)),
-    h('div', { class: 'wt-print-meta' }, `${p.total} stops · ${p.photos} photo${p.photos === 1 ? '' : 's'}${w.status === 'complete' ? ' · complete' : ''}`),
-    (w.stops || []).map((s, i) => h('section', { class: 'wt-print-stop' },
-      h('h2', null, `${i + 1}. ${s.name || 'Stop'}`),
-      s.note ? h('p', { class: 'wt-print-note' }, s.note) : null,
-      (s.photos || []).length ? h('div', { class: 'wt-print-photos' }, (s.photos || []).map((ph) => h('figure', null, h('img', { src: ph.dataUrl, alt: ph.caption || s.name || '' }), ph.caption ? h('figcaption', null, ph.caption) : null))) : h('p', { class: 'muted' }, 'No photos.'))));
+    h('div', { class: 'wt-print-meta' }, `${n} photo${n === 1 ? '' : 's'}${hasVideo(w) ? ' · video on file' : ''}${w.status === 'complete' ? ' · complete' : ''}`),
+    hasTranscript(w) ? h('section', { class: 'wt-print-trans' }, h('h2', null, 'What was walked'), h('p', null, w.transcript)) : null,
+    sections.map((sec) => (sec.captures.length ? h('section', { class: 'wt-print-grp' },
+      h('h2', null, sec.group ? (sec.group.name || 'Group') : (sections.length > 1 ? 'Ungrouped' : 'Photos')),
+      h('div', { class: 'wt-print-photos' }, sec.captures.map((c) => h('figure', null, h('img', { src: c.photo, alt: c.label || '' }), c.label ? h('figcaption', null, c.label) : null)))) : null)));
 
   document.body.append(node);
   document.body.classList.add('printing-walkthrough');

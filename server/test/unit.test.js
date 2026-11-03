@@ -132,24 +132,27 @@ describe('contracts shared with the PWA', () => {
     assert.notEqual(validator.validate('wireRuns', { ...run, wiringMethod: 'tube' }), null);
   });
 
-  test('site walkthroughs as the screen stores them', () => {
-    const photo = { id: 'p1', dataUrl: 'data:image/jpeg;base64,' + 'A'.repeat(300_000), caption: 'Panel', takenAt: new Date().toISOString(), width: 1280, height: 960 };
+  test('site walkthroughs as the screen stores them (free-form: video ref, transcript, captures, groups)', () => {
+    const cap = (groupId = null) => ({ id: 'c' + Math.random().toString(36).slice(2), kind: 'photo', photo: 'data:image/jpeg;base64,' + 'A'.repeat(1000), at: new Date().toISOString(), atMs: 4200, label: 'Burnt lug', groupId });
     const w = {
-      id: 'w1', jobId: 'j1', clientId: 'c1', title: 'Panel change', templateId: 'builtin:panel', status: 'active',
+      id: 'w1', jobId: 'j1', clientId: 'c1', title: 'Service call — Main St', status: 'active',
       date: '2026-11-02', sharedWithClient: false, sharedAt: null, sharedBy: null, startedAt: new Date().toISOString(),
       completedAt: null, createdBy: 'u1',
-      stops: [{ id: 's1', name: 'Existing panel', note: 'surface rust', doneAt: null, photos: [photo] }],
+      recording: { localId: 'vid-1', durationMs: 92000, mimeType: 'video/mp4', startedAt: new Date().toISOString() },
+      transcript: 'Walking the service entrance — the main lug is discoloured and the neutral bar is loose.',
+      transcriptSource: 'gemini',
+      groups: [{ id: 'g1', name: 'Panel room' }],
+      captures: [cap('g1'), cap()],
     };
     assert.equal(validator.validate('walkthroughs', w), null);
     assert.ok(Buffer.byteLength(JSON.stringify(w)) < collectionDef('walkthroughs').maxBytes);
-    const tiny = { id: 'p', dataUrl: 'data:image/jpeg;base64,AAA' };
-    const stop = (photos) => ({ id: 's', name: 'Stop', note: '', doneAt: null, photos });
-    assert.equal(validator.validate('walkthroughs', { ...w, stops: Array.from({ length: 20 }, () => stop([tiny, tiny])) }), null, '20 stops is allowed');
-    assert.notEqual(validator.validate('walkthroughs', { ...w, stops: Array.from({ length: 21 }, () => stop([])) }), null, '20 stops at most');
-    assert.equal(validator.validate('walkthroughs', { ...w, stops: [stop(Array.from({ length: 6 }, () => tiny))] }), null, 'six photos per stop is allowed');
-    assert.notEqual(validator.validate('walkthroughs', { ...w, stops: [stop(Array.from({ length: 7 }, () => tiny))] }), null, 'six photos per stop at most');
+    assert.equal(validator.validate('walkthroughs', { ...w, captures: Array.from({ length: 240 }, () => cap()) }), null, '240 captures is allowed');
+    assert.notEqual(validator.validate('walkthroughs', { ...w, captures: Array.from({ length: 241 }, () => cap()) }), null, '240 captures at most');
+    assert.equal(validator.validate('walkthroughs', { ...w, groups: Array.from({ length: 40 }, (_, i) => ({ id: 'g' + i, name: 'G' + i })) }), null, '40 groups is allowed');
+    assert.notEqual(validator.validate('walkthroughs', { ...w, groups: Array.from({ length: 41 }, (_, i) => ({ id: 'g' + i, name: 'G' + i })) }), null, '40 groups at most');
     assert.notEqual(validator.validate('walkthroughs', { ...w, status: 'draft' }), null, 'status is active or complete');
-    assert.notEqual(validator.validate('walkthroughs', { ...w, stops: [stop([{ id: 'p', dataUrl: 'https://example.com/x.jpg' }])] }), null, 'photos are data URLs');
+    assert.notEqual(validator.validate('walkthroughs', { ...w, transcriptSource: 'whisper' }), null, 'transcript source is a known provider');
+    assert.notEqual(validator.validate('walkthroughs', { ...w, captures: [{ ...cap(), photo: 'https://example.com/x.jpg' }] }), null, 'photos are data URLs');
   });
 
   test('estimating assemblies as the library stores them', () => {

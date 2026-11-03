@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://fishtapehq.com/schema/walkthroughs.json",
   "title": "Site walkthrough",
-  "description": "A guided, room-by-room photo record of a job site (the CompanyCam-style walkthrough). Belongs to a job; carries the job's clientId so a shared one can reach the client portal. Photos are downscaled JPEG data URLs until object storage lands. Known fields are typed; extra fields are allowed.",
+  "description": "A free-form video + photo record of a job site (the CompanyCam-style walkthrough). Belongs to a job; carries the job's clientId so a shared one can reach the client portal. Stills are downscaled JPEG data URLs and the audio transcript is text — both sync; the full video stays on the device (recording.localId) until a blob store lands. Captures are divided into user-named groups after the walk; there is no fixed room list. Known fields are typed; extra fields are allowed.",
   "type": "object",
   "required": [
     "id"
@@ -36,10 +36,6 @@
       "type": ["string", "null"],
       "maxLength": 200
     },
-    "templateId": {
-      "type": ["string", "null"],
-      "maxLength": 128
-    },
     "status": {
       "enum": ["active", "complete", null]
     },
@@ -47,6 +43,66 @@
       "type": ["string", "null"],
       "maxLength": 10,
       "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+    },
+    "recording": {
+      "type": ["object", "null"],
+      "description": "Reference to the device-local video of the walk. The bytes are not in the record.",
+      "properties": {
+        "localId": { "type": ["string", "null"], "maxLength": 128 },
+        "durationMs": { "type": ["number", "null"] },
+        "mimeType": { "type": ["string", "null"], "maxLength": 80 },
+        "startedAt": {
+          "type": ["string", "null"],
+          "maxLength": 40,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+        }
+      }
+    },
+    "transcript": {
+      "type": ["string", "null"],
+      "maxLength": 60000,
+      "description": "The walk's audio, transcribed (on-device speech or Gemini)."
+    },
+    "transcriptSource": {
+      "enum": ["ios-speech", "gemini", "manual", null]
+    },
+    "groups": {
+      "type": ["array", "null"],
+      "maxItems": 40,
+      "description": "User-named sections created on the fly to divide the captures. No fixed room list.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "name": { "type": ["string", "null"], "maxLength": 120 }
+        }
+      }
+    },
+    "captures": {
+      "type": ["array", "null"],
+      "maxItems": 240,
+      "description": "Stills grabbed during the walk, each optionally assigned to a group.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "kind": { "enum": ["photo", null] },
+          "photo": {
+            "type": ["string", "null"],
+            "maxLength": 450000,
+            "pattern": "^(data:image/(jpeg|png|webp);base64,.*)?$",
+            "description": "Downscaled to ~300 KB. Moves to object storage later."
+          },
+          "at": {
+            "type": ["string", "null"],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "atMs": { "type": ["number", "null"] },
+          "label": { "type": ["string", "null"], "maxLength": 140 },
+          "groupId": { "type": ["string", "null"], "maxLength": 128 }
+        }
+      }
     },
     "sharedWithClient": {
       "type": ["boolean", "null"]
@@ -73,66 +129,6 @@
     "createdBy": {
       "type": ["string", "null"],
       "maxLength": 128
-    },
-    "stops": {
-      "type": ["array", "null"],
-      "maxItems": 20,
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": ["string", "null"],
-            "maxLength": 128
-          },
-          "name": {
-            "type": ["string", "null"],
-            "maxLength": 200
-          },
-          "note": {
-            "type": ["string", "null"],
-            "maxLength": 2000
-          },
-          "doneAt": {
-            "type": ["string", "null"],
-            "maxLength": 40,
-            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
-          },
-          "photos": {
-            "type": ["array", "null"],
-            "maxItems": 6,
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": ["string", "null"],
-                  "maxLength": 128
-                },
-                "dataUrl": {
-                  "type": ["string", "null"],
-                  "maxLength": 450000,
-                  "pattern": "^data:image/(jpeg|png|webp);base64,",
-                  "description": "Downscaled to ~300 KB. Moves to object storage later."
-                },
-                "caption": {
-                  "type": ["string", "null"],
-                  "maxLength": 300
-                },
-                "takenAt": {
-                  "type": ["string", "null"],
-                  "maxLength": 40,
-                  "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
-                },
-                "width": {
-                  "type": ["number", "null"]
-                },
-                "height": {
-                  "type": ["number", "null"]
-                }
-              }
-            }
-          }
-        }
-      }
     }
   },
   "additionalProperties": true
