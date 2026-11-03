@@ -179,19 +179,51 @@ function drawAssembly(host, ctx) {
 }
 
 // ---------- apprentice hours ----------
+/**
+ * One row per PERSON. A shop often has more than one employee record for the same human — the
+ * account makes an auto employee (owner/admin) when a timecard is set up, and the field crew get
+ * added by hand too — so records that share a name (case-insensitive) are folded into one person.
+ * Every underlying id is kept, so the level is set on all of them and hours logged under any of them
+ * roll up together.
+ */
+export function peopleFromEmployees(employees) {
+  const groups = new Map();
+  for (const e of employees) {
+    const key = (e.name || '').trim().toLowerCase() || `id:${e.id}`;
+    let g = groups.get(key);
+    if (!g) { g = { ids: [], name: e.name || 'Crew', roles: [], levelId: null }; groups.set(key, g); }
+    g.ids.push(e.id);
+    if (e.role && !g.roles.includes(e.role)) g.roles.push(e.role);
+    if (e.labourLevelId && !g.levelId) g.levelId = e.labourLevelId; // first set level wins
+    if ((e.name || '').length > g.name.length) g.name = e.name; // prefer the fuller name
+  }
+  return [...groups.values()].map((g) => ({ ...g, role: g.roles.join(' · ') }));
+}
+
 function drawApprentices(host, ctx) {
   const { store, ui } = ctx;
   const { h } = ui;
   const money = moneyFormatter(store.settings());
   const levels = activeLevels(store.settings());
-  const employees = store.list('employees').filter((e) => e.active !== false);
-  const employeeLevel = Object.fromEntries(employees.map((e) => [e.id, e.labourLevelId]).filter(([, v]) => v));
+  const people = peopleFromEmployees(store.list('employees').filter((e) => e.active !== false));
+  // employee id -> the person's level, rebuilt from the people whenever a level changes
+  const employeeLevel = {};
+  const mapLevels = () => { for (const k of Object.keys(employeeLevel)) delete employeeLevel[k]; for (const p of people) if (p.levelId) for (const id of p.ids) employeeLevel[id] = p.levelId; };
+  mapLevels();
 
   // default range: the last 14 days
   let to = ctx.ui.today();
   let from = addDays(to, -13);
 
-  const setLevel = (emp, levelId) => { store.update('employees', emp.id, { labourLevelId: levelId || null }); drawApprentices(host, ctx); };
+  // Persist on all of the person's records, then refresh ONLY the summary — never rebuild the
+  // table, so the native <select> the user just tapped keeps its value (iOS commits it cleanly).
+  const setLevel = (person, levelId) => {
+    const v = levelId || null;
+    for (const id of person.ids) store.update('employees', id, { labourLevelId: v });
+    person.levelId = v;
+    mapLevels();
+    render();
+  };
 
   const out = h('div', { class: 'stack' });
   const render = () => {
@@ -226,18 +258,20 @@ function drawApprentices(host, ctx) {
 
   host.append(
     h('div', { class: 'hint' }, 'Give each person a level, then see their hours rolled up by level. The ratio is apprentice hours per journeyman hour.'),
+    levels.length ? null : h('div', { class: 'hint' }, 'Add some levels on the Levels tab first.'),
     ui.table({
       columns: [
-        { key: 'name', label: 'Person', render: (e) => e.name || 'Crew' },
-        { key: 'role', label: 'Role', render: (e) => e.role || '' },
-        { key: 'level', label: 'Labour level', render: (e) => {
-          const sel = h('select', { class: 'input', 'aria-label': `Level for ${e.name || 'crew'}`, onChange: (ev) => setLevel(e, ev.target.value) },
-            h('option', { value: '' }, '—'),
-            levels.map((l) => h('option', { value: l.id, selected: e.labourLevelId === l.id }, l.name)));
+        { key: 'name', label: 'Person', render: (p) => p.name || 'Crew' },
+        { key: 'role', label: 'Role', render: (p) => p.role || '' },
+        { key: 'level', label: 'Labour level', render: (p) => {
+          const sel = h('select', { class: 'input lv-level-select', 'aria-label': `Level for ${p.name || 'crew'}` },
+            h('option', { value: '', selected: !p.levelId }, '—'),
+            levels.map((l) => h('option', { value: l.id, selected: p.levelId === l.id }, l.name)));
+          sel.addEventListener('change', (ev) => setLevel(p, ev.target.value));
           return sel;
         } },
       ],
-      rows: employees,
+      rows: people,
     }),
     h('div', { class: 'row wt-toolbar' }, h('label', { class: 'hint' }, 'From'), fromI, h('label', { class: 'hint' }, 'To'), toI),
     out,

@@ -5,6 +5,7 @@ import {
   DEFAULT_LEVELS, newLevel, normalizeLevels, levelsOf, activeLevels, baselineLevel,
   effectiveHours, levelCostCents, levelChargeCents, labourByLevel, crewMix, apprenticeHours,
 } from '../js/lib/labour-levels.js';
+import { peopleFromEmployees } from '../js/modules/labour.js';
 
 // A small settings object with three levels: apprentice 50%, journeyman 100%, foreman 125%.
 const settings = {
@@ -98,6 +99,25 @@ test('normalizeLevels clamps junk and newLevel is well formed', () => {
   assert.ok(newLevel().id && newLevel().productivityPct === 100);
   assert.deepEqual(normalizeLevels(null), []);
   assert.deepEqual(activeLevels({ labourLevels: [{ id: 'a', name: 'A', archived: true }] }), []);
+});
+
+test('peopleFromEmployees folds same-name records into one person, keeping every id', () => {
+  const people = peopleFromEmployees([
+    { id: 'a', name: 'Kelvin waldner', role: 'admin' },
+    { id: 'b', name: 'Kelvin Waldner', role: 'electrician', labourLevelId: 'L1' },
+    { id: 'c', name: 'Travis', role: 'owner' },
+    { id: 'd', name: 'Travis Gross', role: 'electrician' },
+  ]);
+  assert.equal(people.length, 3); // the two Kelvins fold; Travis / Travis Gross are different names
+  const kelvin = people.find((p) => /kelvin/i.test(p.name));
+  assert.deepEqual(kelvin.ids.sort(), ['a', 'b']);
+  assert.equal(kelvin.levelId, 'L1'); // the level from either record carries
+  assert.ok(kelvin.role.includes('admin') && kelvin.role.includes('electrician'));
+});
+
+test('peopleFromEmployees keeps nameless records distinct (no accidental merge)', () => {
+  const people = peopleFromEmployees([{ id: 'x', name: '' }, { id: 'y', name: '' }]);
+  assert.equal(people.length, 2);
 });
 
 function round2(n) { return Math.round(n * 100) / 100; }
