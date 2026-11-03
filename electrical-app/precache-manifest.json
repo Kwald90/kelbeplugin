@@ -149,6 +149,7 @@
   "./js/lib/safety-reporting.js",
   "./js/lib/safety-topics.js",
   "./js/lib/safety.js",
+  "./js/lib/scanner.js",
   "./js/lib/service.js",
   "./js/lib/shift-tracker.js",
   "./js/lib/signing.js",
@@ -288,6 +289,7 @@
   "./js/ui.js",
   "./js/vendor/qr.js",
   "./manifest.webmanifest",
+  "./vendor/jsqr-1.4.0/jsQR.js",
   "./vendor/pdfjs-4.10.38/pdf.min.js",
   "./vendor/pdfjs-4.10.38/pdf.worker.min.js",
   "./vendor/qrcode-generator-2.0.4/qrcode.js"

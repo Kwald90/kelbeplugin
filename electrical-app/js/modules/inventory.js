@@ -16,6 +16,7 @@ import { receiveSheet, takePoNumber } from './purchasing.js';
 import { newPurchaseOrder } from '../lib/purchasing.js';
 import { reorderSuggestions, ordersFromReorder } from '../lib/reorder.js';
 import { qrSvgNode } from '../lib/qr.js';
+import { openScanner, resolveScan } from '../lib/scanner.js';
 import { BRAND } from '../brand.js';
 
 /** Stock (shop, vans, moves) can be turned off while the price book stays (Settings → Modules). */
@@ -168,6 +169,7 @@ export default {
     // ----- stock -----
     function drawStock() {
       actions.append(
+        ui.button('Scan', { icon: 'qr', onClick: () => scanToFind() }),
         ui.button('Receive', { icon: 'box', onClick: () => receiveSheet(ctx, {}) }),
         ui.button('Reorder low', { icon: 'receipt', onClick: () => draftRestock() }),
         ui.button('Print labels', { icon: 'qr', onClick: () => { labelsView = 'items'; draw(); } }),
@@ -398,6 +400,20 @@ export default {
       ctx.nav('#/purchasing');
     }
 
+    // ----- scan a sticker / barcode to jump to an item or bin -----
+    function scanToFind() {
+      openScanner(ui, {
+        title: 'Scan item or bin',
+        hint: 'Scan a Fishtape QR sticker, or a product barcode saved on an item.',
+        onCode: (code) => {
+          const hit = resolveScan(code, store.list('items'), { locations: store.list('locations') });
+          if (!hit) { ui.toast('No item or bin matches that code', 'error', 2500); return; }
+          if (hit.kind === 'location') { ui.toast(`Bin: ${hit.location.name}`, 'info', 2200); return; }
+          recordMove({ itemId: hit.id });
+        },
+      });
+    }
+
     // ----- printable QR stickers for bins (locations) and items -----
     function ensureLabelStyles() {
       if (typeof document === 'undefined' || document.querySelector('link[href$="css/inventory-labels.css"]')) return;
@@ -573,6 +589,7 @@ export function openCount(ctx, id) {
   const editable = ['draft', 'counted'].includes(count.status);
   const canPost = auth.can('inventory') && auth.isManager();
   const lines = (count.lines || []).map((l) => ({ ...l }));
+  const byItem = new Map(); // itemId -> { line, input, show } so a scan can bump the right row
   let timer = null;
   const save = () => { clearTimeout(timer); timer = null; store.update('stockCounts', id, { lines }, { summary: `count ${loc?.name || ''}` }); };
   const later = () => { clearTimeout(timer); timer = setTimeout(save, 600); };
@@ -588,6 +605,7 @@ export function openCount(ctx, id) {
     const input = h('input', { class: 'input num', type: 'number', step: 'any', min: '0', inputmode: 'decimal', value: l.countedQty ?? '', readonly: !editable, 'aria-label': `${it?.name || 'Item'} counted` });
     input.addEventListener('input', () => { l.countedQty = input.value === '' ? null : Number(input.value); show(); later(); });
     show();
+    byItem.set(l.itemId, { line: l, input, show });
     return h('div', { class: 'cnt-line', dataset: { item: l.itemId } },
       h('div', null, h('strong', null, it?.name || 'Deleted item'), h('div', { class: 'muted' }, `expected ${l.expectedQty} ${it?.unit || ''}`)), input, diff);
   });
@@ -599,6 +617,19 @@ export function openCount(ctx, id) {
       h('div', { class: 'cnt-lines' }, rows)),
     onClose: () => { if (timer) save(); },
     actions: [
+      editable ? ui.button('Scan to count', { icon: 'qr', onClick: () => openScanner(ui, {
+        title: 'Scan to count', continuous: true,
+        hint: 'Scan each item once per unit on hand — it adds to the count. Close when you are done.',
+        onCode: (code) => {
+          const found = resolveScan(code, store.list('items'));
+          if (!found || found.kind === 'location') { ui.toast('No matching item', 'error', 1500); return; }
+          const entry = byItem.get(found.id);
+          if (!entry) { ui.toast(`${found.name} isn’t on this count sheet`, 'error', 2200); return; }
+          entry.line.countedQty = (Number(entry.line.countedQty) || 0) + 1;
+          entry.input.value = String(entry.line.countedQty);
+          entry.show(); later();
+        },
+      }) }) : null,
       editable && count.status !== 'posted' ? ui.button('Void', { variant: 'ghost danger', onClick: async () => {
         if (!(await ui.confirmDialog('Void this count? Nothing is adjusted.', { okLabel: 'Void' }))) return;
         clearTimeout(timer); timer = null;
