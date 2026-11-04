@@ -518,39 +518,42 @@ const shortTag = (m) => {
  * `flip` mirrors it (hook to the right) for a bend made the other way (mark.dir === 'down'). x is the
  * mark's x; yTop is the top of the head. Pure string; all values finite.
  */
-export function benderGlyph(x, yTop, flip = false) {
-  // A conduit hand bender drawn the way the field apps show it under each mark: the cast head hangs
-  // just under the pipe with the conduit HOOK curling over on one side, a stubby foot/step on the
-  // other, the ferrule where the handle threads in, then a long thin BLUE handle straight down.
-  // Origin is the mark on the pipe; the head hangs below it. `flip` mirrors it (hook to the other
-  // side) for a bend made the other way. Built so it reads as a real bender, not a blob.
-  // --- cast head (grey): one compact casting, widest at the top where the conduit HOOK (left) and
-  // the foot/step prong (right) rise, tapering down to the ferrule. The conduit seats in the concave
-  // groove between them. ---
+export function benderGlyph(x, pipeBottomY, flip = false, bendDeg = 0) {
+  // A conduit hand bender SEATED on the pipe at the mark and tilted the way you pull the handle to
+  // make the bend — the how-to is on the picture. The cast head grips the conduit (hook curling over
+  // one edge, the pipe seated in the groove), a ferrule, then a long thin BLUE handle. The whole tool
+  // is rotated about the pipe contact by the bend angle, and a curved arrow shows the swing. `flip`
+  // (mark.dir === 'down') mirrors the head and the swing, so the alternating bends of an offset or a
+  // saddle read as mirror images — A pulled one way, B the other — the way field bending apps show it.
+  // x is the mark's x; pipeBottomY is the bottom edge of the pipe, where the head seats.
+  // --- cast head (grey): the conduit HOOK and a foot/step prong rise either side of the groove. ---
   const head = '<path class="bd-bender-head" d="'
-    + 'M-4,13 '                    // ferrule left
-    + 'L-8,4 '                     // up the left side, widening
-    + 'L-10,-3 '                   // to the base of the hook
-    + 'C-13,-7 -11,-11 -7.5,-10 '  // hook: up and over the crown
-    + 'C-5,-9 -4.5,-6.5 -6.5,-5.5 '// the lip curls back down inside
-    + 'C-8,-5 -7.5,-3.5 -5,-3.5 '  // close the hook claw, into the shoulder
-    + 'L-3,-4 '                    // left wall of the groove
-    + 'C-1,-2 1,-2 3,-4 '          // the concave conduit groove (seat) across the top
-    + 'L5.5,-6 '                   // up to the foot/step prong
-    + 'C8,-8.5 11.5,-7.5 10.5,-3 '// the rounded foot prong on the right
-    + 'C10,-0.5 9,2 8,4 '          // down the right side
-    + 'L4,13 Z"/>';                // to the ferrule right
-  // a soft metallic highlight on the upper body so the casting reads as rounded steel
+    + 'M-4,13 L-8,4 L-10,-3 '
+    + 'C-13,-7 -11,-11 -7.5,-10 C-5,-9 -4.5,-6.5 -6.5,-5.5 C-8,-5 -7.5,-3.5 -5,-3.5 '
+    + 'L-3,-4 C-1,-2 1,-2 3,-4 L5.5,-6 C8,-8.5 11.5,-7.5 10.5,-3 C10,-0.5 9,2 8,4 L4,13 Z"/>';
   const glint = '<path class="bd-bender-glint" d="M-6,-3 C-7.5,1 -6,6 -2,7 C-4,4 -4,0 -2.5,-3 Z"/>';
-  // the conduit groove, picked out darker so the seat reads
   const groove = '<path class="bd-bender-groove" d="M-3,-4 C-1,-2 1,-2 3,-4"/>';
-  // the ferrule (socket collar) the handle threads into
   const ferrule = '<path class="bd-bender-ferrule" d="M-4,12 L4,12 L3,19 L-3,19 Z"/>';
-  // the long thin blue handle with a lighter highlight down one edge
   const handle = '<rect class="bd-bender-handle" x="-2.4" y="17" width="4.8" height="46" rx="2.4"/>';
   const hi = '<rect class="bd-bender-hi" x="-1.7" y="20" width="1.5" height="38" rx="0.75"/>';
-  const t = flip ? `translate(${n1(x)},${n1(yTop)}) scale(-1,1)` : `translate(${n1(x)},${n1(yTop)})`;
-  return `<g class="bd-bender" transform="${t}">${handle}${hi}${ferrule}${head}${glint}${groove}</g>`;
+  const inner = `${handle}${hi}${ferrule}${head}${glint}${groove}`;
+  // tilt the handle by the bend angle (capped so a steep bend still fits the band), toward the pull
+  // side; a 'down' bend (flip) swings the handle to the right, an 'up' bend to the left.
+  const tilt = Math.max(0, Math.min(68, Math.abs(bendDeg))) * (flip ? 1 : -1);
+  const mirror = flip ? ' scale(-1,1)' : '';
+  // seat the groove (head y = -4) on the pipe bottom so the hook curls up over the pipe, then rotate
+  // the whole tool about that contact point.
+  const tool = `<g transform="rotate(${n1(tilt)})"><g transform="translate(0,4)${mirror}">${inner}</g></g>`;
+  // a curved arrow from upright to the tilt, beside the handle, showing which way to pull it
+  let arrow = '';
+  if (tilt) {
+    const R = 54, steps = 8, a1 = (tilt * Math.PI) / 180, pts = [];
+    for (let kk = 0; kk <= steps; kk++) { const a = (a1 * kk) / steps; pts.push([-R * Math.sin(a), R * Math.cos(a)]); }
+    const [hx, hy] = pts[steps], [px, py] = pts[steps - 1];
+    const ang = Math.atan2(hy - py, hx - px), ah = 5;
+    arrow = poly(pts, 'bd-dir') + `<path class="bd-dir" d="M${n1(hx)},${n1(hy)} L${n1(hx - ah * Math.cos(ang - 0.5))},${n1(hy - ah * Math.sin(ang - 0.5))} M${n1(hx)},${n1(hy)} L${n1(hx - ah * Math.cos(ang + 0.5))},${n1(hy - ah * Math.sin(ang + 0.5))}"/>`;
+  }
+  return `<g class="bd-bender" transform="translate(${n1(x)},${n1(pipeBottomY)})">${arrow}${tool}</g>`;
 }
 
 /**
@@ -579,17 +582,18 @@ export function marksSvg(result, { fmt = mmFmt, snap = (m) => m, width = 640 } =
     const marks = [...row.marks].sort((a, b) => a.atM - b.atM);
     const dense = marks.length > 6;
     if (row.title) { parts.push(text(L, y + 12, row.title, 'bd-rowtitle', 'start')); y += 18; }
-    // labels above: number, angle and note; stagger when crowded
-    const topY = y + 62;
+    // place the marks; crowded marks drop their annotations to a second level so they don't collide
     let lastX = [-1e9, -1e9];
-    const above = [];
-    marks.forEach((m) => {
+    const placed = marks.map((m) => {
       const x = X(m.atM);
-      const level = x - lastX[0] >= 54 ? 0 : x - lastX[1] >= 54 ? 1 : 0;
+      const level = !dense && x - lastX[0] < 54 && x - lastX[1] >= 54 ? 1 : 0;
       lastX[level] = x;
-      above.push({ m, x, level });
+      return { m, x, level };
     });
-    const pipeY = topY + 10;
+    const hasL1 = placed.some((p) => p.level === 1);
+    // Everything you need to KNOW sits above the pipe (number · angle, note, distance); the TOOL and
+    // the spacing sit below. Reserve room above for up to three stacked lines, plus the stagger.
+    const pipeY = y + (dense ? 28 : 48 + (hasL1 ? 30 : 0));
     // pipe body as a shaded bar (dark edge, mid body, light highlight band) to match the hero tube
     const barW = n1(X(last) + tail * k - L);
     parts.push(`<rect class="bd-pipebar-edge" x="${L}" y="${pipeY}" width="${barW}" height="${pipeH}" rx="3"/>`);
@@ -601,54 +605,58 @@ export function marksSvg(result, { fmt = mmFmt, snap = (m) => m, width = 640 } =
       const s = startM ? startM.atM : result.startM ?? endM.atM;
       parts.push(`<rect class="${marks.some((m) => m.symbol === 'heat') ? 'bd-heatzone' : 'bd-bendzone'}" x="${n1(X(s))}" y="${pipeY}" width="${n1(Math.max(1, X(endM.atM) - X(s)))}" height="${pipeH}"/>`);
     }
-    // the reference end
+    // the reference end (the label sits above the pipe now that the tool hangs below it)
     if (!fromMark1) {
       parts.push(line(L, pipeY - 6, L, pipeY + pipeH + 6, 'bd-endcap'));
-      parts.push(text(L, pipeY + pipeH + 30, 'END', 'bd-endtext', 'start'));
+      parts.push(text(L, pipeY - 9, 'END', 'bd-endtext', 'start'));
     } else parts.push(breakMark(L + 0.07 * spread * k, pipeY + pipeH / 2, 0, pipeH));
     if (compress) parts.push(breakMark(L + (shift > 0 ? 0.22 * spread * k : 0), pipeY + pipeH / 2, 0, pipeH));
-    for (const { m, x, level } of above) {
-      const ly = topY - level * 30;
+    // mark lines, symbols, and (non-dense) the stacked annotations above each mark
+    for (const { m, x, level } of placed) {
       parts.push(line(x, pipeY - 2, x, pipeY + pipeH + 2, m.symbol === 'tick' ? 'bd-tick' : 'bd-markline'));
       parts.push(SYMBOLS[m.symbol || 'arrow'](x, pipeY - 2));
-      const angle = m.angleDeg ? fmtDeg(m.angleDeg) : '';
-      if (!dense || m.symbol === 'tick' || m === marks.find((q) => q.angleDeg)) {
-        parts.push(text(x, ly - 18, [shortTag(m), angle].filter(Boolean).join(' · '), 'bd-marktag'));
-        if (m.note && !dense) parts.push(text(x, ly - 5, m.note, 'bd-note'));
+      if (dense) {
+        if (m.symbol === 'tick' || m === marks.find((q) => q.angleDeg)) {
+          parts.push(text(x, pipeY - 8, [shortTag(m), m.angleDeg ? fmtDeg(m.angleDeg) : ''].filter(Boolean).join(' · '), 'bd-marktag'));
+        }
+        continue;
       }
+      let up = pipeY - 8 - level * 30;          // distance nearest the pipe, then note, then tag
+      parts.push(text(x, up, fmt(snap(m.atM)), 'bd-pos'));
+      if (m.note) { up -= 13; parts.push(text(x, up, m.note, 'bd-note')); }
+      const tag = [shortTag(m), m.angleDeg ? fmtDeg(m.angleDeg) : ''].filter(Boolean).join(' · ');
+      if (tag) { up -= 13; parts.push(text(x, up, tag, 'bd-marktag')); }
     }
-    // positions from the end, below the pipe
-    let lastPx = [-1e9, -1e9];
-    const posY = pipeY + pipeH + 16;
-    marks.forEach((m, i) => {
-      if (dense && !(i === 0 || i === marks.length - 1 || m.symbol === 'tick' || i === 1)) return;
-      const x = X(m.atM);
-      const level = x - lastPx[0] >= 64 ? 0 : 1;
-      lastPx[level] = x;
-      parts.push(text(x, posY + level * 14, fmt(snap(m.atM)), 'bd-pos'));
-    });
-    // chain dimensions between marks
-    const chainY = posY + 40;
-    if (!dense) {
+    if (dense) {
+      // many shots: positions below and the "every X" spacing note; no per-mark tool
+      let lastPx = [-1e9, -1e9];
+      const posY = pipeY + pipeH + 16;
+      marks.forEach((m, i) => {
+        if (!(i === 0 || i === marks.length - 1 || m.symbol === 'tick' || i === 1)) return;
+        const x = X(m.atM);
+        const lvl = x - lastPx[0] >= 64 ? 0 : 1;
+        lastPx[lvl] = x;
+        parts.push(text(x, posY + lvl * 14, fmt(snap(m.atM)), 'bd-pos'));
+      });
+      const shots = marks.filter((m) => m.angleDeg);
+      if (shots.length > 1) parts.push(text(X(shots[0].atM), posY + 36, `${shots.length} marks, every ${fmt(shots[1].atM - shots[0].atM)}`, 'bd-dimtext', 'start'));
+      y = posY + 44;
+    } else {
+      // a hand bender seated on each real bend mark, tilted the way you pull it to make the bend;
+      // then the centre-to-centre spacing between the marks, dimensioned below the tools
+      const benderMarks = placed.filter(({ m }) => ['arrow', 'star', 'notch'].includes(m.symbol) && m.angleDeg);
+      for (const { m, x } of benderMarks) parts.push(benderGlyph(x, pipeY + pipeH, m.dir === 'down', m.angleDeg));
+      const spanY = pipeY + pipeH + (benderMarks.length ? 82 : 22);
       const pts = [compress || fromMark1 ? null : 0, ...marks.map((m) => m.atM)].filter((v) => v != null);
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1], b = pts[i];
         const d = snap(b) - snap(a);
         if (d <= 0) continue;
         const xa = X(a), xb = X(b);
-        parts.push(line(xa, chainY, xb, chainY, 'bd-dim-span'), line(xa, chainY - 4, xa, chainY + 4, 'bd-dim-span'), line(xb, chainY - 4, xb, chainY + 4, 'bd-dim-span'));
-        if (xb - xa > 34) parts.push(text((xa + xb) / 2, chainY - 5, fmt(d), 'bd-spantext'));
+        parts.push(line(xa, spanY, xb, spanY, 'bd-dim-span'), line(xa, spanY - 4, xa, spanY + 4, 'bd-dim-span'), line(xb, spanY - 4, xb, spanY + 4, 'bd-dim-span'));
+        if (xb - xa > 34) parts.push(text((xa + xb) / 2, spanY - 5, fmt(d), 'bd-spantext'));
       }
-      // a bender under each real bend mark — "set the bender here", like a field bending app
-      const benderMarks = marks.filter((m) => ['arrow', 'star', 'notch'].includes(m.symbol) && m.angleDeg);
-      const bandTop = chainY + 20;
-      // the bender faces the way the bend is made: 'down' bends mirror the head (hook to the right)
-      for (const m of benderMarks) parts.push(benderGlyph(X(m.atM), bandTop, m.dir === 'down'));
-      y = benderMarks.length ? bandTop + 70 : chainY + 14; // clear the long handle + its rounded tip
-    } else {
-      const shots = marks.filter((m) => m.angleDeg);
-      if (shots.length > 1) parts.push(text(X(shots[0].atM), chainY - 4, `${shots.length} marks, every ${fmt(shots[1].atM - shots[0].atM)}`, 'bd-dimtext', 'start'));
-      y = chainY + 6;
+      y = spanY + 14;
     }
     y += 10;
   }
