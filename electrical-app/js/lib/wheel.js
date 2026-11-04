@@ -19,6 +19,17 @@ export const WHEEL = [
   { id: 'sops', label: 'SOPs', icon: 'book', go: 'sops', perm: 'sops' },
 ];
 
+/** A wheel shortcut built from a nav module (so any module can be added to the wheel). */
+export function moduleShortcut(m) {
+  return { id: `mod:${m.id}`, label: m.title, icon: m.icon || 'grid', go: m.id, perm: m.perm };
+}
+
+/** The extra shortcuts this person added beyond the defaults: validated [{ id, label, icon, go, perm }]. */
+export function addedShortcuts(prefs = {}) {
+  const list = Array.isArray(prefs.added) ? prefs.added : [];
+  return list.filter((s) => s && typeof s.id === 'string' && typeof s.go === 'string' && typeof s.label === 'string' && typeof s.icon === 'string');
+}
+
 const key = (uid) => `kc.wheel.${uid || 'local'}`;
 
 /** This person's wheel prefs: { hidden: [id], order: [id] }. Missing/blocked storage → {} (defaults). */

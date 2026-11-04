@@ -15,7 +15,8 @@ import { FEATURE_PLAN, hasFeature } from '../plans.js';
 import { session, savePref } from '../session.js';
 import { panelPrintSettings } from './panels.js';
 import { panelCircuitNames } from '../lib/panel-templates.js';
-import { WHEEL, wheelPrefs, saveWheelPrefs, resetWheelPrefs, orderWheel } from '../lib/wheel.js';
+import { WHEEL, wheelPrefs, saveWheelPrefs, resetWheelPrefs, orderWheel, addedShortcuts, moduleShortcut } from '../lib/wheel.js';
+import { MODULES } from './index.js';
 import { pipelineStages, normalizeStages, openStages, newStageId, DEFAULT_STAGES } from '../lib/pipeline.js';
 
 export const APP_VERSION = '0.3.0';
@@ -455,10 +456,18 @@ export default {
       ui.clear(wheelHost);
       const uid = ctx.auth?.current?.()?.id || null;
       const prefs = wheelPrefs(uid);
-      const mine = WHEEL.filter((w) => !w.perm || (ctx.auth?.can ? ctx.auth.can(w.perm) : true));
-      const shown = orderWheel(mine, prefs);
+      const can = (p) => !p || (ctx.auth?.can ? ctx.auth.can(p) : true);
+      const enabled = (go) => (ctx.on ? ctx.on(String(go).split(/[/?]/)[0]) : true);
+      // the defaults plus the shortcuts this person added; gated like the rail
+      const pool = [...WHEEL, ...addedShortcuts(prefs)].filter((w) => can(w.perm) && enabled(w.go));
+      const shown = orderWheel(pool, prefs);
       const shownIds = shown.map((w) => w.id);
-      const hiddenItems = mine.filter((w) => !shownIds.includes(w.id));
+      const hiddenItems = pool.filter((w) => !shownIds.includes(w.id));
+      // every module you can open that isn't already on the wheel — the "add" catalogue
+      const bases = new Set(pool.map((w) => String(w.go).split(/[/?]/)[0]));
+      const addable = MODULES.filter((m) => !m.hidden && m.group !== 'home' && can(m.perm) && enabled(m.id) && !bases.has(m.id))
+        .map(moduleShortcut).sort((a, b) => a.label.localeCompare(b.label));
+      const isAdded = (w) => String(w.id).startsWith('mod:');
       // Keep the page where it is: re-rendering the list collapses/regrows wheelHost, which would
       // otherwise yank .main's scroll to the top and make a toggle look like it did nothing.
       const commit = (next) => {
@@ -468,16 +477,33 @@ export default {
       };
       const setShown = (id, on) => {
         const hidden = new Set(prefs.hidden || []);
-        let order = Array.isArray(prefs.order) ? [...prefs.order] : [...shownIds];
+        const order = Array.isArray(prefs.order) ? [...prefs.order] : [...shownIds];
         if (on) { hidden.delete(id); if (!order.includes(id)) order.push(id); } else hidden.add(id);
-        commit({ hidden: [...hidden], order });
+        commit({ ...prefs, hidden: [...hidden], order });
       };
       const move = (id, dir) => {
         const order = [...shownIds];
         const i = order.indexOf(id), j = i + dir;
         if (i < 0 || j < 0 || j >= order.length) return;
         [order[i], order[j]] = [order[j], order[i]];
-        commit({ hidden: [...(prefs.hidden || [])], order });
+        commit({ ...prefs, order });
+      };
+      const addShortcut = (item) => {
+        if (pool.some((w) => w.id === item.id)) return;
+        const order = Array.isArray(prefs.order) ? [...prefs.order] : [...shownIds];
+        if (!order.includes(item.id)) order.push(item.id);
+        commit({ ...prefs, added: [...addedShortcuts(prefs), item], order, hidden: (prefs.hidden || []).filter((x) => x !== item.id) });
+        ui.toast(`${item.label} added to your wheel`, 'success');
+      };
+      const removeAdded = (id) => commit({ ...prefs, added: addedShortcuts(prefs).filter((a) => a.id !== id), order: (prefs.order || []).filter((x) => x !== id), hidden: (prefs.hidden || []).filter((x) => x !== id) });
+      const addSheet = () => {
+        if (!addable.length) { ui.toast('Every module you can open is already on your wheel', 'info'); return; }
+        const s = ui.openSheet({
+          title: 'Add a shortcut',
+          body: h('div', { class: 'list' }, addable.map((m) => h('button', { type: 'button', class: 'list-row click', onClick: () => { s.close(); addShortcut(m); } },
+            ui.icon(m.icon, 18), h('span', { class: 'grow', style: { textAlign: 'left' } }, m.label), ui.icon('plus', 16)))),
+          actions: [ui.button('Close', { variant: 'ghost', onClick: () => s.close() })],
+        });
       };
       const row = (w, i, on) => h('div', { class: ['wheel-pref-row', on ? null : 'off'], dataset: { wheel: w.id } },
         ui.icon(w.icon, 18),
@@ -485,14 +511,15 @@ export default {
         on ? h('span', { class: 'row wheel-pref-move' },
           ui.button('', { variant: 'ghost', size: 'sm', icon: 'chevron-up', title: `Move ${w.label} earlier`, disabled: i === 0, onClick: () => move(w.id, -1) }),
           ui.button('', { variant: 'ghost', size: 'sm', icon: 'chevron-down', title: `Move ${w.label} later`, disabled: i === shown.length - 1, onClick: () => move(w.id, 1) })) : null,
+        isAdded(w) ? ui.button('', { variant: 'ghost danger', size: 'sm', icon: 'trash', title: `Remove ${w.label}`, onClick: () => removeAdded(w.id) }) : null,
         h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: on, 'aria-label': `Show ${w.label} on the wheel`, onChange: (e) => setShown(w.id, e.target.checked) }));
       wheelHost.append(
         wheelToggle,
-        h('div', { class: 'muted' }, 'Below is just for you, on this device: tick the shortcuts to show on the + wheel and order them with the arrows.'),
+        h('div', { class: 'muted' }, 'Just for you, on this device: add any module as a shortcut, tick which show on the + wheel, and order them with the arrows.'),
         h('div', { class: 'list wheel-pref-list' },
-          shown.length ? shown.map((w, i) => row(w, i, true)) : h('div', { class: 'list-row muted' }, 'No shortcuts shown — tick some below.'),
+          shown.length ? shown.map((w, i) => row(w, i, true)) : h('div', { class: 'list-row muted' }, 'No shortcuts shown — add or tick some below.'),
           hiddenItems.map((w) => row(w, -1, false))),
-        h('div', { class: 'row' }, h('span', { class: 'grow' }),
+        h('div', { class: 'row' }, ui.button('Add shortcut', { variant: 'secondary', icon: 'plus', onClick: addSheet }), h('span', { class: 'grow' }),
           ui.button('Reset to default', { variant: 'ghost', icon: 'undo', onClick: () => { const sc = wheelHost.closest('.main'); const top = sc ? sc.scrollTop : 0; resetWheelPrefs(uid); dispatchEvent(new Event('ft:wheel-changed')); drawWheelPrefs(); if (sc) sc.scrollTop = top; ui.toast('Wheel shortcuts reset', 'success'); } })));
     };
     drawWheelPrefs();

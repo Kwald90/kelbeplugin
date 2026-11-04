@@ -21,7 +21,7 @@ import { notifyBell } from './modules/notifications.js';
 import { quickReceipt } from './modules/purchasing.js';
 import { moduleOn, linkOn, hrefModule, SWITCHES } from './lib/modules.js';
 import { primaryNavigation, navigationLabel } from './lib/navigation.js';
-import { WHEEL, wheelPrefs, orderWheel } from './lib/wheel.js';
+import { WHEEL, wheelPrefs, orderWheel, addedShortcuts } from './lib/wheel.js';
 
 const { h, icon } = ui;
 const put = (el, ...kids) => h(ui.clear(el), null, ...kids);
@@ -372,9 +372,12 @@ const WHEEL_RUN = { quickReceipt };
 function wheelEnabled() { try { return store.settings()?.ui?.showWheel !== false; } catch { return true; } }
 
 function buildWheel() {
-  const permitted = WHEEL.filter((w) => auth.can(w.perm) && moduleUnlocked(w.go.split(/[/?]/)[0]) && moduleEnabled(hrefModule('#/' + w.go)));
+  // the defaults plus any shortcuts this person added (any module they can open), gated like the rail
+  const prefs = wheelPrefs(auth.current?.()?.id);
+  const pool = [...WHEEL, ...addedShortcuts(prefs)];
+  const permitted = pool.filter((w) => auth.can(w.perm) && moduleEnabled(hrefModule('#/' + w.go)));
   // each person picks which of the ones they can use show, and their order (per device)
-  const items = orderWheel(permitted, wheelPrefs(auth.current?.()?.id));
+  const items = orderWheel(permitted, prefs);
   const scrim = h('div', { class: 'wheel-scrim', onClick: () => toggle(false) });
   const wheel = h('div', { class: 'wheel', 'aria-hidden': 'true' }, h('div', { class: 'wheel-disc' }));
   const r = 118;

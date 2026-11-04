@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 const mem = new Map();
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
 
-const { WHEEL, wheelPrefs, saveWheelPrefs, resetWheelPrefs, orderWheel } = await import('../js/lib/wheel.js');
+const { WHEEL, wheelPrefs, saveWheelPrefs, resetWheelPrefs, orderWheel, addedShortcuts, moduleShortcut } = await import('../js/lib/wheel.js');
 
 const ids = (list) => list.map((w) => w.id);
 
@@ -61,4 +61,28 @@ test('prefs round-trip per user and reset clears them', () => {
 test('bad stored JSON falls back to defaults', () => {
   mem.set('kc.wheel.u3', '{not json');
   assert.deepEqual(wheelPrefs('u3'), {});
+});
+
+test('moduleShortcut turns a nav module into a wheel shortcut', () => {
+  const s = moduleShortcut({ id: 'bending', title: 'Bending', icon: 'ruler', perm: 'calcs' });
+  assert.deepEqual(s, { id: 'mod:bending', label: 'Bending', icon: 'ruler', go: 'bending', perm: 'calcs' });
+  assert.equal(moduleShortcut({ id: 'x', title: 'X' }).icon, 'grid', 'falls back to a default icon');
+});
+
+test('addedShortcuts returns only well-formed custom shortcuts', () => {
+  assert.deepEqual(addedShortcuts({}), []);
+  assert.deepEqual(addedShortcuts({ added: 'nope' }), []);
+  const good = { id: 'mod:jobs', label: 'Jobs', icon: 'briefcase', go: 'jobs', perm: 'jobs' };
+  assert.deepEqual(addedShortcuts({ added: [good, { id: 'bad' }, null, { label: 'no id' }] }), [good]);
+});
+
+test('added shortcuts show on the wheel alongside the defaults, honouring order and hidden', () => {
+  const extra = moduleShortcut({ id: 'bending', title: 'Bending', icon: 'ruler', perm: 'calcs' });
+  const prefs = { added: [extra], order: ['mod:bending', 'job'], hidden: ['calc'] };
+  const pool = [...WHEEL, ...addedShortcuts(prefs)];
+  const shown = orderWheel(pool, prefs);
+  assert.equal(shown[0].id, 'mod:bending', 'the added shortcut can be placed first');
+  assert.equal(shown[1].id, 'job');
+  assert.ok(!ids(shown).includes('calc'), 'a hidden default stays hidden');
+  assert.ok(ids(shown).includes('mod:bending'));
 });
