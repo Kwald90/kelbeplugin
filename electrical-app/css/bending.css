@@ -163,6 +163,7 @@ select.bend-input { font-size: var(--fs-base); }
 .bend-svg .bd-dir { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .bend-svg .bd-sym { fill: var(--accent-fill); stroke: var(--text); stroke-width: 1; }
 .bend-svg .bd-sym.heat { fill: var(--danger); stroke: none; }
+.bend-svg .bd-callout { fill: var(--text-muted); font-size: 11px; font-weight: 600; }
 .bend-svg .bd-marktag { font-weight: 750; font-size: 13px; }
 .bend-svg .bd-note { fill: var(--text-muted); font-size: 11px; }
 .bend-svg .bd-pos { font-weight: 700; font-variant-numeric: tabular-nums; }

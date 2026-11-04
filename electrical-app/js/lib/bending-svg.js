@@ -511,49 +511,25 @@ const shortTag = (m) => {
   return '';
 };
 
-/**
- * A small upright hand bender for the mark layout — a grey cast head with a hook beak and a socket,
- * and a blue handle — drawn under a mark so you can see where to set the bender and which way it
- * faces, the way field bending apps do. The head is built hook-on-the-left around a centred handle;
- * `flip` mirrors it (hook to the right) for a bend made the other way (mark.dir === 'down'). x is the
- * mark's x; yTop is the top of the head. Pure string; all values finite.
- */
-export function benderGlyph(x, pipeBottomY, flip = false, bendDeg = 0) {
-  // A conduit hand bender SEATED on the pipe at the mark and tilted the way you pull the handle to
-  // make the bend — the how-to is on the picture. The cast head grips the conduit (hook curling over
-  // one edge, the pipe seated in the groove), a ferrule, then a long thin BLUE handle. The whole tool
-  // is rotated about the pipe contact by the bend angle, and a curved arrow shows the swing. `flip`
-  // (mark.dir === 'down') mirrors the head and the swing, so the alternating bends of an offset or a
-  // saddle read as mirror images — A pulled one way, B the other — the way field bending apps show it.
-  // x is the mark's x; pipeBottomY is the bottom edge of the pipe, where the head seats.
-  // --- cast head (grey): the conduit HOOK and a foot/step prong rise either side of the groove. ---
-  const head = '<path class="bd-bender-head" d="'
-    + 'M-4,13 L-8,4 L-10,-3 '
-    + 'C-13,-7 -11,-11 -7.5,-10 C-5,-9 -4.5,-6.5 -6.5,-5.5 C-8,-5 -7.5,-3.5 -5,-3.5 '
-    + 'L-3,-4 C-1,-2 1,-2 3,-4 L5.5,-6 C8,-8.5 11.5,-7.5 10.5,-3 C10,-0.5 9,2 8,4 L4,13 Z"/>';
-  const glint = '<path class="bd-bender-glint" d="M-6,-3 C-7.5,1 -6,6 -2,7 C-4,4 -4,0 -2.5,-3 Z"/>';
-  const groove = '<path class="bd-bender-groove" d="M-3,-4 C-1,-2 1,-2 3,-4"/>';
-  const ferrule = '<path class="bd-bender-ferrule" d="M-4,12 L4,12 L3,19 L-3,19 Z"/>';
-  const handle = '<rect class="bd-bender-handle" x="-2.4" y="17" width="4.8" height="46" rx="2.4"/>';
-  const hi = '<rect class="bd-bender-hi" x="-1.7" y="20" width="1.5" height="38" rx="0.75"/>';
-  const inner = `${handle}${hi}${ferrule}${head}${glint}${groove}`;
-  // tilt the handle by the bend angle (capped so a steep bend still fits the band), toward the pull
-  // side; a 'down' bend (flip) swings the handle to the right, an 'up' bend to the left.
-  const tilt = Math.max(0, Math.min(68, Math.abs(bendDeg))) * (flip ? 1 : -1);
-  const mirror = flip ? ' scale(-1,1)' : '';
-  // seat the groove (head y = -4) on the pipe bottom so the hook curls up over the pipe, then rotate
-  // the whole tool about that contact point.
-  const tool = `<g transform="rotate(${n1(tilt)})"><g transform="translate(0,4)${mirror}">${inner}</g></g>`;
-  // a curved arrow from upright to the tilt, beside the handle, showing which way to pull it
-  let arrow = '';
-  if (tilt) {
-    const R = 54, steps = 8, a1 = (tilt * Math.PI) / 180, pts = [];
-    for (let kk = 0; kk <= steps; kk++) { const a = (a1 * kk) / steps; pts.push([-R * Math.sin(a), R * Math.cos(a)]); }
-    const [hx, hy] = pts[steps], [px, py] = pts[steps - 1];
-    const ang = Math.atan2(hy - py, hx - px), ah = 5;
-    arrow = poly(pts, 'bd-dir') + `<path class="bd-dir" d="M${n1(hx)},${n1(hy)} L${n1(hx - ah * Math.cos(ang - 0.5))},${n1(hy - ah * Math.sin(ang - 0.5))} M${n1(hx)},${n1(hy)} L${n1(hx - ah * Math.cos(ang + 0.5))},${n1(hy - ah * Math.sin(ang + 0.5))}"/>`;
+// A photo of a real conduit hand bender (background removed), drawn hooked on the pipe at each mark
+// with the handle hanging straight down — the way the field bend-calc apps show it. w/h are the
+// asset's pixel size; handleFrac is where the handle axis sits across the image (so we can line the
+// handle up with the mark). Processed from the tool photo into electrical-app/img/bender-emt.png.
+const BENDER_IMG = { href: 'img/bender-emt.png', w: 560, h: 542, handleFrac: 0.463 };
+
+/** One short line telling which cast mark on the bender to line up for this bend (arrow/star/teardrop). */
+function benderCallout(result) {
+  switch (result.kind) {
+    case 'saddle3':
+    case 'saddle4':
+      return "Saddle: line the tool's “center of bend” (teardrop/notch) mark up at the centre mark, the arrow at the others.";
+    case 'backToBack':
+      return "Back-to-back: use the tool's star (“back of 90”) mark at mark 2, the arrow at mark 1.";
+    case 'stub90':
+      return "Stub: line the tool's arrow up with the mark and bend to 90°.";
+    default:
+      return "Line the tool's arrow mark up with each mark, bend to the angle shown.";
   }
-  return `<g class="bd-bender" transform="translate(${n1(x)},${n1(pipeBottomY)})">${arrow}${tool}</g>`;
 }
 
 /**
@@ -642,21 +618,25 @@ export function marksSvg(result, { fmt = mmFmt, snap = (m) => m, width = 640 } =
       if (shots.length > 1) parts.push(text(X(shots[0].atM), posY + 36, `${shots.length} marks, every ${fmt(shots[1].atM - shots[0].atM)}`, 'bd-dimtext', 'start'));
       y = posY + 44;
     } else {
-      // a hand bender seated on each real bend mark, tilted the way you pull it to make the bend;
-      // then the centre-to-centre spacing between the marks, dimensioned below the tools
+      // a real hand-bender photo hooked on each bend mark, handle hanging down, like the field apps
       const benderMarks = placed.filter(({ m }) => ['arrow', 'star', 'notch'].includes(m.symbol) && m.angleDeg);
-      for (const { m, x } of benderMarks) parts.push(benderGlyph(x, pipeY + pipeH, m.dir === 'down', m.angleDeg));
-      const spanY = pipeY + pipeH + (benderMarks.length ? 82 : 22);
-      const pts = [compress || fromMark1 ? null : 0, ...marks.map((m) => m.atM)].filter((v) => v != null);
-      for (let i = 1; i < pts.length; i++) {
-        const a = pts[i - 1], b = pts[i];
-        const d = snap(b) - snap(a);
-        if (d <= 0) continue;
-        const xa = X(a), xb = X(b);
-        parts.push(line(xa, spanY, xb, spanY, 'bd-dim-span'), line(xa, spanY - 4, xa, spanY + 4, 'bd-dim-span'), line(xb, spanY - 4, xb, spanY + 4, 'bd-dim-span'));
-        if (xb - xa > 34) parts.push(text((xa + xb) / 2, spanY - 5, fmt(d), 'bd-spantext'));
+      if (benderMarks.length) {
+        const xs = benderMarks.map((b) => b.x).sort((a, b) => a - b);
+        let minGap = Infinity;
+        for (let i = 1; i < xs.length; i++) minGap = Math.min(minGap, xs[i] - xs[i - 1]);
+        // size the tool to the spacing (so two never badly overlap), within sensible bounds
+        const dispW = Math.max(74, Math.min(148, Number.isFinite(minGap) ? minGap * 1.04 : 148));
+        const dispH = (dispW * BENDER_IMG.h) / BENDER_IMG.w;
+        const top = pipeY + pipeH - dispH * 0.06; // the head tucks just under the pipe
+        for (const { x } of benderMarks) {
+          parts.push(`<image class="bd-tool-img" href="${BENDER_IMG.href}" x="${n1(x - BENDER_IMG.handleFrac * dispW)}" y="${n1(top)}" width="${n1(dispW)}" height="${n1(dispH)}" preserveAspectRatio="xMidYMid meet"/>`);
+        }
+        const callout = benderCallout(result);
+        y = top + dispH + 6;
+        if (callout) { parts.push(text(width / 2, y + 2, callout, 'bd-callout')); y += 14; }
+      } else {
+        y = pipeY + pipeH + 20;
       }
-      y = spanY + 14;
     }
     y += 10;
   }
