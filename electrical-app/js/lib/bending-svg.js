@@ -309,21 +309,8 @@ function directionArrow(L) {
   return poly(pts, 'bd-dir') + head;
 }
 
-const svgWrap = (width, height, label, inner, vb) => {
-  // Default view stays byte-identical to the un-tooled diagram (integer box at the origin). Only a
-  // grown box (to contain the bender's handle) uses an offset/rounded view.
-  const vbStr = vb ? `${Math.round(vb.x)} ${Math.round(vb.y)} ${Math.round(vb.w)} ${Math.round(vb.h)}` : `0 0 ${width} ${Math.round(height)}`;
-  const w = vb ? Math.round(vb.w) : width, h = vb ? Math.round(vb.h) : Math.round(height);
-  return `<svg class="bend-svg" viewBox="${vbStr}" width="${w}" height="${h}" role="img" aria-label="${esc(label)}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
-};
-
-/** Grow a [0,0,width,height] box to contain an extra {minx,miny,maxx,maxy}, with a small margin. */
-function viewBoxWith(width, height, bbox, m = 5) {
-  if (!bbox) return null;
-  const x = Math.min(0, bbox.minx - m), y = Math.min(0, bbox.miny - m);
-  const maxX = Math.max(width, bbox.maxx + m), maxY = Math.max(height, bbox.maxy + m);
-  return { x, y, w: maxX - x, h: maxY - y };
-}
+const svgWrap = (width, height, label, inner) =>
+  `<svg class="bend-svg" viewBox="0 0 ${width} ${Math.round(height)}" width="${width}" height="${Math.round(height)}" role="img" aria-label="${esc(label)}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
 
 /** Gradients and a soft-shadow blur for the shaded bender (identical per SVG, so an id clash resolves the same). */
 function benderDefs() {
@@ -344,106 +331,90 @@ function benderMark(kind) {
 }
 
 /**
- * A compact 2.5D hand bender tucked into the crook of the first bend, drawn BEHIND the pipe so the
- * bent pipe is never buried: a round cast head (shoe) whose groove the pipe sits in, a hook lip that
- * catches the pipe, a pivot boss, and a long handle running out into the open space inside the bend —
- * the handle is the cue that reads "bender" at a glance. The head carries this bend's mark (arrow,
- * star or notch) and, when known, the bender's take-up. Returns { body, labels } so the caller draws
- * the metal behind the pipe and the text on top; '' when the first bend has no angle/heading.
+ * A shaded 2.5D hand bender sitting on the pipe at the first bend: a cast head (shoe) with a deep
+ * curved groove the pipe runs in, a hook at the free end, and a long handle. It is oriented along the
+ * outgoing leg and hugs the inside of the swing — "put the bender here, facing this way". The shoe
+ * carries the mark for this bend (arrow, star or notch) and, when the result has the bender's take-up,
+ * that figure. Returns '' when the first bend has no angle/heading. Refined on device.
  */
 function benderParts(result, L, od, fmt = mmFmt) {
   const b0 = L.main.bends[0];
-  if (!b0 || !b0.bendDeg || !Number.isFinite(b0.headingDeg)) return { body: '', labels: '' };
+  if (!b0 || !b0.bendDeg || !Number.isFinite(b0.headingDeg)) return '';
   const cx = L.X(b0.x), cy = L.Y(b0.y);
   const pw = L.pipeW;
-  if (![cx, cy, pw].every(Number.isFinite)) return { body: '', labels: '' };
-  // The two legs at the bend, as screen-space unit vectors pointing AWAY from the vertex (y flipped).
-  const hin = (b0.headingDeg - b0.bendDeg / 2) * Math.PI / 180;   // incoming world heading
-  const hout = (b0.headingDeg + b0.bendDeg / 2) * Math.PI / 180;  // outgoing world heading
-  const legA = [-Math.cos(hin), Math.sin(hin)];                   // back along the incoming leg
-  const legB = [Math.cos(hout), -Math.sin(hout)];                 // out along the outgoing leg
-  let bx = legA[0] + legB[0], by = legA[1] + legB[1];             // bisector into the concave side
-  const bl = Math.hypot(bx, by) || 1;
-  bx /= bl; by /= bl;                                             // unit "inside" direction: where the shoe sits
-  const ang = Math.atan2(by, bx);                                // handle points this way
-  // Size the shoe to the DRAWING, not just the pipe, so a zoomed-in small bend doesn't get a giant
-  // tool. A compact wheel: a couple of pipe widths, capped to a fraction of the diagram.
-  const diag = Math.hypot((L.maxX - L.minX) * L.s, (L.maxY - L.minY) * L.s) || pw * 10;
-  const rs = Math.max(13, Math.min(pw * 2.0, diag * 0.12));
-  const dC = rs * 0.92;                                          // centre offset: rim sits back near the vertex
-  const Cx = cx + bx * dC, Cy = cy + by * dC;
-  const cosA = Math.cos(ang), sinA = Math.sin(ang);
-  // local frame: +x = handle direction (away from vertex), -x faces the pipe; y across.
-  const S = (lx, ly) => [Cx + lx * cosA - ly * sinA, Cy + lx * sinA + ly * cosA];
-  const P = (p) => `${n1(p[0])},${n1(p[1])}`;
-  const polar = (phi, r) => S(r * Math.cos(phi * Math.PI / 180), r * Math.sin(phi * Math.PI / 180));
-  const circ = (r, cls, extra = '') => `<circle class="${cls}" cx="${n1(Cx)}" cy="${n1(Cy)}" r="${n1(r)}"${extra}/>`;
-  // handle: a long tapered bar from the head out along +x — the cue that reads "bender"
-  const hx0 = rs * 0.55, hlen = rs * 3.3, w0 = rs * 0.46, w1 = rs * 0.28;
-  const handle = `M${P(S(hx0, -w0 / 2))} L${P(S(hx0 + hlen, -w1 / 2))} A${n1(w1 / 2)},${n1(w1 / 2)} 0 0 1 ${P(S(hx0 + hlen, w1 / 2))} L${P(S(hx0, w0 / 2))} Z`;
-  const grip = `M${P(S(hx0 + hlen * 0.46, -w1 / 2 - 0.5))} L${P(S(hx0 + hlen * 0.86, -w1 / 2 - 0.5))} L${P(S(hx0 + hlen * 0.86, w1 / 2 + 0.5))} L${P(S(hx0 + hlen * 0.46, w1 / 2 + 0.5))} Z`;
-  // foot peg: the step, a small nub off the base toward the vertex side
-  const foot = `M${P(polar(150, rs * 0.95))} L${P(polar(150, rs * 1.26))} L${P(polar(166, rs * 1.22))} L${P(polar(166, rs * 0.95))} Z`;
-  const shadow = `<g filter="url(#bdSoft)" transform="translate(2.5,3.5)"><path class="bd-tool-shadow" d="${handle}"/><circle class="bd-tool-shadow" cx="${n1(Cx)}" cy="${n1(Cy)}" r="${n1(rs)}"/></g>`;
+  const u = Math.max(10, pw * 1.5);          // tool size, tied to the pipe
+  if (![cx, cy, pw, u].every(Number.isFinite)) return '';
+  const rot = -b0.headingDeg;                // SVG degrees: align the handle with the outgoing leg
+  const k = -(Math.sign(b0.bendDeg) || 1);   // +1/-1: the side of the pipe the shoe sits on (inside of the swing)
+  const R = u * 1.6;                         // shoe radius
+  const Cy = k * (R + pw / 2);               // the shoe's centre; its rim touches the pipe at the origin
+  // a point on the shoe: phi 0 is the contact with the pipe, negative toward the hook, positive toward the handle
+  const at = (phi, r) => { const a = (phi * Math.PI) / 180; return [r * Math.sin(a), Cy - k * r * Math.cos(a)]; };
+  const P = ([x, y]) => `${n1(x)},${n1(y)}`;
+  const sweep = k > 0 ? 1 : 0;
+  const arc = (r, a0, a1) => `M${P(at(a0, r))} A${n1(r)},${n1(r)} 0 ${Math.abs(a1 - a0) > 180 ? 1 : 0} ${sweep} ${P(at(a1, r))}`;
+  const body = `M${P([0, Cy])} L${P(at(-115, R))} A${n1(R)},${n1(R)} 0 1 ${sweep} ${P(at(115, R))} Z`;
+  // the hook: a beak at the free end that curls over the pipe
+  const hook = `M${P(at(-100, R * 0.78))} L${P(at(-112, R * 1.22))} Q${P(at(-96, R * 1.5))} ${P(at(-60, R * 1.3))} L${P(at(-66, R * 1.08))} Q${P(at(-84, R * 1.15))} ${P(at(-80, R * 0.9))} Z`;
+  // the handle: tapered, from the back of the head, with a grip band
+  const hx0 = R * 0.35, hlen = u * 5, w0 = u * 0.62, w1 = u * 0.44;
+  const hy = Cy;
+  const handle = `M${n1(hx0)},${n1(hy - w0 / 2)} L${n1(hx0 + hlen)},${n1(hy - w1 / 2)} A${n1(w1 / 2)},${n1(w1 / 2)} 0 0 1 ${n1(hx0 + hlen)},${n1(hy + w1 / 2)} L${n1(hx0)},${n1(hy + w0 / 2)} Z`;
+  const grip = `<rect class="bd-tool-grip" x="${n1(hx0 + hlen * 0.55)}" y="${n1(hy - w1 / 2 - 0.4)}" width="${n1(hlen * 0.4)}" height="${n1(w1 + 0.8)}" rx="${n1(w1 * 0.3)}"/>`;
+  const shadow = `<g transform="translate(${n1(cx + 2.5)},${n1(cy + 3.5)}) rotate(${n1(rot)})" filter="url(#bdSoft)"><path class="bd-tool-shadow" d="${body} ${handle}"/></g>`;
   const mark = benderMark(result.kind);
-  // mark cast on the exposed top face of the wheel (phi -70), between the hub and the rim
-  const mc = polar(-70, rs * 0.64);
-  let glyph;
+  // the mark, on the face of the head: arrow near the hook, star on the handle side, notch on the rim at the centreline
+  let glyph, mphi;
   if (mark.shape === 'star') {
-    const o = rs * 0.26, inr = o * 0.42;
-    const pts = Array.from({ length: 10 }, (_, j) => { const a = (j * Math.PI) / 5 - Math.PI / 2, r = j % 2 ? inr : o; return [mc[0] + r * Math.cos(a), mc[1] + r * Math.sin(a)]; });
+    mphi = 55;
+    const [sx, sy2] = at(mphi, R * 0.72), o = u * 0.3, i = o * 0.42;
+    const pts = Array.from({ length: 10 }, (_, j) => { const a = (j * Math.PI) / 5 - Math.PI / 2, r = j % 2 ? i : o; return [sx + r * Math.cos(a), sy2 + r * Math.sin(a)]; });
     glyph = `<polygon class="bd-tool-mark" points="${pts.map(P).join(' ')}"/>`;
   } else if (mark.shape === 'notch') {
-    glyph = `<path class="bd-tool-mark" d="M${P(polar(-70, rs * 0.98))} L${P(polar(-74, rs * 0.66))} L${P(polar(-66, rs * 0.66))} Z"/>`;
+    mphi = 0;
+    const [dx, dy] = at(0, R * 0.58);
+    glyph = `<path class="bd-tool-mark" d="M${P(at(-7, R))} L${P(at(0, R * 0.7))} L${P(at(7, R))} Z"/><circle class="bd-tool-mark" cx="${n1(dx)}" cy="${n1(dy)}" r="${n1(u * 0.13)}"/>`;
   } else {
-    glyph = `<path class="bd-tool-mark" d="M${P(polar(-70, rs * 0.92))} L${P(polar(-76, rs * 0.58))} L${P(polar(-64, rs * 0.58))} Z"/>`;
+    mphi = -55;
+    glyph = `<path class="bd-tool-mark" d="M${P(at(mphi, R * 0.95))} L${P(at(mphi - 9, R * 0.62))} L${P(at(mphi + 9, R * 0.62))} Z"/>`;
   }
-  // The shoe as a grooved wheel the pipe wraps: body disc, a dark channel ring near the rim between
-  // two bright edges (the groove the conduit rides in), then a raised centre hub with the pivot.
-  const body = `<g class="bd-tool">`
-    + shadow
-    + `<path class="bd-tool-handle" fill="url(#bdHandle)" d="${handle}"/>`
-    + `<path class="bd-tool-grip" d="${grip}"/>`
-    + `<path class="bd-tool-foot" fill="url(#bdShoe)" d="${foot}"/>`
-    + circ(rs, 'bd-tool-shoe', ' fill="url(#bdHead)"')
-    + circ(rs * 0.9, 'bd-tool-rim-edge', ' fill="none"')
-    + circ(rs * 0.8, 'bd-tool-groove-bed', ` fill="none" stroke="url(#bdGroove)" stroke-width="${n1(rs * 0.16)}"`)
-    + circ(rs * 0.72, 'bd-tool-rim-edge', ' fill="none"')
-    + circ(rs * 0.5, 'bd-tool-hub', ' fill="url(#bdHead)"')
-    + circ(rs * 0.17, 'bd-tool-hole', '')
+  const rad = (rot * Math.PI) / 180, cr = Math.cos(rad), sr = Math.sin(rad);
+  const screen = ([x, y]) => [cx + x * cr - y * sr, cy + x * sr + y * cr];
+  // labels sit on the head in screen space (unrotated), so they stay upright whatever the heading
+  const lab = (p, s) => { const [x, y] = screen(p); return Number.isFinite(x + y) ? text(x, y, s, 'bd-tool-label', 'middle') : ''; };
+  const takeUp = Number.isFinite(result.takeUpM) && result.takeUpM > 0 ? lab(at(0, R * 0.18), `take-up ${fmt(result.takeUpM)}`) : '';
+  const labels = lab(at(mphi, R * 0.4), mark.label) + takeUp;
+  const tool = `<g class="bd-tool" transform="translate(${n1(cx)},${n1(cy)}) rotate(${n1(rot)})">`
+    + `<path class="bd-tool-handle" fill="url(#bdHandle)" d="${handle}"/>${grip}`
+    + `<rect class="bd-tool-hi" x="${n1(hx0 + u * 0.6)}" y="${n1(hy - w1 * 0.3)}" width="${n1(hlen - u * 0.9)}" height="${n1(w1 * 0.16)}" rx="${n1(w1 * 0.08)}"/>`
+    + `<path class="bd-tool-hook" fill="url(#bdShoe)" d="${hook}"/>`
+    + `<path class="bd-tool-shoe" fill="url(#bdHead)" d="${body}"/>`
+    + `<circle class="bd-tool-hole" cx="0" cy="${n1(Cy)}" r="${n1(R * 0.16)}"/>`
+    + `<path class="bd-tool-groove-bed" fill="none" stroke="url(#bdGroove)" stroke-width="${n1(u * 0.34)}" d="${arc(R - u * 0.17, -108, 108)}"/>`
+    + `<path class="bd-tool-groove" fill="none" d="${arc(R - u * 0.34, -104, 104)}"/>`
+    + `<path class="bd-tool-rim" fill="none" d="${arc(R * 0.9, -90, 40)}"/>`
     + glyph
     + '</g>';
-  // labels upright in screen space so they read at any heading; over the hub, on top of the pipe
-  const lab = (p, s, cls = 'bd-tool-label') => (Number.isFinite(p[0] + p[1]) ? text(p[0], p[1], s, cls, 'middle') : '');
-  const takeUp = Number.isFinite(result.takeUpM) && result.takeUpM > 0 ? lab(S(0, rs * 0.52), `take-up ${fmt(result.takeUpM)}`) : '';
-  const labels = `<g class="bd-tool-wrap">${lab(mc, mark.label)}${takeUp}</g>`;
-  // extent of the drawn tool (wheel + handle tip), so the caller can grow the view to not clip it
-  const tip1 = S(hx0 + hlen, w1 / 2 + 1), tip2 = S(hx0 + hlen, -w1 / 2 - 1);
-  const xs = [Cx - rs, Cx + rs, tip1[0], tip2[0]], ys = [Cy - rs, Cy + rs, tip1[1], tip2[1]];
-  const bbox = { minx: Math.min(...xs), maxx: Math.max(...xs), miny: Math.min(...ys), maxy: Math.max(...ys) };
-  return { body, labels, bbox };
+  return `<g class="bd-tool-wrap">${shadow}${tool}${labels}</g>`;
 }
 
 /**
  * The bent pipe, side view, to scale.
  * opts: { fmt(m) -> string, width (px), odM, maxHeight }
  */
-export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight = 340, tool = false } = {}) {
+export function bentSvg(result, { fmt = mmFmt, width = 640, odM = 0, maxHeight = 340 } = {}) {
   const pipes = pipesFor(result);
   const od = odM || 0;
   const L = layoutFor(result, pipes, od, { width, maxHeight }, null);
-  const t = tool ? benderParts(result, L, od, fmt) : { body: '', labels: '', bbox: null };
   const parts = [
     benderDefs(),
     ...backgroundParts(result, L, od),
-    t.body,                         // the bender behind the pipe, so the bend is never buried
     ...pipePolys(pipes, L),
     ...breakParts(pipes, L),
     directionArrow(L),
     ...foregroundParts(result, L, od, fmt, pipes),
-    t.labels,                       // tool text on top
   ];
-  return svgWrap(width, L.height, 'Bent pipe with the bender in place, side view', parts.join(''), viewBoxWith(width, L.height, t.bbox));
+  return svgWrap(width, L.height, 'Bent pipe, side view, to scale', parts.join(''));
 }
 
 /**
@@ -548,27 +519,38 @@ const shortTag = (m) => {
  * mark's x; yTop is the top of the head. Pure string; all values finite.
  */
 export function benderGlyph(x, yTop, flip = false) {
-  // Side profile of a conduit hand bender: a thick cast hook whose open mouth (top) cups the pipe,
-  // a lip that curls over to catch it, a socket boss, and a long blue handle. Built from two
-  // concentric arcs so it reads as a real sickle-shaped shoe, not a blob. `flip` mirrors it.
-  // Solid cast head: a hook lip rises on the left, the pipe nestles in the concave cradle on top,
-  // and the body bulges down to the handle socket. The pipe sits at ~y=-2 (just above the origin).
+  // A conduit hand bender drawn the way the field apps show it under each mark: the cast head hangs
+  // just under the pipe with the conduit HOOK curling over on one side, a stubby foot/step on the
+  // other, the ferrule where the handle threads in, then a long thin BLUE handle straight down.
+  // Origin is the mark on the pipe; the head hangs below it. `flip` mirrors it (hook to the other
+  // side) for a bend made the other way. Built so it reads as a real bender, not a blob.
+  // --- cast head (grey): one compact casting, widest at the top where the conduit HOOK (left) and
+  // the foot/step prong (right) rise, tapering down to the ferrule. The conduit seats in the concave
+  // groove between them. ---
   const head = '<path class="bd-bender-head" d="'
-    + 'M-13,-4 '                 // left lip tip
-    + 'Q-13,-9 -8,-8 '           // lip curls up over the pipe end (the hook)
-    + 'Q-4,-7 -2,-3 '            // down the inner face of the lip
-    + 'Q1,0 4,-3 '              // the cradle: a dip the pipe rests in, up to the right rim
-    + 'Q7,-6 10,-4 '            // right rim
-    + 'C14,-1 14,8 8,13 '       // right side bulges down to the handle
-    + 'C4,16 -2,16 -6,13 '      // bottom
-    + 'C-11,10 -15,2 -13,-4 Z"/>';
-  const cradle = '<path class="bd-bender-cradle" d="M-2,-3 Q1,0.5 4,-3"/>'; // groove highlight
-  const socket = '<circle class="bd-bender-socket" cx="1" cy="13" r="3.4"/>';
-  const bolt = '<circle class="bd-bender-bolt" cx="1" cy="13" r="1.3"/>';
-  const handle = '<rect class="bd-bender-handle" x="-1.5" y="15" width="5" height="34" rx="2.5"/>';
-  const grip = '<rect class="bd-bender-grip" x="-1.5" y="17" width="5" height="9" rx="2.5"/>';
+    + 'M-4,13 '                    // ferrule left
+    + 'L-8,4 '                     // up the left side, widening
+    + 'L-10,-3 '                   // to the base of the hook
+    + 'C-13,-7 -11,-11 -7.5,-10 '  // hook: up and over the crown
+    + 'C-5,-9 -4.5,-6.5 -6.5,-5.5 '// the lip curls back down inside
+    + 'C-8,-5 -7.5,-3.5 -5,-3.5 '  // close the hook claw, into the shoulder
+    + 'L-3,-4 '                    // left wall of the groove
+    + 'C-1,-2 1,-2 3,-4 '          // the concave conduit groove (seat) across the top
+    + 'L5.5,-6 '                   // up to the foot/step prong
+    + 'C8,-8.5 11.5,-7.5 10.5,-3 '// the rounded foot prong on the right
+    + 'C10,-0.5 9,2 8,4 '          // down the right side
+    + 'L4,13 Z"/>';                // to the ferrule right
+  // a soft metallic highlight on the upper body so the casting reads as rounded steel
+  const glint = '<path class="bd-bender-glint" d="M-6,-3 C-7.5,1 -6,6 -2,7 C-4,4 -4,0 -2.5,-3 Z"/>';
+  // the conduit groove, picked out darker so the seat reads
+  const groove = '<path class="bd-bender-groove" d="M-3,-4 C-1,-2 1,-2 3,-4"/>';
+  // the ferrule (socket collar) the handle threads into
+  const ferrule = '<path class="bd-bender-ferrule" d="M-4,12 L4,12 L3,19 L-3,19 Z"/>';
+  // the long thin blue handle with a lighter highlight down one edge
+  const handle = '<rect class="bd-bender-handle" x="-2.4" y="17" width="4.8" height="46" rx="2.4"/>';
+  const hi = '<rect class="bd-bender-hi" x="-1.7" y="20" width="1.5" height="38" rx="0.75"/>';
   const t = flip ? `translate(${n1(x)},${n1(yTop)}) scale(-1,1)` : `translate(${n1(x)},${n1(yTop)})`;
-  return `<g class="bd-bender" transform="${t}">${head}${cradle}${socket}${bolt}${handle}${grip}</g>`;
+  return `<g class="bd-bender" transform="${t}">${handle}${hi}${ferrule}${head}${glint}${groove}</g>`;
 }
 
 /**
@@ -662,7 +644,7 @@ export function marksSvg(result, { fmt = mmFmt, snap = (m) => m, width = 640 } =
       const bandTop = chainY + 20;
       // the bender faces the way the bend is made: 'down' bends mirror the head (hook to the right)
       for (const m of benderMarks) parts.push(benderGlyph(X(m.atM), bandTop, m.dir === 'down'));
-      y = benderMarks.length ? bandTop + 54 : chainY + 14;
+      y = benderMarks.length ? bandTop + 70 : chainY + 14; // clear the long handle + its rounded tip
     } else {
       const shots = marks.filter((m) => m.angleDeg);
       if (shots.length > 1) parts.push(text(X(shots[0].atM), chainY - 4, `${shots.length} marks, every ${fmt(shots[1].atM - shots[0].atM)}`, 'bd-dimtext', 'start'));

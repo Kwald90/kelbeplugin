@@ -209,28 +209,30 @@ select.bend-input { font-size: var(--fs-base); }
 .level-vial.on .level-bubble { opacity: 1; }
 .level-read { font-size: var(--fs-2xl, 2rem); font-weight: 700; font-variant-numeric: tabular-nums; margin-top: var(--s2); }
 
-/* 2.5D bender tool drawn on the diagram at the first bend (fills are inline SVG gradients).
-   A grooved cast wheel the pipe wraps, with a foot peg and a long handle; drawn behind the pipe. */
-.bd-tool-shoe, .bd-tool-foot { stroke: #2b313a; stroke-width: .7; stroke-linejoin: round; }
-.bd-tool-hub { stroke: rgba(255, 255, 255, .28); stroke-width: .7; }
-.bd-tool-rim-edge { stroke: rgba(255, 255, 255, .45); stroke-width: .9; }
+/* 2.5D bender tool drawn on the diagram at the first bend (fills are inline SVG gradients) */
+.bd-tool-shoe, .bd-tool-hook { stroke: #2b313a; stroke-width: .6; stroke-linejoin: round; }
+.bd-tool-groove { stroke: rgba(255, 255, 255, .5); stroke-width: 1.3; stroke-linecap: round; }
 .bd-tool-handle { stroke: #6b4e14; stroke-width: .5; }
+.bd-tool-hi { fill: rgba(255, 255, 255, .42); }
 .bd-tool-shadow { fill: rgba(0, 0, 0, .22); }
 @media print { .bd-tool-shadow { fill: rgba(0, 0, 0, .14); } }
 .bd-tool-hole { fill: #20252b; stroke: rgba(255, 255, 255, .25); stroke-width: .5; }
-.bd-tool-grip { fill: rgba(60, 38, 8, .5); stroke: none; }
+.bd-tool-rim { stroke: rgba(255, 255, 255, .35); stroke-width: .8; stroke-linecap: round; }
+.bd-tool-grip { fill: rgba(60, 38, 8, .45); stroke: none; }
 .bd-tool-mark { fill: #fff; stroke: #1c2127; stroke-width: .5; stroke-linejoin: round; }
-.bd-tool-label { font-size: 7px; font-weight: 700; fill: #fff; stroke: rgba(20, 24, 30, .8); stroke-width: 2.2; paint-order: stroke; pointer-events: none; }
+.bd-tool-label { font-size: 6.5px; font-weight: 700; fill: #fff; stroke: rgba(20, 24, 30, .75); stroke-width: 2; paint-order: stroke; pointer-events: none; }
 
-/* Upright hand bender under each mark on the straight-pipe mark layout (grey head, blue handle) */
-.bd-bender-head { fill: #c3c8ce; stroke: #747b83; stroke-width: 1; stroke-linejoin: round; }
-.bd-bender-cradle { fill: none; stroke: #747b83; stroke-width: 1.4; stroke-linecap: round; opacity: .55; }
-.bd-bender-beak { fill: #b2b8bf; stroke: #878d95; stroke-width: .7; stroke-linejoin: round; }
-.bd-bender-socket { fill: #d6dade; stroke: #9aa0a7; stroke-width: .8; }
-.bd-bender-bolt { fill: #868c94; }
-.bd-bender-handle { fill: #2f6fd0; }
-.bd-bender-grip { fill: #1f58ad; }
-@media print { .bd-bender-handle { fill: #2f6fd0; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+/* Upright hand bender under each mark on the straight-pipe mark layout (grey cast head, hook, blue
+   handle) — matches the field bender-calc apps Kelvin uses. */
+.bd-bender-head { fill: #c3c8ce; stroke: #6b7279; stroke-width: 1; stroke-linejoin: round; }
+.bd-bender-groove { fill: none; stroke: #5c636b; stroke-width: 1.3; stroke-linecap: round; }
+.bd-bender-glint { fill: #e4e7ea; opacity: .55; }
+.bd-bender-ferrule { fill: #aeb4bb; stroke: #6b7279; stroke-width: .8; stroke-linejoin: round; }
+.bd-bender-handle { fill: #2f6fd0; stroke: #1f4f99; stroke-width: .5; }
+.bd-bender-hi { fill: #6a9be6; }
+@media print {
+  .bd-bender-handle, .bd-bender-hi { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
 
 /* photos attached to a saved bend, shown in the printable report */
 .bend-print-photos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }

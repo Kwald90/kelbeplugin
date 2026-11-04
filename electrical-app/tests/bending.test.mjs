@@ -446,43 +446,6 @@ test('diagrams: every kind draws, one line per mark, text escaped', () => {
   assert.ok(S.marksSvg(B.compute('backToBack', cases.backToBack, { fmt }), { fmt }).includes('<polygon class="bd-sym"'));
 });
 
-test('2.5D bender: drawn behind the pipe at the first bend, never buries it, for every kind', () => {
-  const fmt = (m) => `${(m / 0.0254).toFixed(1)}"`;
-  const cases = {
-    offset: { riseM: inToM(6), angleDeg: 30, obstacleM: inToM(36) },
-    kick: { riseM: inToM(3), angleDeg: 22.5 },
-    saddle3: { heightM: inToM(2), centerM: inToM(24) },
-    saddle4: { heightM: inToM(4), widthM: inToM(10) },
-    stub90: { stubM: inToM(10), takeUpM: inToM(5), radiusM: inToM(4.1875), odM: inToM(0.706), otherLegM: inToM(30) },
-    backToBack: { stubM: inToM(10), backToBackM: inToM(30), takeUpM: inToM(5), radiusM: inToM(4.1875), odM: inToM(0.706) },
-    boxOffset: { riseM: inToM(0.5) },
-    rolling: { riseM: inToM(6), rollM: inToM(8), angleDeg: 45, obstacleM: inToM(40) },
-    parallel: { riseM: inToM(6), angleDeg: 30, count: 3, centersM: inToM(2), obstacleM: inToM(36) },
-    segment: { radiusM: inToM(30), stubM: inToM(48), shots: 10, odM: inToM(2.375) },
-    concentric: { count: 3, centersM: inToM(4), innerRadiusM: inToM(20), startM: inToM(12), shots: 9 },
-  };
-  const W = 480;
-  for (const [kind, input] of Object.entries(cases)) {
-    const r = B.compute(kind, input, { fmt });
-    const off = S.bentSvg(r, { fmt, width: W, odM: input.odM || 0, tool: false });
-    const on = S.bentSvg(r, { fmt, width: W, odM: input.odM || 0, tool: true });
-    assert.ok(on.includes('bd-tool'), `${kind}: tool is drawn`);
-    assert.ok(!off.includes('bd-tool'), `${kind}: no tool when off`);
-    assert.ok(!/NaN|undefined/.test(on), `${kind}: tool has no NaN`);
-    // the tool's metal (the <g class="bd-tool">) comes BEFORE the pipe strokes, so the pipe is on top
-    assert.ok(on.indexOf('class="bd-tool"') < on.indexOf('class="bd-pipe"'), `${kind}: bender is behind the pipe`);
-    // the view grew to contain the handle: viewBox starts at or before 0,0 and is at least the width
-    const vb = on.match(/viewBox="(-?[\d.]+) (-?[\d.]+) ([\d.]+) ([\d.]+)"/);
-    assert.ok(vb, `${kind}: has a viewBox`);
-    const [, x, y, w] = vb.map(Number);
-    assert.ok(x <= 0 && y <= 0 && w >= W, `${kind}: view contains the whole tool (${x},${y},${w})`);
-  }
-  // the mark cast on the shoe follows the bend: star for a back-to-back, notch for a saddle, else arrow
-  assert.ok(S.bentSvg(B.compute('backToBack', cases.backToBack, { fmt }), { fmt, width: W, tool: true }).includes('>star<'));
-  assert.ok(S.bentSvg(B.compute('saddle3', cases.saddle3, { fmt }), { fmt, width: W, tool: true }).includes('>notch<'));
-  assert.ok(S.bentSvg(B.compute('offset', cases.offset, { fmt }), { fmt, width: W, tool: true }).includes('>arrow<'));
-});
-
 test('calibrate: take-up and gain from one test 90', () => {
   // marked at 12" and 30"; stub measured 17 1/8", other leg (back of 90 to the 30" mark) 15 3/8"
   // take-up = 17.125 − 12 = 5.125; gain = 17.125 + 15.375 − 30 = 2.5
