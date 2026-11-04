@@ -568,7 +568,7 @@ export function backToBack(input, opts = {}) {
   const m2 = stubM + backToBackM - gainM;
   const marks = [
     { label: 'Mark 1', atM: m1, symbol: isPos(takeUpM) ? 'arrow' : heat ? 'heat' : 'arrow', angleDeg: 90, bend: 1, dir: 'up', note: 'first 90' },
-    { label: 'Mark 2', atM: m2, symbol: isPos(takeUpM) ? 'star' : heat ? 'heat' : 'tick', angleDeg: 90, bend: 2, dir: 'up', note: 'back of second 90' },
+    { label: 'Mark 2', atM: m2, symbol: isPos(takeUpM) ? 'star' : heat ? 'heat' : 'tick', angleDeg: 90, bend: 2, dir: 'down', note: 'back of second 90' },
   ];
   const cut = isPos(secondStubM) ? stubM + backToBackM + secondStubM - 2 * gainM : null;
   const steps = [
