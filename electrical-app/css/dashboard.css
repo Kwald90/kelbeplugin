@@ -1,6 +1,10 @@
 /* Today: work and next actions first, supporting information on demand. */
 .dash-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--s6); align-items: start; margin: var(--s5) 0; }
 .dash-layout > * { min-width: 0; }
+/* single-column, roomy sections (Apple-tidy): the clock, then what needs attention, then the numbers */
+.dash-focus { margin: var(--s6) 0; }
+.dash-stats { margin: var(--s6) 0; }
+.dash-stats .grid { gap: var(--s4); }
 .dash-section-head { display: flex; gap: var(--s3); align-items: center; justify-content: space-between; margin-bottom: var(--s3); }
 .dash-section-head h2 { margin: 0; font-size: var(--fs-lg); line-height: var(--lh-lg); }
 .dash-section-intro { margin: 0 0 var(--s4); color: var(--text-muted); font-size: var(--fs-sm); }
