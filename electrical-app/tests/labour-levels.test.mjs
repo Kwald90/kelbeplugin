@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_LEVELS, newLevel, normalizeLevels, levelsOf, activeLevels, baselineLevel,
+  DEFAULT_LEVELS, newLevel, normalizeLevels, levelsOf, activeLevels, baselineLevel, levelById,
   effectiveHours, levelCostCents, levelChargeCents, labourByLevel, crewMix, apprenticeHours,
 } from '../js/lib/labour-levels.js';
 import { peopleFromEmployees } from '../js/modules/labour.js';
@@ -24,6 +24,19 @@ test('defaults seed when settings have no levels, and the journeyman is the base
   assert.equal(baselineLevel(settings).id, 'jw');
   // an explicit baseline wins
   assert.equal(baselineLevel({ ...settings, baselineLevelId: 'fm' }).id, 'fm');
+});
+
+test('default level ids are stable across reads, so an assignment keeps matching', () => {
+  // The bug: defaults with no id got a fresh random id every read, so a level you assigned to a
+  // person was orphaned the instant anything re-read the list (and on reload). Ids must be stable.
+  const a = levelsOf({}), b = levelsOf({});
+  assert.deepEqual(a.map((l) => l.id), b.map((l) => l.id), 'same ids every call');
+  assert.ok(a.every((l) => l.id), 'every default level has an id');
+  // every seeded default id resolves back to its level (what the apprentice-hours roll-up relies on)
+  for (const l of activeLevels({})) assert.equal(levelById({}, l.id)?.id, l.id);
+  // a person assigned the journeyman still resolves after a re-read
+  const jw = activeLevels({}).find((l) => l.kind === 'journeyman');
+  assert.equal(levelById({}, jw.id)?.kind, 'journeyman');
 });
 
 test('a slower level takes proportionally more hours than the journeyman baseline', () => {

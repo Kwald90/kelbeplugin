@@ -17,13 +17,16 @@ export const LEVEL_KINDS = ['apprentice', 'journeyman', 'foreman', 'other'];
 /**
  * Starting roster (Manitoba-style: three apprentice years + journeyman + foreman). Every value is
  * editable in settings; productivity is relative to a journeyman at 100%. Rates are placeholders.
+ * Each has a STABLE id so that a level you assign to a person keeps matching across reads and
+ * reloads, even before anyone edits the Levels tab (an id minted fresh each call would orphan the
+ * assignment the instant the list is re-read).
  */
 export const DEFAULT_LEVELS = [
-  { kind: 'apprentice', year: 1, name: 'Apprentice — 1st year', productivityPct: 55, costCents: 2200, chargeCents: 6500 },
-  { kind: 'apprentice', year: 2, name: 'Apprentice — 2nd year', productivityPct: 68, costCents: 2600, chargeCents: 7200 },
-  { kind: 'apprentice', year: 3, name: 'Apprentice — 3rd year', productivityPct: 82, costCents: 3000, chargeCents: 8000 },
-  { kind: 'journeyman', year: null, name: 'Journeyman', productivityPct: 100, costCents: 4200, chargeCents: 9500 },
-  { kind: 'foreman', year: null, name: 'Foreman', productivityPct: 105, costCents: 5000, chargeCents: 11000 },
+  { id: 'lvl-appr-1', kind: 'apprentice', year: 1, name: 'Apprentice — 1st year', productivityPct: 55, costCents: 2200, chargeCents: 6500 },
+  { id: 'lvl-appr-2', kind: 'apprentice', year: 2, name: 'Apprentice — 2nd year', productivityPct: 68, costCents: 2600, chargeCents: 7200 },
+  { id: 'lvl-appr-3', kind: 'apprentice', year: 3, name: 'Apprentice — 3rd year', productivityPct: 82, costCents: 3000, chargeCents: 8000 },
+  { id: 'lvl-journeyman', kind: 'journeyman', year: null, name: 'Journeyman', productivityPct: 100, costCents: 4200, chargeCents: 9500 },
+  { id: 'lvl-foreman', kind: 'foreman', year: null, name: 'Foreman', productivityPct: 105, costCents: 5000, chargeCents: 11000 },
 ];
 
 /** A fresh level record (defaults to a new journeyman-speed line). */
