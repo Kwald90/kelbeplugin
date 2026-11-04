@@ -530,20 +530,37 @@ function marksTable(result) {
 let animatedFor = null;
 const prefersReducedMotion = () => !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
 
+// Whether to show the 2.5D hand bender sitting on the finished bend (vs the forming animation).
+// Remembered per device; defaults on so the tool placement is the first thing you see.
+let showBender = (() => { try { return localStorage.getItem('ft.bend.bender') !== '0'; } catch { return true; } })();
+const persistBender = () => { try { localStorage.setItem('ft.bend.bender', showBender ? '1' : '0'); } catch { /* private mode */ } };
+
 function diagrams(result, odM, width) {
   const w = Math.max(300, Math.min(900, Math.round(width || 640)));
   const reduced = prefersReducedMotion();
-  // the hero: the selected bend forming from flat pipe into the finished shape, to scale
+  // the hero: either the finished bend with the hand bender shown on it (the bender sits behind the
+  // pipe, so the bend is never buried — the handle shows which way to pull), or the bend forming
+  // from flat pipe. A toggle switches between them and is remembered.
   const bent = h('div', { class: 'bend-svg-wrap bend-anim' });
-  bent.innerHTML = reduced ? bentSvg(result, { fmt, width: w, odM: odM || 0 }) : animatedBendSvg(result, { fmt, width: w, odM: odM || 0 });
   const play = () => { for (const a of bent.querySelectorAll('.bd-anim')) { try { a.beginElement(); } catch { /* SMIL not ready */ } } };
-  if (!reduced && animatedFor !== result.kind) {
-    animatedFor = result.kind;
-    requestAnimationFrame(() => requestAnimationFrame(play)); // once the SVG is in the DOM and laid out
-  }
-  const heroCap = h('div', { class: 'bend-cap bend-cap-row' },
-    h('span', null, reduced ? 'Bent, to scale' : 'The bend, forming — to scale'),
-    reduced ? null : ui.button('Replay', { size: 'sm', icon: 'play', onClick: play }));
+  const capText = h('span', null, '');
+  const actions = h('div', { class: 'bend-row-actions row' });
+  const renderHero = (replay = false) => {
+    if (showBender) {
+      bent.innerHTML = bentSvg(result, { fmt, width: w, odM: odM || 0, tool: true });
+      capText.textContent = 'The finished bend, bender in place — to scale';
+    } else {
+      bent.innerHTML = reduced ? bentSvg(result, { fmt, width: w, odM: odM || 0 }) : animatedBendSvg(result, { fmt, width: w, odM: odM || 0 });
+      capText.textContent = reduced ? 'Bent, to scale' : 'The bend, forming — to scale';
+      if (!reduced && (replay || animatedFor !== result.kind)) { animatedFor = result.kind; requestAnimationFrame(() => requestAnimationFrame(play)); }
+    }
+    actions.replaceChildren(...[
+      ui.button(showBender ? 'Hide bender' : 'Show bender', { size: 'sm', icon: 'wrench', onClick: () => { showBender = !showBender; persistBender(); renderHero(true); } }),
+      showBender || reduced ? null : ui.button('Replay', { size: 'sm', icon: 'play', onClick: play }),
+    ].filter(Boolean));
+  };
+  renderHero();
+  const heroCap = h('div', { class: 'bend-cap bend-cap-row' }, capText, actions);
   const straight = h('div', { class: 'bend-svg-wrap' });
   straight.innerHTML = marksSvg(result, { fmt, snap, width: w });
   const roll = result.endView ? h('div', { class: 'bend-svg-wrap roll' }) : null;
@@ -865,7 +882,7 @@ function bendSheet(cur, meta) {
       h('tr', null, h('th', null, 'Pipe'), h('td', null, `${B.conduitLabel(conduit.type)} ${B.tradeSizeLabel(conduit.tradeSize)}`)),
       prof ? h('tr', null, h('th', null, 'Bender'), h('td', null, prof.name)) : null,
       inputLines(cur.kind, cur.input).map(([k, v]) => h('tr', null, h('th', null, k), h('td', null, v))))),
-    svg(bentSvg(r, { fmt, width: 680, odM: cur.bender?.odM || cur.input?.odM || 0, maxHeight: 300 })),
+    svg(bentSvg(r, { fmt, width: 680, odM: cur.bender?.odM || cur.input?.odM || 0, maxHeight: 300, tool: showBender })),
     r.endView ? svg(rollSvg(r, { fmt })) : null,
     svg(marksSvg(r, { fmt, snap, width: 680 })),
     h('table', { class: 'bend-sheet-marks' },

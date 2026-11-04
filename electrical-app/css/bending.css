@@ -209,18 +209,18 @@ select.bend-input { font-size: var(--fs-base); }
 .level-vial.on .level-bubble { opacity: 1; }
 .level-read { font-size: var(--fs-2xl, 2rem); font-weight: 700; font-variant-numeric: tabular-nums; margin-top: var(--s2); }
 
-/* 2.5D bender tool drawn on the diagram at the first bend (fills are inline SVG gradients) */
-.bd-tool-shoe, .bd-tool-hook { stroke: #2b313a; stroke-width: .6; stroke-linejoin: round; }
-.bd-tool-groove { stroke: rgba(255, 255, 255, .5); stroke-width: 1.3; stroke-linecap: round; }
+/* 2.5D bender tool drawn on the diagram at the first bend (fills are inline SVG gradients).
+   A grooved cast wheel the pipe wraps, with a foot peg and a long handle; drawn behind the pipe. */
+.bd-tool-shoe, .bd-tool-foot { stroke: #2b313a; stroke-width: .7; stroke-linejoin: round; }
+.bd-tool-hub { stroke: rgba(255, 255, 255, .28); stroke-width: .7; }
+.bd-tool-rim-edge { stroke: rgba(255, 255, 255, .45); stroke-width: .9; }
 .bd-tool-handle { stroke: #6b4e14; stroke-width: .5; }
-.bd-tool-hi { fill: rgba(255, 255, 255, .42); }
 .bd-tool-shadow { fill: rgba(0, 0, 0, .22); }
 @media print { .bd-tool-shadow { fill: rgba(0, 0, 0, .14); } }
 .bd-tool-hole { fill: #20252b; stroke: rgba(255, 255, 255, .25); stroke-width: .5; }
-.bd-tool-rim { stroke: rgba(255, 255, 255, .35); stroke-width: .8; stroke-linecap: round; }
-.bd-tool-grip { fill: rgba(60, 38, 8, .45); stroke: none; }
+.bd-tool-grip { fill: rgba(60, 38, 8, .5); stroke: none; }
 .bd-tool-mark { fill: #fff; stroke: #1c2127; stroke-width: .5; stroke-linejoin: round; }
-.bd-tool-label { font-size: 6.5px; font-weight: 700; fill: #fff; stroke: rgba(20, 24, 30, .75); stroke-width: 2; paint-order: stroke; pointer-events: none; }
+.bd-tool-label { font-size: 7px; font-weight: 700; fill: #fff; stroke: rgba(20, 24, 30, .8); stroke-width: 2.2; paint-order: stroke; pointer-events: none; }
 
 /* Upright hand bender under each mark on the straight-pipe mark layout (grey head, blue handle) */
 .bd-bender-head { fill: #c3c8ce; stroke: #747b83; stroke-width: 1; stroke-linejoin: round; }
