@@ -516,6 +516,12 @@ const shortTag = (m) => {
 // asset's pixel size; handleFrac is where the handle axis sits across the image (so we can line the
 // handle up with the mark). Processed from the tool photo into electrical-app/img/bender-emt.png.
 const BENDER_IMG = { href: 'img/bender-emt.png', w: 560, h: 542, handleFrac: 0.463 };
+// Where each cast reference mark sits across the tool photo (fraction of width), so we can line the
+// RIGHT mark up with the pipe mark for each bend: the front-of-bend arrow for offsets/stubs, the
+// star ("back of 90") for back-to-backs, the centre-of-bend for a saddle centre.
+const BENDER_MARK_FRAC = { arrow: 0.25, star: 0.41, notch: 0.25 };
+// and how far down the tool each mark sits (fraction of height), for the guide line from the pipe
+const BENDER_MARK_YFRAC = { arrow: 0.2, star: 0.12, notch: 0.2 };
 
 /** One short line telling which cast mark on the bender to line up for this bend (arrow/star/teardrop). */
 function benderCallout(result) {
@@ -628,8 +634,14 @@ export function marksSvg(result, { fmt = mmFmt, snap = (m) => m, width = 640 } =
         const dispW = Math.max(74, Math.min(148, Number.isFinite(minGap) ? minGap * 1.04 : 148));
         const dispH = (dispW * BENDER_IMG.h) / BENDER_IMG.w;
         const top = pipeY + pipeH - dispH * 0.06; // the head tucks just under the pipe
-        for (const { x } of benderMarks) {
-          parts.push(`<image class="bd-tool-img" href="${BENDER_IMG.href}" x="${n1(x - BENDER_IMG.handleFrac * dispW)}" y="${n1(top)}" width="${n1(dispW)}" height="${n1(dispH)}" preserveAspectRatio="xMidYMid meet"/>`);
+        for (const { m, x } of benderMarks) {
+          // shift the tool so the mark used for THIS bend sits under the pipe mark
+          const frac = BENDER_MARK_FRAC[m.symbol] ?? BENDER_IMG.handleFrac;
+          parts.push(`<image class="bd-tool-img" href="${BENDER_IMG.href}" x="${n1(x - frac * dispW)}" y="${n1(top)}" width="${n1(dispW)}" height="${n1(dispH)}" preserveAspectRatio="xMidYMid meet"/>`);
+          // a guide line from the pipe mark down to that cast mark — "the bend happens here"
+          const my = top + (BENDER_MARK_YFRAC[m.symbol] ?? 0.2) * dispH;
+          parts.push(`<line class="bd-tool-guide" x1="${n1(x)}" y1="${n1(pipeY + pipeH)}" x2="${n1(x)}" y2="${n1(my)}"/>`);
+          parts.push(`<circle class="bd-tool-guide-dot" cx="${n1(x)}" cy="${n1(my)}" r="2.4"/>`);
         }
         const callout = benderCallout(result);
         y = top + dispH + 6;
