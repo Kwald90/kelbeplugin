@@ -634,10 +634,17 @@ export function marksSvg(result, { fmt = mmFmt, snap = (m) => m, width = 640 } =
         const dispW = Math.max(74, Math.min(148, Number.isFinite(minGap) ? minGap * 1.04 : 148));
         const dispH = (dispW * BENDER_IMG.h) / BENDER_IMG.w;
         const top = pipeY + pipeH - dispH * 0.06; // the head tucks just under the pipe
+        const img = `<image class="bd-tool-img" href="${BENDER_IMG.href}" x="0" y="0" width="${n1(dispW)}" height="${n1(dispH)}" preserveAspectRatio="xMidYMid meet"/>`;
         for (const { m, x } of benderMarks) {
-          // shift the tool so the mark used for THIS bend sits under the pipe mark
+          // a 'down' bend is the mirror of an 'up' one (the pipe is rolled 180°, or bent the other
+          // way), so flip the tool for it — the saddle centre, the offset's far bend, etc.
+          const flip = m.dir === 'down';
           const frac = BENDER_MARK_FRAC[m.symbol] ?? BENDER_IMG.handleFrac;
-          parts.push(`<image class="bd-tool-img" href="${BENDER_IMG.href}" x="${n1(x - frac * dispW)}" y="${n1(top)}" width="${n1(dispW)}" height="${n1(dispH)}" preserveAspectRatio="xMidYMid meet"/>`);
+          const effFrac = flip ? 1 - frac : frac; // the mark mirrors across the tool when flipped
+          const X = x - effFrac * dispW;
+          parts.push(flip
+            ? `<g transform="translate(${n1(X + dispW)},${n1(top)}) scale(-1,1)">${img}</g>`
+            : `<g transform="translate(${n1(X)},${n1(top)})">${img}</g>`);
           // a guide line from the pipe mark down to that cast mark — "the bend happens here"
           const my = top + (BENDER_MARK_YFRAC[m.symbol] ?? 0.2) * dispH;
           parts.push(`<line class="bd-tool-guide" x1="${n1(x)}" y1="${n1(pipeY + pipeH)}" x2="${n1(x)}" y2="${n1(my)}"/>`);
