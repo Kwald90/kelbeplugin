@@ -3,7 +3,8 @@ import { invoiceShown, entryHours, moneyFormatter } from '../lib/money.js';
 import { onboardingCard } from './onboarding.js';
 import { workplanTiles } from './workplan.js';
 import { weekHoursTile } from './time.js';
-import { moduleOn, switchOn } from '../lib/modules.js';
+import { moduleOn, switchOn, hrefModule } from '../lib/modules.js';
+import { WHEEL, wheelPrefs, orderWheel, addedShortcuts } from '../lib/wheel.js';
 import { unbilledAcrossJobs } from '../lib/tm.js';
 import { tmSources } from './jobs.js';
 import { dashboardActions, dashboardRouteAllowed } from '../lib/dashboard-actions.js';
@@ -34,6 +35,7 @@ export default {
   render(root, ctx) {
     const { store, ui, auth } = ctx;
     const { h } = ui;
+    const moduleEnabled = typeof ctx.on === 'function' ? ctx.on : () => true;
     let timer;
     const expanded = new Set();
     let costing = null;
@@ -90,12 +92,24 @@ export default {
         allowed('#/time') ? ui.stat({ label: 'On the clock', value: String(onClock.length), hint: onClock.map((e) => empById.get(e.employeeId)?.name.split(' ')[0]).filter(Boolean).join(', ') || 'nobody yet', tone: onClock.length ? 'success' : null }) : null,
       );
 
-      // ---- my clock ----
-      const clockCard = auth.can('time') && on('time') ? h('div', { class: 'card row', style: { justifyContent: 'space-between' } },
-        h('div', { class: 'row' }, h('span', { class: 'avatar', style: { background: me.color || '#5f5a51', width: '40px', height: '40px' } }, ui.initials(me.name)),
-          h('div', null, h('div', { style: { fontWeight: 650 } }, myOpen ? `${myOpen.kind === 'travel' ? 'Travelling' : 'On the clock'} · ${jobById.get(myOpen.jobId)?.title || 'no job'}` : 'Not clocked in'),
-            h('div', { class: 'muted num', id: 'dash-clock' }, myOpen ? ui.fmtHours(entryHours(myOpen)) + ` since ${ui.fmtTime(myOpen.clockIn)}` : 'Clock in from the time clock'))),
-        ui.button(myOpen ? 'Open time clock' : 'Clock in', { variant: myOpen ? 'secondary' : 'primary', icon: 'clock', href: '#/time' })) : null;
+      // ---- my clock (lives inside the hero band) ----
+      const heroClock = auth.can('time') && on('time') ? h('div', { class: ['dash-hero-clock', myOpen ? 'is-running' : ''] },
+        h('span', { class: 'avatar', 'aria-hidden': 'true', style: { background: me.color || '#5f5a51', width: '38px', height: '38px' } }, ui.initials(me.name)),
+        h('div', { class: 'dash-hero-clock-copy' },
+          h('strong', null, myOpen ? `${myOpen.kind === 'travel' ? 'Travelling' : 'On the clock'} · ${jobById.get(myOpen.jobId)?.title || 'no job'}` : 'Not clocked in'),
+          h('span', { class: 'num', id: 'dash-clock' }, myOpen ? ui.fmtHours(entryHours(myOpen)) + ` since ${ui.fmtTime(myOpen.clockIn)}` : 'Tap to start your day')),
+        ui.button(myOpen ? 'Open' : 'Clock in', { variant: myOpen ? 'secondary' : 'primary', icon: 'clock', href: '#/time' })) : null;
+
+      // ---- quick actions (same shortcuts as the + wheel, in the person's own order) ----
+      const wprefs = wheelPrefs(auth.current?.()?.id);
+      const quickPool = [...WHEEL, ...addedShortcuts(wprefs)].filter((w) => auth.can(w.perm) && moduleEnabled(hrefModule('#/' + w.go)));
+      const quick = orderWheel(quickPool, wprefs).slice(0, 8);
+      const quickGrid = quick.length ? h('section', { class: 'dash-quick', 'aria-labelledby': 'dash-quick-title' },
+        h('div', { class: 'dash-section-head' }, h('h2', { id: 'dash-quick-title' }, 'Quick actions')),
+        h('div', { class: 'dash-quick-grid' }, quick.map((w) =>
+          h('a', { class: 'dash-quick-tile', href: '#/' + w.go },
+            h('span', { class: 'dash-quick-icon', 'aria-hidden': 'true' }, ui.icon(w.icon, 20)),
+            h('span', { class: 'dash-quick-label' }, w.label))))) : null;
 
       // ---- today's crew board ----
       const todays = allowed('#/schedule') && allowed('#/jobs') ? store.list('schedule', (s) => s.date === day) : [];
@@ -194,15 +208,29 @@ export default {
 
       const wp = allowed('#/workplan') && allowed('#/today') && auth.can('kpis') ? workplanTiles(ctx) : null;
       const hours = allowed('#/time') ? weekHoursTile(ctx) : null;
+
+      // ---- hero welcome band: greeting, a one-line read on the day, and the clock CTA ----
+      const needs = attentionRows.length;
+      const heroBits = [];
+      if (needs) heroBits.push(`${needs} thing${needs === 1 ? '' : 's'} need${needs === 1 ? 's' : ''} you`);
+      if (active.length) heroBits.push(`${active.length} job${active.length === 1 ? '' : 's'} on the go`);
+      const heroSub = heroBits.length ? heroBits.join(' · ') : "You're all clear — nice.";
+      const hero = h('section', { class: 'dash-hero' },
+        h('div', { class: 'dash-hero-main' },
+          h('span', { class: 'dash-hero-eyebrow' }, [new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }), settings.company?.name].filter(Boolean).join(' · ')),
+          h('h2', { class: 'dash-hero-title' }, `${hello}, ${me.name.split(' ')[0]}`),
+          h('p', { class: 'dash-hero-sub' }, heroSub)),
+        heroClock);
+
       root.append(ui.page({
         title: 'Today',
-        subtitle: [`${hello}, ${me.name.split(' ')[0]}`, new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }), settings.company?.name].filter(Boolean).join(' · '),
         actions: [
           allowed('#/leads') ? ui.button('New lead', { icon: 'funnel', href: '#/leads?new=1' }) : null,
           allowed('#/estimates') ? ui.button('New quote', { icon: 'file-text', variant: 'primary', href: '#/estimates/new' }) : null,
         ].filter(Boolean),
       },
-      clockCard ? h('div', { class: 'dash-clock-wrap' }, clockCard) : null,
+      hero,
+      quickGrid,
       h('section', { class: 'dash-focus', 'aria-labelledby': 'dash-attention-title' },
         h('div', { class: 'dash-section-head' }, h('h2', { id: 'dash-attention-title' }, 'Needs attention'),
           attentionRows.length ? h('span', { class: 'dash-count', 'aria-label': `${attentionRows.length} action items` }, attentionRows.length) : null),
