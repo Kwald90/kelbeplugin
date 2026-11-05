@@ -468,6 +468,15 @@ function rebuild() {
   route();
 }
 
+// Rebuild only the floating + wheel (its shortcut set changed), leaving the current page — and its
+// scroll position — untouched. A full rebuild() would re-render the page and jump it to the top,
+// which looked like the Settings page "resetting" when you toggled a shortcut.
+function refreshWheel() {
+  for (const el of document.querySelectorAll('.wheel, .wheel-scrim, .wheel-fab')) el.remove();
+  wheelShown = wheelEnabled();
+  if (wheelShown) document.body.append(...buildWheel());
+}
+
 // ---------- banner (offline / demo) ----------
 
 function paintBanner() {
@@ -593,7 +602,7 @@ async function startShell() {
   // A module turned on or off (here or on another device): redraw the rail, wheel and screen.
   store.on('settings', () => { switchCache = null; if (currentModulesKey() !== modulesKey || wheelEnabled() !== wheelShown) rebuild(); });
   // Settings changed this person's wheel shortcuts (lib/wheel.js prefs): rebuild so the live wheel follows.
-  addEventListener('ft:wheel-changed', () => rebuild());
+  addEventListener('ft:wheel-changed', () => refreshWheel());
   startSweeper();
   addEventListener('hashchange', route);
   document.getElementById('boot')?.remove();
