@@ -65,7 +65,12 @@ function startNativeDictation(native, { lang, onText, onInterim, onError }) {
   return {
     stop() {
       stopped = true;
-      Promise.resolve(native.stop()).catch(() => {});
+      // stop() returns the last in-progress phrase (the plugin cancels its task, so that phrase never
+      // arrives as a "final"); append it so nothing spoken just before stopping is lost. This runs
+      // after `stopped` so the removed listeners don't double up, but the direct call still saves it.
+      Promise.resolve(native.stop())
+        .then((res) => { const t = String(res?.tail || '').trim(); if (t) onText?.(t); })
+        .catch(() => {});
       for (const h of handles) Promise.resolve(h).then((x) => x?.remove?.()).catch(() => {});
     },
   };

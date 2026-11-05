@@ -35,6 +35,13 @@ public class FishtapeSpeechPlugin: CAPPlugin, CAPBridgedPlugin {
     private var task: SFSpeechRecognitionTask?
     private var running = false
     private var lang = "en-CA"
+    // The latest uncommitted phrase for the current recognition segment. On-device recognition can
+    // run a long time without ever reporting isFinal, so we rotate the task on a timer to settle the
+    // text periodically; `pending` is what hasn't been emitted as "final" yet.
+    private var pending = ""
+    private var rotateTimer: Timer?
+    // Settle the current phrase this often so the transcript saves as the walk goes, not only at stop.
+    private let rotateInterval: TimeInterval = 20
 
     @objc func available(_ call: CAPPluginCall) {
         let r = SFSpeechRecognizer(locale: Locale(identifier: call.getString("lang") ?? "en-CA")) ?? SFSpeechRecognizer()
@@ -64,7 +71,14 @@ public class FishtapeSpeechPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func stop(_ call: CAPPluginCall) {
-        DispatchQueue.main.async { self.endSession(); call.resolve() }
+        DispatchQueue.main.async {
+            // Hand back the last in-progress phrase so the web app can append it: the recognition
+            // task is about to be cancelled, so this is the one place it won't arrive as a "final".
+            let tail = self.pending
+            self.pending = ""
+            self.endSession()
+            call.resolve(["tail": tail])
+        }
     }
 
     @MainActor
@@ -91,6 +105,14 @@ public class FishtapeSpeechPlugin: CAPPlugin, CAPBridgedPlugin {
         try audioEngine.start()
         running = true
         startRecognition()
+
+        // Settle the current phrase periodically so the transcript is saved as the walk goes. On-device
+        // recognition can run minutes without an isFinal, so without this the whole walk would sit in
+        // one partial and only land when the user stops — and a cancel on stop would lose it entirely.
+        rotateTimer?.invalidate()
+        rotateTimer = Timer.scheduledTimer(withTimeInterval: rotateInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.rotate() }
+        }
     }
 
     @MainActor
@@ -102,20 +124,20 @@ public class FishtapeSpeechPlugin: CAPPlugin, CAPBridgedPlugin {
         request = req
         task = rec.recognitionTask(with: req) { [weak self] result, error in
             guard let self = self else { return }
-            if let result = result {
+            if let result = result, !result.isFinal {
                 let text = result.bestTranscription.formattedString
-                if result.isFinal {
-                    if !text.isEmpty { self.notifyListeners("final", data: ["text": text]) }
-                } else if !text.isEmpty {
-                    self.notifyListeners("partial", data: ["text": text])
-                }
+                if !text.isEmpty { self.pending = text; self.notifyListeners("partial", data: ["text": text]) }
             }
-            // A task ends on a natural pause (isFinal) or a no-speech timeout (error). While we are
-            // still running, start a fresh task so dictation carries on; otherwise surface the error.
+            // A task ends on a natural pause (isFinal), our timed rotation (endAudio), or a no-speech
+            // timeout (error). Whichever it is, commit whatever has built up as a settled phrase, then
+            // start a fresh task so dictation carries on for the whole walk.
             if result?.isFinal == true || error != nil {
+                let settled = (result?.isFinal == true) ? result!.bestTranscription.formattedString : self.pending
+                self.pending = ""
+                if !settled.isEmpty { self.notifyListeners("final", data: ["text": settled]) }
                 DispatchQueue.main.async {
                     guard self.running else {
-                        if let error = error { self.notifyListeners("speechError", data: ["message": error.localizedDescription]) }
+                        if settled.isEmpty, let error = error { self.notifyListeners("speechError", data: ["message": error.localizedDescription]) }
                         return
                     }
                     self.task = nil
@@ -126,9 +148,21 @@ public class FishtapeSpeechPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// End the current recognition request so its text settles (fires isFinal in the task callback,
+    /// which commits the phrase and starts a fresh task). Clearing `request` first stops the mic tap
+    /// feeding a request that has already had endAudio() called on it.
+    @MainActor
+    private func rotate() {
+        guard running, let req = request else { return }
+        request = nil
+        req.endAudio()
+    }
+
     @MainActor
     private func endSession() {
         running = false
+        rotateTimer?.invalidate()
+        rotateTimer = nil
         task?.cancel()
         task = nil
         request?.endAudio()
