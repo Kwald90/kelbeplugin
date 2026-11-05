@@ -5,6 +5,8 @@ import { workplanTiles } from './workplan.js';
 import { weekHoursTile } from './time.js';
 import { moduleOn, switchOn, hrefModule } from '../lib/modules.js';
 import { WHEEL, wheelPrefs, orderWheel, addedShortcuts } from '../lib/wheel.js';
+import { renderWheelEditor } from '../lib/wheel-editor.js';
+import { MODULES } from './index.js';
 import { unbilledAcrossJobs } from '../lib/tm.js';
 import { tmSources } from './jobs.js';
 import { dashboardActions, dashboardRouteAllowed } from '../lib/dashboard-actions.js';
@@ -104,12 +106,21 @@ export default {
       const wprefs = wheelPrefs(auth.current?.()?.id);
       const quickPool = [...WHEEL, ...addedShortcuts(wprefs)].filter((w) => auth.can(w.perm) && moduleEnabled(hrefModule('#/' + w.go)));
       const quick = orderWheel(quickPool, wprefs).slice(0, 8);
-      const quickGrid = quick.length ? h('section', { class: 'dash-quick', 'aria-labelledby': 'dash-quick-title' },
-        h('div', { class: 'dash-section-head' }, h('h2', { id: 'dash-quick-title' }, 'Quick actions')),
-        h('div', { class: 'dash-quick-grid' }, quick.map((w) =>
+      // Edit the quick actions right here: the same per-device shortcut prefs the + wheel uses.
+      const openQuickEditor = () => {
+        const host = h('div', { class: 'stack wheel-prefs' });
+        renderWheelEditor(host, { ui, auth, on: moduleEnabled, modules: MODULES });
+        const s = ui.openSheet({ title: 'Edit quick actions', body: host, actions: [ui.button('Done', { variant: 'primary', onClick: () => s.close() })] });
+      };
+      const quickGrid = quickPool.length ? h('section', { class: 'dash-quick', 'aria-labelledby': 'dash-quick-title' },
+        h('div', { class: 'dash-section-head' },
+          h('h2', { id: 'dash-quick-title' }, 'Quick actions'),
+          ui.button('Edit', { size: 'sm', variant: 'ghost', icon: 'sliders', onClick: openQuickEditor })),
+        quick.length ? h('div', { class: 'dash-quick-grid' }, quick.map((w) =>
           h('a', { class: 'dash-quick-tile', href: '#/' + w.go },
             h('span', { class: 'dash-quick-icon', 'aria-hidden': 'true' }, ui.icon(w.icon, 20)),
-            h('span', { class: 'dash-quick-label' }, w.label))))) : null;
+            h('span', { class: 'dash-quick-label' }, w.label))))
+          : h('p', { class: 'dash-section-intro' }, 'No shortcuts shown — tap Edit to add some.')) : null;
 
       // ---- today's crew board ----
       const todays = allowed('#/schedule') && allowed('#/jobs') ? store.list('schedule', (s) => s.date === day) : [];
@@ -254,6 +265,9 @@ export default {
     }, 30000);
     let pending = null;
     const off = store.on('*', () => { clearTimeout(pending); pending = setTimeout(draw, 50); });
-    return () => { clearInterval(timer); clearTimeout(pending); off(); };
+    // Quick-action edits live in localStorage (not the store), so redraw the home when they change.
+    const onWheel = () => { clearTimeout(pending); pending = setTimeout(draw, 50); };
+    addEventListener('ft:wheel-changed', onWheel);
+    return () => { clearInterval(timer); clearTimeout(pending); off(); removeEventListener('ft:wheel-changed', onWheel); };
   },
 };

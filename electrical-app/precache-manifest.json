@@ -167,6 +167,7 @@
   "./js/lib/walkthrough-recorder.js",
   "./js/lib/walkthrough-upload.js",
   "./js/lib/walkthroughs.js",
+  "./js/lib/wheel-editor.js",
   "./js/lib/wheel.js",
   "./js/lib/wireruns.js",
   "./js/lib/workplan.js",
