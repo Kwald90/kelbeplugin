@@ -224,6 +224,14 @@ describe('CSRF and CORS', { skip }, () => {
     const bad = await app.inject({ method: 'OPTIONS', url: '/api/v1/jobs', headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' } });
     assert.equal(bad.headers['access-control-allow-origin'], undefined);
   });
+
+  test('CORS preflight allows the walkthrough upload headers (cross-origin iOS app)', async () => {
+    const r = await app.inject({ method: 'OPTIONS', url: '/api/v1/walkthrough-media',
+      headers: { origin: 'capacitor://localhost', 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type,x-fishtape,x-walkthrough-id,x-duration-ms' } });
+    const allowed = String(r.headers['access-control-allow-headers'] || '').toLowerCase();
+    assert.ok(allowed.includes('x-walkthrough-id'), 'X-Walkthrough-Id must be allowed');
+    assert.ok(allowed.includes('x-duration-ms'), 'X-Duration-Ms must be allowed');
+  });
 });
 
 describe('roles and record rules', { skip }, () => {
