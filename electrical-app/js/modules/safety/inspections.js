@@ -68,7 +68,8 @@ export function inspectionView(root, ctx, id) {
     ui.clear(summary);
     const res = inspectionResult(d.items);
     const f = d.items.filter((i) => i.result === 'fail').length, open = d.items.filter((i) => i.result === 'open').length;
-    summary.append(ui.badge(res, RESULT_TONE[res]), h('span', { class: 'muted' }, `${d.items.length - open} of ${d.items.length} checked`), f ? ui.badge(`${f} failed`, 'danger') : null);
+    // filter(Boolean): native append() would turn a null arg into a literal "null" text node.
+    summary.append(...[ui.badge(res, RESULT_TONE[res]), h('span', { class: 'muted' }, `${d.items.length - open} of ${d.items.length} checked`), f ? ui.badge(`${f} failed`, 'danger') : null].filter(Boolean));
   };
   const items = h('div', { class: 'sf-items' }, d.items.map((it) => {
     it.photos ||= [];

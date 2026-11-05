@@ -1475,7 +1475,10 @@ function editorView(root, ctx, id) {
     const fitClass = spaces <= 32 ? 'pp-fit-1' : spaces <= 42 ? 'pp-fit-2' : 'pp-fit-3';
     printEl.className = 'print-only panel-print ' + fitClass;
 
-    printEl.append(
+    // .filter(Boolean): native Element.append() turns a null argument into a literal "null" text
+    // node (unlike h(), which drops it), which printed a stray "null" when the company had no logo
+    // or the legend was off.
+    printEl.append(...[
       co.logo ? h('div', { class: 'pp-logo-top' }, h('img', { class: 'pp-head-logo', src: co.logo, alt: co.name || '' })) : null,
       h('div', { class: 'pp-head' },
         h('div', { class: 'pp-head-main' }, titleblock),
@@ -1484,7 +1487,7 @@ function editorView(root, ctx, id) {
       pp.showLegend ? h('div', { class: 'print-legend' },
         pp.phaseBandsOn ? Object.entries(colours.phases).map(([p, col]) => legendChip(`Ø${p}`, col)) : null,
         legendChip('N', colours.neutral), legendChip('Bond', colours.bond)) : null,
-    );
+    ].filter(Boolean));
   }
 
   // The standalone panel label / sticker: the QR big enough to scan from arm's length, the panel
