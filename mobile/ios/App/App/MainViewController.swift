@@ -11,6 +11,7 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(FishtapeKeychainPlugin())
         bridge?.registerPluginInstance(FishtapePrintPlugin())
         bridge?.registerPluginInstance(FishtapeGeofencePlugin())
+        bridge?.registerPluginInstance(FishtapeSpeechPlugin())
 
         // --bg in electrical-app/css/tokens.css (light #f1efea, dark #16171a)
         let background = UIColor { traits in

@@ -1,15 +1,29 @@
 // Turning a walkthrough's narration into text. Two paths, both optional:
-//   1. Live on-device dictation (Web Speech API) while you record — free, private, no network.
-//      Supported on desktop/Android Chrome; NOT in the iOS WebView, so it is offered only where it
-//      actually works and the transcript is always editable by hand.
+//   1. Live on-device dictation while you record — free, private, no network. Two engines behind one
+//      interface: the native FishtapeSpeech plugin (Apple's Speech framework) in the iOS app, and the
+//      Web Speech API on desktop/Android Chrome. The iOS WebView has no Web Speech API, so the native
+//      plugin fills that gap; the transcript is always editable by hand either way.
 //   2. AI transcription of the recorded audio (Gemini) — needs a server endpoint holding the key
 //      (HQ → Platform keys). Off until that endpoint exists; aiTranscriptionAvailable() is the one
 //      place to switch it on so the UI and the wiring stay in step.
 //
 // No import-time side effects: nothing touches the mic or network until a function is called.
 
-export function liveDictationSupported() {
+/** The native iOS speech plugin, or null outside the app / in a build without it. */
+function nativeSpeech() {
+  try {
+    const cap = globalThis.Capacitor;
+    if (!cap?.isNativePlatform?.()) return null;
+    return cap.Plugins?.FishtapeSpeech || null;
+  } catch { return null; }
+}
+
+function webSpeechSupported() {
   return typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+export function liveDictationSupported() {
+  return !!nativeSpeech() || webSpeechSupported();
 }
 
 /**
@@ -17,7 +31,9 @@ export function liveDictationSupported() {
  * in-progress phrase. Returns { stop() }. Resolves nothing; errors are swallowed to onError.
  */
 export function startLiveDictation({ lang = 'en-CA', onText, onInterim, onError } = {}) {
-  if (!liveDictationSupported()) { onError?.(new Error('dictation-unsupported')); return { stop() {} }; }
+  const native = nativeSpeech();
+  if (native) return startNativeDictation(native, { lang, onText, onInterim, onError });
+  if (!webSpeechSupported()) { onError?.(new Error('dictation-unsupported')); return { stop() {} }; }
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new Rec();
   rec.lang = lang; rec.continuous = true; rec.interimResults = true;
@@ -35,6 +51,24 @@ export function startLiveDictation({ lang = 'en-CA', onText, onInterim, onError 
   rec.onend = () => { if (!stopped) { try { rec.start(); } catch { /* restart race */ } } };
   try { rec.start(); } catch (e) { onError?.(e); }
   return { stop() { stopped = true; try { rec.stop(); } catch { /* already stopped */ } } };
+}
+
+/** Live dictation through the native iOS plugin: partial/final/speechError events → the callbacks. */
+function startNativeDictation(native, { lang, onText, onInterim, onError }) {
+  let stopped = false;
+  const handles = [];
+  const listen = (event, fn) => { try { handles.push(native.addListener(event, fn)); } catch (e) { onError?.(e); } };
+  listen('partial', (d) => { if (!stopped) onInterim?.(String(d?.text || '').trim()); });
+  listen('final', (d) => { if (!stopped) { const t = String(d?.text || '').trim(); if (t) onText?.(t); } });
+  listen('speechError', (d) => { if (!stopped) onError?.(new Error(String(d?.message || 'speech-error'))); });
+  Promise.resolve(native.start({ lang })).catch((e) => onError?.(e));
+  return {
+    stop() {
+      stopped = true;
+      Promise.resolve(native.stop()).catch(() => {});
+      for (const h of handles) Promise.resolve(h).then((x) => x?.remove?.()).catch(() => {});
+    },
+  };
 }
 
 // Whether AI transcription is available is decided by the server (is a Gemini key set in HQ?).
