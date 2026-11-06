@@ -601,8 +601,9 @@ async function startShell() {
   store.on('*', (e) => { if (e.type === 'reset') { switchCache = null; rebuild(); } });
   // A module turned on or off (here or on another device): redraw the rail, wheel and screen.
   store.on('settings', () => { switchCache = null; if (currentModulesKey() !== modulesKey || wheelEnabled() !== wheelShown) rebuild(); });
-  // Settings changed this person's wheel shortcuts (lib/wheel.js prefs): rebuild so the live wheel follows.
-  addEventListener('ft:wheel-changed', () => refreshWheel());
+  // Settings changed this person's + wheel shortcuts (scope 'wheel'): rebuild so the live wheel follows.
+  // The home's Quick actions (scope 'home') are a separate list — ignore those.
+  addEventListener('ft:wheel-changed', (e) => { if ((e.detail?.scope || 'wheel') === 'wheel') refreshWheel(); });
   startSweeper();
   addEventListener('hashchange', route);
   document.getElementById('boot')?.remove();

@@ -30,22 +30,26 @@ export function addedShortcuts(prefs = {}) {
   return list.filter((s) => s && typeof s.id === 'string' && typeof s.go === 'string' && typeof s.label === 'string' && typeof s.icon === 'string');
 }
 
-const key = (uid) => `kc.wheel.${uid || 'local'}`;
+// Two independent surfaces share the same shortcut catalogue but keep their own choice of which show
+// and in what order: scope 'wheel' = the radial + menu (its key is the original, so existing
+// customisations carry over), scope 'home' = the Today home's Quick actions tiles. Editing one never
+// touches the other.
+const key = (uid, scope = 'wheel') => `kc.wheel.${scope === 'wheel' ? '' : `${scope}.`}${uid || 'local'}`;
 
-/** This person's wheel prefs: { hidden: [id], order: [id] }. Missing/blocked storage → {} (defaults). */
-export function wheelPrefs(uid) {
+/** This person's prefs for a scope: { hidden: [id], order: [id], added: [...] }. Missing/blocked storage → {}. */
+export function wheelPrefs(uid, scope = 'wheel') {
   try {
-    const v = JSON.parse(localStorage.getItem(key(uid)) || 'null');
+    const v = JSON.parse(localStorage.getItem(key(uid, scope)) || 'null');
     return v && typeof v === 'object' ? v : {};
   } catch { return {}; }
 }
 
-export function saveWheelPrefs(uid, prefs) {
-  try { localStorage.setItem(key(uid), JSON.stringify(prefs || {})); } catch { /* storage blocked */ }
+export function saveWheelPrefs(uid, prefs, scope = 'wheel') {
+  try { localStorage.setItem(key(uid, scope), JSON.stringify(prefs || {})); } catch { /* storage blocked */ }
 }
 
-export function resetWheelPrefs(uid) {
-  try { localStorage.removeItem(key(uid)); } catch { /* ignore */ }
+export function resetWheelPrefs(uid, scope = 'wheel') {
+  try { localStorage.removeItem(key(uid, scope)); } catch { /* ignore */ }
 }
 
 /**

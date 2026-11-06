@@ -1,29 +1,30 @@
-// The shortcut editor for the quick-actions wheel — the same per-person shortcuts the + radial and the
-// Today home's Quick actions tiles both show (lib/wheel.js prefs, on this device): add any module, tick
-// which show, order them with the arrows. Shared so Settings (with the company on/off toggle) and the
-// home (in a sheet) edit the exact same thing and never drift. Every change dispatches 'ft:wheel-changed'
-// so the shell rebuilds the + wheel and the home refreshes its tiles.
+// The shortcut editor — add any module as a shortcut, tick which show, order them with the arrows.
+// Shared chrome, but each surface keeps its OWN list via `scope` (lib/wheel.js prefs, per person, on
+// this device): scope 'wheel' = the radial + menu (edited in Settings), scope 'home' = the Today home's
+// Quick actions tiles (edited from the home). Editing one never changes the other. Every change
+// dispatches a scope-tagged 'ft:wheel-changed' so only the matching surface rebuilds.
 import { WHEEL, wheelPrefs, saveWheelPrefs, resetWheelPrefs, orderWheel, addedShortcuts, moduleShortcut } from './wheel.js';
 
 /**
  * Render the wheel shortcut editor into `host`. Re-renders itself in place on each change. Returns
  * { draw } so the caller can force a redraw.
  * @param {HTMLElement} host
- * @param {{ ui: object, auth?: object, on?: Function, modules?: Array, store?: object, showCompanyToggle?: boolean }} deps
+ * @param {{ ui: object, auth?: object, on?: Function, modules?: Array, store?: object, showCompanyToggle?: boolean, scope?: string }} deps
  *   - ui: the shared UI helpers (h, icon, button, openSheet, toast, clear)
  *   - auth: current()/can() for the signed-in person (optional; permissive without it)
  *   - on: module-enabled check (go/id -> boolean); permissive without it
  *   - modules: the nav module registry, for the "add a shortcut" catalogue
  *   - store: needed only when showCompanyToggle is true (company-wide wheel on/off)
  *   - showCompanyToggle: include the "show the + wheel" company switch (Settings only)
+ *   - scope: which list to edit — 'wheel' (the + radial, default) or 'home' (the Today Quick actions)
  */
-export function renderWheelEditor(host, { ui, auth, on, modules = [], store = null, showCompanyToggle = false }) {
+export function renderWheelEditor(host, { ui, auth, on, modules = [], store = null, showCompanyToggle = false, scope = 'wheel' }) {
   const { h } = ui;
 
   const draw = () => {
     ui.clear(host);
     const uid = auth?.current?.()?.id || null;
-    const prefs = wheelPrefs(uid);
+    const prefs = wheelPrefs(uid, scope);
     const can = (p) => !p || (auth?.can ? auth.can(p) : true);
     const enabled = (go) => (on ? on(String(go).split(/[/?]/)[0]) : true);
     // the defaults plus the shortcuts this person added; gated like the rail
@@ -40,7 +41,7 @@ export function renderWheelEditor(host, { ui, auth, on, modules = [], store = nu
     // page (or sheet) to the top and make a toggle look like it did nothing.
     const commit = (next) => {
       const sc = host.closest('.sheet-body, .main'); const top = sc ? sc.scrollTop : 0;
-      saveWheelPrefs(uid, next); dispatchEvent(new Event('ft:wheel-changed')); draw();
+      saveWheelPrefs(uid, next, scope); dispatchEvent(new CustomEvent('ft:wheel-changed', { detail: { scope } })); draw();
       if (sc) sc.scrollTop = top;
     };
     const setShown = (id, show) => {
@@ -90,14 +91,14 @@ export function renderWheelEditor(host, { ui, auth, on, modules = [], store = nu
         h('span', null, 'Show the quick-actions wheel (the + button and radial menu)')));
     }
     parts.push(
-      h('div', { class: 'muted' }, 'Just for you, on this device: add any module as a shortcut, tick which ones show, and order them with the arrows.'),
+      h('div', { class: 'muted' }, `${scope === 'home' ? 'The Today home’s Quick actions tiles' : 'The + button’s radial menu'} — just for you, on this device. Add any module as a shortcut, tick which show, and order them with the arrows. The + wheel and the home are separate lists.`),
       h('div', { class: 'list wheel-pref-list' },
         shown.length ? shown.map((w, i) => row(w, i, true)) : h('div', { class: 'list-row muted' }, 'No shortcuts shown — add or tick some below.'),
         hiddenItems.map((w) => row(w, -1, false))),
       h('div', { class: 'row' }, ui.button('Add shortcut', { variant: 'secondary', icon: 'plus', onClick: addSheet }), h('span', { class: 'grow' }),
         ui.button('Reset to default', { variant: 'ghost', icon: 'undo', onClick: () => {
           const sc = host.closest('.sheet-body, .main'); const top = sc ? sc.scrollTop : 0;
-          resetWheelPrefs(uid); dispatchEvent(new Event('ft:wheel-changed')); draw();
+          resetWheelPrefs(uid, scope); dispatchEvent(new CustomEvent('ft:wheel-changed', { detail: { scope } })); draw();
           if (sc) sc.scrollTop = top; ui.toast('Shortcuts reset', 'success');
         } })));
     host.append(...parts);

@@ -102,14 +102,14 @@ export default {
           h('span', { class: 'num', id: 'dash-clock' }, myOpen ? ui.fmtHours(entryHours(myOpen)) + ` since ${ui.fmtTime(myOpen.clockIn)}` : 'Tap to start your day')),
         ui.button(myOpen ? 'Open' : 'Clock in', { variant: myOpen ? 'secondary' : 'primary', icon: 'clock', href: '#/time' })) : null;
 
-      // ---- quick actions (same shortcuts as the + wheel, in the person's own order) ----
-      const wprefs = wheelPrefs(auth.current?.()?.id);
+      // ---- quick actions (home's own shortcut list, scope 'home' — independent of the + wheel) ----
+      const wprefs = wheelPrefs(auth.current?.()?.id, 'home');
       const quickPool = [...WHEEL, ...addedShortcuts(wprefs)].filter((w) => auth.can(w.perm) && moduleEnabled(hrefModule('#/' + w.go)));
       const quick = orderWheel(quickPool, wprefs).slice(0, 8);
-      // Edit the quick actions right here: the same per-device shortcut prefs the + wheel uses.
+      // Edit the home's quick actions right here: its own per-device list, separate from the + wheel.
       const openQuickEditor = () => {
         const host = h('div', { class: 'stack wheel-prefs' });
-        renderWheelEditor(host, { ui, auth, on: moduleEnabled, modules: MODULES });
+        renderWheelEditor(host, { ui, auth, on: moduleEnabled, modules: MODULES, scope: 'home' });
         const s = ui.openSheet({ title: 'Edit quick actions', body: host, actions: [ui.button('Done', { variant: 'primary', onClick: () => s.close() })] });
       };
       const quickGrid = quickPool.length ? h('section', { class: 'dash-quick', 'aria-labelledby': 'dash-quick-title' },
@@ -266,7 +266,8 @@ export default {
     let pending = null;
     const off = store.on('*', () => { clearTimeout(pending); pending = setTimeout(draw, 50); });
     // Quick-action edits live in localStorage (not the store), so redraw the home when they change.
-    const onWheel = () => { clearTimeout(pending); pending = setTimeout(draw, 50); };
+    // Only the home's own list (scope 'home') matters here; ignore + wheel (scope 'wheel') edits.
+    const onWheel = (e) => { if ((e.detail?.scope || 'wheel') !== 'home') return; clearTimeout(pending); pending = setTimeout(draw, 50); };
     addEventListener('ft:wheel-changed', onWheel);
     return () => { clearInterval(timer); clearTimeout(pending); off(); removeEventListener('ft:wheel-changed', onWheel); };
   },
