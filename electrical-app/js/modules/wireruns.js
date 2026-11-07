@@ -480,7 +480,9 @@ function renderEditor(root, ctx, id) {
     ui.clear(photoHost);
     if (!run.photos.length) photoHost.append(h('div', { class: 'wr-empty muted' }, 'No photos. Add the route, the boxes or the panel for whoever pulls the wire.'));
     run.photos.forEach((p, i) => photoHost.append(h('figure', { class: 'wr-photo' },
-      h('img', { src: p.dataUrl, alt: p.caption || `Photo ${i + 1}`, loading: 'lazy' }),
+      h('button', { type: 'button', class: 'wr-photo-view', title: 'View photo', 'aria-label': `View photo ${i + 1} full size`,
+        onClick: () => ui.openSheet({ title: p.caption?.trim() || `Photo ${i + 1}`, wide: true, body: h('img', { src: p.dataUrl, alt: p.caption || `Photo ${i + 1}`, class: 'wr-photo-big' }) }) },
+        h('img', { src: p.dataUrl, alt: p.caption || `Photo ${i + 1}`, loading: 'lazy' })),
       h('figcaption', null,
         textInput(p.caption, 'Caption', (v) => { p.caption = v; save(); }, { 'aria-label': `Photo ${i + 1} caption` }),
         iconBtn('trash', 'Delete photo', () => removeAt(run.photos, i, drawPhotos, 'Photo'), { danger: true })))));

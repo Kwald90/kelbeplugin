@@ -73,7 +73,9 @@
 .wr-photos { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
 .wr-photos .wr-empty { grid-column: 1 / -1; }
 .wr-photo { margin: 0; display: flex; flex-direction: column; gap: var(--s1); }
-.wr-photo img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-2); }
+.wr-photo-view { padding: 0; border: 0; background: none; display: block; width: 100%; cursor: zoom-in; border-radius: var(--r-md); }
+.wr-photo img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-2); display: block; }
+.wr-photo-big { display: block; width: 100%; height: auto; max-height: 80vh; object-fit: contain; border-radius: var(--r-md); }
 .wr-photo figcaption { display: flex; gap: var(--s1); align-items: center; }
 .wr-photo figcaption .input { min-height: 34px; font-size: var(--fs-xs); }
 

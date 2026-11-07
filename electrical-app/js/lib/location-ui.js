@@ -146,8 +146,11 @@ export function myLocation(ctx, employeeId) {
       h('details', { class: 'loc-details' }, h('summary', null, "Read the company's location policy"), policyBlock(ctx))),
     h('h2', { class: 'section' }, 'Your location records'),
     h('p', { class: 'muted', style: { marginTop: 0 } }, `Only you can see these. They are deleted after ${ls.retentionDays} days; your time entries stay.`),
-    // Map tiles only around job sites: a tile request never shows where you were off site.
-    dayPoints.length ? miniMap({ h, height: 220, label: 'Map of your location records', center: centerOf(dayPoints), zoom: fitZoom(dayPoints), tilesNear: sites,
+    // Map tiles only around job sites, so a tile request never shows where you were off site — but
+    // only when there ARE pinned sites to anchor to. With none, that gate would fetch nothing and
+    // leave a blank map, so fall back to normal tiles around your own points (your own data, your
+    // own device; tiles go to OSM with no referrer).
+    dayPoints.length ? miniMap({ h, height: 220, label: 'Map of your location records', center: centerOf(dayPoints), zoom: fitZoom(dayPoints), tilesNear: sites.length ? sites : null,
       markers: dayPoints.map((p, i) => ({ lat: p.lat, lng: p.lng, kind: 'point', label: String(dayPoints.length - i), title: ui.fmtTime(p.at) })) }).el : null,
     points.length ? [...byDay].map(([day, list]) => h('div', { class: 'stack loc-day' },
       h('h3', { class: 'loc-dayhead' }, ui.fmtDate(day, { weekday: 'long', month: 'short', day: 'numeric' })),
@@ -221,7 +224,7 @@ export function crewMap(ctx) {
     const all = [...pts, ...sites];
     ui.clear(host).append(
       h('p', { class: 'muted', style: { margin: 0 } }, `Latest location of each person clocked in now (last 12 hours). Nobody off the clock is shown. Views are logged.`),
-      miniMap({ h, height: 320, label: 'Crew map', center: centerOf(all), zoom: fitZoom(all, 360, 320), tilesNear: sites,
+      miniMap({ h, height: 320, label: 'Crew map', center: centerOf(all), zoom: fitZoom(all, 360, 320), tilesNear: sites.length ? sites : null,
         markers: [...sites.map((s) => ({ lat: s.lat, lng: s.lng, kind: 'site', title: jobs.get(s.id)?.number })), ...pts.map((p) => ({ lat: p.lat, lng: p.lng, kind: 'crew', label: ui.initials(p.person?.name), title: p.person?.name }))] }).el,
       pts.length ? h('div', { class: 'list' }, pts.map((p) => h('div', { class: 'list-row' },
         h('span', { class: 'avatar', style: { background: p.person?.color || '#5f5a51' } }, ui.initials(p.person?.name)),
