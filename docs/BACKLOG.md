@@ -19,7 +19,8 @@ Kelvin reviewed an expert gap analysis (three rounds) and set direction.
 **Migration numbers consumed (shipped v0.15.0 / v0.16.0 / v0.17.0):** 0171 control panels · 0172 punch
 list · 0173 daily log · 0174 fire-alarm verification · 0175 thermal/IR · **0176 FREE (unused)** · 0177
 RFI · 0178 submittal · 0179 drawing register · 0180 procurement · 0181 booking_pages (public slug→tenant,
-no RLS) · 0182 service_memberships. **Next free migration = 0183** (0176 also still free).
+no RLS) · 0182 service_memberships · 0183 measurements (AR tape saved lengths). **Next free migration =
+0184** (0176 also still free).
 
 **Resi-service roadmap (build order):** (1) online service-request / booking front door (public
 per-tenant intake → lead/job; none today) · (2) request → scheduled job → dispatch glue · (3) customer
@@ -50,6 +51,11 @@ membership/service plans (recurring Stripe).
   (`#/invoices/new?estimateId=`) and the existing Stripe pay-link (`invoiceOnlineTools`), falling back
   to recording cash/cheque. Render-checked in the real PWA. Resi roadmap now: steps 1–5 done; step 6
   (membership plans) done in v0.17.0; only deeper dispatch/booking polish remains.
+- **v0.19.0–v0.21.0:** global quick-find search (Ctrl/Cmd+K, synonym-aware); AI assistant re-enabled
+  and able to run on **Gemini** (chat.js chooseProvider; reuses the HQ gemini.api_key; business tier);
+  **AR tape** standalone feature `#/measure` (camera measure or type-in → save to the `measurements`
+  collection, mig 0183, starter tier). Hotfix v0.20.1: nav-crowding from the search button + a Gemini
+  tool-schema bug (enum on integer CEC tool fields 400'd the CEC helper).
 - All pro-tier, OFF by default; four office modules under a new "Office & project admin" switch group.
   All waves shipped to production + TestFlight. **Pending Kelvin VERIFY:** arc-flash IEEE 1584-2018
   purchase (screening-only until then); CEC Section 64/46 rule numbers (solar/ESS/gen); ULC S537 device
