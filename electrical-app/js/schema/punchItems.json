@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/punchItems.json",
+  "title": "Punch list item",
+  "description": "A deficiency (snag) on a job: an area/location, a description, the trade responsible, a severity and an open/closed status, optionally assigned to an employee and due by a date, with before/after photos. Resolving stamps who closed it and when. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "area": { "type": ["string", "null"], "maxLength": 200 },
+    "description": { "type": ["string", "null"], "maxLength": 2000 },
+    "trade": { "type": ["string", "null"], "maxLength": 80 },
+    "severity": { "enum": ["low", "medium", "high", null] },
+    "status": { "enum": ["open", "closed", null] },
+    "assigneeId": { "type": ["string", "null"], "maxLength": 128 },
+    "dueDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "openedAt": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "notes": { "type": ["string", "null"], "maxLength": 2000 },
+    "resolvedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "resolvedBy": { "type": ["string", "null"], "maxLength": 128 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 },
+    "photos": {
+      "type": ["array", "null"],
+      "maxItems": 8,
+      "description": "Before/after photos, downscaled JPEG data URLs (~400 KB each). Move to object storage later.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "dataUrl": {
+            "type": ["string", "null"],
+            "maxLength": 600000,
+            "pattern": "^(data:image/(jpeg|png|webp);base64,.*)?$"
+          },
+          "caption": { "type": ["string", "null"], "maxLength": 200 },
+          "takenAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+          "width": { "type": ["number", "null"] },
+          "height": { "type": ["number", "null"] }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

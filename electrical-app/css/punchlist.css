@@ -1,0 +1,36 @@
+/* Punch list / deficiencies (modules/punchlist.js). Tokens only. Loaded by the module. */
+.pl-stats { grid-template-columns: repeat(4, 1fr); gap: var(--s2); }
+.pl-toolbar { gap: var(--s2); align-items: center; flex-wrap: wrap; }
+.pl-filter { max-width: 320px; }
+.pl-tabs { margin: var(--s2) 0; }
+.pl-desc { font-weight: 600; }
+.pl-sub { font-size: var(--fs-sm); }
+.pl-overdue { color: var(--danger); font-weight: 600; }
+.pl-h3 { margin: var(--s3) 0 var(--s1); font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.pl-status { display: flex; align-items: center; gap: var(--s2); }
+.pl-status-note { font-size: var(--fs-sm); }
+
+@media (max-width: 720px) {
+  .pl-stats { grid-template-columns: 1fr 1fr; }
+  .pl-filter { max-width: none; }
+}
+
+/* Printable punch report, grouped by area. */
+.pl-print { display: none; }
+@media print {
+  body.pl-printing > *:not(.pl-print) { display: none !important; }
+  body.pl-printing { overflow: visible; }
+  body.pl-printing .pl-print { display: block; color-scheme: light; color: CanvasText; background: Canvas; }
+}
+.pl-doc { font-size: 12px; line-height: 17px; }
+.pl-doc h1 { font-size: 22px; line-height: 28px; margin: var(--s3) 0 var(--s1); }
+.pl-doc h2 { font-size: 14px; margin: var(--s4) 0 var(--s2); border-bottom: 1px solid GrayText; padding-bottom: 2px; }
+.pl-doc table { width: 100%; border-collapse: collapse; margin-bottom: var(--s2); }
+.pl-doc th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: GrayText; padding: 4px; border-bottom: 1px solid CanvasText; }
+.pl-doc td { padding: 4px; border-bottom: 1px solid GrayText; vertical-align: top; }
+.pl-doc .pl-check { text-align: center; font-size: 15px; }
+.pl-doc-top { display: flex; justify-content: space-between; gap: var(--s4); padding-bottom: var(--s2); border-bottom: 3px solid var(--accent-fill); }
+.pl-doc-brand { font-size: 18px; font-weight: 800; }
+.pl-doc-small { font-size: 11px; color: GrayText; }
+.pl-doc-right { text-align: right; }
+.pl-doc-kind { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: GrayText; }

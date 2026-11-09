@@ -39,6 +39,7 @@ export const COLLECTIONS = [
   'costCodes', 'rules', 'payrollRuns', 'signatures', 'fieldTickets', 'equipment', 'equipmentUse', 'stockCounts',
   'walkthroughs', 'assemblies', 'serviceAgreements', 'assets', 'commissioningTests',
   'controlPanels',
+  'punchItems', 'dailyLogs',
 ];
 
 export const DEFAULT_SETTINGS = {

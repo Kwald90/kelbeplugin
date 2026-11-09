@@ -58,6 +58,8 @@
     "serviceAgreements": "./serviceAgreements.json",
     "assets": "./assets.json",
     "commissioningTests": "./commissioningTests.json",
-    "controlPanels": "./controlPanels.json"
+    "controlPanels": "./controlPanels.json",
+    "punchItems": "./punchItems.json",
+    "dailyLogs": "./dailyLogs.json"
   }
 }

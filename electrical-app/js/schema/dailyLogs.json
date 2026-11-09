@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/dailyLogs.json",
+  "title": "Jobsite daily log",
+  "description": "One site-diary entry per job per day: weather, the crew on site, visitors, deliveries, delays/issues, general notes and photos. The running record a contractor keeps for the job (and for disputes and claims). Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "date": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "weather": { "type": ["string", "null"], "maxLength": 80 },
+    "temperature": { "type": ["string", "null"], "maxLength": 40 },
+    "crewIds": {
+      "type": ["array", "null"],
+      "maxItems": 200,
+      "items": { "type": "string", "maxLength": 128 }
+    },
+    "visitors": { "type": ["string", "null"], "maxLength": 2000 },
+    "deliveries": { "type": ["string", "null"], "maxLength": 2000 },
+    "delays": { "type": ["string", "null"], "maxLength": 4000 },
+    "notes": { "type": ["string", "null"], "maxLength": 8000 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 },
+    "photos": {
+      "type": ["array", "null"],
+      "maxItems": 12,
+      "description": "Photos of the day, downscaled JPEG data URLs (~400 KB each). Move to object storage later.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "dataUrl": {
+            "type": ["string", "null"],
+            "maxLength": 600000,
+            "pattern": "^(data:image/(jpeg|png|webp);base64,.*)?$"
+          },
+          "caption": { "type": ["string", "null"], "maxLength": 200 },
+          "takenAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+          "width": { "type": ["number", "null"] },
+          "height": { "type": ["number", "null"] }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

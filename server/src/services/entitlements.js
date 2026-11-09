@@ -145,6 +145,9 @@ export const COLLECTION_FEATURES = {
   commissioningTests: ['testing'],
   // Control panels — industrial / controls panel builds (Fully Loaded and up).
   controlPanels: ['controlpanels'],
+  // Punch list / deficiencies and the jobsite daily log (Fully Loaded and up).
+  punchItems: ['punchlist'],
+  dailyLogs: ['dailylog'],
 };
 
 /**

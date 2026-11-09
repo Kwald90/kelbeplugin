@@ -1,0 +1,37 @@
+/* Jobsite daily log / diary (modules/dailylog.js). Tokens only. Loaded by the module. */
+.dl-stats { grid-template-columns: repeat(3, 1fr); gap: var(--s2); }
+.dl-toolbar { gap: var(--s2); align-items: center; flex-wrap: wrap; }
+.dl-filter { max-width: 320px; }
+.dl-h3 { margin: var(--s3) 0 var(--s1); font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.dl-crew { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--s1) var(--s2); }
+.dl-crew-item { display: flex; align-items: center; gap: var(--s1); font-size: var(--fs-sm); }
+
+@media (max-width: 720px) {
+  .dl-stats { grid-template-columns: 1fr; }
+  .dl-filter { max-width: none; }
+}
+
+/* Printable daily report. */
+.dl-print { display: none; }
+@media print {
+  body.dl-printing > *:not(.dl-print) { display: none !important; }
+  body.dl-printing { overflow: visible; }
+  body.dl-printing .dl-print { display: block; color-scheme: light; color: CanvasText; background: Canvas; }
+}
+.dl-doc { font-size: 12px; line-height: 17px; }
+.dl-doc h1 { font-size: 22px; line-height: 28px; margin: var(--s3) 0 var(--s1); }
+.dl-doc h2 { font-size: 14px; margin: var(--s4) 0 var(--s2); border-bottom: 1px solid GrayText; padding-bottom: 2px; display: flex; justify-content: space-between; align-items: baseline; gap: var(--s3); }
+.dl-doc-weather { font-size: 11px; font-weight: 400; color: GrayText; }
+.dl-doc table { width: 100%; border-collapse: collapse; margin-bottom: var(--s2); }
+.dl-doc th { text-align: left; width: 120px; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: GrayText; padding: 4px; border-bottom: 1px solid GrayText; vertical-align: top; }
+.dl-doc td { padding: 4px; border-bottom: 1px solid GrayText; vertical-align: top; white-space: pre-wrap; }
+.dl-doc-day { break-inside: avoid; }
+.dl-doc-top { display: flex; justify-content: space-between; gap: var(--s4); padding-bottom: var(--s2); border-bottom: 3px solid var(--accent-fill); }
+.dl-doc-brand { font-size: 18px; font-weight: 800; }
+.dl-doc-small { font-size: 11px; color: GrayText; }
+.dl-doc-right { text-align: right; }
+.dl-doc-kind { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: GrayText; }
+.dl-doc-photos { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); margin-bottom: var(--s3); }
+.dl-doc-photos figure { margin: 0; break-inside: avoid; }
+.dl-doc-photos img { width: 100%; max-height: 300px; object-fit: contain; }
+.dl-doc-photos figcaption { font-size: 10px; color: GrayText; }

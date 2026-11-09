@@ -55,6 +55,7 @@ export const FEATURE_PLAN = {
   books: 'pro', tickets: 'pro', reports: 'pro', 'reports.wip': 'pro', monthend: 'pro',
   walkthroughs: 'pro', assemblies: 'pro', service: 'pro', testing: 'pro', pricelists: 'pro',
   controlpanels: 'pro',
+  punchlist: 'pro', dailylog: 'pro',
   // features inside modules
   'drawings.rooms': 'pro', 'wireruns.trace': 'pro', portal: 'pro', leadsite: 'pro',
   'payments.online': 'pro', 'integrations.email': 'pro',

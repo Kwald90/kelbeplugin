@@ -17,6 +17,7 @@ export const COLLECTIONS = [
   'costCodes', 'rules', 'payrollRuns', 'signatures', 'fieldTickets', 'equipment', 'equipmentUse', 'stockCounts',
   'walkthroughs', 'assemblies', 'serviceAgreements', 'assets', 'commissioningTests',
   'controlPanels',
+  'punchItems', 'dailyLogs',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -211,6 +212,18 @@ const DEFS = {
   controlPanels: {
     table: 'control_panels', gen: [CLIENT, JOB], read: ['jobs'], write: ['jobs'],
     portal: null, maxBytes: MB, migration: '0171',
+  },
+  // Punch list / deficiencies (migration 0172): the end-of-job snag list. Field documentation on a
+  // job; everyone on it reads and writes ('jobs'). A few before/after photos per item.
+  punchItems: {
+    table: 'punch_items', gen: [JOB, STATUS, g('severity', 'severity'), g('assignee_id', 'assigneeId')], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 4 * MB, migration: '0172',
+  },
+  // Jobsite daily log / diary (migration 0173): one entry per job per day. Field documentation on a
+  // job; everyone on it reads and writes ('jobs'). Photos of the day, so a few MB.
+  dailyLogs: {
+    table: 'daily_logs', gen: [JOB, DAY], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 6 * MB, migration: '0173',
   },
 };
 

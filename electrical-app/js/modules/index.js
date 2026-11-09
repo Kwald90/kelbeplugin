@@ -25,6 +25,8 @@ import panels from './panels.js';
 import controlpanels from './controlpanels.js';
 import walkthroughs from './walkthroughs.js';
 import testing from './testing.js';
+import punchlist from './punchlist.js';
+import dailylog from './dailylog.js';
 import settings from './settings.js';
 import integrations from './integrations.js';
 // AI assistant hidden for now (removed from the registry below and from the Settings module picker).
@@ -50,6 +52,6 @@ export const GROUPS = {
 
 export const MODULES = [
   dashboard, today, clients, leads, sequences, jobs, schedule, service, workplan, materials, drawings, wireruns, estimates, assemblies, invoices, purchasing, quickbooks, books, inventory, pricelists,
-  employees, time, labour, sops, safety, compliance, security, calcs, bending, panels, controlpanels, walkthroughs, testing, settings, integrations, billing,
+  employees, time, labour, sops, safety, compliance, security, calcs, bending, panels, controlpanels, walkthroughs, testing, punchlist, dailylog, settings, integrations, billing,
   importer, developer, onboarding, notifications, help,
 ];
