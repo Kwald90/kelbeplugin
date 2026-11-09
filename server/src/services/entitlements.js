@@ -141,6 +141,8 @@ export const COLLECTION_FEATURES = {
   // Service management (Fully Loaded and up): recurring agreements and the site asset registry.
   serviceAgreements: ['service'],
   assets: ['service'],
+  // Residential service plans / memberships (Fully Loaded and up): recurring plans sold to homeowners.
+  serviceMemberships: ['memberships'],
   // Test & commissioning reports (Fully Loaded and up).
   commissioningTests: ['testing'],
   // Control panels — industrial / controls panel builds (Fully Loaded and up).

@@ -61,6 +61,57 @@ export async function createCheckoutSession({ secretKey, tenantId, invoiceId, in
   return { id: s.id, url: s.url, expiresAt: s.expires_at ? new Date(s.expires_at * 1000).toISOString() : null };
 }
 
+export const SUBSCRIPTION_RE = /^sub_[A-Za-z0-9]{6,64}$/;
+
+/**
+ * A hosted Checkout page that starts a recurring subscription for a service plan / membership,
+ * billed on the company's own Stripe account. The price is inline (price_data), so the company
+ * need not create Stripe products first. metadata (on the session and the subscription) carries
+ * the tenant and membership ids, so the company's own Stripe webhook can mirror the subscription
+ * back onto the plan. `interval` is 'month' or 'year'.
+ * @returns {Promise<{ id: string, url: string, expiresAt: string|null }>}
+ */
+export async function createSubscriptionCheckout({ secretKey, tenantId, membershipId, planName, amountCents, interval = 'year', currency = 'cad', customerEmail, successUrl, cancelUrl }) {
+  if (!Number.isInteger(amountCents) || amountCents < 50) throw new ProviderError('stripe', 'The plan price is too small for recurring billing.', { kind: 'invalid' });
+  const recurring = interval === 'month' ? 'month' : 'year';
+  const metadata = { fishtape_tenant: tenantId, fishtape_membership: membershipId };
+  const body = formEncode({
+    mode: 'subscription',
+    client_reference_id: membershipId,
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    customer_email: customerEmail || undefined,
+    line_items: [{
+      quantity: 1,
+      price_data: {
+        currency: String(currency).toLowerCase(),
+        unit_amount: amountCents,
+        recurring: { interval: recurring },
+        product_data: { name: String(planName || 'Membership plan').slice(0, 200) },
+      },
+    }],
+    metadata,
+    subscription_data: { metadata },
+  });
+  const r = await request('stripe', `${API}/checkout/sessions`, { method: 'POST', headers: headers(secretKey), body });
+  if (!r.ok) throw failure(r, 'Checkout Sessions: Write and Subscriptions: Write');
+  const s = r.json || {};
+  if (typeof s.url !== 'string' || !s.url.startsWith('https://')) throw new ProviderError('stripe', 'Stripe did not return a checkout page.', { kind: 'other' });
+  return { id: s.id, url: s.url, expiresAt: s.expires_at ? new Date(s.expires_at * 1000).toISOString() : null };
+}
+
+/**
+ * Cancel a subscription immediately on the company's Stripe account.
+ * @returns {Promise<{ id: string, status: string, canceledAt: string }>}
+ */
+export async function cancelStripeSubscription(secretKey, subscriptionId) {
+  if (!SUBSCRIPTION_RE.test(String(subscriptionId))) throw new ProviderError('stripe', 'This is not a Stripe subscription reference.', { kind: 'invalid' });
+  const r = await request('stripe', `${API}/subscriptions/${subscriptionId}`, { method: 'DELETE', headers: headers(secretKey) });
+  if (!r.ok) throw failure(r, 'Subscriptions: Write');
+  const s = r.json || {};
+  return { id: String(s.id || subscriptionId), status: String(s.status || 'canceled'), canceledAt: s.canceled_at ? new Date(s.canceled_at * 1000).toISOString() : new Date().toISOString() };
+}
+
 /**
  * Verify a webhook and return the event, or null when the signature does not match
  * (wrong secret, edited body, replay older than 5 minutes).

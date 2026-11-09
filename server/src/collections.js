@@ -21,6 +21,7 @@ export const COLLECTIONS = [
   'faVerifications', 'irInspections',
   'rfis', 'submittals',
   'drawingRevisions', 'procurementItems',
+  'serviceMemberships',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -257,6 +258,15 @@ const DEFS = {
   procurementItems: {
     table: 'procurement_items', gen: [JOB, STATUS, g('purchase_order_id', 'purchaseOrderId')], read: ['jobs'], write: ['jobs'],
     portal: null, maxBytes: 128 * KB, migration: '0180',
+  },
+  // Residential service plans / memberships (migration 0182): a recurring plan a homeowner buys
+  // (annual safety plan, priority service). The recurring-billing, customer-facing cousin of
+  // serviceAgreements. Office data — it carries a price and a Stripe subscription — so read/write
+  // need the 'clients' permission (owner/admin/office). stripeSubscriptionId has a generated column
+  // so the company's own Stripe webhook can find the plan it belongs to. Small records.
+  serviceMemberships: {
+    table: 'service_memberships', gen: [CLIENT, STATUS, g('stripe_subscription_id', 'stripeSubscriptionId')], read: ['clients'], write: ['clients'],
+    portal: null, maxBytes: 64 * KB, migration: '0182',
   },
 };
 

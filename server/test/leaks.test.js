@@ -177,7 +177,10 @@ describe('public endpoints and URLs', { skip }, () => {
       // punch list: a severity code (low/med/high) and the assigned employee's id — both ids/codes, no PII
       'severity', 'assigneeId',
       // fire-alarm verification: the overall result code (pass/fail/incomplete), no PII
-      'overallResult']);
+      'overallResult',
+      // residential service plans / memberships: the Stripe subscription id a plan is billed on (an
+      // opaque Stripe id like sub_..., no PII), used by the company's own Stripe webhook to find the plan
+      'stripeSubscriptionId']);
     for (const [path, ops] of Object.entries(spec.paths)) {
       for (const op of Object.values(ops)) {
         for (const p of op.parameters || []) {

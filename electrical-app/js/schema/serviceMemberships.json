@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/serviceMemberships.json",
+  "title": "Service plan / membership",
+  "description": "A recurring plan a homeowner buys from the shop: a plan name, a billing cadence (monthly or yearly), a recurring price, the perks it includes (priority dispatch, an annual inspection, a member discount), a status (active/paused/cancelled) and start/renewal dates. When the company has connected its own Stripe, it can be billed on a Stripe subscription; otherwise it is tracked by hand. Office data (carries a price). Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "planName": { "type": ["string", "null"], "maxLength": 200 },
+    "cadence": { "enum": ["monthly", "annual", null] },
+    "priceCents": { "type": ["integer", "null"], "minimum": 0 },
+    "discountPct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+    "perks": { "type": ["array", "null"], "maxItems": 50, "items": { "type": "string", "maxLength": 200 } },
+    "status": { "enum": ["pending", "active", "paused", "cancelled", null] },
+    "startDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "renewalDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "pausedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "cancelledAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "stripeSubscriptionId": { "type": ["string", "null"], "maxLength": 200 },
+    "stripeCustomerId": { "type": ["string", "null"], "maxLength": 200 },
+    "billingStatus": { "type": ["string", "null"], "maxLength": 40 },
+    "lastPaymentAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "notes": { "type": ["string", "null"], "maxLength": 2000 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 }
+  },
+  "additionalProperties": true
+}

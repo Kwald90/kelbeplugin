@@ -23,7 +23,7 @@ const GUIDE_LABEL = { stripe: 'Stripe', resend: 'Resend (email)', sendgrid: 'Sen
 export const SETUP_EMAIL = 'setup@fishtapehq.com';
 
 const WEBHOOK_HINT = {
-  stripe: 'Stripe > Developers > Webhooks > Add destination. Events: checkout.session.completed, checkout.session.async_payment_succeeded.',
+  stripe: 'Stripe > Developers > Webhooks > Add destination. Events: checkout.session.completed, checkout.session.async_payment_succeeded. For recurring service plans also add customer.subscription.updated, customer.subscription.deleted, invoice.paid and invoice.payment_failed.',
   twilio: 'Twilio > Phone Numbers > your number > Messaging > "A message comes in" (HTTP POST). Used for STOP and START replies.',
   facebook: 'Meta app > Webhooks > Page > Callback URL, with the verify token below. Subscribe to the leadgen field.',
 };

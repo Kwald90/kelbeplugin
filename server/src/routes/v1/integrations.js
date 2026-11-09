@@ -15,7 +15,7 @@ import { exemptionProblem } from '../../../../electrical-app/js/lib/exemption.js
 import { PLANS, planFor } from '../../../../electrical-app/js/plans.js';
 import { ProviderError } from '../../integrations/http.js';
 import { EMAIL_RE, PROVIDERS, PROVIDER_IDS, providerFor, webhookUrl } from '../../integrations/providers.js';
-import { createCheckoutSession, testStripe } from '../../integrations/stripe.js';
+import { cancelStripeSubscription, createCheckoutSession, createSubscriptionCheckout, testStripe } from '../../integrations/stripe.js';
 import { testResend } from '../../integrations/resend.js';
 import { testSendgrid } from '../../integrations/sendgrid.js';
 import { testTwilio, toE164 } from '../../integrations/twilio.js';
@@ -302,6 +302,91 @@ export default async function integrationRoutes(app, { config, db, records }) {
     }
     reply.code(201);
     return { payUrl: out.url, checkoutUrl: checkout.url, checkoutExpiresAt: checkout.expiresAt, amountCents: pre.bal.balanceCents, currency: currency.toUpperCase() };
+  });
+
+  // ---- recurring service plans / memberships (Stripe subscriptions) --------------
+
+  async function loadMembership(tx, membershipId) {
+    const { rows } = await tx.query(
+      'SELECT id, data FROM service_memberships WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL', [tx.tenantId, membershipId]);
+    return rows[0] ? { ...rows[0].data, id: rows[0].id } : null;
+  }
+
+  app.post('/api/v1/integrations/stripe/membership-subscription', {
+    config: { auth: 'tenant', apiKey: false },
+    preHandler: requireFeature(db, 'memberships'),
+    schema: {
+      tags: ['integrations'], summary: 'Start a Stripe subscription for a service plan: a hosted checkout page the customer pays at, billed every cycle',
+      body: { type: 'object', required: ['membershipId'], additionalProperties: false, properties: { membershipId: { type: 'string', minLength: 1, maxLength: 128 } } },
+    },
+  }, async (req, reply) => {
+    const p = req.principal;
+    if (!canWrite(p, 'clients')) throw forbidden('You cannot change service plans.');
+    const ctx = tenantCtx(p);
+    const pre = await db.withTenant(ctx, async (tx) => {
+      const membership = await loadMembership(tx, req.body.membershipId);
+      const clientRow = membership?.clientId
+        ? (await tx.query('SELECT data FROM clients WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL', [tx.tenantId, membership.clientId])).rows[0]
+        : null;
+      return { secrets: await providerSecrets(tx, sealer, 'stripe'), membership, clientEmail: clientRow?.data?.email || null, settings: await companySettings(tx) };
+    });
+    if (!hasRequired('stripe', pre.secrets)) throw notConnected('Stripe');
+    const m = pre.membership;
+    if (!m) throw notFound('No such plan. If it was just created, wait for it to sync and try again.');
+    if (m.stripeSubscriptionId) throw new ApiError(409, 'already_billing', 'This plan is already on a Stripe subscription.');
+    if (!m.clientId) throw badRequest('Add a customer to the plan first.');
+    if (!Number.isInteger(m.priceCents) || m.priceCents < 50) throw badRequest('Set a plan price of at least $0.50 before billing it.');
+
+    let checkout;
+    try {
+      checkout = await createSubscriptionCheckout({
+        secretKey: pre.secrets['stripe.secret_key'], tenantId: p.tenantId, membershipId: m.id,
+        planName: m.planName || 'Membership plan', amountCents: m.priceCents, interval: m.cadence === 'monthly' ? 'month' : 'year',
+        currency: (pre.settings.currency || 'CAD').toLowerCase(), customerEmail: pre.clientEmail,
+        successUrl: `${config.publicOrigin}/#/memberships?billing=done`, cancelUrl: `${config.publicOrigin}/#/memberships?billing=cancelled`,
+      });
+    } catch (e) {
+      if (!(e instanceof ProviderError)) throw e;
+      if (e.kind === 'auth') await db.withTenant(ctx, (tx) => setStatus(tx, 'stripe', 'error', e.message), { write: true });
+      throw new ApiError(502, 'provider_error', e.message);
+    }
+    await db.withTenant(ctx, (tx) => audit(tx, req, { action: 'integration.membership_subscription', collection: 'serviceMemberships', recordId: m.id, summary: `Stripe billing set up for ${m.planName || 'a service plan'}` }), { write: true });
+    reply.code(201);
+    return { checkoutUrl: checkout.url, checkoutExpiresAt: checkout.expiresAt };
+  });
+
+  app.post('/api/v1/integrations/stripe/membership-cancel', {
+    config: { auth: 'tenant', apiKey: false },
+    preHandler: requireFeature(db, 'memberships'),
+    schema: {
+      tags: ['integrations'], summary: 'Cancel the Stripe subscription billing a service plan (the plan record stays; billing stops)',
+      body: { type: 'object', required: ['membershipId'], additionalProperties: false, properties: { membershipId: { type: 'string', minLength: 1, maxLength: 128 } } },
+    },
+  }, async (req, reply) => {
+    const p = req.principal;
+    if (!canWrite(p, 'clients')) throw forbidden('You cannot change service plans.');
+    const ctx = tenantCtx(p);
+    const pre = await db.withTenant(ctx, async (tx) => ({ secrets: await providerSecrets(tx, sealer, 'stripe'), membership: await loadMembership(tx, req.body.membershipId) }));
+    if (!hasRequired('stripe', pre.secrets)) throw notConnected('Stripe');
+    const m = pre.membership;
+    if (!m) throw notFound('No such plan.');
+    if (!m.stripeSubscriptionId) throw new ApiError(409, 'no_subscription', 'This plan is not on a Stripe subscription.');
+
+    let result;
+    try {
+      result = await cancelStripeSubscription(pre.secrets['stripe.secret_key'], m.stripeSubscriptionId);
+    } catch (e) {
+      if (!(e instanceof ProviderError)) throw e;
+      if (e.kind === 'auth') await db.withTenant(ctx, (tx) => setStatus(tx, 'stripe', 'error', e.message), { write: true });
+      throw new ApiError(502, 'provider_error', e.message);
+    }
+    await db.withTenant(ctx, async (tx) => {
+      await tx.query('UPDATE service_memberships SET data = data || $3::jsonb WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL',
+        [tx.tenantId, m.id, JSON.stringify({ status: 'cancelled', billingStatus: result.status, cancelledAt: result.canceledAt, stripeSubscriptionId: null })]);
+      await audit(tx, req, { action: 'integration.membership_cancel', collection: 'serviceMemberships', recordId: m.id, summary: `Stripe billing cancelled for ${m.planName || 'a service plan'}` });
+    }, { write: true });
+    reply.code(200);
+    return { cancelled: true, status: result.status };
   });
 
   // ---- email an invoice or estimate -------------------------------------------

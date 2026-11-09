@@ -53,7 +53,7 @@ export const FEATURE_PLAN = {
   inventory: 'pro', compliance: 'pro', sequences: 'pro', security: 'pro', integrations: 'pro',
   workplan: 'pro', kpis: 'pro', quickbooks: 'pro', purchasing: 'pro',
   books: 'pro', tickets: 'pro', reports: 'pro', 'reports.wip': 'pro', monthend: 'pro',
-  walkthroughs: 'pro', assemblies: 'pro', service: 'pro', testing: 'pro', pricelists: 'pro',
+  walkthroughs: 'pro', assemblies: 'pro', service: 'pro', memberships: 'pro', testing: 'pro', pricelists: 'pro',
   controlpanels: 'pro',
   punchlist: 'pro', dailylog: 'pro',
   faverification: 'pro', irinspection: 'pro',

@@ -66,6 +66,7 @@
     "rfis": "./rfis.json",
     "submittals": "./submittals.json",
     "drawingRevisions": "./drawingRevisions.json",
-    "procurementItems": "./procurementItems.json"
+    "procurementItems": "./procurementItems.json",
+    "serviceMemberships": "./serviceMemberships.json"
   }
 }

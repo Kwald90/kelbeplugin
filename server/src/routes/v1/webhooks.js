@@ -15,6 +15,7 @@ import { verifyStripeEvent } from '../../integrations/stripe.js';
 import { fetchLead, mapLead, verifyFacebook } from '../../integrations/facebook.js';
 import { optKeyword, toE164, verifyTwilio } from '../../integrations/twilio.js';
 import { payoutFromStripe, recordStripePayment, recordStripePayout } from '../../integrations/payments.js';
+import { applyMembershipEvent } from '../../integrations/memberships.js';
 import { enqueuePayoutFetch } from '../../integrations/jobs.js';
 import { createFacebookLead } from '../../integrations/leads.js';
 import { firstSeen, getSettings, optIn, optOut, providerSecrets, setStatus, systemPrincipal, systemWho, touchEvent } from '../../integrations/state.js';
@@ -59,6 +60,10 @@ export default async function webhookRoutes(app, { config, db, records }) {
         if (r.itemise) await enqueuePayoutFetch(tx, tenantId, po.id); // only for a company on QuickBooks
         return r;
       }
+      // Recurring service plans / memberships (subscriptions, subscription invoices, and the
+      // subscription-mode checkout that starts one). Reuses this same verified, idempotent block.
+      const membership = await applyMembershipEvent(tx, event, tenantId);
+      if (membership.handled) return { membership: true };
       // Only sessions Fishtape created for this company; the account may use Checkout for other things.
       if (session.object !== 'checkout.session' || session.metadata?.fishtape_tenant !== tenantId) return { ignored: true };
       const paid = (event.type === 'checkout.session.completed' && session.payment_status === 'paid') || event.type === 'checkout.session.async_payment_succeeded';
