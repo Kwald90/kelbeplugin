@@ -443,12 +443,37 @@ function agentsTab(ui, ctx, status) {
     copyRow(ui, 'Claude Desktop (claude_desktop_config.json)', JSON.stringify({ mcpServers: { fishtape: { command: 'npx', args: ['-y', 'mcp-remote', endpoint, '--header', 'Authorization:${FISHTAPE_KEY}'], env: { FISHTAPE_KEY: 'Bearer ft_live_YOUR_KEY' } } } }, null, 2)),
     h('p', { class: 'muted ai-p' }, 'Other MCP clients: Streamable HTTP transport, POST only, header Authorization: Bearer <key>. Full guide: docs/ai/mcp.md.')));
 
-  if (status.ok && status.canManage) host.append(settingsCard(ui, status));
+  if (status.ok && status.canManage) host.append(settingsCard(ui, ctx, status));
   return host;
 }
 
-function settingsCard(ui, status) {
+function providerCard(ui, ctx, status) {
   const { h } = ui;
+  const cur = ctx.store.settings().ai?.provider || 'auto';
+  const sel = h('select', { class: 'input', 'aria-label': 'Which AI answers' },
+    h('option', { value: 'auto' }, 'Automatic — your Claude key if connected, else Gemini'),
+    h('option', { value: 'anthropic' }, 'Claude (Anthropic) — your own API key'),
+    h('option', { value: 'gemini' }, "Gemini — Fishtape's shared key (HQ)"));
+  sel.value = cur;
+  sel.addEventListener('change', () => {
+    const ai = { ...(ctx.store.settings().ai || {}), provider: sel.value };
+    ctx.store.saveSettings({ ai });
+    statusCache = null;
+    ui.toast(`AI set to ${sel.value === 'auto' ? 'automatic' : sel.value === 'gemini' ? 'Gemini' : 'Claude'}`, 'success');
+  });
+  const active = status.provider === 'gemini' ? 'Google Gemini' : 'Claude';
+  const warn = status.provider === 'gemini' && status.gemini && !status.gemini.available;
+  return h('div', { class: 'card stack' },
+    h('h3', null, 'Which AI answers'),
+    h('p', { class: 'muted ai-p' }, 'The assistant and CEC helper can run on Claude (your own Anthropic key) or Google Gemini (Fishtape\'s shared key). Walkthrough transcription always uses Gemini.'),
+    h('label', { class: 'field' }, h('span', null, 'Provider'), sel),
+    h('p', { class: 'muted ai-p' }, `Currently answering with ${active}${status.model ? ` (${status.model})` : ''}.`,
+      warn ? ' No Gemini key is set yet — an admin adds it in HQ → Platform keys.' : ''));
+}
+
+function settingsCard(ui, ctx, status) {
+  const { h } = ui;
+  const provider = providerCard(ui, ctx, status);
   const cap = h('input', { class: 'input', type: 'number', min: '0', step: '1', value: String(Math.round(status.cap.monthlyCapCents / 100)), 'aria-label': 'Monthly cap in US dollars' });
   const bg = h('input', { type: 'checkbox', checked: status.settings.backgroundEnabled });
   const bgAi = h('input', { type: 'checkbox', checked: status.settings.backgroundAiDrafts });
@@ -459,13 +484,15 @@ function settingsCard(ui, status) {
       ui.toast('AI settings saved', 'success');
     } catch (e) { ui.toast(e.message, 'error'); }
   };
-  return h('div', { class: 'card stack' },
+  const billedBy = status.provider === 'gemini' ? 'Google' : 'Anthropic';
+  const spending = h('div', { class: 'card stack' },
     h('h3', null, 'AI spending and background checks'),
-    h('p', { class: 'muted ai-p' }, `Calls use your company's Anthropic key and are billed by Anthropic in US dollars. Fishtape estimates the cost of each call and stops AI features for the rest of the month at your cap. This month so far: about ${usd(status.usage.costCents)} over ${status.usage.calls} calls.`),
+    h('p', { class: 'muted ai-p' }, `Calls use your company's own key and are billed by ${billedBy} in US dollars. Fishtape estimates the cost of each call and stops AI features for the rest of the month at your cap. This month so far: about ${usd(status.usage.costCents)} over ${status.usage.calls} calls.`),
     h('label', { class: 'field' }, h('span', null, 'Monthly cap (US$)'), cap),
     h('label', { class: 'field check' }, bg, h('span', null, 'Run the daily background checks')),
-    h('label', { class: 'field check' }, bgAi, h('span', null, 'Let Claude word overdue-invoice reminders (counts toward the cap)')),
+    h('label', { class: 'field check' }, bgAi, h('span', null, 'Let the assistant word overdue-invoice reminders (counts toward the cap)')),
     h('div', { class: 'row' }, h('span', { class: 'grow' }), ui.button('Save', { variant: 'primary', onClick: save })));
+  return h('div', { class: 'stack' }, provider, spending);
 }
 
 // ---------- "Ask Fishtape" on estimates, invoices and jobs ----------
