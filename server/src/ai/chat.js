@@ -4,10 +4,14 @@
 // History is stored server-side, append-only and byte-exact (ai_messages.content is the
 // JSON text of the API content blocks). The client only ever sends its new message, so it
 // cannot forge earlier turns or tool results, and thinking blocks are replayed unchanged.
+import { randomUUID } from 'node:crypto';
 import { ApiError, badRequest, forbidden, notFound } from '../errors.js';
 import { assertFeature } from '../services/entitlements.js';
 import { tenantCtx } from '../routes/util.js';
-import { anthropicClient, companyKey, isToolJsonError, requestParams, upstreamError } from './client.js';
+import { ANTHROPIC_SECRET, anthropicClient, isToolJsonError, notConnected, requestParams, upstreamError } from './client.js';
+import { chooseProvider, geminiGenerate, geminiNetworkError, geminiNotConnected, partsToBlocks, toGeminiContents, toGeminiTools } from './gemini-client.js';
+import { geminiSettings, resolveGeminiKey } from '../services/gemini.js';
+import { getSecret } from '../services/secrets.js';
 import { assertUnderCap, recordUsage } from './usage.js';
 import { PROMPT_VERSION, conversationContext, systemPromptFor } from './prompts.js';
 import { apiTools, canUseRecordTools, toolLabel, toolsFor } from './tools/index.js';
@@ -151,16 +155,25 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
     const conv = await inTenant(p, (tx) => loadConversation(tx, p, id));
     await assertFeature(db, p.tenantId, MODES[conv.mode]);
     if (conv.message_count >= aiCfg.maxMessages) throw new ApiError(409, 'ai_conversation_full', 'This conversation is long. Start a new one to keep answers fast.');
-    const apiKey = await inTenant(p, async (tx) => {
-      const key = await companyKey(tx, sealer);
+    // Which provider answers this turn: the company's own Anthropic key, or Gemini (Fishtape's
+    // HQ platform key, or GEMINI_API_KEY). The Gemini key is resolved on the app pool, outside
+    // the tenant transaction (it lives in platform_secrets, not tenant_secrets).
+    const prefSettings = await inTenant(p, (tx) => companySettings(tx));
+    const pref = prefSettings?.ai?.provider;
+    const geminiKey = await resolveGeminiKey(db, sealer);
+    const picked = await inTenant(p, async (tx) => {
+      const anthropicKey = await getSecret(tx, sealer, ANTHROPIC_SECRET);
+      const provider = chooseProvider(pref, Boolean(anthropicKey), Boolean(geminiKey));
+      if (provider === 'gemini' && !geminiKey) throw geminiNotConnected();
+      if (provider === 'anthropic' && !anthropicKey) throw notConnected();
       await assertUnderCap(tx, aiCfg);
       const { rowCount } = await tx.query(
         `UPDATE ai_conversations SET busy_until = now() + make_interval(secs => $3)
           WHERE tenant_id = $1 AND id = $2 AND (busy_until IS NULL OR busy_until < now())`, [tx.tenantId, conv.id, BUSY_SECONDS]);
       if (!rowCount) throw new ApiError(409, 'ai_busy', 'The assistant is still answering in this conversation.');
-      return key;
+      return { provider, apiKey: provider === 'gemini' ? geminiKey : anthropicKey };
     }, { write: true });
-    return { p, conv, apiKey, content: userContent({ text, images }), title: text.slice(0, 80) };
+    return { p, conv, provider: picked.provider, apiKey: picked.apiKey, content: userContent({ text, images }), title: text.slice(0, 80) };
   }
 
   async function append(p, convId, role, content) {
@@ -210,12 +223,27 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
     }
   }
 
+  /** Per-turn tool-run context, shared by both providers. */
+  function turnContext(prep, feature, request) {
+    const { p, conv } = prep;
+    return {
+      db, principal: p, context: conv.context, conversationId: conv.id, feature,
+      tenant: (fn, opts) => inTenant(p, fn, opts),
+      who: { actor: assistantActor(p), conversationId: conv.id, request },
+    };
+  }
+
+  /** Dispatch a turn to the provider chosen in prepare(). */
+  function run(prep, emit, opts = {}) {
+    return prep.provider === 'gemini' ? runGemini(prep, emit, opts) : runAnthropic(prep, emit, opts);
+  }
+
   /**
    * One user message: stream the reply, run tools, loop until the model is done.
    * emit(event, data) writes server-sent events; nothing here throws after streaming starts.
    * @param {Awaited<ReturnType<typeof prepare>>} prep
    */
-  async function run(prep, emit, { signal, request } = {}) {
+  async function runAnthropic(prep, emit, { signal, request } = {}) {
     const { p, conv, apiKey } = prep;
     const feature = conv.mode === 'cec' ? 'cec' : 'assistant';
     const tools = toolsFor(conv.mode);
@@ -226,11 +254,7 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
     ];
     const client = anthropicClient(apiKey, aiCfg);
     const actor = `user:${p.userId}`;
-    const ctx = {
-      db, principal: p, context: conv.context, conversationId: conv.id, feature,
-      tenant: (fn, opts) => inTenant(p, fn, opts),
-      who: { actor: assistantActor(p), conversationId: conv.id, request },
-    };
+    const ctx = turnContext(prep, feature, request);
     const totals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costMicroUsd: 0 };
     let stopReason = null;
     try {
@@ -308,6 +332,86 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
       if (err) emit('error', { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) });
       else {
         log?.error?.({ code: e?.code, name: e?.name }, 'ai turn failed');
+        emit('error', { code: 'internal', message: 'Something went wrong. It has been logged.' });
+      }
+    } finally {
+      await release(p, conv.id);
+    }
+  }
+
+  /**
+   * One user message on Gemini: a non-streaming function-calling loop. Reuses the same tools,
+   * tool executor (runTool), history, cap checks and usage logging as the Anthropic path, and
+   * emits the same server-sent events (text arrives as a single delta). Nothing here throws
+   * after 'start' is emitted.
+   * @param {Awaited<ReturnType<typeof prepare>>} prep
+   */
+  async function runGemini(prep, emit, { signal, request } = {}) {
+    const { p, conv, apiKey } = prep;
+    const feature = conv.mode === 'cec' ? 'cec' : 'assistant';
+    const tools = toolsFor(conv.mode);
+    const byName = new Map(tools.map((t) => [t.name, t]));
+    const systemText = `${systemPromptFor(conv.mode)}\n\n${conv.system_context}`;
+    const geminiTools = toGeminiTools(apiTools(tools));
+    const settings = geminiSettings(null, process.env);
+    const actor = `user:${p.userId}`;
+    const ctx = turnContext(prep, feature, request);
+    const totals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costMicroUsd: 0 };
+    const nextToolId = () => `gcall_${randomUUID()}`;
+    let stopReason = null;
+    try {
+      if (!conv.title && prep.title) {
+        await inTenant(p, (tx) => tx.query('UPDATE ai_conversations SET title = $3 WHERE tenant_id = $1 AND id = $2', [tx.tenantId, conv.id, prep.title]), { write: true });
+      }
+      const seq = await append(p, conv.id, 'user', prep.content);
+      emit('start', { conversationId: conv.id, seq });
+      for (let step = 0; step < aiCfg.maxSteps; step++) {
+        await inTenant(p, (tx) => assertUnderCap(tx, aiCfg));
+        const contents = toGeminiContents(await history(p, conv.id));
+        let result;
+        try {
+          result = await geminiGenerate({
+            apiKey, settings, systemText, contents, tools: geminiTools,
+            generationConfig: { temperature: 0.2, maxOutputTokens: aiCfg.maxTokens }, signal, timeoutMs: aiCfg.timeoutMs,
+          });
+        } catch (e) {
+          throw geminiNetworkError(e);
+        }
+        const cost = await inTenant(p, (tx) => recordUsage(tx, { feature, model: result.model, actor, conversationId: conv.id, usage: result.usage, stopReason: result.finishReason }), { write: true });
+        totals.inputTokens += result.usage.input_tokens || 0;
+        totals.outputTokens += result.usage.output_tokens || 0;
+        totals.costMicroUsd += cost;
+        stopReason = result.finishReason;
+
+        if (result.blockReason || ['SAFETY', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'RECITATION'].includes(result.finishReason)) {
+          emit('error', { code: 'ai_refused', message: 'The AI declined to answer that. Try rephrasing the question.' });
+          break;
+        }
+        const blocks = partsToBlocks(result.parts, nextToolId);
+        if (!blocks.length) break;
+        for (const b of blocks) if (b.type === 'text') { emit('text_start', {}); emit('text', { delta: b.text }); }
+        await append(p, conv.id, 'assistant', blocks);
+        const uses = blocks.filter((b) => b.type === 'tool_use');
+        if (!uses.length) {
+          if (result.finishReason === 'MAX_TOKENS') emit('notice', { message: 'The answer was too long and was cut off. Ask for less at once.' });
+          break;
+        }
+        for (const b of uses) emit('tool', { id: b.id, name: b.name, status: 'running', label: toolLabel(b.name, b.input) });
+        // Parallel tool calls: run together, return every result in one message. Non-streaming,
+        // so a tool input is always complete (unlike the Anthropic eager-streaming path).
+        const results = await Promise.all(uses.map((b) => runTool(ctx, byName.get(b.name), b, emit)));
+        await append(p, conv.id, 'user', results);
+        if (step === aiCfg.maxSteps - 1) {
+          stopReason = 'step_limit';
+          emit('notice', { message: `Stopped after ${aiCfg.maxSteps} steps. Say "continue" to keep going.` });
+        }
+      }
+      emit('done', { stopReason, usage: { ...totals, cacheReadTokens: 0, costCents: Math.ceil(totals.costMicroUsd / 10_000) } });
+    } catch (e) {
+      const err = e instanceof ApiError ? e : null;
+      if (err) emit('error', { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) });
+      else {
+        log?.error?.({ code: e?.code, name: e?.name }, 'ai gemini turn failed');
         emit('error', { code: 'internal', message: 'Something went wrong. It has been logged.' });
       }
     } finally {

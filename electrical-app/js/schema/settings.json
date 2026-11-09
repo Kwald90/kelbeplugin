@@ -572,6 +572,24 @@
         }
       },
       "description": "Server: a mirror of the period locks (docs/office/period-lock.md). Devices cannot change it."
+    },
+    "ai": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "In-app AI assistant options.",
+      "properties": {
+        "provider": {
+          "enum": [
+            "auto",
+            "anthropic",
+            "gemini",
+            null
+          ],
+          "description": "Which model provider answers the assistant. 'auto' keeps the company's Anthropic key when set, else uses Gemini when a Gemini key is available."
+        }
+      }
     }
   },
   "additionalProperties": true
