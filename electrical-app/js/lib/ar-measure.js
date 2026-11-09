@@ -298,6 +298,33 @@ export function pathFromPoints(points) {
 }
 
 /**
+ * Area (m²) of the closed polygon through these 3D points, by Newell's method: it sums the
+ * cross-products of consecutive vertices, so it is correct for a planar polygon at any orientation
+ * (a floor outline tapped in AR need not be axis-aligned). Fewer than 3 points has no area.
+ */
+export function polygonArea(points) {
+  const pts = (points || []).map(xyz);
+  if (pts.length < 3) return 0;
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    nx += (a.y - b.y) * (a.z + b.z);
+    ny += (a.z - b.z) * (a.x + b.x);
+    nz += (a.x - b.x) * (a.y + b.y);
+  }
+  return Math.hypot(nx, ny, nz) / 2;
+}
+
+/** Perimeter (m) of the closed loop through these points — the open path plus the last→first leg. */
+export function closedPerimeter(points) {
+  const pts = (points || []).map(xyz);
+  if (pts.length < 2) return 0;
+  let sum = 0;
+  for (let i = 0; i < pts.length; i++) sum += dist(pts[i], pts[(i + 1) % pts.length]);
+  return sum;
+}
+
+/**
  * Check and tidy what a back end returned. Fills segments from points when the
  * plugin sent only points, and totalM from the segments when it is missing.
  */

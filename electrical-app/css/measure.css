@@ -1,3 +1,5 @@
 /* AR tape measure (#/measure). */
 .measure-capture { display: flex; flex-direction: column; gap: var(--s2); }
 .measure-capture .row { flex-wrap: wrap; gap: var(--s2); }
+.measure-readout { text-align: center; padding: var(--s2) 0 var(--s1); }
+.measure-big { font-size: var(--fs-lg); font-weight: 700; }
