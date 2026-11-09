@@ -15,6 +15,11 @@ export const PRICES = {
   'claude-sonnet-5': [2, 10, 2.5, 0.2],
   'claude-haiku-5-5': [0.1, 0.5, 0.125, 0.01],
   'claude-fable-5-1': [10, 50, 12.5, 0.25],
+  // Google Gemini (ai.google.dev/pricing, paid tier). Gemini has no separate cache-write/read
+  // line here, so those columns mirror input; the assistant records only input/output tokens.
+  'gemini-2.5-flash': [0.3, 2.5, 0.3, 0.075],
+  'gemini-2.5-pro': [1.25, 10, 1.25, 0.31],
+  'gemini-2.0-flash': [0.1, 0.4, 0.1, 0.025],
 };
 
 function priceFor(model) {

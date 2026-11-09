@@ -12,6 +12,9 @@ import { assertFeature, loadTenantPlan, tenantHas } from '../../services/entitle
 import { readAiConfig } from '../../ai/config.js';
 import { createChat } from '../../ai/chat.js';
 import { ANTHROPIC_SECRET } from '../../ai/client.js';
+import { chooseProvider } from '../../ai/gemini-client.js';
+import { geminiConfigured, geminiSettings } from '../../services/gemini.js';
+import { companySettings } from '../../ai/data.js';
 import { aiSettings, monthUsage, monthUsageByFeature } from '../../ai/usage.js';
 import { acceptDraft, discardDraft, getDraft, listDrafts } from '../../ai/drafts.js';
 import { backgroundPrincipal, scanTenant } from '../../ai/background.js';
@@ -47,14 +50,19 @@ export default async function aiRoutes(app, { db, records }) {
   app.get('/api/v1/ai/status', { config: session, schema: { tags, summary: 'Is AI connected and in the plan, this month\'s usage and cap' } }, async (req) => {
     const p = req.principal;
     const t = await loadTenantPlan(db, p.tenantId);
+    const geminiAvailable = await geminiConfigured(db);
     return inTenant(req, async (tx) => {
       const connected = Boolean(await getSecret(tx, app.sealer, ANTHROPIC_SECRET));
+      const settings = await companySettings(tx);
+      const provider = chooseProvider(settings?.ai?.provider, connected, geminiAvailable);
       const s = await aiSettings(tx, aiCfg);
       const u = await monthUsage(tx);
       return {
         connected,
+        provider,
+        gemini: { available: geminiAvailable },
         features: { assistant: tenantHas(t, 'ai.assistant'), cec: tenantHas(t, 'ai.cec'), background: tenantHas(t, 'ai.background'), mcp: tenantHas(t, 'mcp') },
-        model: aiCfg.model,
+        model: provider === 'gemini' ? geminiSettings(null, process.env).model : aiCfg.model,
         usage: { since: u.since, calls: u.calls, inputTokens: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens, outputTokens: u.outputTokens, costCents: u.costCents },
         cap: { monthlyCapCents: s.monthlyCapCents, isDefault: s.capIsDefault, reached: u.costMicroUsd >= s.monthlyCapCents * 10_000 },
         settings: { backgroundEnabled: s.backgroundEnabled, backgroundAiDrafts: s.backgroundAiDrafts },

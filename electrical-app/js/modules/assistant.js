@@ -74,7 +74,11 @@ function problemFor(status, mode = 'assistant') {
   }
   const feature = mode === 'cec' ? status.features.cec : status.features.assistant;
   if (!feature) return { title: 'Part of the Business plan', text: 'The assistant, CEC helper and background agents come with Business. An owner can upgrade from Settings.', lock: true };
-  if (!status.connected) return { title: 'Connect Anthropic in Integrations', text: 'Fishtape\'s AI runs on your company\'s own Anthropic API key, so your data and your bill stay yours. An owner or admin adds the key once in Integrations.', connect: true };
+  if (status.provider === 'gemini') {
+    if (!status.gemini?.available) return { title: 'Gemini is not configured', text: 'This company is set to run the assistant on Google Gemini, but no Gemini API key is set yet. An administrator sets it in HQ → Platform keys.' };
+  } else if (!status.connected) {
+    return { title: 'Connect Anthropic in Integrations', text: 'Fishtape\'s AI runs on your company\'s own Anthropic API key, so your data and your bill stay yours. An owner or admin adds the key once in Integrations.', connect: true };
+  }
   if (status.cap?.reached) return { title: 'Monthly AI cap reached', text: `This month's estimated spend reached the ${usd(status.cap.monthlyCapCents)} cap. An owner or admin can raise it under Connect agents.` };
   return null;
 }
@@ -89,8 +93,11 @@ function problemCard(ui, p) {
 function statusBar(ui, status) {
   if (!status.ok) return ui.h('span');
   const u = status.usage;
+  const providerBadge = status.provider === 'gemini'
+    ? ui.badge(status.gemini?.available ? 'Gemini connected' : 'Gemini not configured', status.gemini?.available ? 'success' : 'warning')
+    : ui.badge(status.connected ? 'Anthropic connected' : 'Anthropic not connected', status.connected ? 'success' : 'warning');
   return ui.h('div', { class: 'row ai-status-row muted' },
-    ui.badge(status.connected ? 'Anthropic connected' : 'Anthropic not connected', status.connected ? 'success' : 'warning'),
+    providerBadge,
     ui.h('span', null, `This month: ${u.calls} call${u.calls === 1 ? '' : 's'}, about ${usd(u.costCents)} of ${usd(status.cap.monthlyCapCents)} cap`));
 }
 

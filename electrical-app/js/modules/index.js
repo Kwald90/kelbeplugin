@@ -38,9 +38,7 @@ import drawingrevisions from './drawingrevisions.js';
 import procurement from './procurement.js';
 import settings from './settings.js';
 import integrations from './integrations.js';
-// AI assistant hidden for now (removed from the registry below and from the Settings module picker).
-// Re-enable: uncomment this import, add `assistant` back to MODULES, and drop `hidden` in lib/modules.js.
-// import assistant from './assistant.js';
+import assistant from './assistant.js';
 import billing from './billing.js';
 import help from './help.js';
 import onboarding from './onboarding.js';
@@ -61,6 +59,6 @@ export const GROUPS = {
 
 export const MODULES = [
   dashboard, today, clients, leads, sequences, servicerequests, jobs, schedule, service, memberships, workplan, materials, drawings, wireruns, estimates, assemblies, invoices, getpaid, purchasing, quickbooks, books, inventory, pricelists,
-  employees, time, labour, sops, safety, compliance, security, calcs, bending, panels, controlpanels, walkthroughs, testing, punchlist, dailylog, faverification, irinspection, rfis, submittals, drawingrevisions, procurement, settings, integrations, billing,
+  employees, time, labour, sops, safety, compliance, security, calcs, bending, panels, controlpanels, walkthroughs, testing, punchlist, dailylog, faverification, irinspection, rfis, submittals, drawingrevisions, procurement, settings, integrations, assistant, billing,
   importer, developer, onboarding, notifications, help,
 ];
