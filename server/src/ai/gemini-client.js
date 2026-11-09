@@ -54,9 +54,24 @@ const TYPE = { string: 'STRING', number: 'NUMBER', integer: 'INTEGER', boolean: 
 export function geminiSchema(s) {
   if (!s || typeof s !== 'object') return undefined;
   const out = {};
-  if (s.type && TYPE[s.type]) out.type = TYPE[s.type];
-  if (s.description) out.description = String(s.description);
-  if (Array.isArray(s.enum)) out.enum = s.enum.map(String);
+  const type = s.type && TYPE[s.type] ? TYPE[s.type] : undefined;
+  let description = s.description ? String(s.description) : '';
+  // Gemini allows `enum` ONLY on a STRING type. A string (or untyped) enum stays an enum; an enum on
+  // an integer/number/boolean (e.g. the CEC tools' terminationC [60,75,90]) would make Gemini reject
+  // the whole tool with a 400 — so keep the numeric type and fold the allowed values into the
+  // description instead, so the model still picks a valid one.
+  if (Array.isArray(s.enum) && s.enum.length) {
+    if (!s.type || s.type === 'string') {
+      out.type = TYPE.string;
+      out.enum = s.enum.map(String);
+    } else {
+      if (type) out.type = type;
+      description = `${description}${description ? ' ' : ''}Allowed values: ${s.enum.join(', ')}.`.trim();
+    }
+  } else if (type) {
+    out.type = type;
+  }
+  if (description) out.description = description;
   if (s.type === 'object' && s.properties) {
     out.properties = {};
     for (const [k, v] of Object.entries(s.properties)) out.properties[k] = geminiSchema(v);

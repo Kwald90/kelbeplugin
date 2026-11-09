@@ -329,9 +329,9 @@ function buildRail() {
     collapse.title = compact ? 'Expand navigation' : 'Collapse navigation';
   } }, icon('menu', 20));
   rail.append(h('div', { class: 'rail-head' },
-    h('a', { class: 'rail-logo', href: FIELD_ROLES.includes(auth.role()) && auth.can('today') && moduleEnabled('today') && moduleUnlocked('today') ? '#/today' : '#/dashboard', title: BRAND.name, 'aria-label': BRAND.name }, icon('zap', 22), h('span', { class: 'nav-label' }, BRAND.name)), collapse));
-  rail.append(h('button', { type: 'button', class: 'rail-btn rail-search', 'aria-label': 'Search features and options', title: 'Search (Ctrl K)', onClick: openSearch },
-    icon('search', 20), h('span', { class: 'nav-label' }, 'Search'), h('span', { class: 'tip' }, 'Search')));
+    h('a', { class: 'rail-logo', href: FIELD_ROLES.includes(auth.role()) && auth.can('today') && moduleEnabled('today') && moduleUnlocked('today') ? '#/today' : '#/dashboard', title: BRAND.name, 'aria-label': BRAND.name }, icon('zap', 22), h('span', { class: 'nav-label' }, BRAND.name)),
+    h('button', { type: 'button', class: 'rail-btn rail-search', 'aria-label': 'Search features and options', title: 'Search (Ctrl K)', onClick: openSearch }, icon('search', 20)),
+    collapse));
   const list = h('div', { class: 'rail-destinations' });
   for (const [group, label] of Object.entries(GROUPS)) {
     const items = visibleModules().filter((m) => m.group === group);
