@@ -16,9 +16,9 @@ Kelvin reviewed an expert gap analysis (three rounds) and set direction.
 - **First lane: residential service shop**, with a hard "everything flows nice + user-friendly setup"
   constraint. Claude is driving this lane directly.
 
-**Reserved migration numbers** (latest shipped is 0170 — do not reuse these):
-0171 control-panel / I-O package · 0172 punch list / deficiencies · 0173 jobsite daily log ·
-0174 grounding ground-resistance test record (only if persisted) · resi lane takes 0175+.
+**Migration numbers consumed (shipped v0.15.0 / v0.16.0):** 0171 control panels · 0172 punch list ·
+0173 daily log · 0174 fire-alarm verification · 0175 thermal/IR · **0176 FREE (unused)** · 0177 RFI ·
+0178 submittal · 0179 drawing register · 0180 procurement. **Next free migration = 0181.**
 
 **Resi-service roadmap (build order):** (1) online service-request / booking front door (public
 per-tenant intake → lead/job; none today) · (2) request → scheduled job → dispatch glue · (3) customer
@@ -26,10 +26,17 @@ per-tenant intake → lead/job; none today) · (2) request → scheduled job →
 e-sign → invoice → pay in one flow · (5) review/reputation ask on job close · (6) residential
 membership/service plans (recurring Stripe).
 
-**In flight (2026-11-08, parallel agents on isolated worktrees):** engineering calc pack (arc-flash +
-Z462 label, coordination/SCCR, transformer, cable-pull, duct-bank, grounding test); control-panel /
-I-O module (0171); punch list (0172) + daily log (0173); marketing site + per-tier plan feature-list
-refresh (resi-first, prices unchanged).
+**SHIPPED 2026-11-09 (two waves of parallel agents, orchestrator-integrated):**
+- **v0.15.0 (wave 1):** engineering calc pack (arc-flash+Z462 screening, SCCR, transformer, cable-pull,
+  duct-bank, grounding — Calcs tabs); control panels; punch list; daily log; resi service-request
+  foundation (lib/service-requests.js, reuses leads — no UI yet); marketing site resi-first.
+- **v0.16.0 (wave 2):** fire-alarm ULC S537 verification + thermal/IR; RFI + submittal logs; drawing
+  register + procurement/long-lead; solar PV/ESS/generator calc tabs.
+- All pro-tier, OFF by default; four office modules under a new "Office & project admin" switch group.
+  Both waves shipped to production + TestFlight. **Pending Kelvin VERIFY:** arc-flash IEEE 1584-2018
+  purchase (screening-only until then); CEC Section 64/46 rule numbers (solar/ESS/gen); ULC S537 device
+  list; NETA ΔT severity bands. **Resi lane still mostly TODO:** booking UI + public intake, dispatch
+  ETA, review ask, membership plans.
 
 **Vetted gap backlog for later lanes** (confirmed NOT built):
 - **Commercial/GC:** WIP %-complete billing, schedule-of-values progress draws, RFI + submittal logs,
