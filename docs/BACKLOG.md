@@ -16,9 +16,10 @@ Kelvin reviewed an expert gap analysis (three rounds) and set direction.
 - **First lane: residential service shop**, with a hard "everything flows nice + user-friendly setup"
   constraint. Claude is driving this lane directly.
 
-**Migration numbers consumed (shipped v0.15.0 / v0.16.0):** 0171 control panels · 0172 punch list ·
-0173 daily log · 0174 fire-alarm verification · 0175 thermal/IR · **0176 FREE (unused)** · 0177 RFI ·
-0178 submittal · 0179 drawing register · 0180 procurement. **Next free migration = 0181.**
+**Migration numbers consumed (shipped v0.15.0 / v0.16.0 / v0.17.0):** 0171 control panels · 0172 punch
+list · 0173 daily log · 0174 fire-alarm verification · 0175 thermal/IR · **0176 FREE (unused)** · 0177
+RFI · 0178 submittal · 0179 drawing register · 0180 procurement · 0181 booking_pages (public slug→tenant,
+no RLS) · 0182 service_memberships. **Next free migration = 0183** (0176 also still free).
 
 **Resi-service roadmap (build order):** (1) online service-request / booking front door (public
 per-tenant intake → lead/job; none today) · (2) request → scheduled job → dispatch glue · (3) customer
@@ -32,11 +33,20 @@ membership/service plans (recurring Stripe).
   foundation (lib/service-requests.js, reuses leads — no UI yet); marketing site resi-first.
 - **v0.16.0 (wave 2):** fire-alarm ULC S537 verification + thermal/IR; RFI + submittal logs; drawing
   register + procurement/long-lead; solar PV/ESS/generator calc tabs.
+- **v0.17.0 (wave 3 — the resi service lane):** online booking front door (EMBED widget / hosted link +
+  iframe, NOT subdomains) → `kind:'service'` lead in the right tenant via a public slug→tenant resolver
+  (`booking_pages`, mig 0181, no RLS); in-app service-request inbox/triage (`#/servicerequests`, switch
+  `booking`, group sales); customer "on-the-way" ETA + review-ask emails (SendGrid, reuse time-clock
+  travel + job-close, dedupe via outbox ids, `settings.notifications`, no new collection); residential
+  membership/service plans (`serviceMemberships`, mig 0182, recurring Stripe via the existing webhook
+  pipeline, manual fallback). Public booking endpoint security-reviewed + verified live (only `/embed`
+  is frameable; rest of app keeps `frame-ancestors 'none'`). Pending Kelvin: Stripe per shop + webhook
+  events; GST/HST on memberships (left all-in, no tax assumption); SMS later (Twilio; outbox has an sms
+  channel).
 - All pro-tier, OFF by default; four office modules under a new "Office & project admin" switch group.
-  Both waves shipped to production + TestFlight. **Pending Kelvin VERIFY:** arc-flash IEEE 1584-2018
+  All three waves shipped to production + TestFlight. **Pending Kelvin VERIFY:** arc-flash IEEE 1584-2018
   purchase (screening-only until then); CEC Section 64/46 rule numbers (solar/ESS/gen); ULC S537 device
-  list; NETA ΔT severity bands. **Resi lane still mostly TODO:** booking UI + public intake, dispatch
-  ETA, review ask, membership plans.
+  list; NETA ΔT severity bands.
 
 **Vetted gap backlog for later lanes** (confirmed NOT built):
 - **Commercial/GC:** WIP %-complete billing, schedule-of-values progress draws, RFI + submittal logs,

@@ -43,8 +43,8 @@ every workstream builds against. Change it before changing a contract in code.
 - **Product focus:** first lane = **residential service shop**, optimized for smooth end-to-end flow and
   user-friendly setup. Roadmap + other-lane gap backlog in
   [BACKLOG.md](BACKLOG.md) under "Product direction (2026-11-08)".
-- **Reserved migration numbers** (latest shipped 0170): 0171 control-panel / I-O · 0172 punch list ·
-  0173 daily log · 0174 grounding test (only if persisted) · resi lane takes 0175+.
+- **Migration numbers:** see the authoritative consumed/free list in [BACKLOG.md](BACKLOG.md). As of
+  v0.17.0, 0171–0182 are consumed except **0176 (free)**; next free = **0183**.
 
 ## The 13 layers
 
