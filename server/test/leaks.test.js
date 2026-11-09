@@ -173,7 +173,9 @@ describe('public endpoints and URLs', { skip }, () => {
       // DELETE /api/hq/rules?key=&province=&effectiveFrom= (a rule key, a province code, a YYYY-MM-DD day).
       'code', 'key', 'docId', 'docType', 'equipmentId', 'locationId', 'through', 'province', 'on', 'effectiveFrom',
       // ERP features: a site-asset type code (panel/generator/…) and the asset id a commissioning test links to
-      'type', 'assetId']);
+      'type', 'assetId',
+      // punch list: a severity code (low/med/high) and the assigned employee's id — both ids/codes, no PII
+      'severity', 'assigneeId']);
     for (const [path, ops] of Object.entries(spec.paths)) {
       for (const op of Object.values(ops)) {
         for (const p of op.parameters || []) {
