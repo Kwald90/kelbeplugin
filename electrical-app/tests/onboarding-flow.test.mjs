@@ -50,6 +50,19 @@ test('existing company data is recognized and module-off steps stay filtered', (
   assert.ok(!journey.later.some(s => ['pricebook', 'plans', 'connect'].includes(s.id)));
 });
 
+test('residential setup is a later step that ticks when the booking lane is on', () => {
+  const journey = onboardingJourney(detectSteps(facts()));
+  const resi = journey.later.find((s) => s.id === 'resisetup');
+  assert.ok(resi, 'resisetup appears under later setup');
+  assert.equal(resi.done, false);
+  const f = facts();
+  f.settings.modules = { booking: true };
+  f.server = { bookingEnabled: true, bookingSlug: 'tg-electrical' };
+  const on = detectSteps(f).find((s) => s.id === 'resisetup');
+  assert.equal(on.done, true);
+  assert.match(on.detail, /tg-electrical/);
+});
+
 test('quote entry requires role access, enabled module and effective synced entitlement', () => {
   const available = { canEstimate: true, enabled: true, synced: true, entitlements: { features: ['estimates'] } };
   assert.equal(onboardingQuoteAction(available).href, '#/estimates/new');

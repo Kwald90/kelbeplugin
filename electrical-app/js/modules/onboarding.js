@@ -6,10 +6,14 @@
 import { isGstHstNumber, PROVINCES } from '../lib/tax.js';
 import { CODE_BOOKS } from '../lib/cec/provinces.js';
 import { DEFAULT_SETTINGS } from '../store.js';
-import { moduleOn } from '../lib/modules.js';
+import { moduleOn, switchOn } from '../lib/modules.js';
+import { hostedLink } from '../lib/booking.js';
 
 /** Steps that belong to a module: left out while the company has it turned off. */
 const STEP_MODULE = { pricebook: 'inventory', plans: 'drawings', connect: 'integrations' };
+
+/** The module switches the residential service lane turns on in one tap. */
+const RESI_SWITCHES = ['booking', 'getpaid', 'memberships'];
 
 const DEFAULT_RATE = DEFAULT_SETTINGS.labourRateCents;
 const DEFAULT_MARKUP = DEFAULT_SETTINGS.markupPct;
@@ -26,6 +30,7 @@ export function collectFacts(store, { synced = false, server = null } = {}) {
     estimates: store.count('estimates'),
     planSets: store.count('drawings', (d) => d.planSet || d.underlay),
     employees: store.count('employees', (e) => e.active !== false),
+    memberships: store.count('serviceMemberships'),
     server: server || store.meta?.(FACTS_META) || null,
   };
 }
@@ -67,6 +72,10 @@ export function detectSteps(f) {
       href: '#/integrations' },
     { id: 'job', title: 'Create your first job', text: 'Jobs tie together the client, crew, drawings, time and invoices.', done: f.jobs > 0, detail: f.jobs ? `${f.jobs} job${f.jobs === 1 ? '' : 's'}` : '', href: '#/jobs?new=1' },
     { id: 'plans', title: 'Import a plan set', text: 'Drop in the PDF drawings; each sheet becomes a page you can mark up and take off from.', done: f.planSets > 0, detail: f.planSets ? `${f.planSets} sheet${f.planSets === 1 ? '' : 's'}` : '', href: '#/drawings' },
+    { id: 'resisetup', title: 'Set up for residential service',
+      text: 'Turn on online booking, the service-request inbox, close-and-collect and service plans — the tools a home-service shop runs on.',
+      done: switchOn(s, 'booking'),
+      detail: switchOn(s, 'booking') ? (server.bookingEnabled ? `Booking live at /${server.bookingSlug}` : 'Tools on — add your booking link below') : '' },
   ];
   for (const st of steps) { st.skipped = !st.done && Boolean(skipped[st.id]); }
   return steps.filter((st) => !STEP_MODULE[st.id] || moduleOn(s, STEP_MODULE[st.id]));
@@ -130,6 +139,7 @@ export async function loadServerFacts(store, auth) {
     out.pins = data.filter((m) => m.hasPin).length;
   } catch { /* offline or not a manager */ }
   try { const { data } = await api.get('/api/v1/devices'); out.devices = data.filter((d) => !d.revokedAt).length; } catch { /* ignore */ }
+  try { const { data } = await api.get('/api/v1/booking'); out.bookingSlug = data?.page?.slug || null; out.bookingEnabled = Boolean(data?.page?.enabled); } catch { /* ignore: not on the booking plan, or offline */ }
   try {
     const { available } = await import('./integrations.js');
     const a = await available(true);
@@ -280,6 +290,40 @@ function stepBody(ctx, st, redraw) {
     case 'job': return h('div', { class: 'row' }, ui.button('New job', { variant: 'primary', size: 'sm', icon: 'plus', href: '#/jobs?new=1' }), ui.button('Import jobs', { size: 'sm', icon: 'upload', href: '#/import?target=jobs' }));
     case 'plans': return h('div', { class: 'row' }, ui.button('Open Drawings', { variant: 'primary', size: 'sm', icon: 'layers', href: '#/drawings' }),
       h('span', { class: 'muted' }, 'Use Import PDF; a multi-page set becomes one sheet per page.'));
+    case 'resisetup': {
+      const laneOn = switchOn(store.settings(), 'booking');
+      if (!laneOn) {
+        return h('div', { class: 'stack' },
+          h('p', { class: 'muted', style: { margin: 0 } }, 'Turns on online booking + the service-request inbox, the Get paid close-out flow, and residential service plans. Each stays yours to switch off again in Settings → Modules.'),
+          h('div', { class: 'row' }, ui.button('Turn on the tools', { variant: 'primary', size: 'sm', icon: 'check', onClick: () => {
+            const m = { ...(store.settings().modules || {}) };
+            for (const id of RESI_SWITCHES) m[id] = true;
+            store.saveSettings({ modules: m });
+            ui.toast('Residential service tools turned on', 'success');
+            redraw();
+          } })));
+      }
+      const server = store.meta?.(FACTS_META) || {};
+      const reviewUrl = s.notifications?.review?.url || '';
+      const plans = store.count('serviceMemberships');
+      const origin = (typeof location !== 'undefined' && location.origin) || '';
+      const link = server.bookingSlug ? hostedLink(origin, server.bookingSlug) : '';
+      const item = (ok, label, detail, action) => h('div', { class: 'row ob-resi-item' },
+        h('span', { class: 'ob-tick', 'aria-hidden': 'true' }, ok ? '✓' : '○'),
+        h('span', { class: 'grow' }, h('span', null, label), detail ? h('span', { class: 'muted', style: { marginLeft: 'var(--s2)' } }, detail) : null),
+        action);
+      return h('div', { class: 'stack' },
+        item(Boolean(server.bookingEnabled), 'Booking page', server.bookingEnabled ? 'Live' : 'Claim your link',
+          ui.button(server.bookingEnabled ? 'Manage' : 'Set up', { size: 'sm', icon: 'link', href: '#/servicerequests' })),
+        link ? h('div', { class: 'row' },
+          h('input', { class: 'input mono', readonly: true, value: link, 'aria-label': 'Booking link', onFocus: (e) => e.target.select() }),
+          ui.button('Copy', { size: 'sm', icon: 'copy', onClick: () => { try { navigator.clipboard?.writeText(link); ui.toast('Booking link copied', 'success'); } catch { /* clipboard blocked */ } } })) : null,
+        item(Boolean(reviewUrl), 'Review request link', reviewUrl ? 'Set' : 'Add your Google review link',
+          ui.button('Open', { size: 'sm', icon: 'settings', href: '#/settings' })),
+        item(plans > 0, 'Service plans', plans ? `${plans} plan${plans === 1 ? '' : 's'}` : 'Create a membership',
+          ui.button('Open', { size: 'sm', icon: 'dollar', href: '#/memberships' })),
+        h('p', { class: 'muted', style: { margin: 0 } }, 'Get paid (close-out) and the on-the-way / review-ask emails are ready once the link above is live.'));
+    }
     default: return null;
   }
 }

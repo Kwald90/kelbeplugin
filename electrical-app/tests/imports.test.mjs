@@ -386,13 +386,13 @@ test('onboarding steps tick themselves off from real data', async () => {
   const { detectSteps, progress, showFor } = await import('../js/modules/onboarding.js');
   const { DEFAULT_SETTINGS } = await import('../js/store.js');
   const fresh = detectSteps({ settings: structuredClone(DEFAULT_SETTINGS), synced: true, items: 0, jobs: 0, planSets: 0, employees: 1, server: { members: 1 } });
-  assert.equal(fresh.length, 9);
+  assert.equal(fresh.length, 10);
   assert.equal(progress(fresh).done, 0);
   assert.equal(progress(fresh).next.id, 'company');
   const s = structuredClone(DEFAULT_SETTINGS);
   Object.assign(s.company, { name: 'TG Electrical', phone: '403-555-0100', gstHstNo: '123456789 RT0001', province: 'AB', logo: 'data:image/png;base64,xx' });
   s.labourRateCents = 11000;
-  s.onboarding = { skipped: { plans: true } };
+  s.onboarding = { skipped: { plans: true, resisetup: true } };
   const steps = detectSteps({ settings: s, synced: true, items: 120, jobs: 1, planSets: 0, employees: 3, server: { members: 4, pins: 2, payments: true } });
   const by = Object.fromEntries(steps.map((x) => [x.id, x]));
   for (const id of ['company', 'province', 'logo', 'rates', 'pricebook', 'crew', 'connect', 'job']) assert.ok(by[id].done, id);
