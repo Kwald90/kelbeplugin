@@ -393,3 +393,18 @@ html.is-printing .sheet { position: static; box-shadow: none; border: 0; width: 
   .app:not(.nav-compact) .doc-layout { grid-template-columns: 1fr; }
   .app:not(.nav-compact) .doc-side { position: static; }
 }
+
+/* Global quick-find overlay (openSearch in app.js). */
+.search-wrap { display: flex; flex-direction: column; gap: var(--s2); min-height: 38vh; }
+.search-input { width: 100%; }
+.search-results { display: flex; flex-direction: column; gap: 2px; max-height: 60vh; overflow: auto; }
+.search-item {
+  display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left;
+  padding: 0.5rem 0.6rem; border: 0; background: none; border-radius: 8px; cursor: pointer; color: var(--text); font: inherit;
+}
+.search-item:hover, .search-item.sel { background: var(--surface-2); }
+.search-item.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+.search-item-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.search-item-label { font-weight: 600; }
+.search-item-hint { font-size: var(--fs-sm); }
+.search-empty { padding: var(--s3); text-align: center; }

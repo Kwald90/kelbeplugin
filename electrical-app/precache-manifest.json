@@ -167,6 +167,7 @@
   "./js/lib/qbo-export.js",
   "./js/lib/qbo-ui.js",
   "./js/lib/qr.js",
+  "./js/lib/quickfind.js",
   "./js/lib/receivables.js",
   "./js/lib/reorder.js",
   "./js/lib/rfis.js",

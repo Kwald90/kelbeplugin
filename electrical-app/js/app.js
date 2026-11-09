@@ -19,7 +19,8 @@ import { createSync } from './sync.js';
 import { FEATURE_PLAN, hasFeature } from './plans.js';
 import { notifyBell } from './modules/notifications.js';
 import { quickReceipt } from './modules/purchasing.js';
-import { moduleOn, linkOn, hrefModule, SWITCHES } from './lib/modules.js';
+import { moduleOn, linkOn, hrefModule, SWITCHES, switchOn } from './lib/modules.js';
+import { searchEntries, rankEntries } from './lib/quickfind.js';
 import { primaryNavigation, navigationLabel } from './lib/navigation.js';
 import { WHEEL, wheelPrefs, orderWheel, addedShortcuts } from './lib/wheel.js';
 
@@ -42,6 +43,8 @@ let landed = false;
 
 let main, rail, cleanup = null;
 let moreSheet = null;
+let searchSheet = null;
+let searchKeyBound = false;
 let navStatusObserver = null;
 let mode = null; // 'synced' | 'demo'
 let sync = null;
@@ -228,6 +231,9 @@ function openMore() {
     onClose: () => { moreSheet = null; trigger.setAttribute('aria-expanded', 'false'); },
     body: (close) => {
       const body = h('nav', { class: 'more-navigation', 'aria-label': 'All destinations' });
+      body.append(h('section', null, h('div', { class: 'more-links' },
+        h('button', { type: 'button', class: 'rail-btn', onClick: () => { close(); openSearch(); } },
+          icon('search', 22), h('span', { class: 'nav-label' }, 'Search features & options')))));
       for (const [group, label] of Object.entries(GROUPS)) {
         const items = visibleModules().filter((m) => m.group === group);
         if (!items.length) continue;
@@ -254,8 +260,66 @@ function openMore() {
   });
 }
 
+// Global quick-find: type to jump to any screen or turn-on/off option. Ctrl/Cmd+K, the rail's
+// Search button, or "Search" in More. Reuses the module + switch registries (lib/quickfind.js).
+function openSearch() {
+  if (searchSheet) { searchSheet.el?.querySelector('.search-input')?.focus(); return; }
+  moreSheet?.close();
+  const entries = searchEntries({
+    modules: MODULES, switches: SWITCHES, groups: GROUPS,
+    canAccess: (perm) => auth.can(perm), isEnabled: (id) => moduleEnabled(id),
+    isSwitchOn: (id) => switchOn(store.settings(), id), label: navigationLabel,
+    includeOptions: auth.can('settings'),
+  });
+  let results = rankEntries(entries, '');
+  let sel = 0;
+  const input = h('input', { type: 'search', class: 'input search-input', placeholder: 'Search features and options…', 'aria-label': 'Search features and options', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'go' });
+  const list = h('div', { class: 'search-results', role: 'listbox', 'aria-label': 'Results' });
+  const closeSearch = () => searchSheet?.close();
+  const activate = (i) => { const e = results[i]; if (!e) return; closeSearch(); nav(e.target); };
+  const paintSel = () => {
+    [...list.children].forEach((c, i) => { if (c.classList) { c.classList.toggle('sel', i === sel); c.setAttribute('aria-selected', String(i === sel)); } });
+    list.children[sel]?.scrollIntoView?.({ block: 'nearest' });
+  };
+  const render = () => {
+    ui.clear(list);
+    if (!results.length) { list.append(h('div', { class: 'search-empty muted' }, 'No matches. Try another word.')); return; }
+    results.forEach((e, i) => {
+      list.append(h('button', {
+        type: 'button', class: ['search-item', i === sel ? 'sel' : null], role: 'option', 'aria-selected': String(i === sel),
+        onMouseenter: () => { sel = i; paintSel(); }, onClick: () => activate(i),
+      },
+      icon(e.icon || 'file-text', 18),
+      h('span', { class: 'search-item-main' },
+        h('span', { class: 'search-item-label' }, e.label),
+        e.hint ? h('span', { class: 'search-item-hint muted' }, e.hint) : null),
+      e.kind === 'option'
+        ? ui.badge(e.enabled ? 'On' : 'Off', e.enabled ? 'success' : 'neutral')
+        : (e.enabled ? null : ui.badge('Off', 'neutral'))));
+    });
+  };
+  input.addEventListener('input', () => { results = rankEntries(entries, input.value); sel = 0; render(); });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); sel = Math.min(sel + 1, results.length - 1); paintSel(); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); sel = Math.max(sel - 1, 0); paintSel(); }
+    else if (ev.key === 'Enter') { ev.preventDefault(); activate(sel); }
+  });
+  render();
+  searchSheet = ui.openSheet({
+    title: 'Search', initialFocus: '.search-input',
+    onClose: () => { searchSheet = null; },
+    body: h('div', { class: 'search-wrap' }, input, list),
+  });
+}
+
 function buildRail() {
   rail = h('nav', { class: 'rail', 'aria-label': 'Main' });
+  if (!searchKeyBound) {
+    searchKeyBound = true;
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); openSearch(); }
+    });
+  }
   const collapse = h('button', { type: 'button', class: 'rail-btn rail-collapse', title: 'Collapse navigation', 'aria-label': 'Collapse navigation', onClick: () => {
     const compact = !shell.classList.contains('nav-compact');
     shell.classList.toggle('nav-compact', compact);
@@ -266,6 +330,8 @@ function buildRail() {
   } }, icon('menu', 20));
   rail.append(h('div', { class: 'rail-head' },
     h('a', { class: 'rail-logo', href: FIELD_ROLES.includes(auth.role()) && auth.can('today') && moduleEnabled('today') && moduleUnlocked('today') ? '#/today' : '#/dashboard', title: BRAND.name, 'aria-label': BRAND.name }, icon('zap', 22), h('span', { class: 'nav-label' }, BRAND.name)), collapse));
+  rail.append(h('button', { type: 'button', class: 'rail-btn rail-search', 'aria-label': 'Search features and options', title: 'Search (Ctrl K)', onClick: openSearch },
+    icon('search', 20), h('span', { class: 'nav-label' }, 'Search'), h('span', { class: 'tip' }, 'Search')));
   const list = h('div', { class: 'rail-destinations' });
   for (const [group, label] of Object.entries(GROUPS)) {
     const items = visibleModules().filter((m) => m.group === group);
