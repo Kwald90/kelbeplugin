@@ -148,6 +148,12 @@ export const COLLECTION_FEATURES = {
   // Punch list / deficiencies and the jobsite daily log (Fully Loaded and up).
   punchItems: ['punchlist'],
   dailyLogs: ['dailylog'],
+  faVerifications: ['faverification'],
+  irInspections: ['irinspection'],
+  rfis: ['rfis'],
+  submittals: ['submittals'],
+  drawingRevisions: ['drawingrevisions'],
+  procurementItems: ['procurement'],
 };
 
 /**

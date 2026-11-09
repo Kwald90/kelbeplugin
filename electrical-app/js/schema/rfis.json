@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/rfis.json",
+  "title": "RFI (Request for Information)",
+  "description": "A Request for Information raised to the GC or engineer on a job: an auto number per job, a subject and the question, a discipline, who it is to, dates raised and needed-by, a status (open/answered/closed), the answer with its date, cost/schedule impact flags and attachments/photos. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "number": { "type": ["integer", "null"], "minimum": 0, "maximum": 1000000 },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "subject": { "type": ["string", "null"], "maxLength": 200 },
+    "discipline": { "type": ["string", "null"], "maxLength": 80 },
+    "question": { "type": ["string", "null"], "maxLength": 5000 },
+    "status": { "enum": ["open", "answered", "closed", null] },
+    "dateRaised": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "neededBy": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "toName": { "type": ["string", "null"], "maxLength": 200 },
+    "answer": { "type": ["string", "null"], "maxLength": 5000 },
+    "answeredDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "answeredBy": { "type": ["string", "null"], "maxLength": 128 },
+    "costImpact": { "type": ["boolean", "null"] },
+    "scheduleImpact": { "type": ["boolean", "null"] },
+    "notes": { "type": ["string", "null"], "maxLength": 2000 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 },
+    "photos": {
+      "type": ["array", "null"],
+      "maxItems": 8,
+      "description": "Attachments/photos, downscaled JPEG data URLs (~400 KB each). Move to object storage later.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "dataUrl": {
+            "type": ["string", "null"],
+            "maxLength": 600000,
+            "pattern": "^(data:image/(jpeg|png|webp);base64,.*)?$"
+          },
+          "caption": { "type": ["string", "null"], "maxLength": 200 },
+          "takenAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+          "width": { "type": ["number", "null"] },
+          "height": { "type": ["number", "null"] }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -18,6 +18,9 @@ export const COLLECTIONS = [
   'walkthroughs', 'assemblies', 'serviceAgreements', 'assets', 'commissioningTests',
   'controlPanels',
   'punchItems', 'dailyLogs',
+  'faVerifications', 'irInspections',
+  'rfis', 'submittals',
+  'drawingRevisions', 'procurementItems',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -224,6 +227,36 @@ const DEFS = {
   dailyLogs: {
     table: 'daily_logs', gen: [JOB, DAY], read: ['jobs'], write: ['jobs'],
     portal: null, maxBytes: 6 * MB, migration: '0173',
+  },
+  // Fire-alarm verification (migration 0174): CAN/ULC S537 device-by-device verification + certificate.
+  faVerifications: {
+    table: 'fa_verifications', gen: [JOB, CLIENT, g('result', 'overallResult')], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 512 * KB, migration: '0174',
+  },
+  // Thermal / IR inspection (migration 0175): infrared survey findings + thermal/visible photos.
+  irInspections: {
+    table: 'ir_inspections', gen: [JOB, CLIENT, g('asset_id', 'assetId')], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 64 * MB, migration: '0175',
+  },
+  // RFI log (migration 0177): requests for information to the GC / engineer.
+  rfis: {
+    table: 'rfis', gen: [JOB, STATUS, NUMBER], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 4 * MB, migration: '0177',
+  },
+  // Submittal log (migration 0178): shop drawings / product data review cycle.
+  submittals: {
+    table: 'submittals', gen: [JOB, STATUS, NUMBER], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 4 * MB, migration: '0178',
+  },
+  // Drawing register (migration 0179): current-rev transmittal register (not the drawings canvas).
+  drawingRevisions: {
+    table: 'drawing_revisions', gen: [JOB, NUMBER, STATUS], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 256 * KB, migration: '0179',
+  },
+  // Procurement / long-lead log (migration 0180): long-lead gear, risk-flagged.
+  procurementItems: {
+    table: 'procurement_items', gen: [JOB, STATUS, g('purchase_order_id', 'purchaseOrderId')], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 128 * KB, migration: '0180',
   },
 };
 

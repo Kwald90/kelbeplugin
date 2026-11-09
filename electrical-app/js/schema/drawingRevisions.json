@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/drawingRevisions.json",
+  "title": "Drawing register entry",
+  "description": "One construction drawing on a job in the revision register: its number, title, discipline, the revision currently in force and a history of every revision received (rev, date, description, received-from, superseded flag), with a status (current / superseded / void). A transmittal register, not the drawings/canvas collection. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "number": { "type": ["string", "null"], "maxLength": 80 },
+    "title": { "type": ["string", "null"], "maxLength": 200 },
+    "discipline": { "type": ["string", "null"], "maxLength": 40 },
+    "currentRev": { "type": ["string", "null"], "maxLength": 40 },
+    "status": { "enum": ["current", "superseded", "void", null] },
+    "notes": { "type": ["string", "null"], "maxLength": 2000 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 },
+    "revHistory": {
+      "type": ["array", "null"],
+      "maxItems": 100,
+      "description": "Every revision received for this drawing, oldest to newest.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "rev": { "type": ["string", "null"], "maxLength": 40 },
+          "date": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+          "description": { "type": ["string", "null"], "maxLength": 1000 },
+          "receivedFrom": { "type": ["string", "null"], "maxLength": 200 },
+          "superseded": { "type": ["boolean", "null"] }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

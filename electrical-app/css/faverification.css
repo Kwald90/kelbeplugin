@@ -1,0 +1,44 @@
+/* Fire-alarm verification (modules/faverification.js). Tokens only. Loaded by the module. */
+.fa-summary { font-size: var(--fs-sm); }
+.fa-hint { font-size: var(--fs-sm); margin: 0 0 var(--s2); }
+.fa-devhead { align-items: center; gap: var(--s2); }
+.fa-devices { display: flex; flex-direction: column; gap: var(--s2); }
+.fa-device { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s2); background: var(--surface-2, transparent); }
+.fa-device-top { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
+.fa-devnum { font-weight: 700; color: var(--text-muted); min-width: 2em; }
+.fa-devres { margin-left: auto; }
+.fa-checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--s1) var(--s2); margin-bottom: var(--s2); }
+.fa-checkwrap { display: flex; flex-direction: column; gap: 2px; }
+.fa-checklbl { font-size: var(--fs-sm); color: var(--text-muted); }
+.fa-check { width: 100%; }
+.fa-addrow { display: inline-flex; align-items: center; gap: var(--s1); border: 1px dashed var(--border); border-radius: var(--radius); padding: var(--s2); background: none; color: var(--text); cursor: pointer; }
+.fa-addrow:hover { background: var(--surface-2, transparent); }
+
+@media (max-width: 720px) {
+  .fa-device-top { gap: var(--s1); }
+}
+
+/* Printable CAN/ULC S537 verification certificate. */
+.fa-print { display: none; }
+@media print {
+  body.fa-printing > *:not(.fa-print) { display: none !important; }
+  body.fa-printing { overflow: visible; }
+  body.fa-printing .fa-print { display: block; color-scheme: light; color: CanvasText; background: Canvas; }
+}
+.fa-doc { font-size: 12px; line-height: 17px; }
+.fa-doc h1 { font-size: 22px; line-height: 28px; margin: var(--s3) 0 var(--s1); }
+.fa-doc h2 { font-size: 14px; margin: var(--s4) 0 var(--s2); border-bottom: 1px solid GrayText; padding-bottom: 2px; }
+.fa-doc table { width: 100%; border-collapse: collapse; margin-bottom: var(--s2); }
+.fa-doc th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: GrayText; padding: 4px; border-bottom: 1px solid CanvasText; }
+.fa-doc td { padding: 4px; border-bottom: 1px solid GrayText; vertical-align: top; }
+.fa-doc .fa-c { text-align: center; }
+.fa-doc-top { display: flex; justify-content: space-between; gap: var(--s4); padding-bottom: var(--s2); border-bottom: 3px solid var(--accent-fill); }
+.fa-doc-brand { font-size: 18px; font-weight: 800; }
+.fa-doc-small { font-size: 11px; color: GrayText; }
+.fa-doc-right { text-align: right; }
+.fa-doc-kind { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: GrayText; }
+.fa-doc .fa-kv th { border-bottom: 1px solid GrayText; white-space: nowrap; }
+.fa-sign { display: flex; gap: var(--s4); margin-top: var(--s5, 24px); }
+.fa-sign > div { flex: 1; }
+.fa-sign-line { border-top: 1px solid CanvasText; margin-top: 28px; }
+.fa-doc-foot { font-size: 10px; color: GrayText; margin-top: var(--s3); }

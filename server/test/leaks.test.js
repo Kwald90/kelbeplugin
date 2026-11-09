@@ -175,7 +175,9 @@ describe('public endpoints and URLs', { skip }, () => {
       // ERP features: a site-asset type code (panel/generator/…) and the asset id a commissioning test links to
       'type', 'assetId',
       // punch list: a severity code (low/med/high) and the assigned employee's id — both ids/codes, no PII
-      'severity', 'assigneeId']);
+      'severity', 'assigneeId',
+      // fire-alarm verification: the overall result code (pass/fail/incomplete), no PII
+      'overallResult']);
     for (const [path, ops] of Object.entries(spec.paths)) {
       for (const op of Object.values(ops)) {
         for (const p of op.parameters || []) {

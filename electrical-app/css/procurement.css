@@ -1,0 +1,37 @@
+/* Procurement / long-lead log (modules/procurement.js). Tokens only. Loaded by the module. */
+.pr-stats { grid-template-columns: repeat(4, 1fr); gap: var(--s2); }
+.pr-toolbar { gap: var(--s2); align-items: center; flex-wrap: wrap; }
+.pr-filter { max-width: 320px; }
+.pr-tabs { margin: var(--s2) 0; }
+.pr-desc { font-weight: 600; }
+.pr-sub { font-size: var(--fs-sm); }
+.pr-risk { color: var(--danger); font-weight: 600; }
+.pr-statuscell { display: inline-flex; align-items: center; gap: var(--s1); flex-wrap: wrap; }
+.pr-riskline { display: flex; align-items: center; gap: var(--s2); }
+.pr-risknote { font-size: var(--fs-sm); }
+
+@media (max-width: 720px) {
+  .pr-stats { grid-template-columns: 1fr 1fr; }
+  .pr-filter { max-width: none; }
+}
+
+/* Printable procurement / long-lead log. */
+.pr-print { display: none; }
+@media print {
+  body.pr-printing > *:not(.pr-print) { display: none !important; }
+  body.pr-printing { overflow: visible; }
+  body.pr-printing .pr-print { display: block; color-scheme: light; color: CanvasText; background: Canvas; }
+}
+.pr-doc { font-size: 12px; line-height: 17px; }
+.pr-doc h1 { font-size: 22px; line-height: 28px; margin: var(--s3) 0 var(--s1); }
+.pr-doc table { width: 100%; border-collapse: collapse; margin-bottom: var(--s2); }
+.pr-doc th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: GrayText; padding: 4px; border-bottom: 1px solid CanvasText; }
+.pr-doc td { padding: 4px; border-bottom: 1px solid GrayText; vertical-align: top; }
+.pr-doc .pr-c { text-align: center; font-variant-numeric: tabular-nums; }
+.pr-doc .pr-row-risk td { background: color-mix(in srgb, var(--danger) 10%, Canvas); }
+.pr-doc-risk { font-size: 10px; color: GrayText; }
+.pr-doc-top { display: flex; justify-content: space-between; gap: var(--s4); padding-bottom: var(--s2); border-bottom: 3px solid var(--accent-fill); }
+.pr-doc-brand { font-size: 18px; font-weight: 800; }
+.pr-doc-small { font-size: 11px; color: GrayText; }
+.pr-doc-right { text-align: right; }
+.pr-doc-kind { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: GrayText; }

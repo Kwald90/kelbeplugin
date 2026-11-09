@@ -40,6 +40,9 @@ export const COLLECTIONS = [
   'walkthroughs', 'assemblies', 'serviceAgreements', 'assets', 'commissioningTests',
   'controlPanels',
   'punchItems', 'dailyLogs',
+  'faVerifications', 'irInspections',
+  'rfis', 'submittals',
+  'drawingRevisions', 'procurementItems',
 ];
 
 export const DEFAULT_SETTINGS = {

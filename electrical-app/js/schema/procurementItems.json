@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/procurementItems.json",
+  "title": "Procurement / long-lead item",
+  "description": "A piece of long-lead gear to procure for a job (switchgear, transformer, panel): a job link, description, vendor, an optional purchase-order link by id, quantity, a pipeline status (to-order/quoted/ordered/released/shipped/delivered), order/promised/need-by dates, lead time in weeks, a delivered flag and notes. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "description": { "type": ["string", "null"], "maxLength": 300 },
+    "vendor": { "type": ["string", "null"], "maxLength": 200 },
+    "purchaseOrderId": { "type": ["string", "null"], "maxLength": 128 },
+    "quantity": { "type": ["number", "null"] },
+    "status": { "enum": ["to-order", "quoted", "ordered", "released", "shipped", "delivered", null] },
+    "orderDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "promisedDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "needByDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "leadTimeWeeks": { "type": ["number", "null"] },
+    "delivered": { "type": ["boolean", "null"] },
+    "deliveredDate": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "notes": { "type": ["string", "null"], "maxLength": 2000 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 }
+  },
+  "additionalProperties": true
+}

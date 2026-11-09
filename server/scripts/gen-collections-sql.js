@@ -152,7 +152,7 @@ GRANT SELECT ON record_history, sync_mutations TO fishtape_hq;
 }
 
 /** Later migrations that create collection tables: version -> file name. */
-export const LATER = { '0100': '0100_workplan.sql', '0110': '0110_safety.sql', '0130': '0130_material_requests.sql', '0141': '0141_location.sql', '0151': '0151_purchasing.sql', '0161': '0161_r1_collections.sql', '0164': '0164_walkthroughs.sql', '0165': '0165_assemblies.sql', '0166': '0166_service.sql', '0167': '0167_commissioning.sql', '0171': '0171_controlpanels.sql', '0172': '0172_punchlist.sql', '0173': '0173_daily_logs.sql' };
+export const LATER = { '0100': '0100_workplan.sql', '0110': '0110_safety.sql', '0130': '0130_material_requests.sql', '0141': '0141_location.sql', '0151': '0151_purchasing.sql', '0161': '0161_r1_collections.sql', '0164': '0164_walkthroughs.sql', '0165': '0165_assemblies.sql', '0166': '0166_service.sql', '0167': '0167_commissioning.sql', '0171': '0171_controlpanels.sql', '0172': '0172_punchlist.sql', '0173': '0173_daily_logs.sql', '0174': '0174_faverification.sql', '0175': '0175_irinspection.sql', '0177': '0177_rfis.sql', '0178': '0178_submittals.sql', '0179': '0179_drawing_revisions.sql', '0180': '0180_procurement.sql' };
 export const laterFile = (version) => fileURLToPath(new URL(`../migrations/${LATER[version]}`, import.meta.url));
 
 /** The tables of the collections whose registry entry says `migration: version`, made exactly like 0003's. */

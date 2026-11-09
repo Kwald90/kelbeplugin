@@ -60,6 +60,12 @@
     "commissioningTests": "./commissioningTests.json",
     "controlPanels": "./controlPanels.json",
     "punchItems": "./punchItems.json",
-    "dailyLogs": "./dailyLogs.json"
+    "dailyLogs": "./dailyLogs.json",
+    "faVerifications": "./faVerifications.json",
+    "irInspections": "./irInspections.json",
+    "rfis": "./rfis.json",
+    "submittals": "./submittals.json",
+    "drawingRevisions": "./drawingRevisions.json",
+    "procurementItems": "./procurementItems.json"
   }
 }

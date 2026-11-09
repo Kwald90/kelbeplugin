@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/irInspections.json",
+  "title": "Thermal / IR inspection report",
+  "description": "A thermographic (infrared) survey of electrical equipment: the target (panel/equipment, optionally a job and a site asset), survey date, the camera and emissivity, and a list of findings (location, measured and reference/ambient °C, ΔT, a severity band, a recommended action and a thermal + a visible photo), plus an overall summary. Severity bands are NETA-style defaults, overridable per finding. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "assetId": { "type": ["string", "null"], "maxLength": 128 },
+    "target": { "type": ["string", "null"], "maxLength": 200 },
+    "date": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "inspector": { "type": ["string", "null"], "maxLength": 200 },
+    "instrument": { "type": ["string", "null"], "maxLength": 200 },
+    "emissivity": { "type": ["number", "null"] },
+    "ambientC": { "type": ["number", "null"] },
+    "summary": { "type": ["string", "null"], "maxLength": 4000 },
+    "notes": { "type": ["string", "null"], "maxLength": 4000 },
+    "signatureId": { "type": ["string", "null"], "maxLength": 128 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 },
+    "findings": {
+      "type": ["array", "null"],
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "location": { "type": ["string", "null"], "maxLength": 200 },
+          "component": { "type": ["string", "null"], "maxLength": 200 },
+          "loadAmps": { "type": ["number", "null"] },
+          "measuredC": { "type": ["number", "null"] },
+          "referenceC": { "type": ["number", "null"] },
+          "deltaC": { "type": ["number", "null"] },
+          "severity": { "enum": ["", "none", "investigate", "repair-scheduled", "repair-immediate", null] },
+          "action": { "type": ["string", "null"], "maxLength": 500 },
+          "notes": { "type": ["string", "null"], "maxLength": 1000 },
+          "thermalPhotos": {
+            "type": ["array", "null"],
+            "maxItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": ["string", "null"], "maxLength": 128 },
+                "dataUrl": { "type": ["string", "null"], "maxLength": 600000, "pattern": "^(data:image/(jpeg|png|webp);base64,.*)?$" },
+                "caption": { "type": ["string", "null"], "maxLength": 200 },
+                "takenAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+                "width": { "type": ["number", "null"] },
+                "height": { "type": ["number", "null"] }
+              }
+            }
+          },
+          "visiblePhotos": {
+            "type": ["array", "null"],
+            "maxItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": ["string", "null"], "maxLength": 128 },
+                "dataUrl": { "type": ["string", "null"], "maxLength": 600000, "pattern": "^(data:image/(jpeg|png|webp);base64,.*)?$" },
+                "caption": { "type": ["string", "null"], "maxLength": 200 },
+                "takenAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+                "width": { "type": ["number", "null"] },
+                "height": { "type": ["number", "null"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

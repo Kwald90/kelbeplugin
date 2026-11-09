@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/faVerifications.json",
+  "title": "Fire-alarm verification (CAN/ULC S537)",
+  "description": "A fire-alarm system verification for a building: panel/system info, a device list with per-device checks (installed, correct type/location, alarm received at panel, annunciation, audibility/visibility), the standby-battery check, an overall result and the verifier's name and date. Records what the tech observed, not S537 pass/fail thresholds. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "building": { "type": ["string", "null"], "maxLength": 200 },
+    "address": { "type": ["string", "null"], "maxLength": 300 },
+    "stage": { "enum": ["initial", "reverification", "annual", null] },
+    "panelMake": { "type": ["string", "null"], "maxLength": 120 },
+    "panelModel": { "type": ["string", "null"], "maxLength": 120 },
+    "panelType": { "enum": ["", "conventional", "addressable", null] },
+    "zones": { "type": ["number", "null"] },
+    "date": { "type": ["string", "null"], "maxLength": 10, "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$" },
+    "verifierName": { "type": ["string", "null"], "maxLength": 200 },
+    "verifierCert": { "type": ["string", "null"], "maxLength": 120 },
+    "overallResult": { "enum": ["pass", "fail", "incomplete", null] },
+    "notes": { "type": ["string", "null"], "maxLength": 4000 },
+    "signatureId": { "type": ["string", "null"], "maxLength": 128 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 },
+    "battery": {
+      "type": ["object", "null"],
+      "properties": {
+        "voltageV": { "type": ["number", "null"] },
+        "alarmVoltageV": { "type": ["number", "null"] },
+        "batteryAh": { "type": ["number", "null"] },
+        "standbyOk": { "enum": ["", "pass", "fail", "na", null] },
+        "alarmOk": { "enum": ["", "pass", "fail", "na", null] },
+        "notes": { "type": ["string", "null"], "maxLength": 1000 }
+      }
+    },
+    "devices": {
+      "type": ["array", "null"],
+      "maxItems": 400,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "type": { "enum": ["smoke", "heat", "duct", "pull", "strobe", "horn", "speaker", "module", "other", null] },
+          "location": { "type": ["string", "null"], "maxLength": 200 },
+          "zone": { "type": ["string", "null"], "maxLength": 60 },
+          "address": { "type": ["string", "null"], "maxLength": 60 },
+          "notes": { "type": ["string", "null"], "maxLength": 500 },
+          "checks": {
+            "type": ["object", "null"],
+            "properties": {
+              "installed": { "enum": ["", "pass", "fail", "na", null] },
+              "correctType": { "enum": ["", "pass", "fail", "na", null] },
+              "alarmAtPanel": { "enum": ["", "pass", "fail", "na", null] },
+              "annunciation": { "enum": ["", "pass", "fail", "na", null] },
+              "audibilityVisibility": { "enum": ["", "pass", "fail", "na", null] }
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

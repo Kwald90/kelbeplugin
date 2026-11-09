@@ -1,0 +1,46 @@
+/* Thermal / IR inspection (modules/irinspection.js). Tokens only. Loaded by the module. */
+.ir-summary { font-size: var(--fs-sm); }
+.ir-hint { font-size: var(--fs-sm); margin: 0 0 var(--s2); }
+.ir-findhead { align-items: center; gap: var(--s2); }
+.ir-findings { display: flex; flex-direction: column; gap: var(--s2); }
+.ir-finding { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s2); background: var(--surface-2, transparent); }
+.ir-finding-top { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
+.ir-fnum { font-weight: 700; color: var(--text-muted); min-width: 2em; }
+.ir-delta { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: var(--fs-sm); }
+.ir-sevbadge { margin-left: auto; }
+.ir-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--s1) var(--s2); margin-bottom: var(--s2); }
+.ir-f { display: flex; flex-direction: column; gap: 2px; }
+.ir-flbl { font-size: var(--fs-sm); color: var(--text-muted); }
+.ir-photos { display: flex; gap: var(--s3); flex-wrap: wrap; }
+.ir-photoblock { display: flex; flex-direction: column; gap: 2px; }
+.ir-photolbl { font-size: var(--fs-sm); }
+.ir-addrow { display: inline-flex; align-items: center; gap: var(--s1); border: 1px dashed var(--border); border-radius: var(--radius); padding: var(--s2); background: none; color: var(--text); cursor: pointer; }
+.ir-addrow:hover { background: var(--surface-2, transparent); }
+
+/* Printable IR inspection report. */
+.ir-print { display: none; }
+@media print {
+  body.ir-printing > *:not(.ir-print) { display: none !important; }
+  body.ir-printing { overflow: visible; }
+  body.ir-printing .ir-print { display: block; color-scheme: light; color: CanvasText; background: Canvas; }
+}
+.ir-doc { font-size: 12px; line-height: 17px; }
+.ir-doc h1 { font-size: 22px; line-height: 28px; margin: var(--s3) 0 var(--s1); }
+.ir-doc h2 { font-size: 14px; margin: var(--s4) 0 var(--s2); border-bottom: 1px solid GrayText; padding-bottom: 2px; }
+.ir-doc table { width: 100%; border-collapse: collapse; margin-bottom: var(--s2); }
+.ir-doc th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: GrayText; padding: 4px; border-bottom: 1px solid GrayText; white-space: nowrap; }
+.ir-doc td { padding: 4px; border-bottom: 1px solid GrayText; vertical-align: top; }
+.ir-doc-top { display: flex; justify-content: space-between; gap: var(--s4); padding-bottom: var(--s2); border-bottom: 3px solid var(--accent-fill); }
+.ir-doc-brand { font-size: 18px; font-weight: 800; }
+.ir-doc-small { font-size: 11px; color: GrayText; }
+.ir-doc-right { text-align: right; }
+.ir-doc-kind { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: GrayText; }
+.ir-doc-finding { margin-bottom: var(--s3); page-break-inside: avoid; }
+.ir-doc-fhead { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s2); border-bottom: 1px solid GrayText; padding-bottom: 2px; }
+.ir-doc-sev { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border: 1px solid CanvasText; border-radius: 3px; }
+.ir-doc-sev.ir-sev-repair-immediate { border-width: 2px; }
+.ir-doc-imgs { display: flex; gap: var(--s3); margin-top: var(--s1); }
+.ir-doc-imgs figure { margin: 0; }
+.ir-doc-imgs img { max-width: 260px; max-height: 200px; border: 1px solid GrayText; }
+.ir-doc-imgs figcaption { font-size: 10px; color: GrayText; text-align: center; }
+.ir-doc-foot { font-size: 10px; color: GrayText; margin-top: var(--s3); }

@@ -16,6 +16,9 @@ import { sizeTransformer, PHASES as XF_PHASES } from '../lib/transformer.js';
 import { pull as cablePull, N_PER_LBF } from '../lib/cable-pull.js';
 import { ductBankAmpacity, MATERIALS as DB_MATERIALS } from '../lib/ductbank.js';
 import { evaluateTest as groundTest, potentialProbeDistance, TARGETS as GND_TARGETS } from '../lib/grounding-test.js';
+import { solarPv, CONNECTION as PV_CONNECTION } from '../lib/solar-pv.js';
+import { sizeEss, CHEMISTRIES as ESS_CHEMISTRIES } from '../lib/ess.js';
+import { sizeGenerator, PHASES as GEN_PHASES } from '../lib/generator.js';
 
 const FT2 = M_PER_FT * M_PER_FT; // m² per ft²
 const ML_PER_IN3 = 16.387064;
@@ -40,6 +43,9 @@ const TABS = [
   { id: 'cablepull', label: 'Cable pull' },
   { id: 'ductbank', label: 'Duct bank' },
   { id: 'ground', label: 'Ground test' },
+  { id: 'solarpv', label: 'Solar PV' },
+  { id: 'ess', label: 'Battery (ESS)' },
+  { id: 'generator', label: 'Generator / ATS' },
 ];
 
 const MATERIALS = [{ value: 'cu', label: 'Copper' }, { value: 'al', label: 'Aluminum' }];
@@ -1135,11 +1141,186 @@ function groundTab() {
   });
 }
 
+// ===========================================================================
+// Renewable / standby engineering calculators (code-book-neutral; shown under
+// both books). Math in lib/solar-pv.js, lib/ess.js, lib/generator.js. Each cites
+// CEC Section 64 / 46 rules, reuses the CEC conductor/rating engine, and marks
+// VERIFY on anything not confirmed against CSA C22.1:24. Screening aids, not
+// stamped designs.
+// ===========================================================================
+
+// A short "design aid — confirm against the printed CEC and your AHJ" footer, mirroring arc flash.
+function designAidNote(extra) {
+  return h('p', { class: 'calc-disclaimer' }, ui.icon('info', 16),
+    ` Design aid — confirm against the printed CSA C22.1:24 (CEC 2024), the utility and the equipment datasheets, and your AHJ before you install. Section 64 / 46 rule numbers below are marked VERIFY where not confirmed.${extra ? ' ' + extra : ''}`);
+}
+
+// -- 1. Solar PV sizing + CEC Section 64 interconnection ---------------------
+function solarPvTab() {
+  const D = {
+    moduleWp: 400, vocStc: 49.5, vmpStc: 41.5, iscStc: 10.5, betaPctPerC: -0.27, gammaPctPerC: -0.35,
+    tMinC: -40, tMaxC: 65, modulesPerString: 10, strings: 2,
+    inverterVmaxDc: 600, inverterMpptMin: 200, inverterAcAmps: 32, inverterAcKw: 0, acVolts: 240, acPhase: '1',
+    connection: 'loadside', busbarRating: 200, mainBreaker: 200, dcMaterial: 'cu',
+  };
+  return liveCalc('solarpv', D, (v) => [
+    { label: 'Module power (W)', name: 'moduleWp', type: 'number', value: v.moduleWp, step: 'any', min: 0 },
+    { label: 'Module Voc (V)', name: 'vocStc', type: 'number', value: v.vocStc, step: 'any', min: 0, hint: 'Open-circuit voltage at STC (datasheet)' },
+    { label: 'Module Vmp (V)', name: 'vmpStc', type: 'number', value: v.vmpStc, step: 'any', min: 0, hint: 'Voltage at max power at STC' },
+    { label: 'Module Isc (A)', name: 'iscStc', type: 'number', value: v.iscStc, step: 'any', min: 0, hint: 'Short-circuit current at STC' },
+    { label: 'Voc temp coeff (%/°C)', name: 'betaPctPerC', type: 'number', value: v.betaPctPerC, step: 'any', hint: 'Negative, e.g. -0.27' },
+    { label: 'Vmp temp coeff (%/°C, optional)', name: 'gammaPctPerC', type: 'number', value: v.gammaPctPerC, step: 'any', hint: 'Negative; blank uses the Voc coeff' },
+    { label: 'Record low temperature (°C)', name: 'tMinC', type: 'number', value: v.tMinC, step: 'any', hint: 'Coldest expected — sets the high Voc' },
+    { label: 'Record high cell temperature (°C)', name: 'tMaxC', type: 'number', value: v.tMaxC, step: 'any', hint: 'Hottest cell — sets the low Vmp' },
+    { label: 'Modules per string', name: 'modulesPerString', type: 'number', value: v.modulesPerString, min: 1, step: 1 },
+    { label: 'Parallel strings', name: 'strings', type: 'number', value: v.strings, min: 1, step: 1 },
+    { label: 'Inverter max DC input (V)', name: 'inverterVmaxDc', type: 'number', value: v.inverterVmaxDc, step: 'any', min: 0 },
+    { label: 'Inverter MPPT minimum (V)', name: 'inverterMpptMin', type: 'number', value: v.inverterMpptMin, step: 'any', min: 0 },
+    { label: 'Inverter AC output (A, continuous)', name: 'inverterAcAmps', type: 'number', value: v.inverterAcAmps, step: 'any', min: 0, hint: 'Or enter the AC kW below' },
+    { label: 'or Inverter AC power (kW)', name: 'inverterAcKw', type: 'number', value: v.inverterAcKw, step: 'any', min: 0 },
+    { label: 'AC voltage (V)', name: 'acVolts', type: 'number', value: v.acVolts, step: 'any', min: 1 },
+    { label: 'AC phase', name: 'acPhase', type: 'select', value: v.acPhase, options: PHASES },
+    { label: 'Point of connection', name: 'connection', type: 'select', value: v.connection, options: PV_CONNECTION, span: true },
+    { label: 'Busbar rating (A, load side)', name: 'busbarRating', type: 'number', value: v.busbarRating, step: 'any', min: 0 },
+    { label: 'Service main breaker (A)', name: 'mainBreaker', type: 'number', value: v.mainBreaker, step: 'any', min: 0 },
+    { label: 'DC conductor material', name: 'dcMaterial', type: 'select', value: v.dcMaterial, options: MATERIALS },
+  ], (x) => {
+    const r = solarPv({
+      moduleWp: n(x.moduleWp), vocStc: n(x.vocStc), vmpStc: n(x.vmpStc), iscStc: n(x.iscStc),
+      betaPctPerC: n(x.betaPctPerC), gammaPctPerC: n(x.gammaPctPerC),
+      tMinC: n(x.tMinC), tMaxC: n(x.tMaxC), modulesPerString: n(x.modulesPerString), strings: n(x.strings),
+      inverterVmaxDc: n(x.inverterVmaxDc), inverterMpptMin: n(x.inverterMpptMin),
+      inverterAcAmps: n(x.inverterAcAmps), inverterAcKw: n(x.inverterAcKw), acVolts: n(x.acVolts), acPhase: Number(x.acPhase),
+      connection: x.connection, busbarRating: n(x.busbarRating), mainBreaker: n(x.mainBreaker), dcMaterial: x.dcMaterial,
+    });
+    const w = r.stringWindow;
+    const b = r.busbar120;
+    return [
+      result({
+        label: 'PV array (DC)', value: num(r.array.arrayKwDc, 2), unit: 'kW', tone: w.windowOk ? 'pass' : 'warn',
+        badge: w.windowOk ? `${r.array.moduleCount} modules` : 'Check string window',
+        sub: `${w.perString} modules × ${w.strings} string${w.strings === 1 ? '' : 's'} · cold string Voc ${w.stringVocCold != null ? num(w.stringVocCold, 0) + ' V' : '—'}`,
+        lines: [
+          `String window: ${w.minModules || '?'}–${w.maxModules || '?'} modules per string (max keeps cold Voc under the inverter's DC limit; min keeps warm Vmp above the MPPT floor).`,
+          `DC max circuit current = 1.25 × Isc × strings = ${num(r.dc.maxCircuitAmps, 1)} A; conductor and overcurrent at 1.25× (continuous) = ${num(r.dc.designAmps, 1)} A (Section 64, Rule 64-014 — VERIFY).`,
+          `AC output ${num(r.ac.continuousAmps, 1)} A × 1.25 (continuous) = ${num(r.ac.designAmps, 1)} A.`,
+        ],
+      }),
+      h('div', { class: 'calc-minis' },
+        mini('Modules per string', `${w.minModules || '?'}–${w.maxModules || '?'} (you: ${w.perString})`),
+        mini('DC conductor', r.dc.sizeLabel ? `${r.dc.sizeLabel} ${C.mat(r.material)}` : '—'),
+        mini('DC overcurrent', r.dc.ocpd ? `${r.dc.ocpd} A` : '—'),
+        mini('AC conductor', r.ac.sizeLabel ? `${r.ac.sizeLabel} ${C.mat(r.material)}` : '—'),
+        mini('AC overcurrent / back-feed', r.ac.ocpd ? `${r.ac.ocpd} A` : '—'),
+        r.ac.bond ? mini('Bonding (Table 16)', `${CEC.sizeLabel(r.ac.bond.cu)} Cu / ${CEC.sizeLabel(r.ac.bond.al)} Al`) : null),
+      b ? h('div', { class: 'card flat' },
+        h('div', { class: 'calc-label' }, '120% busbar rule (load-side connection)'),
+        result({
+          label: 'Busbar check', value: b.pass ? 'PASS' : 'FAIL', tone: b.pass ? 'pass' : 'fail',
+          badge: b.pass ? `${num(b.maxBackfeedBreaker, 0)} A back-feed headroom` : 'Over 120%',
+          sub: `${b.main} A main + ${b.backfeedBreaker || '—'} A PV = ${b.sumBreakers != null ? num(b.sumBreakers, 0) : '—'} A vs 120% of ${b.busbar} A busbar = ${num(b.allowedTotal, 0)} A.`,
+          lines: ['Load-side (back-fed breaker): main OCPD + PV back-feed OCPD ≤ 120% of the busbar rating (Section 64 / Section 84 interconnection — VERIFY the rule number).',
+            'A supply-side (line-side) tap ahead of the service main is not limited by the 120% rule.'],
+        })) : h('p', { class: 'calc-note muted' }, 'Supply-side connection selected: the 120% busbar rule does not apply (tap ahead of the service main overcurrent device).'),
+      r.warnings.length ? h('ul', { class: 'calc-why' }, r.warnings.map((wn) => h('li', null, wn))) : null,
+      h('p', { class: 'calc-note muted' }, 'Rapid shutdown / disconnecting means: PV on or in a building needs a readily accessible means to de-energize the conductors (CEC Section 64, Rule 64-218 area — VERIFY; module-level rapid shutdown where required by the AHJ).'),
+      refs('CEC Section 64 (Renewable Energy Systems)', 'Rule 64-014 max circuit current = 1.25 × Isc (VERIFY)', '120% busbar rule, load-side interconnection (VERIFY)', 'String window from the module/inverter datasheets — VERIFY'),
+      designAidNote('String sizing (cold Voc, warm Vmp) is a datasheet calculation, not a CEC value — confirm against the inverter and module datasheets and the site design temperatures.'),
+    ];
+  });
+}
+
+// -- 2. Battery energy storage (ESS) basics ----------------------------------
+function essTab(rerender) {
+  const D = { loadKw: 5, hours: 8, chemistry: 'liion', dodPct: 90, deratePct: 95, inverterKw: 6, acVolts: 240, acPhase: '1', dcVolts: 48, material: 'cu' };
+  return liveCalc('ess', D, (v) => [
+    { label: 'Backup load (kW)', name: 'loadKw', type: 'number', value: v.loadKw, step: 'any', min: 0 },
+    { label: 'Backup time (hours)', name: 'hours', type: 'number', value: v.hours, step: 'any', min: 0 },
+    { label: 'Battery chemistry', name: 'chemistry', type: 'select', value: v.chemistry, options: ESS_CHEMISTRIES.map((c) => ({ value: c.value, label: c.label })), span: true },
+    v.chemistry === 'custom' ? { label: 'Depth of discharge (%)', name: 'dodPct', type: 'number', value: v.dodPct, min: 1, max: 100, step: 'any' } : null,
+    { label: 'Round-trip / aging derate (%)', name: 'deratePct', type: 'number', value: v.deratePct, min: 1, max: 100, step: 'any', hint: '100% = none; 90–95% is typical' },
+    { label: 'Inverter / charger continuous (kW)', name: 'inverterKw', type: 'number', value: v.inverterKw, step: 'any', min: 0, hint: 'Blank uses the backup load' },
+    { label: 'AC voltage (V)', name: 'acVolts', type: 'number', value: v.acVolts, step: 'any', min: 1 },
+    { label: 'AC phase', name: 'acPhase', type: 'select', value: v.acPhase, options: PHASES },
+    { label: 'Battery DC bus voltage (V)', name: 'dcVolts', type: 'number', value: v.dcVolts, step: 'any', min: 0, hint: '48 V is common for small systems' },
+    { label: 'Conductor material', name: 'material', type: 'select', value: v.material, options: MATERIALS },
+  ], (x) => {
+    const chem = ESS_CHEMISTRIES.find((c) => c.value === x.chemistry) || ESS_CHEMISTRIES[0];
+    const dodPct = x.chemistry === 'custom' ? n(x.dodPct) : chem.dodPct;
+    const r = sizeEss({
+      loadKw: n(x.loadKw), hours: n(x.hours), dodPct, deratePct: n(x.deratePct),
+      inverterKw: n(x.inverterKw), acVolts: n(x.acVolts), acPhase: Number(x.acPhase), dcVolts: n(x.dcVolts), material: x.material,
+    });
+    return [
+      result({
+        label: 'Battery capacity (nominal)', value: r.energy.nominalKwh != null ? num(r.energy.nominalKwh, 1) : '—', unit: 'kWh', tone: 'warn', badge: 'VERIFY',
+        sub: `${num(r.energy.usableKwh, 1)} kWh usable ÷ ${r.energy.dodPct}% depth of discharge${r.energy.deratePct < 100 ? ` ÷ ${r.energy.deratePct}% derate` : ''}.`,
+        lines: [
+          `Usable energy = load ${num(r.ac.inverterKw, 1)} kW × ${num(n(x.hours), 1)} h = ${num(r.energy.usableKwh, 1)} kWh (the backup it must deliver).`,
+          'Size the bank conservatively; real usable energy depends on temperature, age and the inverter cut-off. Confirm against the battery datasheet.',
+        ],
+      }),
+      h('div', { class: 'calc-minis' },
+        mini('Usable energy', `${num(r.energy.usableKwh, 1)} kWh`),
+        mini('Nominal capacity', r.energy.nominalKwh != null ? `${num(r.energy.nominalKwh, 1)} kWh` : '—'),
+        mini('AC continuous', `${num(r.ac.continuousAmps, 1)} A`),
+        mini('AC conductor / overcurrent', r.ac.sizeLabel ? `${r.ac.sizeLabel} ${C.mat(r.material)} · ${r.ac.ocpd} A` : '—'),
+        r.dc.volts > 0 ? mini('DC continuous', `${num(r.dc.continuousAmps, 1)} A @ ${num(r.dc.volts, 0)} V`) : null,
+        r.dc.sizeLabel ? mini('DC conductor / disconnect', `${r.dc.sizeLabel} ${C.mat(r.material)} · ${r.dc.ocpd} A`) : null),
+      r.warnings.length ? h('ul', { class: 'calc-why' }, r.warnings.map((wn) => h('li', null, wn))) : null,
+      h('p', { class: 'calc-note muted' }, 'A disconnecting means and overcurrent protection are required on both the AC and DC sides, and the DC conductors and overcurrent are sized at 125% of the continuous current (Section 64 / Rule 8-104). Batteries and battery rooms also fall under Section 26 (Rule 26-500 series) — VERIFY.'),
+      refs('CEC Section 64 (energy storage systems) — VERIFY rule numbers', 'CEC Section 26, Rule 26-500 series (batteries) — VERIFY', 'Rule 8-104 (125% continuous)', 'Capacity is conservative — confirm against the battery datasheet'),
+      designAidNote(),
+    ];
+  }, { onChange: (vals, e) => { if (e?.target?.name === 'chemistry') { rerender(); return 'rerender'; } } });
+}
+
+// -- 3. Generator / optional-standby sizing + ATS ----------------------------
+function generatorTab() {
+  const D = { connectedKw: 48, demandPct: 100, pf: 0.8, volts: 208, phase: '3', largestMotorKw: 0, material: 'cu' };
+  return liveCalc('generator', D, (v) => [
+    { label: 'Connected standby load (kW)', name: 'connectedKw', type: 'number', value: v.connectedKw, step: 'any', min: 0 },
+    { label: 'Optional-standby demand (%)', name: 'demandPct', type: 'number', value: v.demandPct, min: 1, max: 100, step: 'any', hint: '100% = whole load; Section 8 may allow a demand factor (VERIFY)' },
+    { label: 'Power factor', name: 'pf', type: 'number', value: v.pf, step: 'any', min: 0.1, max: 1, hint: 'Standby gensets are rated at 0.8 PF' },
+    { label: 'Voltage (line-to-line)', name: 'volts', type: 'number', value: v.volts, step: 'any', min: 1 },
+    { label: 'Phase', name: 'phase', type: 'select', value: v.phase, options: GEN_PHASES },
+    { label: 'Largest motor (kW, optional)', name: 'largestMotorKw', type: 'number', value: v.largestMotorKw, step: 'any', min: 0, hint: 'Checks the starting-kVA margin' },
+    { label: 'Feeder conductor material', name: 'material', type: 'select', value: v.material, options: MATERIALS },
+  ], (x) => {
+    const r = sizeGenerator({
+      connectedKw: n(x.connectedKw), demandPct: n(x.demandPct), pf: n(x.pf), volts: n(x.volts), phase: Number(x.phase),
+      largestMotorKw: n(x.largestMotorKw), material: x.material,
+    });
+    return [
+      result({
+        label: 'Generator size', value: r.generator.kw != null ? ui.fmtNum(r.generator.kw) : '—', unit: `kW ${Number(x.phase) === 3 ? '3φ' : '1φ'}`, tone: 'warn', badge: 'VERIFY',
+        sub: `${num(r.load.requiredKw, 1)} kW required (${num(r.load.requiredKva, 1)} kVA at ${num(r.pf, 2)} PF) · generator FLA ${num(r.generator.fla, 1)} A @ ${ui.fmtNum(r.volts)} V`,
+        lines: [
+          `Required kW = connected ${num(r.load.connectedKw, 1)} kW × ${r.load.demandPct}% demand = ${num(r.load.requiredKw, 1)} kW → next catalogue size ${r.generator.kw != null ? r.generator.kw + ' kW' : 'over the list'}.`,
+          `Generator FLA = kVA ÷ (${Number(x.phase) === 3 ? '√3 × ' : ''}V) = ${num(r.generator.fla, 1)} A.`,
+          `Feeder at 125% of FLA = ${num(r.feeder.designAmps, 1)} A → ${r.feeder.sizeLabel || 'over 500 kcmil'} ${C.mat(r.material)} (75 °C, Rule 4-004), overcurrent ${r.feeder.ocpd} A.`,
+        ],
+      }),
+      h('div', { class: 'calc-minis' },
+        mini('Required', `${num(r.load.requiredKw, 1)} kW / ${num(r.load.requiredKva, 1)} kVA`),
+        mini('Generator FLA', `${num(r.generator.fla, 1)} A`),
+        mini('Feeder conductor', r.feeder.sizeLabel ? `${r.feeder.sizeLabel} ${C.mat(r.material)}` : '—'),
+        mini('Feeder overcurrent', `${r.feeder.ocpd} A`),
+        mini('Transfer switch (ATS)', `${r.ats.rating} A`),
+        r.feeder.bond ? mini('Bonding (Table 16)', `${CEC.sizeLabel(r.feeder.bond.cu)} Cu / ${CEC.sizeLabel(r.feeder.bond.al)} Al`) : null),
+      r.warnings.length ? h('ul', { class: 'calc-why' }, r.warnings.map((wn) => h('li', null, wn))) : null,
+      h('p', { class: 'calc-note muted' }, 'One-line / ATS: the transfer switch isolates the normal and standby sources so they never parallel; rate it at or above the feeder overcurrent and the switched load. For an optional-standby system the genset and transfer equipment follow Section 46; an emergency/life-safety system has stricter rules. VERIFY the demand factor and the transfer-equipment rating.'),
+      refs('CEC Section 46 (emergency / optional-standby) — VERIFY', 'Section 8 optional-standby demand factor — VERIFY', 'Rule 4-004 / Tables 2, 4 (feeder conductor)', 'Rule 8-104 (125% continuous)'),
+      designAidNote('Motor starting (locked-rotor) kVA, not running kW, governs where a large motor starts across the line — confirm with the genset manufacturer.'),
+    ];
+  });
+}
+
 // Company name for the printable label, set from settings in render().
 let _companyName = 'Fishtape';
 const ctxCompanyName = () => _companyName || 'Fishtape';
 
-const ENG = { arcflash: arcflashTab, sccr: sccrTab, transformer: transformerTab, cablepull: cablepullTab, ductbank: ductbankTab, ground: groundTab };
+const ENG = { arcflash: arcflashTab, sccr: sccrTab, transformer: transformerTab, cablepull: cablepullTab, ductbank: ductbankTab, ground: groundTab, solarpv: solarPvTab, ess: essTab, generator: generatorTab };
 
 const VIEWS = {
   'CEC-2024': { vd: cecVoltageDrop, wire: cecWire, conduit: cecConduit, box: cecBox, load: cecLoad, motor: cecMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab, burial: burialTab, expansion: expansionTab, ...ENG },
