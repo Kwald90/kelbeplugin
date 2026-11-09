@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/measurements.json",
+  "title": "Saved measurement",
+  "description": "A length captured with the AR tape (or typed in), kept so it can be read back later and optionally tied to a job: a label, the length in metres, the unit it was taken in, a note and when/how it was captured. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "label": { "type": ["string", "null"], "maxLength": 200 },
+    "lengthM": { "type": ["number", "null"], "minimum": 0, "maximum": 100000, "description": "The measured length in metres (the canonical unit; display follows the user's unit preference)." },
+    "unit": { "type": ["string", "null"], "enum": ["metric", "imperial", null], "description": "The unit system the measurement was taken in, for display." },
+    "method": { "type": ["string", "null"], "enum": ["ar", "manual", null], "description": "How it was captured: AR tape or typed in." },
+    "note": { "type": ["string", "null"], "maxLength": 2000 },
+    "takenAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 }
+  },
+  "additionalProperties": true
+}

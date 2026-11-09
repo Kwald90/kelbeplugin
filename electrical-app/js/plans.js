@@ -42,7 +42,7 @@ export const extraUserCents = (planId) => PLANS[planId]?.extraUserCents ?? 0;
 /** Lowest plan that includes each module (by module id) or feature key. Anything missing is in every plan. */
 export const FEATURE_PLAN = {
   // Live Wire (starter): calculators and concept drawings, plus the shell every account needs.
-  calcs: 'starter', bending: 'starter', wireruns: 'starter', drawings: 'starter', panels: 'starter',
+  calcs: 'starter', bending: 'starter', wireruns: 'starter', drawings: 'starter', panels: 'starter', measure: 'starter',
   dashboard: 'starter', settings: 'starter', billing: 'starter', help: 'starter',
   onboarding: 'starter', import: 'starter', notifications: 'starter',
   today: 'starter',

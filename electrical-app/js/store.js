@@ -44,7 +44,7 @@ export const COLLECTIONS = [
   'faVerifications', 'irInspections',
   'rfis', 'submittals',
   'drawingRevisions', 'procurementItems',
-  'serviceMemberships',
+  'serviceMemberships', 'measurements',
 ];
 
 export const DEFAULT_SETTINGS = {

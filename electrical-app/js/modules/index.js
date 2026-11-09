@@ -24,6 +24,7 @@ import compliance from './compliance.js';
 import security from './security.js';
 import calcs from './calcs.js';
 import bending from './bending.js';
+import measure from './measure.js';
 import panels from './panels.js';
 import controlpanels from './controlpanels.js';
 import walkthroughs from './walkthroughs.js';
@@ -59,6 +60,6 @@ export const GROUPS = {
 
 export const MODULES = [
   dashboard, today, clients, leads, sequences, servicerequests, jobs, schedule, service, memberships, workplan, materials, drawings, wireruns, estimates, assemblies, invoices, getpaid, purchasing, quickbooks, books, inventory, pricelists,
-  employees, time, labour, sops, safety, compliance, security, calcs, bending, panels, controlpanels, walkthroughs, testing, punchlist, dailylog, faverification, irinspection, rfis, submittals, drawingrevisions, procurement, settings, integrations, assistant, billing,
+  employees, time, labour, sops, safety, compliance, security, calcs, bending, measure, panels, controlpanels, walkthroughs, testing, punchlist, dailylog, faverification, irinspection, rfis, submittals, drawingrevisions, procurement, settings, integrations, assistant, billing,
   importer, developer, onboarding, notifications, help,
 ];

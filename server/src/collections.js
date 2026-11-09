@@ -21,7 +21,7 @@ export const COLLECTIONS = [
   'faVerifications', 'irInspections',
   'rfis', 'submittals',
   'drawingRevisions', 'procurementItems',
-  'serviceMemberships',
+  'serviceMemberships', 'measurements',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -267,6 +267,11 @@ const DEFS = {
   serviceMemberships: {
     table: 'service_memberships', gen: [CLIENT, STATUS, g('stripe_subscription_id', 'stripeSubscriptionId')], read: ['clients'], write: ['clients'],
     portal: null, maxBytes: 64 * KB, migration: '0182',
+  },
+  // Saved measurements (migration 0183): the AR tape's kept lengths, optionally tied to a job.
+  measurements: {
+    table: 'measurements', gen: [JOB, CLIENT], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: 64 * KB, migration: '0183',
   },
 };
 

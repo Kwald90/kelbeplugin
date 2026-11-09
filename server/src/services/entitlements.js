@@ -143,6 +143,7 @@ export const COLLECTION_FEATURES = {
   assets: ['service'],
   // Residential service plans / memberships (Fully Loaded and up): recurring plans sold to homeowners.
   serviceMemberships: ['memberships'],
+  measurements: ['measure'],
   // Test & commissioning reports (Fully Loaded and up).
   commissioningTests: ['testing'],
   // Control panels — industrial / controls panel builds (Fully Loaded and up).

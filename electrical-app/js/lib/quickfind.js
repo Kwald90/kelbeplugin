@@ -8,7 +8,7 @@
  * they can change. Each entry: { kind:'screen'|'option', id, label, hint, icon, enabled, target, terms }.
  */
 export function searchEntries({
-  modules = [], switches = [], groups = {},
+  modules = [], switches = [], groups = {}, aliases = {},
   canAccess = () => true, isEnabled = () => true, isSwitchOn = () => true,
   label = (m) => m.title, includeOptions = true,
 } = {}) {
@@ -16,10 +16,13 @@ export function searchEntries({
   for (const m of modules) {
     if (m.hidden || !canAccess(m.perm)) continue;
     const name = label(m) || m.title || m.id;
+    // Synonyms (aliases[id]) and the module's own `keywords` widen matching so a feature is found
+    // by what people call it ("tape"/"ruler" -> AR tape), not only its exact title.
+    const extra = `${aliases[m.id] || ''} ${Array.isArray(m.keywords) ? m.keywords.join(' ') : m.keywords || ''}`.trim();
     out.push({
       kind: 'screen', id: m.id, label: name, hint: groups[m.group] || '', icon: m.icon || 'file-text',
       enabled: isEnabled(m.id), target: m.id,
-      terms: `${name} ${m.id} ${groups[m.group] || ''}`.toLowerCase(),
+      terms: `${name} ${m.id} ${groups[m.group] || ''} ${extra}`.toLowerCase().trim(),
     });
   }
   if (includeOptions) {

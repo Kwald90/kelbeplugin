@@ -260,13 +260,40 @@ function openMore() {
   });
 }
 
+// Synonyms so search finds a feature by what people call it, not just its title. id -> extra terms.
+const SEARCH_ALIASES = {
+  measure: 'tape ruler distance length laser ar camera',
+  calcs: 'calculator voltage drop conduit fill box fill ampacity conductor load motor dwelling service',
+  bending: 'bend offset saddle kick pipe conduit emt 90',
+  wireruns: 'pull wire cable run homerun',
+  estimates: 'quote bid proposal takeoff',
+  invoices: 'bill billing payment receivable statement overdue',
+  getpaid: 'collect pay card checkout close sale deposit',
+  memberships: 'service plan subscription recurring maintenance',
+  servicerequests: 'booking online request inbox',
+  schedule: 'calendar dispatch week',
+  clients: 'customer contact',
+  leads: 'prospect pipeline crm',
+  jobs: 'project work order',
+  time: 'clock timesheet hours travel on the way',
+  inventory: 'stock parts van warehouse',
+  purchasing: 'supplier vendor purchase order bill receipt',
+  panels: 'panel schedule circuit directory',
+  drawings: 'plans markup sheets',
+  walkthroughs: 'video walkthrough site reel transcript',
+  compliance: 'certification licence permit inspection',
+  assistant: 'ai chat gemini claude helper cec code question',
+  integrations: 'stripe payments email sms twilio quickbooks connect keys gemini anthropic',
+  settings: 'preferences options modules units company tax provider',
+};
+
 // Global quick-find: type to jump to any screen or turn-on/off option. Ctrl/Cmd+K, the rail's
 // Search button, or "Search" in More. Reuses the module + switch registries (lib/quickfind.js).
 function openSearch() {
   if (searchSheet) { searchSheet.el?.querySelector('.search-input')?.focus(); return; }
   moreSheet?.close();
   const entries = searchEntries({
-    modules: MODULES, switches: SWITCHES, groups: GROUPS,
+    modules: MODULES, switches: SWITCHES, groups: GROUPS, aliases: SEARCH_ALIASES,
     canAccess: (perm) => auth.can(perm), isEnabled: (id) => moduleEnabled(id),
     isSwitchOn: (id) => switchOn(store.settings(), id), label: navigationLabel,
     includeOptions: auth.can('settings'),

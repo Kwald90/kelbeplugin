@@ -70,6 +70,21 @@ test('rankEntries: matches label and description, exact/prefix beat contains', (
   assert.equal(rankEntries(e, 'zzznope').length, 0);
 });
 
+test('aliases and keywords widen matching beyond the title', () => {
+  const mods = [{ id: 'measure', title: 'AR tape', group: 'field', perm: 'jobs' }];
+  const e = searchEntries({ modules: mods, groups: { field: 'Field' }, aliases: { measure: 'ruler distance laser' }, canAccess: () => true });
+  // found by title word
+  assert.ok(rankEntries(e, 'tape').some((x) => x.id === 'measure'));
+  // found by the module id
+  assert.ok(rankEntries(e, 'measure').some((x) => x.id === 'measure'));
+  // found by an alias synonym not in the title/id
+  assert.ok(rankEntries(e, 'ruler').some((x) => x.id === 'measure'));
+  assert.ok(rankEntries(e, 'laser').some((x) => x.id === 'measure'));
+  // a module's own keywords array also counts
+  const e2 = searchEntries({ modules: [{ id: 'x', title: 'Thing', perm: 'a', keywords: ['widget', 'gadget'] }], canAccess: () => true });
+  assert.ok(rankEntries(e2, 'gadget').some((x) => x.id === 'x'));
+});
+
 test('rankEntries: all tokens must match (AND)', () => {
   const e = searchEntries(base);
   assert.equal(rankEntries(e, 'get paid').some((x) => x.id === 'getpaid'), true);

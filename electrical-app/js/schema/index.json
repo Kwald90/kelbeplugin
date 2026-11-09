@@ -67,6 +67,7 @@
     "submittals": "./submittals.json",
     "drawingRevisions": "./drawingRevisions.json",
     "procurementItems": "./procurementItems.json",
-    "serviceMemberships": "./serviceMemberships.json"
+    "serviceMemberships": "./serviceMemberships.json",
+    "measurements": "./measurements.json"
   }
 }

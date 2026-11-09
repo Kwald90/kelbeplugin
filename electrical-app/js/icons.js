@@ -5,6 +5,7 @@
 export const ICONS = {
   home: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
   zap: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  ruler: '<rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 7v3M10 7v4M14 7v3M18 7v4"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 010 6.8"/><path d="M18 14.8c1.9.7 3.1 2.5 3.5 5.2"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.2-6 8-6s7 2 8 6"/>',
   funnel: '<path d="M3 4h18l-7 8.5V19l-4 2v-8.5z"/>',
