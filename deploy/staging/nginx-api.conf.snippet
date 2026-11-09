@@ -31,6 +31,42 @@ include /etc/nginx/snippets/fishtape-staging-headers.conf;
 # Body size (72m), no-store, header clean-up and timeouts come from fishtape-staging-proxy.conf
 # (= deploy/staging/nginx-proxy.conf). Logged without query strings or Referer queries (format
 # in fishtape-staging-http.conf).
+# Public online-booking front door. The /embed page is an iframe a shop pastes on its OWN website,
+# so it must be frameable cross-origin: the API sets its own CSP (frame-ancestors *) on that one
+# response and sends no X-Frame-Options. This location is the shared API proxy (fishtape-staging-
+# proxy.conf) MINUS its `add_header X-Frame-Options "DENY"` line, so the site-wide DENY is not
+# re-added here; every other header is identical. /config and POST still carry the API's default
+# CSP (frame-ancestors 'none'), so only the /embed document can be framed. SECURITY-REVIEW THIS.
+location ^~ /api/v1/public/book/ {
+    access_log /var/log/fishtape-staging/nginx-api.access.log fishtape_staging_noquery;
+    limit_req zone=fishtape_staging_api burst=60 nodelay;
+    limit_req_status 429;
+    proxy_pass http://127.0.0.1:3410;
+    client_max_body_size 72m;
+    client_body_timeout 60s;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Request-Id $request_id;
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    proxy_next_upstream off;
+    proxy_hide_header Cache-Control;
+    proxy_hide_header X-Powered-By;
+    add_header Cache-Control "no-store" always;
+    proxy_hide_header Strict-Transport-Security;
+    proxy_hide_header X-Content-Type-Options;
+    proxy_hide_header Referrer-Policy;
+    proxy_hide_header X-Frame-Options;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # Deliberately NO `add_header X-Frame-Options`: the booking page is embeddable on the shop's site.
+}
 # Tenant API on 127.0.0.1:3410.
 location ^~ /api/ {
     access_log /var/log/fishtape-staging/nginx-api.access.log fishtape_staging_noquery;

@@ -3,6 +3,7 @@ import dashboard from './dashboard.js';
 import clients from './clients.js';
 import leads from './leads.js';
 import sequences from './sequences.js';
+import servicerequests from './servicerequests.js';
 import jobs from './jobs.js';
 import schedule from './schedule.js';
 import service from './service.js';
@@ -57,7 +58,7 @@ export const GROUPS = {
 };
 
 export const MODULES = [
-  dashboard, today, clients, leads, sequences, jobs, schedule, service, workplan, materials, drawings, wireruns, estimates, assemblies, invoices, purchasing, quickbooks, books, inventory, pricelists,
+  dashboard, today, clients, leads, sequences, servicerequests, jobs, schedule, service, workplan, materials, drawings, wireruns, estimates, assemblies, invoices, purchasing, quickbooks, books, inventory, pricelists,
   employees, time, labour, sops, safety, compliance, security, calcs, bending, panels, controlpanels, walkthroughs, testing, punchlist, dailylog, faverification, irinspection, rfis, submittals, drawingrevisions, procurement, settings, integrations, billing,
   importer, developer, onboarding, notifications, help,
 ];

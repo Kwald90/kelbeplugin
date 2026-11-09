@@ -10,6 +10,7 @@
 // here talks to the network.
 import { BRAND } from './brand.js';
 import { DEFAULT_MODULES } from './lib/modules.js';
+import { DEFAULT_BOOKING } from './lib/booking.js';
 
 export const isBackupTag = (tag) => tag === BRAND.backupTag || BRAND.legacyBackupTags.includes(tag);
 
@@ -101,6 +102,10 @@ export const DEFAULT_SETTINGS = {
     priceVariancePct: 2,
   },
   payroll: { vacationPayMode: 'each-cheque', holidayPayMode: 'each-cheque' },
+  // Online booking form (js/lib/booking.js): which service types and intake fields the public
+  // booking page offers, the confirmation message and the shop's contact. The public slug itself
+  // is not here — it is globally unique and lives server-side (routes/v1/booking.js).
+  booking: { ...DEFAULT_BOOKING },
 };
 
 /**
