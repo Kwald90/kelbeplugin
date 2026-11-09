@@ -16,6 +16,7 @@
 !electrical-app/js/canvas/symbols.js
 !electrical-app/js/lib/modules.js
 !electrical-app/js/lib/materials.js
+!electrical-app/js/lib/customer-comms.js
 !electrical-app/js/lib/location-policy.js
 # Release 1 shared libraries (docs/releases/r1-get-paid.md 2.12); harmless until a file exists.
 !electrical-app/js/lib/rules.js

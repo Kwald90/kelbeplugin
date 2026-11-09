@@ -8,6 +8,7 @@ import { ENTRY_COORDS, canRead, canWrite, checkWriteRules, mergeWrite, redactFor
 import { appendAudit, auditRowToRecord, describeRecord } from './audit.js';
 import { assertCollectionWritable, loadTenantPlan } from './entitlements.js';
 import { afterTaskWrite } from './workplan-events.js';
+import { afterTimeEntryWrite, afterJobWrite } from './customer-comms.js';
 import { assertCollectionModuleOn, loadModuleSettings } from './modules.js';
 import { QBO_COLLECTIONS, qboAfterDelete, qboAfterWrite } from '../qbo/hooks.js';
 import { readQboConfig } from '../qbo/env.js';
@@ -32,6 +33,8 @@ const canon = (v) => (Array.isArray(v) ? `[${v.map(canon).join(',')}]`
 /** Per-collection follow-ups after a write, in the same transaction (notification hooks). */
 async function afterWrite(tx, coll, id, before, after, who) {
   if (coll === 'workTasks') await afterTaskWrite(tx, { id, before, after, who });
+  else if (coll === 'timeEntries') await afterTimeEntryWrite(tx, { id, before, after, who });
+  else if (coll === 'jobs') await afterJobWrite(tx, { id, before, after, who });
 }
 
 /** The engine's own writes (QuickBooks sync, docs/integrations/quickbooks.md 5.7). */

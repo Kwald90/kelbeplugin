@@ -69,6 +69,16 @@ export const DEFAULT_SETTINGS = {
   billing: { defaultMode: 'fixed', travelRateCents: null },
   // Material requests go to the office once a day (js/lib/materials.js).
   materialRequests: { sendAt: '15:00', emailTo: '' },
+  // Customer-facing emails (js/lib/customer-comms.js), sent through the outbox with the company's
+  // own SendGrid/Resend account. Both OFF by default. eta: an "on the way" email when a tech enters
+  // the time-clock TRAVEL state for a job with a customer; review: a "how did we do?" email with the
+  // shop's review link when a job is marked complete/invoiced. Optional per-flow custom message and a
+  // shared reply-to. The server reads these from the tenant's settings row.
+  notifications: {
+    eta: { on: false, message: '' },
+    review: { on: false, url: '', message: '' },
+    replyTo: '',
+  },
   // Release 1 (docs/releases/r1-get-paid.md 2.4). Each is edited on the screen of the stream that
   // uses it: costCodes and payroll on Books, tickets on Field tickets, deposits, collections,
   // closeout and promptPayment on Invoices → Collections, costing on Job costing → Rates.

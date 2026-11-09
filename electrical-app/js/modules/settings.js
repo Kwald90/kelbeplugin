@@ -11,6 +11,7 @@ import { gesturePanel } from '../canvas/gestures.js';
 import { SWITCHES, SWITCH_GROUPS, SWITCH_BY_ID, PRESETS, switchOn, nextModules, presetModules, presetOf } from '../lib/modules.js';
 import { BILLING_MODES } from '../lib/tm.js';
 import { requestSettings, fmtSendAt, nextSendAt, PROVINCE_TZ, validTimeZone } from '../lib/materials.js';
+import { commsSettings, cleanUrl } from '../lib/customer-comms.js';
 import { FEATURE_PLAN, hasFeature } from '../plans.js';
 import { session, savePref } from '../session.js';
 import { panelPrintSettings } from './panels.js';
@@ -427,6 +428,66 @@ export default {
         saveRow('Save', save));
     };
 
+    // customer messages: ETA "on the way" email (time-clock TRAVEL) and the review ask on job close.
+    // Both OFF by default; stored under settings.notifications and sent server-side through the outbox
+    // with the company's own SendGrid/Resend account. See js/lib/customer-comms.js.
+    const notificationsHost = h('div', { class: 'stack' });
+    const drawNotifications = () => {
+      ui.clear(notificationsHost);
+      const cs = commsSettings(store.settings());
+      const save = (patch) => {
+        const cur = store.settings().notifications || {};
+        store.saveSettings({ notifications: { ...cur, ...patch } });
+        drawNotifications();
+      };
+      const toggle = (label, hint, checked, onChange) => h('label', { class: ['mod-row', checked ? null : 'off'] },
+        h('div', { class: 'grow' }, h('div', { class: 'title' }, label), h('div', { class: 'meta' }, hint)),
+        h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked, 'aria-label': label, onChange: (e) => onChange(e.target.checked) }));
+
+      // ETA
+      const etaForm = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
+        { label: 'Custom message (optional)', name: 'etaMessage', type: 'textarea', value: cs.eta.message, span: true,
+          placeholder: 'Leave blank for the default: “<Tech> from <Company> is on the way.”', hint: 'Replaces the default wording. The customer’s name and your sign-off are added automatically.' },
+      ]));
+      const saveEta = () => save({ eta: { on: cs.eta.on, message: String(ui.readForm(etaForm).etaMessage || '').trim() } });
+
+      // Review ask
+      const reviewForm = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
+        { label: 'Review link', name: 'reviewUrl', type: 'url', value: cs.review.url, span: true, placeholder: 'https://g.page/r/your-business/review',
+          hint: 'Your Google (or other) review page. Only https links are sent.' },
+        { label: 'Custom message (optional)', name: 'reviewMessage', type: 'textarea', value: cs.review.message, span: true,
+          placeholder: 'Leave blank for the default thank-you. The review link is added below your message.' },
+      ]));
+      const saveReview = () => {
+        if (!reviewForm.reportValidity()) return;
+        const v = ui.readForm(reviewForm);
+        const url = cleanUrl(v.reviewUrl);
+        if (String(v.reviewUrl || '').trim() && !url) { ui.toast('Enter a full https:// review link', 'error'); return; }
+        save({ review: { on: cs.review.on, url, message: String(v.reviewMessage || '').trim() } });
+        ui.toast('Review ask saved', 'success');
+      };
+
+      // Shared reply-to
+      const replyForm = h('form', { onSubmit: (e) => e.preventDefault() }, ui.formGrid([
+        { label: 'Reply-to address', name: 'replyTo', type: 'email', value: cs.replyTo, span: true, placeholder: s.company?.email || 'office@yourcompany.ca',
+          hint: 'Where customer replies go. Blank: your company email.' },
+      ]));
+      const saveReply = () => {
+        if (!replyForm.reportValidity()) return;
+        save({ replyTo: String(ui.readForm(replyForm).replyTo || '').trim() });
+        ui.toast('Reply-to saved', 'success');
+      };
+
+      notificationsHost.append(
+        h('div', { class: 'muted' }, 'Keep customers in the loop automatically. Emails go only to the customer on the job, from your own email, and only while a switch below is on. Both are off until you turn them on.'),
+        toggle('Email “on the way” when a tech starts travelling', 'Sent when someone enters the time clock’s Travel state heading to a job that has a customer with an email.', cs.eta.on, (on) => { save({ eta: { on, message: cs.eta.message } }); ui.toast(on ? 'On-the-way emails are on' : 'On-the-way emails are off', 'success'); }),
+        cs.eta.on ? h('div', { class: 'stack indent' }, etaForm, saveRow('Save message', saveEta)) : null,
+        toggle('Ask for a review when a job is closed', 'Sent once when a job is marked complete (or invoiced), with your review link.', cs.review.on, (on) => { save({ review: { on, url: cs.review.url, message: cs.review.message } }); ui.toast(on ? 'Review asks are on' : 'Review asks are off', 'success'); }),
+        cs.review.on ? h('div', { class: 'stack indent' }, reviewForm, saveRow('Save review ask', saveReview)) : null,
+        h('hr', { class: 'hr' }),
+        replyForm, saveRow('Save reply-to', saveReply));
+    };
+
     // theme
     let theme = 'system';
     try { theme = localStorage.getItem('kc.theme') || 'system'; } catch { /* ignore */ }
@@ -491,7 +552,7 @@ export default {
       ? ui.badge('Memory only: data is lost on reload', 'danger')
       : store.persistent ? ui.badge('Persistent storage', 'success') : ui.badge('Browser may clear data when low on space', 'warning');
 
-    drawCode(); drawTax(); drawPlacement(); drawPanelPrint(); drawCircuitNames(); drawModules(); drawMaterials(); drawPipeline();
+    drawCode(); drawTax(); drawPlacement(); drawPanelPrint(); drawCircuitNames(); drawModules(); drawMaterials(); drawPipeline(); drawNotifications();
 
     // Extra search terms for a card, for words a person might type that aren't in its visible text.
     const tag = (el, keywords) => { if (el && keywords) el.dataset.keywords = keywords; return el; };
@@ -508,6 +569,10 @@ export default {
       ['Modules', [modulesCard]],
       ['Sales', [
         ctx.on?.('leads') !== false ? tag(card('Sales pipeline', 'The lead stages and the follow-up each one starts', pipelineHost), 'leads funnel crm stages pipeline kanban follow-up sequence lead flow') : null,
+      ]],
+      ['Customer messages', [
+        tag(card('Customer messages', 'Automatic emails to the customer: on-the-way and a review ask', notificationsHost),
+          'eta on the way travel review reputation google rating reply-to customer email notification'),
       ]],
       ['Money & documents', [
         card('Defaults', 'Applied to new estimates and invoices', defaults, saveRow('Save defaults', saveDefaults)),

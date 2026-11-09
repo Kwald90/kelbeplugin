@@ -67,7 +67,7 @@ function buildEmail(item, secrets, cfg, company, provider = 'resend') {
     apiKey: secrets[`${provider}.api_key`], from: secrets[`${provider}.from`], to,
     subject: String(item.subject || '').trim() || `Message from ${company?.name || 'your contractor'}`,
     text, html: textToHtml(text),
-    replyTo: cfg.replyTo || (company?.email && EMAIL_RE.test(company.email) ? company.email : undefined),
+    replyTo: (item.replyTo && EMAIL_RE.test(item.replyTo) ? item.replyTo : null) || cfg.replyTo || (company?.email && EMAIL_RE.test(company.email) ? company.email : undefined),
     idempotencyKey: `fishtape-outbox-${item.id}`,
     tags: [{ name: 'source', value: 'fishtape' }, { name: 'kind', value: String(item.kind || 'sequence').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'sequence' }],
   };

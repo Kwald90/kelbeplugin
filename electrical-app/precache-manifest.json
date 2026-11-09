@@ -106,6 +106,7 @@
   "./js/lib/cost-codes.js",
   "./js/lib/costing.js",
   "./js/lib/csv.js",
+  "./js/lib/customer-comms.js",
   "./js/lib/dailylog.js",
   "./js/lib/dashboard-actions.js",
   "./js/lib/doc-view.js",
