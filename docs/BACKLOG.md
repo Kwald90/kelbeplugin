@@ -43,8 +43,15 @@ membership/service plans (recurring Stripe).
   is frameable; rest of app keeps `frame-ancestors 'none'`). Pending Kelvin: Stripe per shop + webhook
   events; GST/HST on memberships (left all-in, no tax assumption); SMS later (Twilio; outbox has an sms
   channel).
+- **v0.18.0 (resi roadmap step 4 — close the sale):** a new **Get paid** flow (`#/getpaid`, money group,
+  off by default, pro) that walks a job quote → customer signature → invoice → payment as one guided
+  checklist. Pure client orchestration — NO new collection/migration/server change: it reuses the
+  estimate sign+accept (exported `acceptSideEffects`), the invoice-from-estimate builder
+  (`#/invoices/new?estimateId=`) and the existing Stripe pay-link (`invoiceOnlineTools`), falling back
+  to recording cash/cheque. Render-checked in the real PWA. Resi roadmap now: steps 1–5 done; step 6
+  (membership plans) done in v0.17.0; only deeper dispatch/booking polish remains.
 - All pro-tier, OFF by default; four office modules under a new "Office & project admin" switch group.
-  All three waves shipped to production + TestFlight. **Pending Kelvin VERIFY:** arc-flash IEEE 1584-2018
+  All waves shipped to production + TestFlight. **Pending Kelvin VERIFY:** arc-flash IEEE 1584-2018
   purchase (screening-only until then); CEC Section 64/46 rule numbers (solar/ESS/gen); ULC S537 device
   list; NETA ΔT severity bands.
 
