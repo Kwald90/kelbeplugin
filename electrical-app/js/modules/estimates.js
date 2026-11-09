@@ -31,7 +31,7 @@ async function storeBudget(store, est, ui) {
 }
 
 /** Accepting (or signing) a revision supersedes the estimate it revises, in the same write batch (4.2). */
-function acceptSideEffects(store, est, ui) {
+export function acceptSideEffects(store, est, ui) {
   if (est.revisionOf) {
     const orig = store.get('estimates', est.revisionOf);
     if (orig && orig.status !== 'superseded') store.update('estimates', orig.id, { status: 'superseded' }, { summary: `${orig.number} superseded by ${est.number}` });

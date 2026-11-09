@@ -15,6 +15,7 @@ import assemblies from './assemblies.js';
 import labour from './labour.js';
 import pricelists from './pricelists.js';
 import invoices from './invoices.js';
+import getpaid from './getpaid.js';
 import inventory from './inventory.js';
 import employees from './employees.js';
 import time from './time.js';
@@ -59,7 +60,7 @@ export const GROUPS = {
 };
 
 export const MODULES = [
-  dashboard, today, clients, leads, sequences, servicerequests, jobs, schedule, service, memberships, workplan, materials, drawings, wireruns, estimates, assemblies, invoices, purchasing, quickbooks, books, inventory, pricelists,
+  dashboard, today, clients, leads, sequences, servicerequests, jobs, schedule, service, memberships, workplan, materials, drawings, wireruns, estimates, assemblies, invoices, getpaid, purchasing, quickbooks, books, inventory, pricelists,
   employees, time, labour, sops, safety, compliance, security, calcs, bending, panels, controlpanels, walkthroughs, testing, punchlist, dailylog, faverification, irinspection, rfis, submittals, drawingrevisions, procurement, settings, integrations, billing,
   importer, developer, onboarding, notifications, help,
 ];

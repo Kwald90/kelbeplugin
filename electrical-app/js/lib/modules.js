@@ -49,6 +49,7 @@ export const SWITCHES = [
   { id: 'estimates', group: 'money', label: 'Estimates', desc: 'Quotes from the price book and drawing takeoffs.', modules: ['estimates'], core: true },
   { id: 'assemblies', group: 'money', label: 'Assembly estimating', desc: 'Reusable kits (material + labour units) you count to build a quote fast.', modules: ['assemblies'], core: true },
   { id: 'invoices', group: 'money', label: 'Invoices', desc: 'Billing, payments and what is owed.', modules: ['invoices'], core: true },
+  { id: 'getpaid', group: 'money', label: 'Get paid (close-out flow)', desc: 'One guided flow per job: quote → customer signature → invoice → take payment, so a tech closes and collects on site.', modules: ['getpaid'] },
   { id: 'pricebook', group: 'money', label: 'Price book', desc: 'Your items with cost and sell prices.', modules: [], core: true },
   { id: 'inventory', group: 'money', label: 'Stock', desc: 'Stock in the shop and vans, and what moved where.', modules: [] },
   { id: 'pricelists', group: 'money', label: 'Supplier price lists', desc: 'Import a distributor price file (EECOL, Westburne) to update your price-book costs.', modules: ['pricelists'], core: true },

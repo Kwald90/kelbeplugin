@@ -1,0 +1,45 @@
+/* Get paid — the close-the-sale flow. A vertical stepper: quote → approval → invoice → payment. */
+.gp-flow { display: flex; flex-direction: column; gap: var(--s2); max-width: 640px; }
+
+/* Progress dots across the top of a job's flow. */
+.gp-progress { display: flex; gap: var(--s2); margin: 0 0 var(--s1); }
+.gp-dot {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 13px; line-height: 1; border: 2px solid var(--line); color: var(--text-muted); background: var(--surface);
+}
+.gp-dot.gp-done { background: var(--success); border-color: var(--success); color: #fff; }
+.gp-dot.gp-now { border-color: var(--accent); color: var(--accent); }
+
+/* One step row. */
+.gp-step {
+  display: flex; gap: var(--s2); align-items: flex-start;
+  border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s2) var(--s3); background: var(--surface);
+}
+.gp-step.gp-now { border-color: var(--accent); box-shadow: inset 3px 0 0 0 var(--accent); }
+.gp-step.gp-blocked { opacity: 0.6; }
+.gp-mark {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 14px; background: var(--surface-2); color: var(--text-muted);
+}
+.gp-step.gp-done .gp-mark { background: var(--success); color: #fff; }
+.gp-step.gp-now .gp-mark { background: var(--accent); color: #fff; }
+.gp-body { flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--s1); min-width: 0; }
+.gp-step-title { display: flex; align-items: center; gap: var(--s2); font-weight: 600; }
+.gp-hint { color: var(--text-muted); font-size: var(--fs-sm); margin: 0; }
+.gp-owing { font-size: var(--fs-lg); font-weight: 700; }
+
+/* Signature summary bits (reused in the sign sheet). */
+.gp-lines { margin: var(--s1) 0; padding-left: var(--s3); color: var(--text-muted); font-size: var(--fs-sm); }
+.gp-total { font-weight: 600; }
+
+/* Paid-in-full banner (gp-paid, kept distinct from the gp-done step state to avoid a class clash). */
+.gp-paid {
+  display: flex; flex-direction: column; align-items: center; gap: var(--s1); text-align: center;
+  border: 1px solid var(--success); border-radius: var(--radius); padding: var(--s4) var(--s3);
+  background: color-mix(in srgb, var(--success) 10%, var(--surface));
+}
+.gp-paid h3 { margin: 0; }
+.gp-paid-icon {
+  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--success); color: #fff; font-size: 22px; font-weight: 700;
+}
