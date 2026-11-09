@@ -143,6 +143,8 @@ export const COLLECTION_FEATURES = {
   assets: ['service'],
   // Test & commissioning reports (Fully Loaded and up).
   commissioningTests: ['testing'],
+  // Control panels — industrial / controls panel builds (Fully Loaded and up).
+  controlPanels: ['controlpanels'],
 };
 
 /**

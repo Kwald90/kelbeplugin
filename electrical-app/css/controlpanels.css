@@ -1,0 +1,49 @@
+/* Control panels (#/controlpanels). Schedule tables on screen + a printable shop package. */
+
+.cp-hint { margin: 0 0 var(--s2); }
+.cp-bomstat { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--s2); }
+
+/* Schedule rows: a header row + input rows sharing a grid template set inline per table. */
+.cp-rows { display: grid; gap: var(--s1); }
+.cp-rowhead, .cp-row { display: grid; gap: var(--s2); align-items: center; }
+.cp-rowhead { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 0 var(--s1); }
+.cp-rowhead .num, .cp-row .num { text-align: right; }
+.cp-row .input { width: 100%; }
+.cp-bom-grid { grid-template-columns: 1.4fr 1fr 2fr 1fr 0.7fr 0.8fr 0.8fr auto; }
+.cp-ext { align-self: center; white-space: nowrap; }
+
+.cp-addrow {
+  justify-self: start; display: inline-flex; align-items: center; gap: var(--s1);
+  background: none; border: 1px dashed var(--line); color: var(--accent-fill);
+  border-radius: var(--radius); padding: var(--s1) var(--s2); cursor: pointer; font: inherit;
+}
+.cp-addrow:hover { background: var(--surface-2); }
+
+@media (max-width: 720px) {
+  .cp-rowhead { display: none; }
+  .cp-row, .cp-bom-grid { grid-template-columns: 1fr 1fr auto !important; }
+}
+
+/* ---- printable package ---- */
+.cp-print { display: none; }
+@media print {
+  body.cp-printing > *:not(.cp-print) { display: none !important; }
+  body.cp-printing { overflow: visible; }
+  body.cp-printing .cp-print { display: block; color-scheme: light; color: CanvasText; background: Canvas; }
+}
+.cp-doc { font-size: 12px; line-height: 17px; }
+.cp-doc h1 { font-size: 22px; line-height: 28px; margin: var(--s3) 0 var(--s1); }
+.cp-doc h2 { font-size: 14px; margin: var(--s4) 0 var(--s2); border-bottom: 1px solid GrayText; padding-bottom: 2px; }
+.cp-doc table { width: 100%; border-collapse: collapse; margin-bottom: var(--s2); }
+.cp-doc th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: GrayText; padding: 4px; border-bottom: 1px solid CanvasText; }
+.cp-doc td { padding: 4px; border-bottom: 1px solid GrayText; vertical-align: top; }
+.cp-doc .right { text-align: right; }
+.cp-doc tr.strong td, .cp-doc tfoot td { font-weight: 700; }
+.cp-doc-meta th { border: none; width: 140px; }
+.cp-doc-meta td { border: none; }
+.cp-doc-top { display: flex; justify-content: space-between; gap: var(--s4); padding-bottom: var(--s2); border-bottom: 3px solid var(--accent-fill); }
+.cp-doc-brand { font-size: 18px; font-weight: 800; }
+.cp-doc-small { font-size: 11px; color: GrayText; }
+.cp-doc-right { text-align: right; }
+.cp-doc-kind { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: GrayText; }
+.cp-doc-notes { white-space: pre-wrap; }

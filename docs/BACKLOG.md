@@ -3,6 +3,48 @@
 Open items raised while building. Newest decisions live in [BUILD-PLAN.md](BUILD-PLAN.md).
 Tag: **K** needs Kelvin, **legal** needs a lawyer or accountant, **dev** is code.
 
+## Product direction (2026-11-08, Kelvin)
+
+Kelvin reviewed an expert gap analysis (three rounds) and set direction.
+
+**Decisions**
+- **Tenancy:** keep the current **hardened shared Postgres + `FORCE ROW LEVEL SECURITY`** model. NOT
+  multi-entity single-login — each company is a fully separate tenant (own login, own data, no bridge).
+  Dedicated DB-per-tenant stays an option for one enterprise client later without an app change.
+  RULE: every new tenant table gets `FORCE ROW LEVEL SECURITY`, a `(tenant_id, …)` index, and lives
+  behind `withTenant`.
+- **First lane: residential service shop**, with a hard "everything flows nice + user-friendly setup"
+  constraint. Claude is driving this lane directly.
+
+**Reserved migration numbers** (latest shipped is 0170 — do not reuse these):
+0171 control-panel / I-O package · 0172 punch list / deficiencies · 0173 jobsite daily log ·
+0174 grounding ground-resistance test record (only if persisted) · resi lane takes 0175+.
+
+**Resi-service roadmap (build order):** (1) online service-request / booking front door (public
+per-tenant intake → lead/job; none today) · (2) request → scheduled job → dispatch glue · (3) customer
+"on-the-way" ETA (reuse time-clock travel; email via SendGrid now, SMS later) · (4) on-site quote →
+e-sign → invoice → pay in one flow · (5) review/reputation ask on job close · (6) residential
+membership/service plans (recurring Stripe).
+
+**In flight (2026-11-08, parallel agents on isolated worktrees):** engineering calc pack (arc-flash +
+Z462 label, coordination/SCCR, transformer, cable-pull, duct-bank, grounding test); control-panel /
+I-O module (0171); punch list (0172) + daily log (0173); marketing site + per-tier plan feature-list
+refresh (resi-first, prices unchanged).
+
+**Vetted gap backlog for later lanes** (confirmed NOT built):
+- **Commercial/GC:** WIP %-complete billing, schedule-of-values progress draws, RFI + submittal logs,
+  3-week look-ahead / Gantt, drawing revision control.
+- **Industrial:** control-panel package (in flight), arc-flash/coordination (in flight), solar/ESS +
+  CEC Section 64 interconnection, fire-alarm ULC S537 verification certs, generator/ATS standby.
+- **Service/resi extras:** thermal/IR inspection reports, warranty/callback (RMA) loop.
+- **Platform:** bilingual EN/FR (no i18n today), Android/Play build, 2FA/SSO, data export, webhooks/API.
+- **Finance (beyond receivables):** AP vendor-bill entry + bill pay, cash-flow forecast,
+  overhead-recovery / break-even.
+- **People:** apprentice logbook → provincial board format, qualification matrix, PTO/WSIB.
+- **Already strong — do NOT re-pitch:** CEC Section 8 load calcs incl. EVEMS, bonding, receivables
+  (aging/statements/interest/dunning/holdback), certifications w/ expiry, permits + inspections,
+  closeout w/ substantial-completion, job costing, certified payroll.
+
 ## Needs Kelvin
 
 - **K** iOS device acceptance and public App Store release: the FishTapeHQ app record exists, and `1.0 (20261023.25)` is available to the internal TG Electrical TestFlight group (verified 2026-10-22). Complete the device checks and public-release review in [the release record](mobile/UX-TESTFLIGHT.md).

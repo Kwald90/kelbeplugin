@@ -10,6 +10,12 @@ import { recommendBreakerKa, KA_OPTIONS, KA_REFERENCE } from '../lib/breaker-ka.
 import { BURIAL_METHODS, BURIAL_LOCATIONS, BURIAL_SOURCE, minimumCover } from '../lib/burial.js';
 import { CONDUIT_MATERIALS, FITTING_THRESHOLD_MM, FITTING_TRAVEL_MM, MM_PER_IN as EXP_MM_PER_IN, expansionMm, needsExpansionFitting, fittingsNeeded, deltaFtoC } from '../lib/conduit-expansion.js';
 import { FIXTURES, DEFAULT_LUMENS, TARGET_FC, DEFAULT_TARGET_FC, solveLayout } from '../lib/lighting.js';
+import { arcFlash, EQUIPMENT as AF_EQUIPMENT, CONFIGS as AF_CONFIGS, GROUNDING as AF_GROUNDING } from '../lib/arc-flash.js';
+import { quickCheck as sccrCheck, selectivityNote, DEVICE_KINDS as SCCR_DEVICES } from '../lib/sccr.js';
+import { sizeTransformer, PHASES as XF_PHASES } from '../lib/transformer.js';
+import { pull as cablePull, N_PER_LBF } from '../lib/cable-pull.js';
+import { ductBankAmpacity, MATERIALS as DB_MATERIALS } from '../lib/ductbank.js';
+import { evaluateTest as groundTest, potentialProbeDistance, TARGETS as GND_TARGETS } from '../lib/grounding-test.js';
 
 const FT2 = M_PER_FT * M_PER_FT; // m² per ft²
 const ML_PER_IN3 = 16.387064;
@@ -28,6 +34,12 @@ const TABS = [
   { id: 'potlight', label: 'Pot lights' },
   { id: 'burial', label: 'Burial depth' },
   { id: 'expansion', label: 'Conduit expansion' },
+  { id: 'arcflash', label: 'Arc flash' },
+  { id: 'sccr', label: 'SCCR check' },
+  { id: 'transformer', label: 'Transformer' },
+  { id: 'cablepull', label: 'Cable pull' },
+  { id: 'ductbank', label: 'Duct bank' },
+  { id: 'ground', label: 'Ground test' },
 ];
 
 const MATERIALS = [{ value: 'cu', label: 'Copper' }, { value: 'al', label: 'Aluminum' }];
@@ -867,9 +879,271 @@ function expansionTab() {
   });
 }
 
+// ===========================================================================
+// Engineering calculators (code-book-neutral; shown under both books). The math
+// lives in pure libs: arc-flash.js, sccr.js, transformer.js, cable-pull.js,
+// ductbank.js, grounding-test.js. Each carries its own source citations and
+// VERIFY tags. These are estimating / screening aids, not stamped studies.
+// ===========================================================================
+
+const MM_PER_IN_L = 25.4;
+const mmTxt = (mm) => (mm == null ? '—' : imperial() ? `${num(mm / MM_PER_IN_L, 1)} in (${num(mm, 0)} mm)` : `${num(mm, 0)} mm (${num(mm / MM_PER_IN_L, 1)} in)`);
+
+// Print one node alone, reusing the global .doc-print / body.printing-doc print rules (money.css) and
+// the app's native-print hook. Mirrors lib/doc-view.js printNode so the arc-flash label prints the
+// same way as the invoice / wire-run PDFs.
+function printLabel(node) {
+  const wrap = h('div', { class: 'doc-print' }, node);
+  document.body.append(wrap);
+  document.body.classList.add('printing-doc');
+  const done = () => { wrap.remove(); document.body.classList.remove('printing-doc'); removeEventListener('afterprint', done); };
+  addEventListener('afterprint', done);
+  setTimeout(() => { window.print(); setTimeout(done, 50); }, 50);
+}
+
+// A CSA Z462-style arc-flash warning label built from a screening result. Mirrors the printable
+// document pattern (a single node mounted for print). Conservative; carries the not-a-study notice.
+function arcFlashLabel(r, meta) {
+  const line = (label, value) => h('div', { class: 'af-row' }, h('span', { class: 'af-k' }, label), h('span', { class: 'af-v' }, value));
+  const ppe = r.ppe.danger ? 'DANGER — over 40 cal/cm²' : r.ppe.category === 0 ? 'Below 1.2 cal/cm² boundary' : `Category ${r.ppe.category} · arc rating ≥ ${r.ppe.minArc} cal/cm²`;
+  return h('div', { class: 'af-label' },
+    h('div', { class: ['af-head', r.ppe.danger ? 'danger' : 'warn'] },
+      h('span', { class: 'af-bang' }, '⚠'),
+      h('span', null, r.ppe.danger ? 'DANGER' : 'WARNING'),
+      h('span', { class: 'af-sub' }, 'Arc Flash and Shock Hazard — Appropriate PPE Required')),
+    h('div', { class: 'af-grid' },
+      line('Incident energy', `${num(r.cal, 2)} cal/cm²`),
+      line('Working distance', mmTxt(r.inputs.workingMm)),
+      line('Arc-flash boundary', mmTxt(r.boundaryMm)),
+      line('Minimum PPE', ppe),
+      line('Nominal voltage', `${ui.fmtNum(r.inputs.voltV)} V`),
+      line('Available fault current', `${num(r.inputs.faultKa, 1)} kA`),
+      line('Arc duration', `${num(r.inputs.clearSec, 2)} s`),
+      line('Equipment', r.inputs.equipmentLabel),
+      meta.equipmentId ? line('Equipment ID', meta.equipmentId) : null,
+      line('Method', r.method),
+      line('Date', ui.fmtDate(new Date().toISOString()))),
+    h('div', { class: 'af-foot' }, `${meta.company || 'Fishtape'} — SCREENING ESTIMATE ONLY (${r.ppe.danger ? 'IE > 40 cal/cm²' : 'IEEE 1584-2002 / Lee'}). NOT a stamped arc-flash study per CSA Z462 Clause 4.3. Verify available fault current and clearing time against the real system; have a qualified engineer complete the study before relying on this label.`));
+}
+
+// -- 1. Arc flash (IEEE 1584-2002 empirical + Lee) + CSA Z462 label ----------
+function arcflashTab() {
+  const D = { faultKa: 25, voltV: 600, equipment: 'lv-switchgear', config: 'box', grounding: 'grounded', clearSec: 0.2, gapMm: '', workingMm: '', equipmentId: '' };
+  return liveCalc('arcflash', D, (v) => [
+    { label: 'Available bolted fault current (kA)', name: 'faultKa', type: 'number', value: v.faultKa, step: 'any', min: 0, hint: 'From the utility or a short-circuit calc. The "Breaker kA" tab helps judge the magnitude.' },
+    { label: 'System voltage (V, line-to-line)', name: 'voltV', type: 'number', value: v.voltV, step: 'any', min: 1 },
+    { label: 'Equipment', name: 'equipment', type: 'select', value: v.equipment, options: Object.entries(AF_EQUIPMENT).map(([k, e]) => ({ value: k, label: e.label })), span: true },
+    { label: 'Electrode configuration', name: 'config', type: 'select', value: v.config, options: Object.entries(AF_CONFIGS).map(([k, c]) => ({ value: k, label: c.label })) },
+    { label: 'System grounding', name: 'grounding', type: 'select', value: v.grounding, options: AF_GROUNDING },
+    { label: 'Arc duration / upstream clearing time (s)', name: 'clearSec', type: 'number', value: v.clearSec, step: 'any', min: 0, hint: 'Total time to clear the arc (device trip + delay). 0.2 s is a common default.' },
+    { label: 'Conductor gap (mm, blank = default)', name: 'gapMm', type: 'number', value: v.gapMm, step: 'any', min: 0, hint: `Default for this equipment: ${AF_EQUIPMENT[v.equipment]?.gapMm} mm` },
+    { label: 'Working distance (mm, blank = default)', name: 'workingMm', type: 'number', value: v.workingMm, step: 'any', min: 0, hint: `Default: ${AF_EQUIPMENT[v.equipment]?.workingMm} mm` },
+    { label: 'Equipment ID (for the label)', name: 'equipmentId', type: 'text', value: v.equipmentId },
+  ], (x) => {
+    const r = arcFlash({ faultKa: n(x.faultKa), voltV: n(x.voltV), equipment: x.equipment, config: x.config, grounding: x.grounding, clearSec: n(x.clearSec), gapMm: x.gapMm, workingMm: x.workingMm });
+    const company = ctxCompanyName();
+    const tone = r.ppe.danger ? 'fail' : r.ppe.category >= 3 ? 'warn' : 'pass';
+    const badge = r.ppe.danger ? 'DANGER > 40 cal/cm²' : r.ppe.category === 0 ? 'Below boundary' : `PPE Cat ${r.ppe.category}`;
+    return [
+      result({
+        label: 'Incident energy at working distance', value: num(r.cal, 2), unit: 'cal/cm²', tone, badge,
+        sub: `${r.ppe.danger ? 'No PPE category — energized work not permitted without a study.' : r.ppe.category === 0 ? 'Below the 1.2 cal/cm² boundary.' : `Minimum arc rating ${r.ppe.minArc} cal/cm².`} Arc-flash boundary ${mmTxt(r.boundaryMm)}.`,
+        lines: [
+          `Arcing current ${num(r.arcKa, 1)} kA (${r.arcEquation || r.method}).`,
+          `Method: ${r.method}.`,
+          `Gap ${num(r.inputs.gapMm, 0)} mm · working distance ${mmTxt(r.inputs.workingMm)} · ${r.inputs.clearSec} s · distance exponent ${r.inputs.x}.`,
+        ],
+      }),
+      h('div', { class: 'calc-minis' },
+        mini('Arc-flash boundary', mmTxt(r.boundaryMm)),
+        mini('Minimum arc rating', r.ppe.danger ? 'Study required' : `${r.ppe.minArc} cal/cm²`),
+        mini('Arcing current', `${num(r.arcKa, 1)} kA`)),
+      h('div', { class: 'calc-actions no-print' }, ui.button('Print Z462 label', { icon: 'printer', onClick: () => printLabel(arcFlashLabel(r, { company, equipmentId: x.equipmentId })) })),
+      h('ul', { class: 'calc-why' }, r.warnings.map((w) => h('li', null, w))),
+      h('p', { class: 'calc-disclaimer' }, ui.icon('info', 16),
+        ' SAFETY-CRITICAL screening estimate, NOT a stamped arc-flash study (CSA Z462 Clause 4.3 / Annex D). Available fault current and clearing time must come from the real system; a qualified engineer must complete the study. Values are conservative and the IEEE 1584-2018 model is not applied (see the warnings).'),
+      refs('IEEE 1584-2002 empirical model (eq. 1, 3, 5) + Ralph Lee method', 'CSA Z462 arc-rating bands', '1.2 cal/cm² (5 J/cm²) boundary threshold'),
+    ];
+  });
+}
+
+// -- 2. Interrupting / SCCR quick-check --------------------------------------
+function sccrTab() {
+  const D = { availableKa: 10, ratingKa: 22, deviceKind: 'breaker', marginPct: 0, seriesRated: false };
+  return liveCalc('sccr', D, (v) => [
+    { label: 'Available fault current (kA)', name: 'availableKa', type: 'number', value: v.availableKa, step: 'any', min: 0, hint: 'At the device terminals (utility / short-circuit calc). See the "Breaker kA" tab.' },
+    { label: 'Device interrupting / withstand rating (kA)', name: 'ratingKa', type: 'number', value: v.ratingKa, step: 'any', min: 0 },
+    { label: 'Device / equipment', name: 'deviceKind', type: 'select', value: v.deviceKind, options: SCCR_DEVICES },
+    { label: 'Required margin over available (%)', name: 'marginPct', type: 'number', value: v.marginPct, step: 'any', min: 0, hint: 'Code minimum is 0%; a margin covers utility growth' },
+    { label: 'Relying on a tested series-rated combination', name: 'seriesRated', type: 'checkbox', value: v.seriesRated },
+  ], (x) => {
+    const r = sccrCheck({ availableKa: n(x.availableKa), ratingKa: n(x.ratingKa), marginPct: n(x.marginPct), deviceKind: x.deviceKind, seriesRated: x.seriesRated });
+    return [
+      result({
+        label: 'Interrupting / SCCR check', value: r.pass ? 'PASS' : 'FAIL', tone: r.pass ? 'pass' : 'fail',
+        badge: r.pass ? `${num(r.marginActualPct, 0)}% headroom` : (r.nextStandard ? `Need ${r.nextStandard} kA` : 'Under-rated'),
+        sub: `${num(r.ratingKa, 1)} kA rating vs ${num(r.requiredKa, 1)} kA required (available ${num(r.availableKa, 1)} kA${n(x.marginPct) ? ` + ${n(x.marginPct)}%` : ''}).`,
+        lines: r.notes,
+      }),
+      h('div', { class: 'card flat' },
+        h('div', { class: 'calc-label' }, 'Breaker vs fuse selectivity (quick note)'),
+        h('ul', { class: 'calc-why' }, selectivityNote({ availableKa: n(x.availableKa) }).map((l) => h('li', null, l)))),
+      refs(book === 'CEC-2024' ? 'CEC 2024 Rule 14-012' : 'NEC 2023 110.9 / 110.10', 'SCCR per UL 508A Supp. SB', 'Documented quick-check — not a coordination study'),
+    ];
+  });
+}
+
+// -- 3. Transformer sizing (CEC Section 26) ----------------------------------
+function transformerTab() {
+  const D = { loadKva: 75, loadAmps: 0, primaryV: 600, secondaryV: 208, phase: '3', impedancePct: 0, continuous: true, material: 'cu' };
+  return liveCalc('transformer', D, (v) => [
+    { label: 'Phase', name: 'phase', type: 'select', value: v.phase, options: XF_PHASES },
+    { label: 'Load (kVA, 0 = use amps below)', name: 'loadKva', type: 'number', value: v.loadKva, step: 'any', min: 0 },
+    { label: 'or Load current on the secondary (A)', name: 'loadAmps', type: 'number', value: v.loadAmps, step: 'any', min: 0 },
+    { label: 'Primary voltage (V)', name: 'primaryV', type: 'number', value: v.primaryV, step: 'any', min: 1 },
+    { label: 'Secondary voltage (V)', name: 'secondaryV', type: 'number', value: v.secondaryV, step: 'any', min: 1 },
+    { label: 'Impedance %Z (blank = 5% assumed)', name: 'impedancePct', type: 'number', value: v.impedancePct, step: 'any', min: 0, hint: 'Dry-type is typically 3–6%' },
+    { label: 'Continuous load (size secondary at 125%)', name: 'continuous', type: 'checkbox', value: v.continuous },
+    { label: 'Secondary conductor material', name: 'material', type: 'select', value: v.material, options: MATERIALS },
+  ], (x) => {
+    const r = sizeTransformer({ loadKva: n(x.loadKva), loadAmps: n(x.loadAmps), primaryV: n(x.primaryV), secondaryV: n(x.secondaryV), phase: Number(x.phase), impedancePct: n(x.impedancePct), continuous: x.continuous, material: x.material });
+    return [
+      result({
+        label: 'Transformer size', value: ui.fmtNum(r.kva), unit: `kVA ${Number(x.phase) === 3 ? '3φ' : '1φ'}`, tone: 'pass',
+        badge: `${num(r.loadKva, 1)} kVA load`,
+        sub: `Primary ${num(r.primaryFla, 1)} A @ ${ui.fmtNum(r.primaryV)} V · Secondary ${num(r.secondaryFla, 1)} A @ ${ui.fmtNum(r.secondaryV)} V`,
+        lines: [
+          `Primary overcurrent ≤ ${r.ocpd.pct}% of ${num(r.primaryFla, 1)} A = ${num(r.ocpd.maxAmps, 1)} A → ${r.ocpd.rating} A device (Rule 26-256, primary-only, conservative — VERIFY).`,
+          `Secondary conductor at ${r.continuous ? '125%' : '100%'} of ${num(r.secondaryFla, 1)} A = ${num(r.secondary.designAmps, 1)} A → ${r.secondary.sizeLabel || 'over 500 kcmil'} ${C.mat(r.material)} (75 °C, Rule 4-004).`,
+          `Secondary available fault ≈ ${num(r.impedance.secFaultKa, 1)} kA at ${r.impedance.pct}% Z${r.impedance.assumed ? ' (assumed)' : ''} (infinite-primary estimate — conservative).`,
+        ],
+      }),
+      h('div', { class: 'calc-minis' },
+        mini('Primary FLA', `${num(r.primaryFla, 1)} A`),
+        mini('Secondary FLA', `${num(r.secondaryFla, 1)} A`),
+        mini('Primary OCPD', `${r.ocpd.rating} A`),
+        mini('Secondary conductor', r.secondary.sizeLabel ? `${r.secondary.sizeLabel} ${C.mat(r.material)}` : '—'),
+        mini(`Inrush (${r.inrush.lowX}–${r.inrush.highX}× FLA)`, `${num(r.inrush.lowKa, 1)}–${num(r.inrush.highKa, 1)} kA`)),
+      h('p', { class: 'calc-note muted' }, 'Magnetizing inrush of 8–12× FLA lasts a few cycles on energization — pick a primary device that rides through it (time-delay fuse or an inverse-time breaker with margin). Inrush multiple and %Z are typical values; confirm the nameplate.'),
+      refs('CEC Rule 26-256 (primary protection ≤ 750 V)', 'Rule 26-258 / Table 50 (secondary conductors)', 'Rules 4-004, 8-104', 'Estimating aid — VERIFY the 26-256 ladder'),
+    ];
+  });
+}
+
+// -- 4. Cable-pulling tension & sidewall pressure ----------------------------
+function cablepullTab() {
+  // Weight entered per the user's units; converted to N/m. 1 lb/ft = 14.5939 N/m; 1 kg/m = 9.80665 N/m.
+  const N_PER_LBFT = 14.5939029, N_PER_KGM = 9.80665;
+  const D = { weight: imperial() ? 2 : 3, length: imperial() ? 150 : 45, mu: 0.4, inclineDeg: 0, bendDeg: 90, radius: imperial() ? 2 : 0.6, areaMm2: 107.2, conductors: 3, material: 'cu', swbpLimit: 500 };
+  return liveCalc('cablepull', D, (v) => [
+    { label: imperial() ? 'Cable weight (lb/ft, all conductors)' : 'Cable weight (kg/m, all conductors)', name: 'weight', type: 'number', value: v.weight, step: 'any', min: 0 },
+    { label: 'Straight run length', name: 'length', qty: 'length', value: v.length },
+    { label: 'Coefficient of friction', name: 'mu', type: 'number', value: v.mu, step: 'any', min: 0, hint: 'Lubricated 0.2–0.4; dry 0.5+' },
+    { label: 'Incline up from horizontal (deg)', name: 'inclineDeg', type: 'number', value: v.inclineDeg, step: 'any' },
+    { label: 'Bend angle at end of run (deg, 0 = none)', name: 'bendDeg', type: 'number', value: v.bendDeg, step: 'any', min: 0 },
+    { label: 'Bend radius', name: 'radius', qty: 'length', value: v.radius },
+    { label: 'Conductor size each (mm²)', name: 'areaMm2', type: 'select', value: String(v.areaMm2), options: CEC.SIZES.map((s) => ({ value: String(CEC.AREA_MM2[s]), label: `${CEC.sizeLabel(s)} (${CEC.AREA_MM2[s]} mm²)` })) },
+    { label: 'Number of conductors', name: 'conductors', type: 'number', value: v.conductors, min: 1, step: 1 },
+    { label: 'Conductor material', name: 'material', type: 'select', value: v.material, options: MATERIALS },
+    { label: 'Max sidewall pressure (lbf/ft)', name: 'swbpLimit', type: 'number', value: v.swbpLimit, step: 'any', min: 0, hint: 'Cable maker spec; 500 lbf/ft typical' },
+  ], (x) => {
+    const weightNPerM = n(x.weight) * (imperial() ? N_PER_LBFT : N_PER_KGM);
+    const r = cablePull({
+      weightNPerM, lengthM: x.length ?? 0, mu: n(x.mu), inclineDeg: n(x.inclineDeg), bendDeg: n(x.bendDeg),
+      radiusM: x.radius ?? 0, areaMm2: n(x.areaMm2), conductors: n(x.conductors), material: x.material, swbpLimitLbfFt: n(x.swbpLimit),
+    });
+    const tensionTxt = (lbf) => `${num(lbf, 0)} lbf (${num(lbf * N_PER_LBF, 0)} N)`;
+    const tone = (r.tensionPass === false || r.swbpPass === false) ? 'fail' : 'pass';
+    return [
+      result({
+        label: 'Maximum pulling tension', value: num(r.tensionAfterBendLbf, 0), unit: 'lbf', tone,
+        badge: r.tensionPass === false ? 'Over max tension' : r.swbpPass === false ? 'Over sidewall limit' : 'Within limits',
+        sub: `${tensionTxt(r.tensionAfterBendLbf)} at the pull end${r.hasBend ? `, after the bend (${tensionTxt(r.tensionBeforeBendLbf)} entering it)` : ''}.`,
+        lines: [
+          `T = T_in + weight × length × (μ·cosθ + sinθ); each bend ×e^(μ·α).`,
+          r.maxTensionLbf != null ? `Max allowed ${tensionTxt(r.maxTensionLbf)} (${x.material === 'al' ? '0.006' : '0.008'} lbf/cmil × ${n(x.conductors)} conductors).` : null,
+          r.hasBend ? `Sidewall pressure ${num(r.swbpLbfFt, 0)} lbf/ft vs ${num(r.swbpLimitLbfFt, 0)} lbf/ft limit.` : 'No bend modelled — add the worst bend for sidewall pressure.',
+        ],
+      }),
+      h('div', { class: 'calc-minis' },
+        mini('Tension at pull', `${num(r.tensionAfterBendLbf, 0)} lbf`),
+        r.hasBend ? mini('Sidewall pressure', `${num(r.swbpLbfFt, 0)} lbf/ft`) : null,
+        r.maxTensionLbf != null ? mini('Max tension', `${num(r.maxTensionLbf, 0)} lbf`) : null),
+      refs('Capstan T₂ = T₁·e^(μα); SWBP = T/r', 'Polywater / NECA / IEEE 525 pulling calcs', 'Max tension 0.008 lbf/cmil Cu (0.006 Al) — VERIFY vs cable maker'),
+    ];
+  });
+}
+
+// -- 5. Underground duct-bank ampacity derating (screening) ------------------
+function ductbankTab() {
+  const D = { size: '4/0', material: 'cu', conductorC: '90', earthAmbientC: 20, loadedDucts: 4, loadFactorPct: 100 };
+  return liveCalc('ductbank', D, (v) => [
+    { label: 'Conductor size', name: 'size', type: 'select', value: v.size, options: CEC.SIZES.map((s) => ({ value: s, label: `${CEC.sizeLabel(s)} (${CEC.AREA_MM2[s]} mm²)` })) },
+    { label: 'Material', name: 'material', type: 'select', value: v.material, options: DB_MATERIALS },
+    { label: 'Conductor rating (°C)', name: 'conductorC', type: 'select', value: v.conductorC, options: [{ value: '90', label: '90 °C' }, { value: '75', label: '75 °C' }] },
+    { label: 'Earth ambient (°C)', name: 'earthAmbientC', type: 'number', value: v.earthAmbientC, step: 'any', hint: 'Base is 20 °C' },
+    { label: 'Loaded ducts in the bank', name: 'loadedDucts', type: 'number', value: v.loadedDucts, min: 1, step: 1 },
+    { label: 'Load factor (%)', name: 'loadFactorPct', type: 'number', value: v.loadFactorPct, min: 50, max: 100, step: 'any', hint: '100% = continuous peak; lower lets the earth cool' },
+  ], (x) => {
+    const r = ductBankAmpacity({ size: x.size, material: x.material, conductorC: Number(x.conductorC), earthAmbientC: n(x.earthAmbientC), loadedDucts: n(x.loadedDucts), loadFactorPct: n(x.loadFactorPct) });
+    return [
+      result({
+        label: 'Derated ampacity (screening)', value: num(r.deratedAmpacity, 0), unit: 'A', tone: 'warn', badge: 'VERIFY',
+        sub: `${r.sizeLabel} ${C.mat(r.material)} at ${r.conductorC} °C: base ${num(r.baseAmpacity, 0)} A × factors.`,
+        lines: [
+          `Earth ambient ${num(r.factors.ambient, 3)} (${r.earthAmbientC} °C) × group ${num(r.factors.group, 3)} (${r.loadedDucts} ducts) × load factor ${num(r.factors.loadFactor, 3)} (${r.loadFactorPct}%).`,
+          'NOT a Neher-McGrath calc and NOT a CEC underground table. The group factor is a conservative curve, not a code table.',
+          'Confirm the final size against CEC Tables D8A–D17 (underground) or an IEEE 835 study.',
+        ],
+      }),
+      h('div', { class: 'calc-minis' },
+        mini('Base ampacity', `${num(r.baseAmpacity, 0)} A`),
+        mini('Combined derate', `${num(r.factors.ambient * r.factors.group * r.factors.loadFactor, 3)}×`),
+        mini('Derated', `${num(r.deratedAmpacity, 0)} A`)),
+      refs('CEC Tables D8A–D17, Rule 4-004, Appendix D', 'Neher-McGrath / IEEE 835 for a real design', 'All factors VERIFY — screening only'),
+    ];
+  });
+}
+
+// -- 6. Grounding electrode / fall-of-potential test record (stateless) ------
+function groundTab() {
+  const D = { targetOhms: '25', distance: imperial() ? 100 : 30, r1: 22, r2: 24, r3: 23, r4: '' };
+  return liveCalc('ground', D, (v) => [
+    { label: 'Target resistance', name: 'targetOhms', type: 'select', value: v.targetOhms, options: GND_TARGETS.map((t) => ({ value: String(t.value), label: t.label })) },
+    { label: 'Current-probe distance (for the 62% rule)', name: 'distance', qty: 'length', value: v.distance },
+    { label: 'Reading 1 (Ω)', name: 'r1', type: 'number', value: v.r1, step: 'any', min: 0 },
+    { label: 'Reading 2 (Ω)', name: 'r2', type: 'number', value: v.r2, step: 'any', min: 0 },
+    { label: 'Reading 3 (Ω)', name: 'r3', type: 'number', value: v.r3, step: 'any', min: 0 },
+    { label: 'Reading 4 (Ω, optional)', name: 'r4', type: 'number', value: v.r4, step: 'any', min: 0 },
+  ], (x) => {
+    const readings = [x.r1, x.r2, x.r3, x.r4].map(n).filter((y) => y > 0);
+    const r = groundTest({ readings, targetOhms: Number(x.targetOhms), currentProbeDistance: x.distance ?? 0 });
+    const probeM = potentialProbeDistance(x.distance ?? 0);
+    return [
+      result({
+        label: 'Ground resistance (median)', value: r.resultOhms == null ? '—' : num(r.resultOhms, 2), unit: r.resultOhms == null ? '' : 'Ω',
+        tone: r.pass == null ? 'warn' : r.pass ? 'pass' : 'fail', badge: r.pass == null ? 'Enter readings' : r.pass ? `≤ ${num(r.targetOhms, 0)} Ω` : `Over ${num(r.targetOhms, 0)} Ω`,
+        sub: probeM ? `Place the potential probe at 62% = ${len(probeM)} from the electrode (current probe at ${len(x.distance ?? 0)}).` : null,
+        lines: r.notes,
+      }),
+      h('div', { class: 'calc-minis' },
+        mini('Readings', String(readings.length)),
+        r.resultOhms != null ? mini('Spread', `${num(r.spreadPct, 0)}%`) : null,
+        probeM ? mini('62% probe position', len(probeM)) : null),
+      refs('CEC Section 10 (Rule 10-700 series)', 'IEEE 81 fall-of-potential (62% rule)', 'Target set by spec / AHJ / utility — the CEC sets no general maximum (VERIFY)'),
+    ];
+  });
+}
+
+// Company name for the printable label, set from settings in render().
+let _companyName = 'Fishtape';
+const ctxCompanyName = () => _companyName || 'Fishtape';
+
+const ENG = { arcflash: arcflashTab, sccr: sccrTab, transformer: transformerTab, cablepull: cablepullTab, ductbank: ductbankTab, ground: groundTab };
+
 const VIEWS = {
-  'CEC-2024': { vd: cecVoltageDrop, wire: cecWire, conduit: cecConduit, box: cecBox, load: cecLoad, motor: cecMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab, burial: burialTab, expansion: expansionTab },
-  'NEC-2023': { vd: necVoltageDrop, wire: necWire, conduit: necConduit, box: necBox, load: necLoad, motor: necMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab, burial: burialTab, expansion: expansionTab },
+  'CEC-2024': { vd: cecVoltageDrop, wire: cecWire, conduit: cecConduit, box: cecBox, load: cecLoad, motor: cecMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab, burial: burialTab, expansion: expansionTab, ...ENG },
+  'NEC-2023': { vd: necVoltageDrop, wire: necWire, conduit: necConduit, box: necBox, load: necLoad, motor: necMotor, ohms: ohmsTab, '3ph': threePhaseTab, ka: breakerKaTab, potlight: potlightTab, burial: burialTab, expansion: expansionTab, ...ENG },
 };
 
 export default {
@@ -883,6 +1157,7 @@ export default {
     const s = ctx.store.settings();
     book = CEC.codeBookOf(s);
     province = s.company?.province || null;
+    _companyName = s.company?.name || 'Fishtape';
     units = getUnits(s.units);
     const views = VIEWS[book];
     const tab = views[ctx.params[0]] ? ctx.params[0] : 'vd';

@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fishtapehq.com/schema/controlPanels.json",
+  "title": "Control panel",
+  "description": "An industrial control-panel build record: header (tag, enclosure, voltage, SCCR, job), a components list that rolls up into a bill of materials, an I/O list, a terminal/wiring schedule and a nameplate/engraving schedule. Known fields are typed; extra fields are allowed.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "createdAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "updatedAt": { "type": ["string", "null"], "maxLength": 40, "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$" },
+    "name": { "type": ["string", "null"], "maxLength": 200 },
+    "tag": { "type": ["string", "null"], "maxLength": 80 },
+    "enclosureType": { "type": ["string", "null"], "maxLength": 80 },
+    "enclosureRating": { "type": ["string", "null"], "maxLength": 80 },
+    "systemVoltage": { "type": ["string", "null"], "maxLength": 80 },
+    "sccr": { "type": ["string", "null"], "maxLength": 80 },
+    "jobId": { "type": ["string", "null"], "maxLength": 128 },
+    "clientId": { "type": ["string", "null"], "maxLength": 128 },
+    "createdBy": { "type": ["string", "null"], "maxLength": 128 },
+    "notes": { "type": ["string", "null"], "maxLength": 20000 },
+    "components": {
+      "type": ["array", "null"],
+      "maxItems": 300,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "itemId": { "type": ["string", "null"], "maxLength": 128 },
+          "part": { "type": ["string", "null"], "maxLength": 200 },
+          "description": { "type": ["string", "null"], "maxLength": 300 },
+          "manufacturer": { "type": ["string", "null"], "maxLength": 200 },
+          "qty": { "type": ["number", "null"], "minimum": 0 },
+          "unitCents": { "type": ["integer", "null"], "minimum": 0 }
+        }
+      }
+    },
+    "io": {
+      "type": ["array", "null"],
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "tag": { "type": ["string", "null"], "maxLength": 80 },
+          "type": { "enum": ["DI", "DO", "AI", "AO", null] },
+          "description": { "type": ["string", "null"], "maxLength": 300 },
+          "device": { "type": ["string", "null"], "maxLength": 200 },
+          "terminal": { "type": ["string", "null"], "maxLength": 80 },
+          "address": { "type": ["string", "null"], "maxLength": 80 }
+        }
+      }
+    },
+    "wiring": {
+      "type": ["array", "null"],
+      "maxItems": 2000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "wire": { "type": ["string", "null"], "maxLength": 80 },
+          "from": { "type": ["string", "null"], "maxLength": 200 },
+          "to": { "type": ["string", "null"], "maxLength": 200 },
+          "gauge": { "type": ["string", "null"], "maxLength": 40 },
+          "colour": { "type": ["string", "null"], "maxLength": 40 },
+          "terminal": { "type": ["string", "null"], "maxLength": 80 }
+        }
+      }
+    },
+    "nameplates": {
+      "type": ["array", "null"],
+      "maxItems": 300,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 128 },
+          "item": { "type": ["string", "null"], "maxLength": 200 },
+          "legend": { "type": ["string", "null"], "maxLength": 300 },
+          "size": { "type": ["string", "null"], "maxLength": 40 },
+          "colour": { "type": ["string", "null"], "maxLength": 40 }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

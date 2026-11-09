@@ -57,6 +57,7 @@
     "assemblies": "./assemblies.json",
     "serviceAgreements": "./serviceAgreements.json",
     "assets": "./assets.json",
-    "commissioningTests": "./commissioningTests.json"
+    "commissioningTests": "./commissioningTests.json",
+    "controlPanels": "./controlPanels.json"
   }
 }

@@ -362,9 +362,17 @@ export const FEATURES = [
 
 /** Smaller things in the app, shown on the overview without their own page. */
 export const MORE = [
+  ['Assemblies and kits', 'Reusable material-plus-labour assemblies you drop onto an estimate for faster, consistent bids.', 'assemblies'],
+  ['Service agreements and assets', 'Recurring maintenance with a due list and a per-site equipment registry: make, model, serial and nameplate photos.', 'service'],
+  ['Site walkthrough video', 'Walk the site talking; it records video and audio, grabs photos and transcribes the audio into a report.', 'walkthroughs'],
+  ['Test and commissioning', 'Megger, bonding, GFCI-trip and torque readings with an automatic pass/fail against the limit.', 'testing'],
+  ['Purchasing and POs', 'Purchase orders, supplier bills and vendors, tied to the job.', 'purchasing'],
+  ['Receivables', 'Aging, statements, overdue reminders and interest, deposits and holdback.', 'books'],
+  ['Supplier price-list import', 'Update your costs by part number from a distributor\'s price file, so quotes use today\'s prices.', 'pricelists'],
+  ['Labour levels and apprentice hours', 'Labour units by level, with apprentice productivity carried into the estimate.', 'labour'],
+  ['Inventory', 'Stock by van and shop with counts, QR labels and auto-reorder, moved between locations.', 'inventory'],
   ['Panel schedules', 'Single and three phase, 120/240 V to 347/600 V, with phase balance.', 'panels'],
   ['Permits and inspections', 'Permits, inspections, licences and CEC checklists with your province\'s amendments.', 'compliance'],
-  ['Inventory', 'Stock by van and shop, moves between them, and the price book.', 'inventory'],
   ['SOPs', 'Versioned procedures that each person acknowledges.', 'sops'],
   ['Schedule', 'The crew week board: who is on which job, which day.', 'schedule'],
   ['Dashboard', 'Pipeline, jobs, money owed, who\'s on the clock and today\'s crew.', 'dashboard'],

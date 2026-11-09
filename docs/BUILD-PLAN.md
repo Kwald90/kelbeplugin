@@ -31,6 +31,21 @@ every workstream builds against. Change it before changing a contract in code.
 | Repo | This repo, branch `claude/electrical-concept-app-h4qz12`. |
 | Mobile | iOS app via Capacitor wrapping `electrical-app/`, with a native ARKit measuring plugin. Built on Kelvin's Mac over SSH. Bundle ID proposal: `com.fishtapehq.app`. |
 
+## Decisions update (2026-11-08, Kelvin)
+
+- **Tenancy clarified:** stay on the shared-Postgres + **`FORCE ROW LEVEL SECURITY`** model (restricted
+  app role, HQ-only `BYPASSRLS`, `withTenant` sets `app.tenant_id` per transaction, `(tenant_id, …)`
+  indexes). This IS the enterprise isolation model — the app role cannot cross tenants, and lookups stay
+  fast. Explicitly **rejected** multi-entity single-login (one user switching between their own
+  companies); each company stays a separate tenant. Dedicated DB-per-tenant remains a later option for a
+  single enterprise client without an app change. RULE: every new tenant table gets
+  `FORCE ROW LEVEL SECURITY` + a `(tenant_id, …)` index + goes behind `withTenant`.
+- **Product focus:** first lane = **residential service shop**, optimized for smooth end-to-end flow and
+  user-friendly setup. Roadmap + other-lane gap backlog in
+  [BACKLOG.md](BACKLOG.md) under "Product direction (2026-11-08)".
+- **Reserved migration numbers** (latest shipped 0170): 0171 control-panel / I-O · 0172 punch list ·
+  0173 daily log · 0174 grounding test (only if persisted) · resi lane takes 0175+.
+
 ## The 13 layers
 
 | # | layer | where it lives |

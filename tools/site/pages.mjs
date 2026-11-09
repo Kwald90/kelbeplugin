@@ -84,12 +84,23 @@ export function featuresIndex() {
   <ul class="mk-plans">${MORE.map(([t, d, feature]) => html`<li><span><strong>${t}.</strong> ${d}</span><span data-plan-feature="${feature}">${planLabel(feature, plans)}</span></li>`)}</ul>
 </section>
 
+<section class="site-section" aria-labelledby="soon-title">
+  <div class="site-section-head"><h2 id="soon-title">Coming soon</h2><p>Being built now. We say "coming" until it ships, and never bill for it before.</p></div>
+  <ul class="mk-plans">
+    <li><span><strong>Online booking and customer ETA.</strong> Customers book a time window online and get an on-the-way ETA on the day.</span><span>Coming</span></li>
+    <li><span><strong>Review requests and membership plans.</strong> Ask for the review after the job, and put residential customers on a recurring membership.</span><span>Coming</span></li>
+    <li><span><strong>Arc-flash labels and calcs.</strong> Incident energy and the labels for the gear.</span><span>Coming</span></li>
+    <li><span><strong>Control-panel and I/O package.</strong> Panel builds and I/O schedules for industrial jobs.</span><span>Coming</span></li>
+    <li><span><strong>Punch lists and daily logs.</strong> Deficiencies to close out, and a jobsite daily log.</span><span>Coming</span></li>
+  </ul>
+</section>
+
 ${limitsSection()}
 ${ctaBand()}`;
   return {
     path: '/features', file: 'features/index.html',
     title: 'Features · Fishtape, software for Canadian electrical contractors',
-    description: 'Plans and takeoff, box auto-placement with CEC checks, AR wire runs, pipe bending, CEC calculators, estimates and invoices with Canadian tax, work plans, safety, time clock, CRM and AI.',
+    description: 'Plans and takeoff, box auto-placement with CEC checks, AR wire runs, pipe bending, CEC calculators, estimates and invoices with Canadian tax, assemblies, scheduling, GPS time clock, safety, inventory, service agreements and a CRM.',
     body,
   };
 }

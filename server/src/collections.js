@@ -16,6 +16,7 @@ export const COLLECTIONS = [
   'vendors', 'bills', 'purchaseOrders',
   'costCodes', 'rules', 'payrollRuns', 'signatures', 'fieldTickets', 'equipment', 'equipmentUse', 'stockCounts',
   'walkthroughs', 'assemblies', 'serviceAgreements', 'assets', 'commissioningTests',
+  'controlPanels',
 ];
 
 /** auditLog is not a table: it is a view over audit_events (append-only, server-written). */
@@ -204,6 +205,12 @@ const DEFS = {
   commissioningTests: {
     table: 'commissioning_tests', gen: [JOB, g('asset_id', 'assetId'), g('result', 'result')], read: ['jobs'], write: ['jobs'],
     portal: null, maxBytes: 256 * KB, migration: '0167',
+  },
+  // Control panels (migration 0171): industrial / controls panel builds — header, BOM, I/O list,
+  // wiring and nameplate schedules. Shop documentation on a job; everyone on it reads and writes ('jobs').
+  controlPanels: {
+    table: 'control_panels', gen: [CLIENT, JOB], read: ['jobs'], write: ['jobs'],
+    portal: null, maxBytes: MB, migration: '0171',
   },
 };
 
