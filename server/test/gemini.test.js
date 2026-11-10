@@ -7,7 +7,7 @@ import { geminiSettings, extractText, transcribeAudio, TRANSCRIBE_PROMPT } from 
 describe('geminiSettings', () => {
   test('sensible defaults, all overridable by env', () => {
     const d = geminiSettings({}, {});
-    assert.equal(d.model, 'gemini-2.5-flash');
+    assert.equal(d.model, 'gemini-3.8-flash');
     assert.equal(d.apiBase, 'https://generativelanguage.googleapis.com/v1beta');
     assert.equal(d.apiKey, '');
     assert.ok(d.maxInlineBytes > 0 && d.maxInlineBytes < 20 * 1024 * 1024);

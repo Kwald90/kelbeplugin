@@ -19,7 +19,7 @@ export const TRANSCRIBE_PROMPT =
 export function geminiSettings(config, env = process.env) {
   return {
     apiKey: env.GEMINI_API_KEY || '',
-    model: env.GEMINI_MODEL || 'gemini-2.5-flash',
+    model: env.GEMINI_MODEL || 'gemini-3.8-flash',
     apiBase: String(env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, ''),
     // A margin under the hard 20 MB inline-request limit (base64 inflates bytes by ~4/3).
     maxInlineBytes: Number(env.GEMINI_MAX_INLINE_BYTES) || 13 * 1024 * 1024,
