@@ -48,6 +48,73 @@ const TABS = [
   { id: 'generator', label: 'Generator / ATS' },
 ];
 
+// The 21 calculators are too many for one scrolling tab strip, so the page is a grouped index
+// (hub) and each calculator opens on its own with a back link + a "Jump to" picker. Groups cover
+// every TAB id exactly once; labels come from TABS so they stay in one place.
+const TAB_LABEL = Object.fromEntries(TABS.map((t) => [t.id, t.label]));
+const CALC_GROUPS = [
+  { title: 'Conductors & circuits', items: [
+    ['vd', 'Drop % over a run and the smallest conductor that passes'],
+    ['wire', 'Conductor and bond size for a load'],
+    ['ohms', 'Solve voltage, current, resistance and power'],
+    ['3ph', 'Three-phase power, current and power factor'],
+  ] },
+  { title: 'Raceway & cable', items: [
+    ['conduit', 'Trade size for your conductor fill'],
+    ['box', 'Box size for the devices and conductors'],
+    ['expansion', 'Expansion fitting for a temperature swing'],
+    ['cablepull', 'Pulling tension and sidewall pressure'],
+    ['ductbank', 'Derated ampacity in a duct bank'],
+    ['burial', 'Minimum cover by wiring method'],
+  ] },
+  { title: 'Loads & motors', items: [
+    ['load', 'Dwelling or feeder service load'],
+    ['motor', 'FLC, overloads, feeder and breaker'],
+    ['transformer', 'Primary and secondary FLA and protection'],
+    ['potlight', 'Count, spacing and circuit load'],
+  ] },
+  { title: 'Protection & testing', items: [
+    ['ka', 'Available fault current vs breaker rating'],
+    ['arcflash', 'Incident energy and PPE category'],
+    ['sccr', 'Assembly short-circuit current rating'],
+    ['ground', 'Electrode resistance pass or fail'],
+  ] },
+  { title: 'Solar, storage & backup', items: [
+    ['solarpv', 'String sizing and conductor ampacity'],
+    ['ess', 'Battery bank and inverter sizing'],
+    ['generator', 'Genset and transfer switch sizing'],
+  ] },
+];
+
+/** The hub: calculators grouped into labelled sections of tappable cards. */
+function calcIndex(ctx) {
+  const wrap = h('div', { class: 'calc-index' });
+  for (const g of CALC_GROUPS) {
+    wrap.append(
+      h('h3', { class: 'calc-cat' }, g.title),
+      h('div', { class: 'calc-cards' }, g.items.map(([id, desc]) =>
+        h('a', { class: 'calc-card', href: '#/calcs/' + id },
+          h('span', { class: 'calc-card-text' },
+            h('strong', null, TAB_LABEL[id]),
+            h('span', { class: 'calc-card-desc muted' }, desc)),
+          ui.icon('chevron-right', 18)))),
+    );
+  }
+  return wrap;
+}
+
+/** Open-calculator header: back to the hub + a grouped picker to jump straight to another one. */
+function calcSwitcher(ctx, tab) {
+  const sel = h('select', { class: 'input calc-switch', 'aria-label': 'Switch calculator' },
+    CALC_GROUPS.map((g) => h('optgroup', { label: g.title },
+      g.items.map(([id]) => h('option', { value: id, ...(id === tab ? { selected: true } : {}) }, TAB_LABEL[id])))));
+  sel.addEventListener('change', () => ctx.nav('#/calcs/' + sel.value));
+  return h('div', { class: 'row calc-head' },
+    ui.button('All calculators', { size: 'sm', variant: 'ghost', icon: 'chevron-left', href: '#/calcs' }),
+    h('span', { class: 'grow' }),
+    h('label', { class: 'calc-jump' }, h('span', { class: 'muted' }, 'Jump to'), sel));
+}
+
 const MATERIALS = [{ value: 'cu', label: 'Copper' }, { value: 'al', label: 'Aluminum' }];
 const PHASES = [{ value: '1', label: 'Single phase' }, { value: '3', label: 'Three phase' }];
 
@@ -1341,17 +1408,14 @@ export default {
     _companyName = s.company?.name || 'Fishtape';
     units = getUnits(s.units);
     const views = VIEWS[book];
-    const tab = views[ctx.params[0]] ? ctx.params[0] : 'vd';
+    // No (or unknown) sub-route => the grouped hub; a valid id => that calculator on its own.
+    const tab = views[ctx.params[0]] ? ctx.params[0] : null;
     const body = h('div', { class: 'calc-body' });
-    const draw = () => {
-      ui.clear(body);
-      body.append(views[tab](draw));
-    };
     const cec = book === 'CEC-2024';
     const amend = cec && province ? CEC.amendmentsFor(province) : [];
     root.append(ui.page(
-      { title: 'Calculators', subtitle: `${cec ? 'Canadian Electrical Code 2024 (CSA C22.1:24)' : 'NEC 2023'} · lengths in ${imperial() ? 'feet and inches' : 'metres'}. Results update as you type.` },
-      h('div', { class: 'calc-tabs' }, ui.tabs(TABS, tab, (id) => ctx.nav('#/calcs/' + id))),
+      { title: tab ? TAB_LABEL[tab] : 'Calculators', subtitle: `${cec ? 'Canadian Electrical Code 2024 (CSA C22.1:24)' : 'NEC 2023'} · lengths in ${imperial() ? 'feet and inches' : 'metres'}.${tab ? ' Results update as you type.' : ''}` },
+      tab ? calcSwitcher(ctx, tab) : null,
       h('p', { class: 'calc-disclaimer' }, ui.icon('info', 16),
         cec
           ? `Estimating aid citing CEC 2024 rules and tables${province ? ` for ${province}${amend.length ? `, with ${amend.length} provincial amendment${amend.length > 1 ? 's' : ''} noted` : ''}` : ''}. Values marked for checking are listed in the docs. Confirm with the inspection authority before you install.`
@@ -1359,6 +1423,11 @@ export default {
         ' ', h('a', { href: '#/settings' }, 'Change code book or units')),
       body,
     ));
-    draw();
+    if (tab) {
+      const draw = () => { ui.clear(body); body.append(views[tab](draw)); };
+      draw();
+    } else {
+      body.append(calcIndex(ctx));
+    }
   },
 };
