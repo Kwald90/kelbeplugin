@@ -329,7 +329,7 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
       emit('done', { stopReason, usage: { ...totals, costCents: Math.ceil(totals.costMicroUsd / 10_000) } });
     } catch (e) {
       const err = e instanceof ApiError ? e : upstreamError(e);
-      if (err) emit('error', { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) });
+      if (err) { log?.warn?.({ provider: 'anthropic', code: err.code, status: err.statusCode }, 'ai turn error'); emit('error', { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) }); }
       else {
         log?.error?.({ code: e?.code, name: e?.name }, 'ai turn failed');
         emit('error', { code: 'internal', message: 'Something went wrong. It has been logged.' });
@@ -409,7 +409,7 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
       emit('done', { stopReason, usage: { ...totals, cacheReadTokens: 0, costCents: Math.ceil(totals.costMicroUsd / 10_000) } });
     } catch (e) {
       const err = e instanceof ApiError ? e : null;
-      if (err) emit('error', { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) });
+      if (err) { log?.warn?.({ provider: 'gemini', code: err.code, status: err.statusCode }, 'ai gemini turn error'); emit('error', { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) }); }
       else {
         log?.error?.({ code: e?.code, name: e?.name }, 'ai gemini turn failed');
         emit('error', { code: 'internal', message: 'Something went wrong. It has been logged.' });

@@ -144,6 +144,7 @@ describe('gemini chat', { skip }, () => {
       [401, 'ai_key_rejected'],
       [429, 'ai_rate_limited'],
       [400, 'ai_bad_request'],
+      [404, 'ai_model_missing'],
       [500, 'ai_unavailable'],
     ];
     for (const [status, code] of cases) {

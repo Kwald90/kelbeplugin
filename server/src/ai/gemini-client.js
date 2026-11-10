@@ -139,18 +139,35 @@ export function partsToBlocks(parts, nextId) {
 // ---- the call ----------------------------------------------------------------
 
 /**
- * Gemini HTTP errors -> ApiError a person can act on. Never includes the key, the prompt or
- * the upstream body (Gemini echoes request fragments in some messages). Parallels
- * client.js upstreamError.
+ * A short, key-free scrap of an upstream error message, safe to show a person. Gemini echoes
+ * request fragments in some messages, so the key is redacted and the text is trimmed hard; what
+ * is left (e.g. "models/gemini-2.5-flash is not found for API version v1beta") turns an opaque
+ * failure into something an admin can act on.
  */
-export function geminiUpstreamError(status) {
+export function safeDetail(message, apiKey) {
+  let s = String(message || '').trim();
+  if (!s) return '';
+  if (apiKey) s = s.split(apiKey).join('[key]');
+  return s.replace(/\s+/g, ' ').slice(0, 160);
+}
+
+/**
+ * Gemini HTTP errors -> ApiError a person can act on. The key is never included; a trimmed,
+ * key-free scrap of the upstream message (detail) is appended so the exact cause is visible.
+ * Parallels client.js upstreamError.
+ */
+export function geminiUpstreamError(status, detail = '') {
+  const tail = detail ? ` (${detail})` : '';
   if (status === 401 || status === 403) {
-    return new ApiError(409, 'ai_key_rejected', 'Google rejected the Gemini API key. Check it in HQ → Platform keys.', { integration: 'gemini', guide: 'gemini' });
+    return new ApiError(409, 'ai_key_rejected', `Google rejected the Gemini API key. Check it in HQ → Platform keys.${tail}`, { integration: 'gemini', guide: 'gemini' });
   }
   if (status === 429) return new ApiError(429, 'ai_rate_limited', 'Gemini is rate limiting the key. Try again in a minute.');
-  if (status === 400) return new ApiError(502, 'ai_bad_request', 'The AI service refused the request. Try again or start a new conversation.');
+  // A 404 on generateContent means the configured model id is not available to this key/version
+  // (a widespread Gemini symptom even for a model that lists fine). Name it so an admin can fix it.
+  if (status === 404) return new ApiError(502, 'ai_model_missing', `Gemini could not find the configured model. An admin can set GEMINI_MODEL to a current one.${tail}`, { integration: 'gemini', guide: 'gemini' });
+  if (status === 400) return new ApiError(502, 'ai_bad_request', `The AI service refused the request. Try again or start a new conversation.${tail}`);
   if (status >= 500) return new ApiError(503, 'ai_unavailable', 'Gemini is busy right now. Try again shortly.');
-  return new ApiError(502, 'ai_error', 'The AI service returned an error. Try again.');
+  return new ApiError(502, 'ai_error', `The AI service returned an error (HTTP ${status}). Try again.${tail}`);
 }
 
 /** A network failure or timeout reaching Gemini -> ApiError (no key or body in the message). */
@@ -196,7 +213,7 @@ export async function geminiGenerate({ apiKey, settings, systemText, contents, t
   }
   let data = null;
   try { data = await res.json(); } catch { /* non-JSON body */ }
-  if (!res.ok) throw geminiUpstreamError(res.status);
+  if (!res.ok) throw geminiUpstreamError(res.status, safeDetail(data?.error?.message, apiKey));
   const cand = data?.candidates?.[0];
   const u = data?.usageMetadata || {};
   return {

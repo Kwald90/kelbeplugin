@@ -106,9 +106,13 @@ export function upstreamError(e) {
   }
   if (e instanceof Anthropic.APIConnectionError) return new ApiError(503, 'ai_unavailable', 'Could not reach Anthropic. Try again shortly.');
   if (e instanceof Anthropic.APIError) {
-    return e.status === 529 || e.status >= 500
-      ? new ApiError(503, 'ai_unavailable', 'Anthropic is busy right now. Try again shortly.')
-      : new ApiError(502, 'ai_error', 'The AI service returned an error. Try again.');
+    if (e.status === 529 || e.status >= 500) return new ApiError(503, 'ai_unavailable', 'Anthropic is busy right now. Try again shortly.');
+    // The body carries no key (the key is a header), so a trimmed scrap of the message is safe to
+    // show and makes an opaque failure (e.g. an unknown model on a 404) diagnosable.
+    const detail = String(e?.error?.error?.message || '').replace(/\s+/g, ' ').slice(0, 160);
+    const tail = detail ? ` (${detail})` : '';
+    if (e.status === 404) return new ApiError(502, 'ai_model_missing', `Anthropic could not find the model. Check the model id in the AI config.${tail}`);
+    return new ApiError(502, 'ai_error', `The AI service returned an error (HTTP ${e.status}). Try again.${tail}`);
   }
   if (isToolJsonError(e)) return new ApiError(502, 'ai_bad_output', 'The AI sent a malformed tool request. Try again.');
   return null;
