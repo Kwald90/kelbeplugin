@@ -106,6 +106,19 @@ describe('tenant lifecycle', { skip }, () => {
     assert.equal(ev[0].actor_type, 'hq');
   });
 
+  test("the retired 'enterprise' plan is rejected; the offered plans (trial/starter/pro/business) are accepted", async () => {
+    // Regression: the HQ "New company" form offered an Enterprise option, but 'enterprise' is retired
+    // and not in the API's PLAN_VALUES, so creating with it failed as "invalid request". The form no
+    // longer offers it; this pins the API contract so the two can't drift apart again.
+    const bad = await hq(admin.token, '/api/hq/tenants', { method: 'POST', body: { name: 'Echo Electric', ownerEmail: 'owner@echo.example', plan: 'enterprise' } });
+    assert.equal(bad.status, 400, JSON.stringify(bad.body));
+    for (const plan of ['trial', 'starter', 'pro', 'business']) {
+      const r = await hq(admin.token, '/api/hq/tenants', { method: 'POST', body: { name: `Echo ${plan}`, ownerEmail: `owner-${plan}@echo.example`, plan } });
+      assert.equal(r.status, 201, `plan ${plan}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.tenant.plan, plan);
+    }
+  });
+
   test('list, search (term in the body) and detail', async () => {
     const list = await hq(staff.token, '/api/hq/tenants');
     const alpha = list.body.data.find((x) => x.id === A.tenantId);

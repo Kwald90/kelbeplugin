@@ -112,14 +112,16 @@ export default {
         fields: [
           { label: 'Company name', name: 'name', required: true, span: true },
           { label: 'Province', name: 'province', type: 'select', options: [{ value: '', label: '—' }, ...PROVINCES] },
-          { label: 'Plan', name: 'plan', type: 'select', value: 'trial', options: [{ value: 'trial', label: 'Trial (Business features)' }, { value: 'starter', label: 'Starter' }, { value: 'pro', label: 'Pro' }, { value: 'business', label: 'Business' }, { value: 'enterprise', label: 'Enterprise' }] },
+          // Plans must match the API's PLAN_VALUES (trial + PLAN_IDS = starter/pro/business). 'enterprise'
+          // is retired, so it is NOT offered here — selecting it made the create request fail validation.
+          { label: 'Plan', name: 'plan', type: 'select', value: 'trial', options: [{ value: 'trial', label: 'Trial (Business features)' }, { value: 'starter', label: 'Starter' }, { value: 'pro', label: 'Pro' }, { value: 'business', label: 'Business' }] },
           { label: 'Trial length (days)', name: 'trialDays', type: 'number', value: 14, min: 1, max: 365 },
           { label: 'Owner name', name: 'ownerName' },
           { label: 'Owner email', name: 'ownerEmail', type: 'email', required: true, hint: 'They get an invite to set a password (7 days). An existing account is added as owner instead.' },
         ],
         submitLabel: 'Create and invite',
         onSubmit: (v) => {
-          post('/api/hq/tenants', { name: v.name, province: v.province || null, plan: v.plan, ...(v.plan === 'trial' && v.trialDays ? { trialDays: v.trialDays } : {}), ownerName: v.ownerName, ownerEmail: v.ownerEmail })
+          post('/api/hq/tenants', { name: v.name, province: v.province || null, plan: v.plan, ...(v.plan === 'trial' && Number(v.trialDays) ? { trialDays: Number(v.trialDays) } : {}), ownerName: v.ownerName, ownerEmail: v.ownerEmail })
             .then((r) => { ui.toast(r.ownerInvited ? 'Company created; owner invited' : 'Company created; existing account added as owner', 'success'); nav(`tenants/${r.tenant.id}`); })
             .catch((e) => ui.toast(e.message, 'error'));
         },
