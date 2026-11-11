@@ -139,6 +139,26 @@ describe('gemini chat', { skip }, () => {
     assert.equal(usage.rows[0].n, 2);
   });
 
+  test('a Gemini 3.x thought_signature on a tool call is echoed back on the next turn', async () => {
+    const SIG = 'ChYKEthought-signature-abc123-opaque-blob==';
+    const mock = mockGemini([
+      geminiTurn([geminiText('Looking that up.', SIG), geminiCall('search_price_book', { query: 'receptacle' }, SIG)]),
+      geminiTurn([geminiText('Here is the price.')]),
+    ]);
+    const conv = await newConversation(A.token);
+    const r = await say(A.token, conv.id, 'price a receptacle');
+    assert.equal(r.status, 200, JSON.stringify(r.events));
+    assert.ok(!r.events.some((e) => e.event === 'error'), 'no error event');
+    assert.equal(mock.pending(), 0, 'both scripted turns were used (the follow-up was accepted)');
+    // The follow-up request must replay the signature on the functionCall part, or Gemini 3.x 400s.
+    const parts = mock.calls[1].body.contents.flatMap((c) => c.parts);
+    const fc = parts.find((p) => p.functionCall?.name === 'search_price_book');
+    assert.ok(fc, 'the functionCall was replayed');
+    assert.equal(fc.thoughtSignature, SIG, 'the thoughtSignature rode back on the same part');
+    const usage = await t.superPool.query('SELECT count(*)::int AS n FROM ai_usage WHERE tenant_id = $1 AND conversation_id = $2', [A.tenantId, conv.id]);
+    assert.equal(usage.rows[0].n, 2);
+  });
+
   test('HTTP errors map to friendly error events and never leak the key', async () => {
     const cases = [
       [401, 'ai_key_rejected'],

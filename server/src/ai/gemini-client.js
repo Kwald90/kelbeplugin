@@ -100,6 +100,10 @@ export function toGeminiTools(apiTools) {
  * `contents`. Assistant role becomes 'model'; tool_use -> functionCall; tool_result ->
  * functionResponse (Gemini keys these by function name, so map the id back via the tool_use
  * that produced it); images -> inlineData; thinking blocks are dropped (Gemini has no slot).
+ *
+ * Gemini 3.x thinking models return a `thoughtSignature` on text/functionCall parts and REQUIRE
+ * it echoed back on the same parts in later turns (otherwise generateContent 400s with "Function
+ * call is missing a thought_signature"). partsToBlocks stashes it on the block; we replay it here.
  * @param {{ role: 'user'|'assistant', content: any[] }[]} messages
  */
 export function toGeminiContents(messages) {
@@ -109,9 +113,10 @@ export function toGeminiContents(messages) {
     const role = m.role === 'assistant' ? 'model' : 'user';
     const parts = [];
     for (const b of Array.isArray(m.content) ? m.content : []) {
-      if (b.type === 'text' && b.text) parts.push({ text: b.text });
+      const sig = typeof b.thoughtSignature === 'string' && b.thoughtSignature ? { thoughtSignature: b.thoughtSignature } : null;
+      if (b.type === 'text' && b.text) parts.push({ text: b.text, ...sig });
       else if (b.type === 'image' && b.source?.type === 'base64') parts.push({ inlineData: { mimeType: b.source.media_type, data: b.source.data } });
-      else if (b.type === 'tool_use') { nameById.set(b.id, b.name); parts.push({ functionCall: { name: b.name, args: b.input || {} } }); }
+      else if (b.type === 'tool_use') { nameById.set(b.id, b.name); parts.push({ functionCall: { name: b.name, args: b.input || {} }, ...sig }); }
       else if (b.type === 'tool_result') {
         const name = nameById.get(b.tool_use_id) || String(b.tool_use_id || 'tool');
         let response;
@@ -126,12 +131,17 @@ export function toGeminiContents(messages) {
   return contents;
 }
 
-/** Gemini candidate parts -> internal assistant content blocks (text, tool_use). */
+/**
+ * Gemini candidate parts -> internal assistant content blocks (text, tool_use). A part's
+ * `thoughtSignature` (Gemini 3.x thinking models) is carried onto the block so toGeminiContents
+ * can echo it back on the next turn; without it the follow-up request 400s on tool calls.
+ */
 export function partsToBlocks(parts, nextId) {
   const blocks = [];
   for (const p of Array.isArray(parts) ? parts : []) {
-    if (typeof p.text === 'string' && p.text) blocks.push({ type: 'text', text: p.text });
-    else if (p.functionCall?.name) blocks.push({ type: 'tool_use', id: nextId(), name: p.functionCall.name, input: p.functionCall.args || {} });
+    const sig = typeof p.thoughtSignature === 'string' && p.thoughtSignature ? { thoughtSignature: p.thoughtSignature } : null;
+    if (typeof p.text === 'string' && p.text) blocks.push({ type: 'text', text: p.text, ...sig });
+    else if (p.functionCall?.name) blocks.push({ type: 'tool_use', id: nextId(), name: p.functionCall.name, input: p.functionCall.args || {}, ...sig });
   }
   return blocks;
 }

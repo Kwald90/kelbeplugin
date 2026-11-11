@@ -7,8 +7,10 @@ import { setGeminiFetch } from '../../src/ai/gemini-client.js';
 export function geminiTurn(parts, { finishReason = 'STOP', usage = { promptTokenCount: 1000, candidatesTokenCount: 120 } } = {}) {
   return { status: 200, data: { candidates: [{ content: { role: 'model', parts }, finishReason }], usageMetadata: usage } };
 }
-export const geminiText = (t) => ({ text: t });
-export const geminiCall = (name, args) => ({ functionCall: { name, args } });
+// A `sig` makes the part carry a thoughtSignature, as Gemini 3.x thinking models do; the client
+// must echo it back on the same part in later turns or generateContent 400s on tool calls.
+export const geminiText = (t, sig) => ({ text: t, ...(sig ? { thoughtSignature: sig } : {}) });
+export const geminiCall = (name, args, sig) => ({ functionCall: { name, args }, ...(sig ? { thoughtSignature: sig } : {}) });
 
 /** An HTTP error response (401, 429, 400, 500, …). */
 export function geminiError(status, message = 'error') {
