@@ -221,40 +221,50 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   installAuth(app, { db, config });
 
   const deps = { config, db, records, email, oidcProviders: providers, stats, bodyLimit: SYNC_BODY_LIMIT };
+  // Process role (ACC-06): in HQ-only mode the tenant/app data routes are not registered at all, so
+  // hq-api returns 404 for them from the app itself — defence in depth behind the nginx 404 routing.
+  // HQ, sign-in and health routes are always registered. config.apiMode is validated in config.js.
+  const hqOnly = config.apiMode === 'hq';
   await app.register(hqHealthRoutes, deps);
   // Before the other routes: their hooks count API usage and AI errors on every route.
   await app.register(hqDeveloperRoutes, deps);
   await app.register(hqAiRoutes, deps);
   await app.register(healthRoutes, deps);
   await app.register(authRoutes, deps);
-  await app.register(meRoutes, deps);
-  await app.register(adminRoutes, deps);
-  await app.register(recordRoutes, deps);
-  await app.register(syncRoutes, deps);
+  if (!hqOnly) {
+    await app.register(meRoutes, deps);
+    await app.register(adminRoutes, deps);
+    await app.register(recordRoutes, deps);
+    await app.register(syncRoutes, deps);
+  }
   await app.register(hqRoutes, deps);
-  await app.register(integrationRoutes, deps);
-  await app.register(webhookRoutes, deps);
-  await app.register(aiRoutes, deps);
-  await app.register(mcpRoutes, deps);
-  await app.register(notificationRoutes, deps);
-  await app.register(kpiRoutes, deps);
-  await app.register(materialRoutes, deps);
-  await app.register(drawingRoutes, deps);
-  await app.register(walkthroughMediaRoutes, deps);
-  await app.register(locationRoutes, deps);
-  await app.register(qboConnectRoutes, deps);
-  await app.register(qboWebhookRoutes, deps);
-  await app.register(qboRoutes, deps);
-  await app.register(closingRoutes, deps);
-  await app.register(rulesRoutes, deps);
+  if (!hqOnly) {
+    await app.register(integrationRoutes, deps);
+    await app.register(webhookRoutes, deps);
+    await app.register(aiRoutes, deps);
+    await app.register(mcpRoutes, deps);
+    await app.register(notificationRoutes, deps);
+    await app.register(kpiRoutes, deps);
+    await app.register(materialRoutes, deps);
+    await app.register(drawingRoutes, deps);
+    await app.register(walkthroughMediaRoutes, deps);
+    await app.register(locationRoutes, deps);
+    await app.register(qboConnectRoutes, deps);
+    await app.register(qboWebhookRoutes, deps);
+    await app.register(qboRoutes, deps);
+    await app.register(closingRoutes, deps);
+    await app.register(rulesRoutes, deps);
+  }
   await app.register(hqTenantRoutes, deps);
   await app.register(hqComplianceRoutes, deps);
   await app.register(hqBillingRoutes, deps);
   await app.register(hqLeadRoutes, deps);
-  await app.register(publicSignupRoutes, deps);
-  await app.register(publicMarketingRoutes, deps);
-  await app.register(publicBookingRoutes, deps);
-  await app.register(bookingRoutes, deps);
+  if (!hqOnly) {
+    await app.register(publicSignupRoutes, deps);
+    await app.register(publicMarketingRoutes, deps);
+    await app.register(publicBookingRoutes, deps);
+    await app.register(bookingRoutes, deps);
+  }
   await app.register(hqFinanceRoutes, deps);
   await app.register(hqSettingsRoutes, deps);
   await app.register(hqPlatformKeysRoutes, deps);
@@ -264,8 +274,10 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
   await app.register(hqAnnouncementRoutes, deps);
   await app.register(hqHelpRoutes, deps);
   await app.register(hqMailRoutes, deps);
-  await app.register(mailWebhookRoutes, deps);
-  await app.register(promotionRoutes, deps);
+  if (!hqOnly) {
+    await app.register(mailWebhookRoutes, deps);
+    await app.register(promotionRoutes, deps);
+  }
   await app.register(hqStatusRoutes, deps);
 
   app.get('/api/v1/openapi.json', { config: { auth: 'public' }, schema: { hide: true } }, async () => app.swagger());

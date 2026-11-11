@@ -165,6 +165,10 @@ services:
     environment:
       <<: *server-environment
       HQ_DATABASE_URL: postgres://fishtape_hq:${FISHTAPE_HQ_PASSWORD:?set in .env}@postgres:5432/fishtape
+      # HQ-only process (ACC-06): register only HQ, sign-in and health routes — no tenant/app data
+      # routes — so hq-api cannot serve tenant data even if the nginx 404 routing slips. Defence in
+      # depth; the BYPASSRLS HQ role makes this isolation matter most here.
+      FISHTAPE_API_MODE: hq
     # The shared volumes plus the drill results, which only hq-api writes (HQ health upload).
     volumes:
       - /var/lib/fishtape-production/status:/run/fishtape/status:ro

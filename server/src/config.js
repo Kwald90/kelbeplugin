@@ -40,6 +40,12 @@ export function readConfig(env = process.env) {
   const appEnv = env.APP_ENV || 'local';
   if (!['local', 'test', 'staging', 'production'].includes(appEnv)) throw new Error(`APP_ENV must be local, test, staging or production (got ${appEnv})`);
   const deployed = appEnv === 'staging' || appEnv === 'production';
+  // Process role (ACC-06). 'hq' registers only the HQ, sign-in and health routes — no tenant/app
+  // data routes — so an HQ-only process cannot serve tenant data even if nginx routing slips. 'full'
+  // (default) registers everything (single-process and the app container). 'app' is reserved and
+  // registers everything today.
+  const apiMode = env.FISHTAPE_API_MODE || 'full';
+  if (!['full', 'hq', 'app'].includes(apiMode)) throw new Error(`FISHTAPE_API_MODE must be full, hq or app (got ${apiMode})`);
   const port = int(env.PORT, 3410);
   const publicOrigin = (env.PUBLIC_ORIGIN || `http://localhost:8080`).replace(/\/$/, '');
 
@@ -60,6 +66,7 @@ export function readConfig(env = process.env) {
 
   return {
     appEnv,
+    apiMode,
     isProduction: appEnv === 'production',
     deployed,
     version: APP_VERSION,

@@ -308,10 +308,11 @@ controls:
       - "server/db/bootstrap.sql role definitions"
       - "Evidence bundle: ci-runs.json (server job migrates and tests with these roles)"
     status: partial
-    notes: "Done in the compose files: only hq-api gets HQ_DATABASE_URL and nginx sends it only sign-in, HQ and health routes. Still to do: an HQ-only mode in the API (no tenant routes in hq-api), and the production host itself."
+    notes: "Role separation in the compose files (only hq-api gets HQ_DATABASE_URL; nginx sends it only sign-in, HQ and health routes) and the HQ-only API mode are both done: FISHTAPE_API_MODE=hq makes hq-api register only HQ/sign-in/health routes, so tenant/app routes 404 from the process itself (server/test/api-mode.test.js), set on hq-api in both compose files. Remaining: the production host itself (Lane C)."
     links:
       - deploy/production/docker-compose.yml
       - deploy/staging/docker-compose.yml
+      - server/test/api-mode.test.js
       - docs/compliance/access-control.md
 
   - id: ACC-07

@@ -123,3 +123,8 @@ ENABLE+FORCE RLS + a USING/WITH CHECK policy on every collection and platform ta
 fails if any table with the tenant-data shape lacks ENABLE+FORCE RLS (catches new tables);
 `isolation.test.js` proves cross-tenant access is blocked at API and DB layers and `withTenant` rejects
 malformed ids. All run in the embedded CI suite (1054 pass).
+
+**2026-11-11 — ACC-06 HQ-only API mode built (T6).** `FISHTAPE_API_MODE=hq` makes the API register
+only HQ/sign-in/health routes; tenant/app routes 404 from the process itself (`api-mode.test.js`),
+set on `hq-api` in both compose files. ACC-06 stays `partial` only for the production host (Lane C).
+The three under-marked controls still open: ACC-08, CRY-03, OPS-04.

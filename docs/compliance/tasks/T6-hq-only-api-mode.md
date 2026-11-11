@@ -3,6 +3,13 @@
 **Closes toward green:** ACC-06 (`partial`).
 **Lane:** B — **security-sensitive routing change; review carefully before merge.**
 
+> **DONE 2026-11-11** (in this branch). `FISHTAPE_API_MODE` added to `server/src/config.js`
+> (`full` default / `hq` / `app`, validated); in `hq` mode `server/src/app.js` skips the tenant/app
+> route registrations entirely; `server/test/api-mode.test.js` proves tenant routes 404 in `hq` mode
+> and are auth-gated (not 404) in `full` mode; both compose files set `FISHTAPE_API_MODE: hq` on
+> `hq-api`. ACC-06 stays `partial` only because the production host isn't built (Lane C). Kelvin:
+> this changed how the process mounts routes — worth a review of the `app.js` diff.
+
 ## Why it isn't green
 
 ACC-06 (database role separation) is done in the compose files — only `hq-api` gets
