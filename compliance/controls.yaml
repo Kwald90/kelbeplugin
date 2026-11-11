@@ -65,7 +65,7 @@ controls:
       - "Evidence bundle: controls-summary.json"
       - "Evidence bundle: access-review-<date>.md"
     status: partial
-    notes: "Backup contact not named yet. No independent oversight; consider an annual review with an outside advisor once there are paying customers."
+    notes: "Backup contact not named yet; sealed-instructions template ready in docs/compliance/templates/sealed-instructions.md (Kelvin must name the person). No independent oversight; consider an annual review with an outside advisor once there are paying customers."
     links:
       - docs/compliance/information-security.md
       - docs/compliance/business-continuity.md
@@ -176,11 +176,13 @@ controls:
     evidence:
       - "Signed contractor agreements (kept outside git)"
       - "Evidence bundle: access-review-<date>.md (collaborators, briefing dates)"
-    status: partial
-    notes: "Prepare an agreement template and briefing outline before the next contractor."
+    status: implemented
+    notes: "Agreement template and briefing outline ready in docs/compliance/templates/ (contractor-agreement.md, security-briefing.md). Use them when the next contractor is onboarded."
     links:
       - docs/compliance/hr-security.md
       - docs/compliance/acceptable-use.md
+      - docs/compliance/templates/contractor-agreement.md
+      - docs/compliance/templates/security-briefing.md
 
   - id: HRS-02
     title: Contractor offboarding within 24 hours
@@ -193,9 +195,11 @@ controls:
       - "GitHub collaborator history"
       - "Written confirmation from the contractor (kept outside git)"
     status: partial
+    notes: "Offboarding checklist ready in docs/compliance/templates/offboarding-checklist.md; closes on an actual engagement end."
     links:
       - docs/compliance/hr-security.md
       - docs/runbooks/rotate-secrets.md
+      - docs/compliance/templates/offboarding-checklist.md
 
   - id: HRS-03
     title: Security awareness

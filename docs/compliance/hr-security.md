@@ -29,18 +29,21 @@ Before any access:
 
 1. Written agreement covering confidentiality, ownership of the work, return or deletion of data at
    the end, and agreement to follow [acceptable-use.md](acceptable-use.md). A separate NDA is fine if
-   the main contract doesn't cover confidentiality.
+   the main contract doesn't cover confidentiality. Template:
+   [templates/contractor-agreement.md](templates/contractor-agreement.md).
 2. Access on least privilege ([access-control.md](access-control.md)): normally a GitHub collaborator
    invite, working in their own branch with pull requests. No production access, production secrets,
    SSH keys, HQ accounts or vendor consoles. Staging access only if the task needs it, recorded with the reason.
 3. MFA on their GitHub account (checked before the invite is sent) and on any other account they get.
 4. A short security briefing (about 30 minutes): this policy set, data classes, no production data
-   anywhere outside production, seeded data only, how to report a problem.
+   anywhere outside production, seeded data only, how to report a problem. Outline:
+   [templates/security-briefing.md](templates/security-briefing.md).
 5. Add them to the access list checked in the quarterly access review.
 
 ### Offboarding
 
-Within 24 hours of the end of the engagement:
+Within 24 hours of the end of the engagement, working through
+[templates/offboarding-checklist.md](templates/offboarding-checklist.md):
 
 1. Remove GitHub access and any other accounts.
 2. Rotate any secret they could have seen ([docs/runbooks/rotate-secrets.md](../runbooks/rotate-secrets.md)).

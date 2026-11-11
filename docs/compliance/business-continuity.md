@@ -90,7 +90,9 @@ Fishtape depends on one person. Until there is a second operator:
 
 - Sealed instructions, kept by the trusted backup contact: what Fishtape is, the hosts and vendors,
   how to post a status notice, who to call for technical help, how to give tenants their data and,
-  if needed, wind down the service in an orderly way.
+  if needed, wind down the service in an orderly way. Structure to fill in:
+  [docs/compliance/templates/sealed-instructions.md](templates/sealed-instructions.md) (outline
+  only — the real instructions are printed and sealed, never committed).
 - Emergency access to the password manager for the trusted person (the manager's emergency-access
   feature, or its emergency kit in the sealed envelope), with a waiting period so Kelvin can refuse.
 - The runbooks in [docs/runbooks/](../runbooks/) are written so a competent developer can follow them.
