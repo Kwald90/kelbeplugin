@@ -112,10 +112,14 @@ Verification commands used across tasks:
 
 - **Dependency advisory (SDL-02/SDL-03):** 1 moderate `fast-uri` (transitive). Fix via `npm audit fix`
   in `server/`. Within the 90-day Medium deadline.
-- **Under-marked controls to re-verify:** ACC-08 (in-app auth), ACC-09 (RLS isolation tests), CRY-03
-  (app-level encryption) and OPS-04 (audit trail) have more working, tested code than their
-  `planned`/`partial` status implies — but each still has a named gap in the ASSESSMENT (e.g. no
-  session rotation after MFA, no `__Host-` cookie, 403s not audited), so none can honestly flip to
-  `implemented` yet. A dedicated verification pass could legitimately move ACC-09 if the isolation
-  tests fully cover ENABLE+FORCE RLS on every tenant table in CI. **Do not upgrade status without
-  re-reading the code + tests.**
+- **Under-marked controls to re-verify:** ACC-08 (in-app auth), CRY-03 (app-level encryption) and
+  OPS-04 (audit trail) have more working, tested code than their `planned`/`partial` status implies —
+  but each still has a named gap in the assessment (e.g. no session rotation after MFA, no `__Host-`
+  cookie, 403s not audited), so none can honestly flip to `implemented` yet. **Do not upgrade status
+  without re-reading the code + tests.**
+
+**2026-11-11 — ACC-09 re-verified → implemented.** Confirmed `migrations.test.js` catalog-asserts
+ENABLE+FORCE RLS + a USING/WITH CHECK policy on every collection and platform table; `restore-test.sh`
+fails if any table with the tenant-data shape lacks ENABLE+FORCE RLS (catches new tables);
+`isolation.test.js` proves cross-tenant access is blocked at API and DB layers and `withTenant` rejects
+malformed ids. All run in the embedded CI suite (1054 pass).

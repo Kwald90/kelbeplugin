@@ -356,10 +356,13 @@ controls:
     frequency: per-change
     evidence:
       - "server/test/isolation.test.js results (evidence bundle: ci-runs.json)"
+      - "server/test/migrations.test.js: catalog check that every collection and platform table has RLS enabled+forced with a USING/WITH CHECK policy"
       - "Evidence bundle: restore-tests-<env>.jsonl (rlsForcedTables, failures)"
-    status: partial
-    notes: "The restore-test RLS check is implemented; isolation tests arrive with the API."
+    status: implemented
+    notes: "withTenant sets app.tenant_id (unset = no rows) and rejects a missing/malformed id; isolation.test.js proves cross-tenant reads/writes/pulls/pushes are blocked at the API and DB layers; migrations.test.js asserts ENABLE+FORCE RLS and a policy on every tenant table; restore-test.sh fails if any table with the tenant-data shape lacks ENABLE+FORCE RLS. All run in the embedded CI suite."
     links:
+      - server/test/isolation.test.js
+      - server/test/migrations.test.js
       - deploy/staging/restore-test.sh
       - docs/BUILD-PLAN.md
       - docs/security/threat-model.md
