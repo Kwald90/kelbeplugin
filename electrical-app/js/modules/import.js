@@ -49,7 +49,7 @@ function chooseStep(ctx, w, go) {
     h('div', { class: 'card stack' },
       h('label', { class: 'field' }, h('span', null, 'Exported from'),
         h('select', { name: 'preset', onChange: (e) => { w.presetId = e.target.value; } }, presets.map((p) => h('option', { value: p.id, selected: p.id === w.presetId }, p.label)))),
-      h('p', { class: 'muted', style: { margin: '0' } }, 'CSV, tab-separated or Excel (.xlsx, first sheet). We recognise exports from Jobber, QuickBooks Online and Housecall Pro; any spreadsheet with a header row works too.'),
+      h('p', { class: 'muted', style: { margin: '0' } }, 'CSV, tab-separated or Excel (.xlsx, first sheet). We recognise exports from Jobber, QuickBooks Online, Housecall Pro, Xero and Sage; any spreadsheet with a header row works too.'),
       h('div', { class: 'row' }, fileBtn,
         ui.button('Download a template', { icon: 'download', onClick: () => ui.download(`fishtape-${w.target}-template.csv`, toCSV(templateRows(w.target)), 'text/csv') })),
       w.error ? h('div', { class: 'imp-error', role: 'alert' }, ui.icon('alert', 16), w.error) : null),
@@ -64,6 +64,9 @@ function howTo(ui, presetId) {
     'qbo-customers': ['In QuickBooks Online, go to Sales → Customers (or Get paid & pay → Customers).', 'Use the Export to Excel icon above the list, or run the Customer Contact List report and export it.', 'Choose the .xlsx or a CSV saved from it.'],
     'qbo-products': ['In QuickBooks Online, go to Sales → Products and services.', 'Use the Export to Excel icon above the list.', 'Choose the .xlsx here. Sales price becomes the sell price, purchase cost the cost.'],
     'hcp-customers': ['In Housecall Pro, open Customers.', 'Actions → Export (admins only). The CSV arrives by email.', 'Choose that file here.'],
+    'xero-contacts': ['In Xero, go to Contacts → All contacts.', 'Import → Download template to see the columns, or export your contact list to CSV. Keep Xero\'s column headings as they are.', 'Choose that file here.'],
+    'xero-items': ['In Xero, go to Products and services (or Inventory items).', 'Import → Download template, or export the items list to CSV.', 'Choose it here. Sales price becomes the sell price, purchase price the cost.'],
+    'sage-customers': ['In Sage Accounting: Contacts → Customers → Export (add Email to the list view first if it is missing). In Sage 50: File → Export → Customers (CUSTOMER.CSV).', 'Save or download the CSV.', 'Choose that file here.'],
   }[p?.id];
   if (!tips) return null;
   return h('details', { class: 'card flat imp-howto' }, h('summary', null, `How to export from ${p.source}`), h('ol', null, tips.map((t) => h('li', null, t))));

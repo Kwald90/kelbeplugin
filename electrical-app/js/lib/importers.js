@@ -306,6 +306,35 @@ export const PRESETS = [
     },
     typeFrom: 'company',
   },
+  {
+    // Xero: Contacts > All contacts > Import > Download template, or export the contact list. Headers from
+    // Xero's contact import template (help.xero.com Contacts-Import-Existing, checked 2026-11-11); the
+    // asterisk on required headers (*ContactName) is ignored by headerKey. VERIFY against a real export.
+    id: 'xero-contacts', target: 'clients', label: 'Xero contacts', source: 'Xero', verified: '2026-11-11',
+    signature: ['ContactName', 'EmailAddress', 'POAddressLine1', 'POCity', 'PORegion', 'AccountNumber'],
+    headers: {
+      name: ['ContactName', 'Contact Name', 'Name'], firstName: ['FirstName', 'First Name'], lastName: ['LastName', 'Last Name'],
+      email: ['EmailAddress', 'Email', 'Email Address'], phone: ['PhoneNumber', 'Phone', 'MobileNumber', 'Mobile', 'Telephone'],
+      street: ['POAddressLine1', 'SAAddressLine1', 'AddressLine1'], street2: ['POAddressLine2', 'SAAddressLine2', 'AddressLine2'],
+      city: ['POCity', 'SACity', 'City'], province: ['PORegion', 'SARegion', 'Region', 'State'], postal: ['POPostalCode', 'SAPostalCode', 'PostalCode'],
+    },
+  },
+  {
+    // Sage: Sage Accounting (Contacts > Export) or Sage 50 (customer export, CUSTOMER.CSV). Column names
+    // differ between the two products; both styles are matched. Sage 50 export order per Sage KB 10105,
+    // Sage Accounting contact template per help.sbc.sage.com (checked 2026-11-11). VERIFY against a real export.
+    id: 'sage-customers', target: 'clients', label: 'Sage customers (Sage Accounting / Sage 50)', source: 'Sage', verified: '2026-11-11',
+    signature: ['Customer Name', 'Contact Name', 'Second Street Address', 'Second Phone', 'Zip Code'],
+    headers: {
+      name: ['Customer Name', 'Company Name', 'Name', 'Customer'], company: ['Company Name', 'Company'],
+      firstName: ['First Name'], lastName: ['Last Name'],
+      email: ['Email', 'Email Address', 'E-mail'], phone: ['Phone', 'Telephone', 'Phone 1', 'Phone Number', 'Mobile', 'Second Phone'],
+      street: ['Street Address', 'Address 1', 'Address Line 1', 'Address'], street2: ['Second Street Address', 'Address 2', 'Address Line 2'],
+      city: ['City'], province: ['Province', 'State', 'Province/State', 'Region'], postal: ['Zip Code', 'Postal Code', 'Zip', 'Postcode'],
+      notes: ['Notes', 'Note'],
+    },
+    typeFrom: 'company',
+  },
   { id: 'generic-items', target: 'items', label: 'Price book (any spreadsheet)', source: 'Generic', headers: {}, signature: [] },
   {
     id: 'qbo-products', target: 'items', label: 'QuickBooks Online products and services', source: 'QuickBooks Online', verified: '2026-10-19',
@@ -317,6 +346,18 @@ export const PRESETS = [
       category: ['Category', 'Type'], costCents: ['Purchase Cost', 'Cost'], priceCents: ['Sales Price / Rate', 'Sales Price/Rate', 'Price', 'Rate'],
       qtyOnHand: ['Quantity On Hand', 'Qty On Hand', 'Quantity on hand'], reorderPoint: ['Reorder Point', 'Reorder point'],
       unit: ['Unit', 'UOM'],
+    },
+  },
+  {
+    // Xero: Products and services / Inventory items > Import > Download template, or export the items list.
+    // Headers from Xero's inventory import template (checked 2026-11-11). Sales price -> sell price,
+    // purchase price -> cost. VERIFY against a real export.
+    id: 'xero-items', target: 'items', label: 'Xero items (products & services)', source: 'Xero', verified: '2026-11-11',
+    signature: ['ItemCode', 'ItemName', 'SalesUnitPrice', 'PurchasesUnitPrice', 'SalesDescription'],
+    headers: {
+      name: ['ItemName', 'Item Name', 'Name'], sku: ['ItemCode', 'Item Code', 'Code', 'SKU'],
+      description: ['SalesDescription', 'PurchasesDescription', 'Description'],
+      priceCents: ['SalesUnitPrice', 'Sales Unit Price', 'Unit Price', 'Price'], costCents: ['PurchasesUnitPrice', 'Purchases Unit Price', 'Cost'],
     },
   },
   { id: 'generic-jobs', target: 'jobs', label: 'Jobs (any spreadsheet)', source: 'Generic', headers: {}, signature: [] },

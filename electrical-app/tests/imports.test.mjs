@@ -157,8 +157,38 @@ test('presets are detected from export headers', () => {
   assert.equal(I.detectPreset(['Product/Service Name', 'Sales Description', 'SKU', 'Type', 'Sales Price / Rate', 'Income Account', 'Purchase Cost', 'Expense Account']).id, 'qbo-products');
   assert.equal(I.detectPreset(['Customer', 'Phone Numbers', 'Email', 'Full Name', 'Billing Address', 'Customer Type']).id, 'qbo-customers');
   assert.equal(I.detectPreset(['Display name', 'First name', 'Last name', 'Mobile number', 'Home number', 'Work number', 'Emails', 'Service address']).id, 'hcp-customers');
+  assert.equal(I.detectPreset(['ContactName', 'EmailAddress', 'POAddressLine1', 'POCity', 'PORegion', 'AccountNumber']).id, 'xero-contacts');
+  assert.equal(I.detectPreset(['Customer Name', 'Contact Name', 'Street Address', 'Second Street Address', 'Second Phone', 'Zip Code', 'Email']).id, 'sage-customers');
+  assert.equal(I.detectPreset(['ItemCode', 'ItemName', 'SalesUnitPrice', 'PurchasesUnitPrice', 'SalesDescription']).id, 'xero-items');
   assert.equal(I.detectPreset(['Name', 'Email'], 'clients').id, 'generic-clients');
   assert.equal(I.detectPreset(['Whatever']), null);
+});
+
+test('Xero and Sage exports map to the right fields', () => {
+  // Xero contacts
+  const xm = I.autoMap(['ContactName', 'FirstName', 'LastName', 'EmailAddress', 'PhoneNumber', 'POAddressLine1', 'POCity', 'PORegion', 'POPostalCode'], 'clients', 'xero-contacts');
+  const xr = I.normalizeRow(['Acme Electric Ltd', 'Jane', 'Doe', 'jane@acme.example', '204-555-1212', '12 Main St', 'Winnipeg', 'MB', 'R3C 1A1'], xm, 'clients', { presetId: 'xero-contacts' });
+  assert.deepEqual(xr.errors, []);
+  assert.equal(xr.record.name, 'Acme Electric Ltd');
+  assert.equal(xr.record.email, 'jane@acme.example');
+  // The importer assembles street/city/province/postal into one address string.
+  assert.match(xr.record.address, /12 Main St/);
+  assert.match(xr.record.address, /Winnipeg/);
+  assert.match(xr.record.address, /MB/);
+  // Xero items: sales price -> sell, purchase price -> cost
+  const xim = I.autoMap(['ItemCode', 'ItemName', 'SalesDescription', 'SalesUnitPrice', 'PurchasesUnitPrice'], 'items', 'xero-items');
+  const xir = I.normalizeRow(['REC-15', '15A receptacle', 'Decora, white', '4.50', '1.20'], xim, 'items', { presetId: 'xero-items' });
+  assert.deepEqual(xir.errors, []);
+  assert.equal(xir.record.sku, 'REC-15');
+  assert.equal(xir.record.priceCents, 450);
+  assert.equal(xir.record.costCents, 120);
+  // Sage customers
+  const sm = I.autoMap(['Customer Name', 'Email', 'Phone', 'Street Address', 'City', 'Province', 'Zip Code'], 'clients', 'sage-customers');
+  const sr = I.normalizeRow(['Northend Reno', 'info@northend.example', '2045550000', '5 First Ave', 'Brandon', 'MB', 'R7A 0A1'], sm, 'clients', { presetId: 'sage-customers' });
+  assert.deepEqual(sr.errors, []);
+  assert.equal(sr.record.name, 'Northend Reno');
+  assert.match(sr.record.address, /Brandon/);
+  assert.match(sr.record.address, /R7A 0A1/);
 });
 
 test('QuickBooks products: mapping, money, units and quantity on hand', () => {
