@@ -8,7 +8,7 @@ import {
   sizeConductor, voltageDrop, minSizeForVoltageDrop, maxLengthForVoltageDrop, VD_LIMITS, designCurrent,
   TRADE_SIZES, TRADE_SIZE_IN, CONDUIT_TYPES, CONDUCTOR_TYPES, conduitFill, minConduit,
   TABLE_22, BOXES, boxFill, singleDwelling, livingArea, motor, TABLE_44, TABLE_45,
-  ADOPTION, amendmentsFor, ruleParams,
+  ADOPTION, amendmentsFor, ruleParams, CEC_TEMPLATES, cecTemplates,
 } from '../../../../electrical-app/js/lib/cec/index.js';
 
 const FT = 0.3048;
@@ -285,6 +285,53 @@ export const CEC_TOOLS = [
         amendments: amendmentsFor(prov, i.rule || null).map((x) => ({ rule: `Rule ${x.rule}`, summary: x.summary, source: x.source })),
         voltageDropLimits: VD_LIMITS,
         ...cite([]),
+      };
+    },
+  },
+  {
+    name: 'cec_lookup',
+    description: 'Look up what the CEC 2024 requires, by topic or rule number. Covers the everyday rules: receptacle spacing and counts, GFCI and AFCI, tamper-resistant and weatherproof receptacles, kitchen/bathroom/outdoor/garage receptacles, service and panel install, working space and clearances, bonding and grounding, smoke/CO alarms, NMSC (loomex) support and protection, box fill, EV chargers, emergency and exit lighting, and more. Returns plain-language requirements in Fishtape\'s own words, each with the rule or section number to verify, plus the province\'s amendments. It does NOT reproduce the CSA code text word for word (that is copyright) — for exact wording the user reads the printed code. Use it to answer "what does the code require for X", and to cite real rule numbers in advice.',
+    input_schema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        query: { type: 'string', maxLength: 120, description: 'Topic words, e.g. "bathroom receptacle GFCI", "kitchen counter spacing", "service working space", "bond water pipe", "EV charger disconnect".' },
+        rule: { type: 'string', maxLength: 20, description: 'A rule/section number or prefix to match, e.g. "26-704", "2-308", "10-" (grounding/bonding), "86-" (EV), "Section 10".' },
+        province: { type: 'string', pattern: '^[A-Z]{2}$', description: 'Two-letter province to fold in its amendments. Omit to use the company province.' },
+        limit: { type: 'integer', minimum: 1, maximum: 40, default: 15 },
+      },
+    },
+    run(ctx, i) {
+      const prov = province(ctx, i);
+      const STOP = new Set(['the', 'a', 'an', 'for', 'of', 'in', 'on', 'to', 'and', 'or', 'what', 'does', 'do', 'is', 'are', 'my', 'code', 'rule', 'rules', 'cec', 'requirement', 'requirements', 'need', 'needs', 'required', 'how', 'many', 'with']);
+      const tokens = [...new Set(String(i.query || '').toLowerCase().split(/[^a-z0-9/]+/).filter((w) => w.length > 1 && !STOP.has(w)))];
+      const ruleQ = String(i.rule || '').toLowerCase().trim();
+      if (!tokens.length && !ruleQ) {
+        return { error: 'Give a topic (query) like "bathroom GFCI" or "kitchen counter spacing", or a rule number (rule) like "26-704".', availableTopics: CEC_TEMPLATES.map((t) => t.title), ...cite([]) };
+      }
+      const seen = new Set();
+      const scored = [];
+      for (const t of cecTemplates(prov)) {
+        for (const [requirement, rule] of t.items) {
+          const key = `${rule}|${requirement}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const hay = requirement.toLowerCase();
+          const rl = String(rule).toLowerCase();
+          if (ruleQ && !rl.includes(ruleQ)) continue;
+          let score = ruleQ ? 2 : 0;
+          for (const tok of tokens) if (hay.includes(tok) || rl.includes(tok)) score += 2;
+          if (tokens.length && score === (ruleQ ? 2 : 0)) continue; // a topic was asked for but nothing in this item matched
+          scored.push({ requirement, rule, section: t.section ?? t.title, score });
+        }
+      }
+      scored.sort((a, b) => b.score - a.score || (a.rule < b.rule ? -1 : 1));
+      const top = scored.slice(0, i.limit || 15).map(({ score, ...r }) => r);
+      return {
+        province: prov, matched: scored.length, showing: top.length, requirements: top,
+        ...cite([...new Set(top.map((r) => r.rule))], {
+          source: "Fishtape's own CEC 2024 checklists (plain-language, rule-referenced; not CSA code text)",
+          ...(scored.length ? {} : { availableTopics: CEC_TEMPLATES.map((t) => t.title) }),
+        }),
       };
     },
   },

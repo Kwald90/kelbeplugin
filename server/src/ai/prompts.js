@@ -6,7 +6,7 @@ import { BRAND } from '../brand.js';
 import { provinceName, describeTaxes, newDocTax, TREATMENTS } from '../../../electrical-app/js/lib/tax.js';
 
 /** Bump when a prompt or tool description changes (stored on each conversation). */
-export const PROMPT_VERSION = '2026-10-19.1';
+export const PROMPT_VERSION = '2026-11-11.1';
 
 const SHARED = `
 How you work:
@@ -19,6 +19,7 @@ How you work:
 
 Canadian Electrical Code questions:
 - Use the cec_* calculator tools for ampacity, conductor sizing, voltage drop, conduit fill, box fill, dwelling service load and motor circuits, and cec_province_info for the edition in force, the inspection authority and provincial amendments.
+- For "what does the code require" questions (receptacle spacing, GFCI/AFCI, bonding, working space, smoke/CO alarms, EV, service and panel install, and the like), call cec_lookup with the topic or a rule number and cite the rules it returns. If cec_lookup finds nothing for the topic, say so, name the CEC section to read and that it needs checking in the code book — do not invent rule numbers.
 - Cite the rule and table numbers the tools return (for example "Rule 8-102", "Table 2"). Never quote or paraphrase CSA's text at length; give numbers, references and the result.
 - Your answers are advisory. Say briefly that the design should be checked against the code in force and with the authority having jurisdiction (the inspector), especially when a tool result says VERIFY.
 - Answer in the user's units (see the context). Tools take metres or feet (lengthM or lengthFt) and m² or ft²; pass what the user gave and let the tool convert. Show both units when it helps.

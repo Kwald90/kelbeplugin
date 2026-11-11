@@ -119,6 +119,7 @@ export function toolLabel(name, input = {}) {
     case 'get_record': return `Opening a ${String(input.collection || 'record').replace(/s$/, '')}`;
     case 'draft_estimate_lines': return input.estimateId ? 'Drafting lines for the estimate' : 'Drafting an estimate';
     case 'draft_invoice_from_job': return 'Drafting an invoice';
+    case 'cec_lookup': return input.rule ? `Looking up CEC rule ${input.rule}` : 'Looking up the code book';
     default: return name.startsWith('cec_') ? `CEC calculator: ${name.slice(4).replace(/_/g, ' ')}` : name;
   }
 }

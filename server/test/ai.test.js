@@ -419,6 +419,36 @@ describe('units (no database)', () => {
     for (const out of [size, fill, box, load, m, info]) assert.match(out.note, /authority having jurisdiction/);
   });
 
+  test('cec_lookup finds code requirements by topic and by rule number', () => {
+    const run = (input) => { const tool = CEC_TOOLS.find((x) => x.name === 'cec_lookup'); assert.equal(validateInput(tool.input_schema, input), null); return tool.run({ context: { province: 'ON' } }, input); };
+
+    // By topic: a bathroom GFCI question finds the Class A GFCI near-sink rule.
+    const gfci = run({ query: 'bathroom receptacle GFCI' });
+    assert.ok(gfci.requirements.length > 0, 'found at least one requirement');
+    assert.ok(gfci.requirements.some((r) => /GFCI/i.test(r.requirement) && /26-704/.test(r.rule)), 'the 26-704 Class A GFCI rule is in the hits');
+    assert.match(gfci.note, /authority having jurisdiction/);
+    // No CSA code text is reproduced — the source is Fishtape's own checklists.
+    assert.match(gfci.source, /not CSA code text/);
+
+    // By rule number: 2-308 is the working-space clearance rule.
+    const space = run({ rule: '2-308' });
+    assert.ok(space.requirements.length > 0 && space.requirements.every((r) => /2-308/.test(r.rule)), 'every hit is a 2-308 rule');
+    assert.ok(space.requirements.some((r) => /working space/i.test(r.requirement)));
+
+    // Kitchen counter spacing (the 900 mm rule) is findable.
+    const kitchen = run({ query: 'kitchen counter receptacle spacing' });
+    assert.ok(kitchen.requirements.some((r) => /900 mm/.test(r.requirement) && /26-722/.test(r.rule)));
+
+    // Province amendments are folded in: Saskatchewan's checklists carry SK amendment items.
+    const sk = run({ query: 'AFCI', province: 'SK' });
+    assert.ok(sk.requirements.length > 0, 'AFCI lookup returns items');
+
+    // Neither query nor rule: a helpful error listing the topic areas, not a throw.
+    const empty = run({});
+    assert.match(empty.error, /topic|rule number/);
+    assert.ok(Array.isArray(empty.availableTopics) && empty.availableTopics.length > 0);
+  });
+
   test('request options follow the skill: adaptive thinking, explicit effort, fallbacks, no forced tool choice', () => {
     const cfg = readAiConfig({});
     const p = requestParams(cfg, { system: [], messages: [] });
