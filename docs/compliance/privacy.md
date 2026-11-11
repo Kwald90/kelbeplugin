@@ -1,8 +1,9 @@
 # Privacy policy (internal)
 
 How Fishtape handles personal information under Canadian privacy law. This is the internal policy;
-the public privacy notice and the sub-processor list for customers are separate (planned). This is
-not legal advice. Where it says "confirm with counsel", do that before relying on it.
+the public privacy notice and the sub-processor list for customers are separate (drafts in
+[../legal/](../legal/), pending counsel review). This is not legal advice. Where it says "confirm
+with counsel", do that before relying on it.
 
 | | |
 | --- | --- |

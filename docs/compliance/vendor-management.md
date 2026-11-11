@@ -1,6 +1,8 @@
 # Vendor management policy
 
 Which outside companies Fishtape relies on, what data they see, and how they are chosen and checked.
+The public sub-processor list built from this inventory is a draft in
+[../legal/subprocessors.md](../legal/subprocessors.md) (pending counsel review).
 
 | | |
 | --- | --- |

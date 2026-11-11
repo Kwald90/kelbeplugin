@@ -115,7 +115,7 @@ controls:
       - "https://status.fishtapehq.com/api/v1/status"
       - "Published privacy notice, terms and sub-processor list with their history"
     status: partial
-    notes: "SECURITY.md exists. Privacy notice, terms, DPA and sub-processor list are planned; the status endpoint comes with production."
+    notes: "SECURITY.md exists. Public privacy notice, terms, DPA and sub-processor list now drafted in docs/legal/, pending counsel review; the status endpoint comes with production."
     links:
       - SECURITY.md
       - docs/compliance/privacy.md
@@ -730,11 +730,15 @@ controls:
     evidence:
       - "Evidence bundle: ci-runs.json (web unit tests)"
       - "electrical-app/tests/*.test.mjs"
-    status: partial
-    notes: "Unit tests exist for electrical calculations and units; CEC, tax and money tests are being added."
+    status: implemented
+    notes: "CEC/tax/money reproducibility tests added (source-cited values, integer-cents and SI invariants asserted); electrical-app/tests/integrity.test.mjs plus tax/money/cec suites."
     links:
       - electrical-app/tests/electrical.test.mjs
       - electrical-app/tests/units.test.mjs
+      - electrical-app/tests/integrity.test.mjs
+      - electrical-app/tests/tax.test.mjs
+      - electrical-app/tests/money.test.mjs
+      - electrical-app/tests/cec.test.mjs
       - docs/BUILD-PLAN.md
 
   # ---------------------------------------------------------------- processing integrity of money records (PI1, CC6.1)
@@ -1195,7 +1199,7 @@ controls:
       - "Published privacy notice"
       - "Request and complaint log"
     status: partial
-    notes: "Internal policy written; public notice and privacy contact address planned. Counsel review before launch."
+    notes: "Internal policy written; public privacy notice drafted in docs/legal/, pending counsel review. Privacy contact address still to be set up."
     links:
       - docs/compliance/privacy.md
 
@@ -1209,7 +1213,7 @@ controls:
       - "Terms and data processing addendum (when published)"
       - "Field lists in the JSON Schemas under electrical-app/js/schema/"
     status: partial
-    notes: "Terms and DPA planned."
+    notes: "Terms and DPA drafted in docs/legal/, pending counsel review."
     links:
       - docs/compliance/privacy.md
       - docs/compliance/data-classification.md
@@ -1267,7 +1271,7 @@ controls:
       - "docs/compliance/vendor-management.md"
       - "audit_events (HQ reads, integration calls)"
     status: partial
-    notes: "Sub-processor list planned; production host and several vendor locations still to confirm."
+    notes: "Sub-processor list drafted in docs/legal/subprocessors.md, pending counsel review; production host and several vendor locations still to confirm."
     links:
       - docs/compliance/privacy.md
       - docs/compliance/vendor-management.md
