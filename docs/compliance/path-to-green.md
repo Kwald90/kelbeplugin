@@ -90,3 +90,32 @@ Verification commands used across tasks:
     cd server && node scripts/with-embedded-pg.js node --test test/<file>.test.js
     node .github/scripts/check-csp.mjs
     node .github/scripts/check-committed-files.mjs
+
+---
+
+## Progress log
+
+**2026-11-11 — first green pass.**
+
+- **HRS-01 → implemented** (T2): contractor agreement, briefing, offboarding and sealed-instructions
+  templates in `docs/compliance/templates/`.
+- **SDL-10 → implemented** (T4): CEC/tax/money reproducibility tests
+  (`electrical-app/tests/integrity.test.mjs`); integer-cents + SI invariants asserted.
+- **SDL-06 → implemented** (T3): ASVS self-assessment filled in — 126 items, 97 pass, 18 gap, 11 N/A.
+  All 18 gaps map to existing controls below; no orphans.
+- **GOV-05 / PRV-01 / PRV-02 / PRV-06** advanced (T1): public legal drafts in `docs/legal/`; stay
+  `partial` pending counsel review + publish.
+- **Android workflow** hardened (security-review defense-in-depth): dispatch input no longer
+  interpolated into shell `run:` steps.
+
+**Open follow-ups the ASVS surfaced:**
+
+- **Dependency advisory (SDL-02/SDL-03):** 1 moderate `fast-uri` (transitive). Fix via `npm audit fix`
+  in `server/`. Within the 90-day Medium deadline.
+- **Under-marked controls to re-verify:** ACC-08 (in-app auth), ACC-09 (RLS isolation tests), CRY-03
+  (app-level encryption) and OPS-04 (audit trail) have more working, tested code than their
+  `planned`/`partial` status implies — but each still has a named gap in the ASSESSMENT (e.g. no
+  session rotation after MFA, no `__Host-` cookie, 403s not audited), so none can honestly flip to
+  `implemented` yet. A dedicated verification pass could legitimately move ACC-09 if the isolation
+  tests fully cover ENABLE+FORCE RLS on every tenant table in CI. **Do not upgrade status without
+  re-reading the code + tests.**

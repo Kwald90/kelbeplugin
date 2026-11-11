@@ -673,7 +673,8 @@ controls:
     evidence:
       - "Completed copy of docs/security/pentest-checklist-asvs.md in the August evidence bundle"
       - "External test report, when commissioned"
-    status: planned
+    status: implemented
+    notes: "ASVS self-assessment completed 2026-11-11 (126 items: 97 pass, 18 gap, 11 N/A pre-launch); all 18 gaps tracked under existing controls (see docs/compliance/path-to-green.md). Re-run annually each August and when the architecture changes."
     links:
       - docs/security/pentest-checklist-asvs.md
 
