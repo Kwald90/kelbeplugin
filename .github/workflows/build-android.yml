@@ -42,9 +42,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Skip the action's default package set: it tries to install the obsolete 'tools' package,
+          # which no longer exists and fails the step. We install exactly what the build needs below.
+          packages: ''
 
       - name: Install required SDK packages
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Install mobile dependencies
         working-directory: mobile
