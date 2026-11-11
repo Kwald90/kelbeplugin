@@ -1,0 +1,72 @@
+# Build the Fishtape Android app (Capacitor wrapper around electrical-app) and upload the APK as a
+# run artifact. Android has no ARKit/geofence/native-print plugins (iOS only); the web null-checks
+# those, so the app runs without them. Debug-signed by default so it installs directly on a phone
+# (sideload); release signing for Google Play is added once the upload keystore secrets are set.
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag or branch to build (default: this branch)
+        required: false
+      versionName:
+        description: versionName, e.g. 0.24.3
+        required: false
+        default: "0.24.3"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Copy web assets (production API)
+        working-directory: mobile
+        env:
+          FISHTAPE_ENV: production
+        run: node scripts/copy-web.mjs
+
+      - name: Capacitor sync (android)
+        working-directory: mobile
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug --no-daemon -PfishtapeVersionName=${{ github.event.inputs.versionName || '0.24.3' }} -PfishtapeVersionCode=${{ github.run_number }}
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk "out/fishtape-${{ github.event.inputs.versionName || '0.24.3' }}-${{ github.run_number }}.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fishtape-android-apk
+          path: out/*.apk
+          if-no-files-found: error
