@@ -168,8 +168,9 @@ describe('gemini chat', { skip }, () => {
       [500, 'ai_unavailable'],
     ];
     for (const [status, code] of cases) {
-      // Three copies so a 5xx (which is retried) still exhausts the retries and surfaces the error.
-      mockGemini([0, 1, 2].map(() => geminiError(status, `boom ${GEMINI_KEY}`)));
+      // Six copies so a 5xx (retried on the primary then on the fallback model) still exhausts every
+      // attempt and surfaces the error; non-retried codes just consume the first.
+      mockGemini([0, 1, 2, 3, 4, 5].map(() => geminiError(status, `boom ${GEMINI_KEY}`)));
       const conv = await newConversation(A.token);
       const r = await say(A.token, conv.id, 'hello');
       const err = r.events.find((e) => e.event === 'error');
@@ -181,6 +182,24 @@ describe('gemini chat', { skip }, () => {
     mockGemini([geminiTurn([geminiText('ok now')])]);
     const conv = await newConversation(A.token);
     assert.equal((await say(A.token, conv.id, 'again')).status, 200);
+  });
+
+  test('a persistently overloaded primary model falls over to the fallback model', async () => {
+    // The primary (gemini-3.8-flash) 503s through all its retries; the next call must go to the
+    // fallback model (gemini-3.5-flash) and succeed, so the user gets an answer, not an error.
+    const mock = mockGemini([
+      geminiError(503, 'high demand'), geminiError(503, 'high demand'), geminiError(503, 'high demand'),
+      geminiTurn([geminiText('Answered by the fallback model.')]),
+    ]);
+    const conv = await newConversation(A.token);
+    const r = await say(A.token, conv.id, 'storage shed power');
+    assert.equal(r.status, 200, JSON.stringify(r.events));
+    assert.ok(!r.events.some((e) => e.event === 'error'), 'no error surfaced; it fell over');
+    assert.match(textOf(r.events), /fallback model/);
+    assert.equal(mock.pending(), 0, 'all three primary attempts and the fallback call were used');
+    // The first calls hit the primary model; the successful one hit the fallback model.
+    assert.ok(mock.calls[0].url.includes('gemini-3.8-flash'), 'primary tried first');
+    assert.ok(mock.calls[3].url.includes('gemini-3.5-flash'), 'fell over to the fallback model');
   });
 
   test('a transient 503 (model overloaded) is retried, not surfaced to the user', async () => {

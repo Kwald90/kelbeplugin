@@ -362,6 +362,7 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
     const totals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costMicroUsd: 0 };
     const nextToolId = () => `gcall_${randomUUID()}`;
     let stopReason = null;
+    let activeModel = null; // pinned to the first model that answers, so a turn stays on one model
     try {
       if (!conv.title && prep.title) {
         await inTenant(p, (tx) => tx.query('UPDATE ai_conversations SET title = $3 WHERE tenant_id = $1 AND id = $2', [tx.tenantId, conv.id, prep.title]), { write: true });
@@ -371,27 +372,39 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
       for (let step = 0; step < aiCfg.maxSteps; step++) {
         await inTenant(p, (tx) => assertUnderCap(tx, aiCfg));
         const contents = toGeminiContents(await history(p, conv.id));
+        // Try the primary model; on a sustained 503 "model overloaded" fall over to the next model
+        // (settings.models). The 3.x flash models have long high-demand spells where every call 503s
+        // while an older flash id keeps answering. Retry each model a couple of times (transient blip),
+        // then move on. Non-transient errors (400/404/401) abort at once. Nothing is stored for the
+        // step until a call succeeds, so re-issuing is safe; the working model is pinned for the turn.
+        const candidates = activeModel ? [activeModel] : settings.models;
         let result;
-        for (let attempt = 0; ; attempt++) {
-          try {
-            result = await geminiGenerate({
-              apiKey, settings, systemText, contents, tools: geminiTools,
-              generationConfig: { temperature: 0.2, maxOutputTokens: aiCfg.maxTokens }, signal, timeoutMs: aiCfg.timeoutMs,
-            });
-            break;
-          } catch (e) {
-            const mapped = e instanceof ApiError ? e : geminiNetworkError(e);
-            // Gemini (the 3.x flash models especially) throws transient 503 "model overloaded"
-            // under load, and the odd network blip. Nothing is stored for this step yet, so
-            // re-issue the turn a couple of times with a short backoff before giving up.
-            if (mapped.code === 'ai_unavailable' && attempt < GEMINI_RETRIES && !signal?.aborted) {
-              log?.warn?.({ provider: 'gemini', attempt: attempt + 1 }, 'ai gemini transient, retrying');
-              await sleep(600 * (attempt + 1));
-              continue;
+        let lastErr;
+        for (let m = 0; m < candidates.length && !result; m++) {
+          const model = candidates[m];
+          for (let attempt = 0; ; attempt++) {
+            try {
+              result = await geminiGenerate({
+                apiKey, settings: { ...settings, model }, systemText, contents, tools: geminiTools,
+                generationConfig: { temperature: 0.2, maxOutputTokens: aiCfg.maxTokens }, signal, timeoutMs: aiCfg.timeoutMs,
+              });
+              activeModel = model;
+              break;
+            } catch (e) {
+              lastErr = e instanceof ApiError ? e : geminiNetworkError(e);
+              if (lastErr.code === 'ai_unavailable' && !signal?.aborted) {
+                if (attempt < GEMINI_RETRIES) {
+                  log?.warn?.({ provider: 'gemini', model, attempt: attempt + 1 }, 'ai gemini transient, retrying');
+                  await sleep(600 * (attempt + 1));
+                  continue;
+                }
+                if (m < candidates.length - 1) { log?.warn?.({ provider: 'gemini', from: model, to: candidates[m + 1] }, 'ai gemini overloaded, falling over'); break; }
+              }
+              throw lastErr;
             }
-            throw mapped;
           }
         }
+        if (!result) throw lastErr;
         const cost = await inTenant(p, (tx) => recordUsage(tx, { feature, model: result.model, actor, conversationId: conv.id, usage: result.usage, stopReason: result.finishReason }), { write: true });
         totals.inputTokens += result.usage.input_tokens || 0;
         totals.outputTokens += result.usage.output_tokens || 0;

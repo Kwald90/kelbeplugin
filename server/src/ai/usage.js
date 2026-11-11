@@ -18,6 +18,7 @@ export const PRICES = {
   // Google Gemini (ai.google.dev/pricing, paid tier). Gemini has no separate cache-write/read
   // line here, so those columns mirror input; the assistant records only input/output tokens.
   'gemini-3.8-flash': [0.75, 3.75, 0.75, 0.1875],
+  'gemini-3.5-flash': [0.75, 3.75, 0.75, 0.1875], // 503-overload fallback for 3.8-flash; priced the same (estimate) so cost tracking isn't under-counted
   'gemini-2.5-flash': [0.3, 2.5, 0.3, 0.075],
   'gemini-2.5-pro': [1.25, 10, 1.25, 0.31],
   'gemini-2.0-flash': [0.1, 0.4, 0.1, 0.025],

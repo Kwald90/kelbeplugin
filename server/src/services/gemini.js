@@ -17,9 +17,17 @@ export const TRANSCRIBE_PROMPT =
 
 /** Gemini settings; the model and base are overridable so a provider rename needs no code change. */
 export function geminiSettings(config, env = process.env) {
+  const model = env.GEMINI_MODEL || 'gemini-3.8-flash';
+  // Fallback models tried, in order, when the primary is overloaded (503). The Gemini 3.x flash
+  // models go through long "high demand" spells where every call 503s while an older flash id keeps
+  // answering, so the chat path fails over instead of showing "Gemini is busy". Override/clear with
+  // GEMINI_FALLBACK_MODELS (comma-separated; empty string disables fallback).
+  const fallbackRaw = env.GEMINI_FALLBACK_MODELS == null ? 'gemini-3.5-flash' : env.GEMINI_FALLBACK_MODELS;
+  const models = [...new Set([model, ...fallbackRaw.split(',').map((m) => m.trim()).filter(Boolean)])];
   return {
     apiKey: env.GEMINI_API_KEY || '',
-    model: env.GEMINI_MODEL || 'gemini-3.8-flash',
+    model,
+    models,
     apiBase: String(env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, ''),
     // A margin under the hard 20 MB inline-request limit (base64 inflates bytes by ~4/3).
     maxInlineBytes: Number(env.GEMINI_MAX_INLINE_BYTES) || 13 * 1024 * 1024,
