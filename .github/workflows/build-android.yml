@@ -26,10 +26,23 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Resolve the version name once, here, instead of interpolating the dispatch input directly into
+    # shell `run:` steps (that is the GitHub Actions script-injection pattern, even though this input
+    # only arrives via workflow_dispatch, which already needs repo write access). A later step
+    # validates it against a strict charset before any step uses it.
+    env:
+      VERSION_NAME: ${{ github.event.inputs.versionName || '0.24.3' }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Validate versionName
+        run: |
+          # A strict allowlist so the value is safe to pass to gradle and to use in a filename.
+          if ! printf '%s' "$VERSION_NAME" | grep -Eq '^[0-9A-Za-z._-]{1,32}$'; then
+            echo "versionName must match ^[0-9A-Za-z._-]{1,32}$ (got: $VERSION_NAME)"; exit 1
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -66,12 +79,16 @@ jobs:
 
       - name: Build debug APK
         working-directory: mobile/android
-        run: ./gradlew assembleDebug --no-daemon -PfishtapeVersionName=${{ github.event.inputs.versionName || '0.24.3' }} -PfishtapeVersionCode=${{ github.run_number }}
+        run: ./gradlew assembleDebug --no-daemon -PfishtapeVersionName="$VERSION_NAME" -PfishtapeVersionCode="$RUN_NUMBER"
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
 
       - name: Rename APK
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           mkdir -p out
-          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk "out/fishtape-${{ github.event.inputs.versionName || '0.24.3' }}-${{ github.run_number }}.apk"
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk "out/fishtape-${VERSION_NAME}-${RUN_NUMBER}.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
