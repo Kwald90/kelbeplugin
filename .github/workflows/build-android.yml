@@ -8,15 +8,20 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Tag or branch to build (default: this branch)
+        description: "Tag or branch to build (default: this branch)"
         required: false
       versionName:
-        description: versionName, e.g. 0.24.3
+        description: "versionName, e.g. 0.24.3"
         required: false
         default: "0.24.3"
+  # Pushing an android-v* tag builds that ref and publishes the APK as a GitHub Release,
+  # so the APK has a stable download link without needing the API locally.
+  push:
+    tags:
+      - 'android-v*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -70,3 +75,11 @@ jobs:
           name: fishtape-android-apk
           path: out/*.apk
           if-no-files-found: error
+
+      - name: Publish APK to a GitHub Release
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        uses: softprops/action-gh-release@v2.0.8
+        with:
+          files: out/*.apk
+          name: Fishtape Android ${{ github.ref_name }}
+          body: "Debug-signed Fishtape APK (sideload: enable 'install unknown apps', then open this file on the phone). Build ${{ github.run_number }}."
