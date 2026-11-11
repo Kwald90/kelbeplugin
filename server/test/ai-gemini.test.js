@@ -168,7 +168,8 @@ describe('gemini chat', { skip }, () => {
       [500, 'ai_unavailable'],
     ];
     for (const [status, code] of cases) {
-      mockGemini([geminiError(status, `boom ${GEMINI_KEY}`)]);
+      // Three copies so a 5xx (which is retried) still exhausts the retries and surfaces the error.
+      mockGemini([0, 1, 2].map(() => geminiError(status, `boom ${GEMINI_KEY}`)));
       const conv = await newConversation(A.token);
       const r = await say(A.token, conv.id, 'hello');
       const err = r.events.find((e) => e.event === 'error');
@@ -180,5 +181,16 @@ describe('gemini chat', { skip }, () => {
     mockGemini([geminiTurn([geminiText('ok now')])]);
     const conv = await newConversation(A.token);
     assert.equal((await say(A.token, conv.id, 'again')).status, 200);
+  });
+
+  test('a transient 503 (model overloaded) is retried, not surfaced to the user', async () => {
+    // Gemini throws a 503 once, then answers: the user should see the answer, no error event.
+    const mock = mockGemini([geminiError(503, 'The model is overloaded. Please try again later.'), geminiTurn([geminiText('Recovered after a retry.')])]);
+    const conv = await newConversation(A.token);
+    const r = await say(A.token, conv.id, 'are you there');
+    assert.equal(r.status, 200);
+    assert.ok(!r.events.some((e) => e.event === 'error'), 'the transient 503 did not surface as an error');
+    assert.match(textOf(r.events), /Recovered after a retry/);
+    assert.equal(mock.pending(), 0, 'both the failed attempt and the retry were consumed');
   });
 });

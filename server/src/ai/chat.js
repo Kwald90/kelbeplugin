@@ -22,6 +22,9 @@ export const MODES = { assistant: 'ai.assistant', cec: 'ai.cec' };
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_TOOL_RESULT_CHARS = 24_000;
 const BUSY_SECONDS = 300;
+const GEMINI_RETRIES = 2;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Agent actor for things the assistant does on a person's behalf (drafts). */
 export const assistantActor = (p) => ({ type: 'agent', id: `assistant:${p.userId}`, label: `${p.actor?.label || 'User'} via assistant` });
@@ -369,13 +372,25 @@ export function createChat({ db, sealer, records, aiCfg, log }) {
         await inTenant(p, (tx) => assertUnderCap(tx, aiCfg));
         const contents = toGeminiContents(await history(p, conv.id));
         let result;
-        try {
-          result = await geminiGenerate({
-            apiKey, settings, systemText, contents, tools: geminiTools,
-            generationConfig: { temperature: 0.2, maxOutputTokens: aiCfg.maxTokens }, signal, timeoutMs: aiCfg.timeoutMs,
-          });
-        } catch (e) {
-          throw geminiNetworkError(e);
+        for (let attempt = 0; ; attempt++) {
+          try {
+            result = await geminiGenerate({
+              apiKey, settings, systemText, contents, tools: geminiTools,
+              generationConfig: { temperature: 0.2, maxOutputTokens: aiCfg.maxTokens }, signal, timeoutMs: aiCfg.timeoutMs,
+            });
+            break;
+          } catch (e) {
+            const mapped = e instanceof ApiError ? e : geminiNetworkError(e);
+            // Gemini (the 3.x flash models especially) throws transient 503 "model overloaded"
+            // under load, and the odd network blip. Nothing is stored for this step yet, so
+            // re-issue the turn a couple of times with a short backoff before giving up.
+            if (mapped.code === 'ai_unavailable' && attempt < GEMINI_RETRIES && !signal?.aborted) {
+              log?.warn?.({ provider: 'gemini', attempt: attempt + 1 }, 'ai gemini transient, retrying');
+              await sleep(600 * (attempt + 1));
+              continue;
+            }
+            throw mapped;
+          }
         }
         const cost = await inTenant(p, (tx) => recordUsage(tx, { feature, model: result.model, actor, conversationId: conv.id, usage: result.usage, stopReason: result.finishReason }), { write: true });
         totals.inputTokens += result.usage.input_tokens || 0;

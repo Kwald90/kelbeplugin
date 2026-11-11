@@ -176,7 +176,7 @@ export function geminiUpstreamError(status, detail = '') {
   // (a widespread Gemini symptom even for a model that lists fine). Name it so an admin can fix it.
   if (status === 404) return new ApiError(502, 'ai_model_missing', `Gemini could not find the configured model. An admin can set GEMINI_MODEL to a current one.${tail}`, { integration: 'gemini', guide: 'gemini' });
   if (status === 400) return new ApiError(502, 'ai_bad_request', `The AI service refused the request. Try again or start a new conversation.${tail}`);
-  if (status >= 500) return new ApiError(503, 'ai_unavailable', 'Gemini is busy right now. Try again shortly.');
+  if (status >= 500) return new ApiError(503, 'ai_unavailable', `Gemini is busy right now. Try again shortly.${tail}`);
   return new ApiError(502, 'ai_error', `The AI service returned an error (HTTP ${status}). Try again.${tail}`);
 }
 
