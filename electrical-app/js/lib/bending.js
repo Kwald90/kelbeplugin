@@ -168,6 +168,139 @@ export function tracePath(segments, { x = 0, y = 0, headingDeg = 0 } = {}) {
   return { points, bends, end: [x, y], headingDeg: h };
 }
 
+/**
+ * Round each sharp corner of a polyline with a tangent arc of `radiusM` (the bend radius to the
+ * centre of the pipe). The straight legs stay exactly where the bending maths puts them, so the rise
+ * and the spacing are unchanged; only the corners become the curve a real bender makes. A corner
+ * whose arc would not fit between its neighbours gets the largest radius that does fit.
+ * Every interior point becomes `steps + 1` points whatever its angle, so animation frames of the
+ * same path keep the same point count.
+ */
+export function filletPoints(points, radiusM, steps = 8) {
+  const n = points.length;
+  if (n < 3) return points.map((p) => p.slice());
+  const r = isPos(radiusM) ? radiusM : 0;
+  const out = [points[0].slice()];
+  for (let i = 1; i < n - 1; i++) {
+    const [px, py] = points[i - 1], [vx, vy] = points[i], [qx, qy] = points[i + 1];
+    const l1 = Math.hypot(vx - px, vy - py), l2 = Math.hypot(qx - vx, qy - vy);
+    const ux = l1 ? (vx - px) / l1 : 0, uy = l1 ? (vy - py) / l1 : 0;
+    const wx = l2 ? (qx - vx) / l2 : 0, wy = l2 ? (qy - vy) / l2 : 0;
+    const cross = ux * wy - uy * wx;
+    const phi = Math.atan2(Math.abs(cross), ux * wx + uy * wy); // turning angle, 0..π
+    if (!r || l1 < 1e-12 || l2 < 1e-12 || phi < 1e-9) {
+      for (let k = 0; k <= steps; k++) out.push([vx, vy]);
+      continue;
+    }
+    const tanHalf = Math.tan(phi / 2);
+    // room on each side: the whole first or last leg, half of a leg shared with another corner
+    const t = Math.min(r * tanHalf, i === 1 ? l1 : l1 / 2, i === n - 2 ? l2 : l2 / 2);
+    const re = t / tanHalf;
+    const sign = cross > 0 ? 1 : -1; // a left turn has its centre on the left
+    const ax = vx - ux * t, ay = vy - uy * t;
+    const cx = ax - uy * re * sign, cy = ay + ux * re * sign;
+    const a0 = Math.atan2(ay - cy, ax - cx);
+    for (let k = 0; k <= steps; k++) {
+      const a = a0 + (sign * phi * k) / steps;
+      out.push([cx + re * Math.cos(a), cy + re * Math.sin(a)]);
+    }
+  }
+  out.push(points[n - 1].slice());
+  return out;
+}
+
+/**
+ * The obstruction a bend has to clear, in drawing coordinates (metres; the pipe's centreline starts
+ * at y 0 and its underside rests on the surface at y −OD/2; x runs along the surface from the end):
+ *   { shape: 'circle', cx, cy, r }      the pipe or round obstruction under a 3-point saddle
+ *   { shape: 'rect', x0, y0, x1, y1 }   the block under a 4-point saddle, or the step an offset climbs
+ * A step's x1 is Infinity: it carries on past the end of the pipe. Null when the bend has none.
+ * Parallel offsets put the step under the lowest pipe; `lowestPipe: false` puts it under pipe 1
+ * (the same fit, since every pipe makes the same offset), to check against result.segments.
+ * The height is the "height + clearance" typed in, so the pipe must stay outside the whole shape.
+ */
+export function obstacleShape(result, odM = 0, { lowestPipe = true } = {}) {
+  const od = isPos(odM) ? odM : 0;
+  const dims = result.dims || [];
+  const ob = dims.find((d) => d.type === 'obstacle');
+  if (ob?.round && isNum(ob.centerM)) return { shape: 'circle', cx: ob.centerM, cy: -od / 2 + ob.heightM / 2, r: ob.heightM / 2 };
+  if (ob && isNum(ob.startM)) return { shape: 'rect', x0: ob.startM, y0: -od / 2, x1: ob.startM + ob.widthM, y1: -od / 2 + ob.heightM };
+  const step = dims.find((d) => d.type === 'rise' && d.obstacle);
+  if (step && isNum(step.atM)) {
+    // parallel offsets: the step sits under the lowest pipe (the one on the outside of the first bend)
+    const low = result.kind === 'parallel' && lowestPipe ? result.count - 1 : 0;
+    const yb = -low * (result.centersM || 0) - od / 2;
+    return { shape: 'rect', x0: step.atM + low * (result.adjustM || 0), y0: yb, x1: Infinity, y1: yb + step.label };
+  }
+  return null;
+}
+
+/** Signed distance from a point to an obstruction shape (negative inside it). */
+export function shapeDistance(shape, x, y) {
+  if (shape.shape === 'circle') return Math.hypot(x - shape.cx, y - shape.cy) - shape.r;
+  const hy = (shape.y1 - shape.y0) / 2;
+  const dy = Math.abs(y - (shape.y0 + shape.y1) / 2) - hy;
+  const dx = Number.isFinite(shape.x1) ? Math.abs(x - (shape.x0 + shape.x1) / 2) - (shape.x1 - shape.x0) / 2 : shape.x0 - x;
+  return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0);
+}
+
+/** Smallest gap between a polyline swept to half-width `halfW` and a shape (negative = they overlap). */
+export function polylineClearance(points, shape, halfW = 0) {
+  let best = Infinity;
+  for (let i = 1; i < points.length; i++) {
+    const [ax, ay] = points[i - 1], [bx, by] = points[i];
+    const len = Math.hypot(bx - ax, by - ay);
+    const n = Math.min(400, Math.max(1, Math.ceil(len / Math.max(halfW / 4, 1e-4))));
+    for (let k = 0; k <= n; k++) best = Math.min(best, shapeDistance(shape, ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n));
+  }
+  return best - halfW;
+}
+
+/**
+ * Does the pipe clear the obstruction? Traces the real pipe (the bend radius on every corner) and
+ * measures from its outside surface (OD/2 off the centreline) to the obstruction from the inputs.
+ * Null when the bend has no obstruction, else { clearM, heightM, ok, shape }: a negative clearM is
+ * how far the pipe would dig into the "height + clearance" the bend was laid out for.
+ *
+ * Every real bend dips a little into that allowance: the corners of the bend are round, and a
+ * saddle's legs close in on a round obstruction. That is what the clearance in "height + clearance"
+ * is for, so `ok` stays true up to clearanceSlackM (¼", or a quarter of the height for tall ones).
+ * Past that the pipe would hit the obstruction itself, and the calculators warn.
+ */
+export const clearanceSlackM = (heightM) => Math.max(0.00635, 0.25 * heightM);
+export function obstacleClearance(result, { odM = 0, radiusM = 0 } = {}) {
+  const shape = obstacleShape(result, odM, { lowestPipe: false });
+  if (!shape) return null;
+  const path = tracePath(result.segments, result.start);
+  const clearM = polylineClearance(filletPoints(path.points, radiusM, 16), shape, (isPos(odM) ? odM : 0) / 2);
+  const heightM = shape.shape === 'circle' ? 2 * shape.r : shape.y1 - shape.y0;
+  return { clearM, heightM, ok: clearM >= -clearanceSlackM(heightM), shape };
+}
+
+/** Add the "pipe would hit the obstruction" warning to a finished result (offsets and saddles). */
+function checkClearance(result, input, f) {
+  const c = obstacleClearance(result, { odM: input.odM, radiusM: input.radiusM });
+  if (!c) return result;
+  result.clearanceM = c.clearM;
+  if (!c.ok) {
+    const why = isPos(input.radiusM) ? ` (its ${f(input.radiusM)} bend radius rounds the corners)` : '';
+    result.warnings.push(`The pipe won't clear: it comes about ${f(-c.clearM)} into the ${f(c.heightM)} you allowed${why}. Add that to the height, or use a smaller angle.`);
+  }
+  return result;
+}
+
+/** Warn when two neighbouring bends need more pipe than there is between their marks. */
+function checkBendRoom(warnings, input, pairs, f) {
+  if (!isPos(input.radiusM)) return;
+  for (const [a, b, gap] of pairs) {
+    const need = input.radiusM * (tanD(Math.abs(a) / 2) + tanD(Math.abs(b) / 2));
+    if (gap < need - 1e-9) {
+      warnings.push(`The marks ${f(gap)} apart are too close for a ${f(input.radiusM)} bend radius (the bends need ${f(need)}). The bends will run into each other: use a smaller angle or a bigger obstruction allowance.`);
+      return;
+    }
+  }
+}
+
 /** Straight length of conduit the segments use (straights plus arcs). */
 export function developedLength(segments) {
   let total = 0;
@@ -223,6 +356,9 @@ function resolveAngle({ angleDeg, riseM, spacingM }) {
   return { angleDeg: angleForSpacing(riseM, spacingM), solved: true };
 }
 
+/** What the diagram needs to draw the real pipe: its bend radius (rounds the corners) and OD. */
+const drawn = (input) => ({ bendRadiusM: isPos(input.radiusM) ? input.radiusM : null, odM: isPos(input.odM) ? input.odM : null });
+
 function tailFor(lastM, span, runM, shrinkM) {
   if (isNum(runM)) return Math.max(0, runM + shrinkM - lastM);
   return Math.max(span * 0.5, 0.05);
@@ -260,7 +396,7 @@ export function offset(input, opts = {}) {
   if (isNum(runM) && isNum(obstacleM) && runM < obstacleM) warnings.push('The run is shorter than the distance to the obstruction.');
   if (angleDeg > 60) warnings.push(`${fmtDeg(angleDeg)} offsets are hard to pull through and easy to over-bend. 45° or less is usual.`);
   const cut = isNum(runM) ? runM + shrink : null;
-  return finish('offset', {
+  return checkClearance(finish('offset', {
     reference,
     marks: [
       { label: 'Mark 1', atM: m1, symbol: 'arrow', angleDeg, bend: 1, dir: 'up' },
@@ -289,9 +425,9 @@ export function offset(input, opts = {}) {
       { straightM: m1 }, { bendDeg: angleDeg }, { straightM: dist }, { bendDeg: -angleDeg },
       { straightM: tailFor(m2, dist, runM, shrink) },
     ],
-    dims: [{ type: 'rise', label: riseM, obstacle: reference === 'end' && isNum(obstacleM) }],
-    extra: { angleDeg, multiplier: k, spacingM: dist, riseM },
-  });
+    dims: [{ type: 'rise', label: riseM, obstacle: reference === 'end' && isNum(obstacleM), atM: isNum(obstacleM) ? obstacleM : null }],
+    extra: { angleDeg, multiplier: k, spacingM: dist, riseM, ...drawn(input) },
+  }), input, f);
 }
 
 /**
@@ -327,7 +463,7 @@ export function kick(input, opts = {}) {
     start: { x: 0, y: 0, headingDeg: -angleDeg },
     segments: [{ straightM: travel }, { bendDeg: angleDeg }, { straightM: Math.max(travel, 0.15) }],
     dims: [{ type: 'kick', label: riseM }],
-    extra: { angleDeg, riseM },
+    extra: { angleDeg, riseM, ...drawn(input) },
   });
 }
 
@@ -374,7 +510,8 @@ export function saddle3(input, opts = {}) {
   }
   const cut = isNum(runM) ? runM + 2 * shHalf : null;
   figures.push(cut != null ? { label: 'Cut length', m: cut } : { label: 'Pipe to the last mark', m: b });
-  return finish('saddle3', {
+  checkBendRoom(warnings, input, [[side, center, sp], [center, side, sp]], f);
+  return checkClearance(finish('saddle3', {
     reference,
     marks: [
       { label: 'Mark 1', atM: a, symbol: 'arrow', angleDeg: side, bend: 2, dir: 'up' },
@@ -400,8 +537,8 @@ export function saddle3(input, opts = {}) {
       { straightM: tailFor(b, sp, runM, 2 * shHalf) },
     ],
     dims: [{ type: 'obstacle', centerM: isNum(centerM) ? centerM : c - shHalf, heightM, round: true }],
-    extra: { heightM, centerAngleDeg: center, sideAngleDeg: side, spacingM: sp },
-  });
+    extra: { heightM, centerAngleDeg: center, sideAngleDeg: side, spacingM: sp, ...drawn(input) },
+  }), input, f);
 }
 
 /**
@@ -426,7 +563,9 @@ export function saddle4(input, opts = {}) {
   const m1 = m2 - dist, m3 = m2 + widthM, m4 = m3 + dist;
   need(m1 >= 0, `Not enough room: mark 1 would be ${f(-m1)} past the end of the pipe.`);
   const cut = isNum(runM) ? runM + 2 * sh : null;
-  return finish('saddle4', {
+  const warnings = [];
+  checkBendRoom(warnings, input, [[angleDeg, angleDeg, dist], [angleDeg, angleDeg, widthM], [angleDeg, angleDeg, dist]], f);
+  return checkClearance(finish('saddle4', {
     reference,
     marks: [
       { label: 'Mark 1', atM: m1, symbol: 'arrow', angleDeg, bend: 1, dir: 'up' },
@@ -436,6 +575,7 @@ export function saddle4(input, opts = {}) {
     ],
     shrinkM: 2 * sh,
     developedLengthM: cut ?? m4,
+    warnings,
     figures: [
       { label: 'Angle', deg: angleDeg },
       { label: chartRow(angleDeg, opts) ? 'Multiplier (chart)' : 'Multiplier', x: k },
@@ -462,8 +602,8 @@ export function saddle4(input, opts = {}) {
       { bendDeg: -angleDeg }, { straightM: dist }, { bendDeg: angleDeg }, { straightM: tailFor(m4, dist, runM, 2 * sh) },
     ],
     dims: [{ type: 'obstacle', startM: isNum(obstacleM) ? obstacleM : m2 - sh, widthM, heightM }],
-    extra: { angleDeg, heightM, widthM, spacingM: dist },
-  });
+    extra: { angleDeg, heightM, widthM, spacingM: dist, ...drawn(input) },
+  }), input, f);
 }
 
 // ---------------------------------------------------------------------------
@@ -660,7 +800,7 @@ export function boxOffset(input, opts = {}) {
     ],
     segments: [{ straightM: m1 }, { bendDeg: -angleDeg }, { straightM: dist }, { bendDeg: angleDeg }, { straightM: Math.max(dist, 0.1) }],
     dims: [{ type: 'rise', from: 0, to: 1, label: riseM }],
-    extra: { target: 'box', angleDeg, riseM },
+    extra: { target: 'box', angleDeg, riseM, ...drawn(input) },
   });
 }
 
@@ -741,7 +881,7 @@ export function parallelOffsets(input, opts = {}) {
       ],
       segments: base.segments,
       dims: base.dims,
-      extra: { angleDeg: base.angleDeg, spacingM: base.spacingM, adjustM: adj, pipes, centersM: input.centersM, count, riseM: input.riseM },
+      extra: { angleDeg: base.angleDeg, spacingM: base.spacingM, adjustM: adj, pipes, centersM: input.centersM, count, riseM: input.riseM, bendRadiusM: base.bendRadiusM, odM: base.odM },
     }),
   };
 }

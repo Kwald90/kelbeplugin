@@ -8,6 +8,8 @@ import { fmtLength, parseLength, getUnits, setUnits, inToM, mToIn } from '../lib
 import * as Level from '../lib/level.js';
 import { getArSupport, measurePath, isCancelled } from '../lib/ar-measure.js';
 import { photoStrip } from '../lib/safety-capture.js';
+import { noteUse, rankByUse } from '../lib/usage-rank.js';
+import { bendArt } from '../lib/bend-art.js';
 
 /** Load the shared photo-strip styles (css/safety.css) the first time a bend photo UI is shown. */
 function ensureSafetyStyles() {
@@ -147,58 +149,58 @@ const MEASURED = [
 const RUN = { type: 'len', name: 'runM', label: 'Overall run', optional: true, hint: 'End to where the far end lands, along the wall. Gives the cut length.', when: (f) => f.measure === 'obstacle' };
 
 const KIND_LIST = [
-  { id: 'offset', label: 'Offset', blurb: 'Two equal bends that move the pipe over an obstruction.', fields: [
+  { id: 'offset', label: 'Offset', short: 'Offset', blurb: 'Two equal bends that move the pipe over an obstruction.', fields: [
     { type: 'len', name: 'riseM', label: 'Offset depth (rise)', def: [6, 150] },
     { type: 'angle', def: 30, fit: { name: 'spacingM', label: 'Distance between marks', def: [12, 300] } },
     MEASURE, ...MEASURED, RUN,
   ] },
-  { id: 'kick', label: 'Kick', blurb: 'One bend that moves the end of the pipe off the line of the run.', fields: [
+  { id: 'kick', label: 'Kick', short: 'Kick', blurb: 'One bend that moves the end of the pipe off the line of the run.', fields: [
     { type: 'len', name: 'riseM', label: 'Kick (how far the end moves)', def: [3, 75] },
     { type: 'angle', def: 22.5, fit: { name: 'spacingM', label: 'Mark from the end', def: [8, 200] } },
   ] },
-  { id: 'saddle3', label: '3-point saddle', blurb: 'Over a pipe or round obstruction: one centre bend, two side bends.', fields: [
+  { id: 'saddle3', label: '3-point saddle', short: '3-pt saddle', blurb: 'Over a pipe or round obstruction: one centre bend, two side bends.', fields: [
     { type: 'len', name: 'heightM', label: 'Obstruction height + clearance', def: [2, 50] },
     { type: 'choice', name: 'centerAngleDeg', label: 'Bends', def: '45', options: [{ value: '20', label: '20° centre, 10° sides' }, { value: '30', label: '30° centre, 15° sides' }, { value: '45', label: '45° centre, 22.5° sides' }, { value: '60', label: '60° centre, 30° sides' }] },
     { type: 'len', name: 'centerM', label: 'End to the centre of the obstruction', optional: true, def: [24, 600], hint: 'Leave empty to space the marks from mark 1.' },
     { type: 'len', name: 'runM', label: 'Overall run', optional: true, hint: 'For a cut length.' },
   ] },
-  { id: 'saddle4', label: '4-point saddle', blurb: 'Over a wide obstruction: an offset up, across, and back down.', fields: [
+  { id: 'saddle4', label: '4-point saddle', short: '4-pt saddle', blurb: 'Over a wide obstruction: an offset up, across, and back down.', fields: [
     { type: 'len', name: 'heightM', label: 'Obstruction height + clearance', def: [4, 100] },
     { type: 'len', name: 'widthM', label: 'Obstruction width + clearance', def: [10, 250] },
     { type: 'angle', def: 30, choices: [22.5, 30, 45] },
     { type: 'len', name: 'obstacleM', label: 'End to the near edge', optional: true, def: [36, 900], hint: 'Shrink is added for you. Empty: marks from mark 1.' },
     { type: 'len', name: 'runM', label: 'Overall run', optional: true, hint: 'For a cut length.' },
   ] },
-  { id: 'stub90', label: '90° stub', blurb: 'A stub-up: end of the pipe to the back of the 90, less the take-up.', fields: [
+  { id: 'stub90', label: '90° stub', short: '90° stub', blurb: 'A stub-up: end of the pipe to the back of the 90, less the take-up.', fields: [
     { type: 'len', name: 'stubM', label: 'Stub (end to back of the 90)', def: [10, 250] },
     { type: 'len', name: 'otherLegM', label: 'Other leg', optional: true, hint: 'To the back of the bend. Gives the cut length (uses gain).' },
   ] },
-  { id: 'backToBack', label: 'Back-to-back', blurb: 'Two 90s a set distance apart, measured across their backs.', fields: [
+  { id: 'backToBack', label: 'Back-to-back', short: 'Back-to-back', blurb: 'Two 90s a set distance apart, measured across their backs.', fields: [
     { type: 'len', name: 'stubM', label: 'First stub (end to back of the 90)', def: [10, 250] },
     { type: 'len', name: 'backToBackM', label: 'Across the backs of the 90s', def: [30, 750] },
     { type: 'len', name: 'secondStubM', label: 'Second stub', optional: true, hint: 'Gives the cut length.' },
   ] },
-  { id: 'boxOffset', label: 'Box / bracket', blurb: 'Small offsets into a box knockout, or over a bracket or strut.', fields: [
+  { id: 'boxOffset', label: 'Box / bracket', short: 'Box offset', blurb: 'Small offsets into a box knockout, or over a bracket or strut.', fields: [
     { type: 'choice', name: 'target', label: 'Where', def: 'box', options: [{ value: 'box', label: 'Into a box' }, { value: 'bracket', label: 'Over a bracket or strut' }] },
     { type: 'len', name: 'riseM', label: 'Offset', def: [0.5, 13], hint: 'Box: knockout centre off the line of the pipe. Bracket: its depth + clearance.' },
     { type: 'angle', def: 10, choices: [10, 22.5, 30] },
     { type: 'len', name: 'straightM', label: 'Straight into the box', def: [1.5, 38], hint: 'Pipe past the offset for the connector.', when: (f) => f.target !== 'bracket' },
     { type: 'len', name: 'obstacleM', label: 'End to the bracket', def: [24, 600], when: (f) => f.target === 'bracket' },
   ] },
-  { id: 'rolling', label: 'Rolling offset', blurb: 'Up and over at the same time: true offset = √(rise² + roll²).', fields: [
+  { id: 'rolling', label: 'Rolling offset', short: 'Rolling', blurb: 'Up and over at the same time: true offset = √(rise² + roll²).', fields: [
     { type: 'len', name: 'riseM', label: 'Rise (up)', def: [6, 150] },
     { type: 'len', name: 'rollM', label: 'Roll (over)', def: [8, 200] },
     { type: 'angle', def: 45, fit: { name: 'spacingM', label: 'Distance between marks', def: [14, 350] } },
     MEASURE, ...MEASURED, RUN,
   ] },
-  { id: 'parallel', label: 'Parallel offsets', blurb: 'A rack of pipes offsetting together, kept the same distance apart.', fields: [
+  { id: 'parallel', label: 'Parallel offsets', short: 'Parallel', blurb: 'A rack of pipes offsetting together, kept the same distance apart.', fields: [
     { type: 'len', name: 'riseM', label: 'Offset depth (rise)', def: [6, 150] },
     { type: 'angle', def: 30, fit: { name: 'spacingM', label: 'Distance between marks', def: [12, 300] } },
     { type: 'count', name: 'count', label: 'Conduits', def: 3, min: 2, max: 12 },
     { type: 'len', name: 'centersM', label: 'Centre-to-centre spacing', def: [2, 50] },
     MEASURE, ...MEASURED,
   ] },
-  { id: 'segment', label: 'Segment bend', blurb: 'A large-radius bend made as several small shots.', fields: [
+  { id: 'segment', label: 'Segment bend', short: 'Segment', blurb: 'A large-radius bend made as several small shots.', fields: [
     { type: 'len', name: 'radiusM', label: 'Bend radius (to the centre of the pipe)', def: [30, 750] },
     { type: 'angle', def: 90, choices: [90, 45, 30], name: 'angleDeg' },
     { type: 'count', name: 'shots', label: 'Shots', def: 9, min: 2, max: 60, hint: 'Degrees per shot = angle ÷ shots.' },
@@ -206,7 +208,7 @@ const KIND_LIST = [
     { type: 'len', name: 'stubM', label: 'Stub (end to back of the 90)', def: [48, 1200], when: (f) => f.angleSel === '90' && f.segRef !== 'start' },
     { type: 'len', name: 'startM', label: 'End to the start of the bend', def: [12, 300], when: (f) => f.angleSel !== '90' || f.segRef === 'start' },
   ] },
-  { id: 'concentric', label: 'Concentric 90s', blurb: 'A rack of 90s that share one centre: each pipe out adds the spacing to its radius.', fields: [
+  { id: 'concentric', label: 'Concentric 90s', short: 'Concentric', blurb: 'A rack of 90s that share one centre: each pipe out adds the spacing to its radius.', fields: [
     { type: 'count', name: 'count', label: 'Conduits', def: 3, min: 2, max: 12 },
     { type: 'len', name: 'centersM', label: 'Centre-to-centre spacing', def: [4, 100] },
     { type: 'len', name: 'innerRadiusM', label: 'Inside radius (pipe 1)', def: [20, 500] },
@@ -216,8 +218,31 @@ const KIND_LIST = [
   ] },
 ];
 const KINDS = Object.fromEntries(KIND_LIST.map((k) => [k.id, k]));
-const TABS = [...KIND_LIST.map((k) => ({ id: k.id, label: k.label })), { id: 'pull', label: '360° check' }];
+// The bend picker: a picture of each bend with a short name; the longer description is the tooltip
+// and sits folded away under the form.
+const PICKS = [
+  ...KIND_LIST.map((k) => ({ id: k.id, name: k.short, title: k.label, blurb: k.blurb })),
+  { id: 'pull', name: '360° check', title: '360° between pull points', blurb: 'Add up the bends between two pull points: 360° at most.' },
+];
 const kindLabel = (id) => KINDS[id]?.label || id;
+
+// Most-used bends first, per person on this device. The order is worked out when you come to the
+// bending screen and kept while you stay on it, so the buttons don't jump under your finger.
+let pickOrder = null;
+const usageUid = () => ctx?.auth?.current?.()?.id;
+
+/** The picture buttons for the bend kinds (and the 360° check). */
+function bendPicker(active, onPick) {
+  if (!pickOrder) pickOrder = rankByUse('bending', PICKS, (p) => p.id, { uid: usageUid() });
+  return h('div', { class: 'bend-picks no-print', role: 'tablist', 'aria-label': 'Bend type' }, pickOrder.map((p) => {
+    const art = h('span', { class: 'bend-pick-art', 'aria-hidden': 'true' });
+    art.innerHTML = bendArt(p.id);
+    return h('button', {
+      type: 'button', role: 'tab', class: 'bend-pick', 'aria-selected': String(p.id === active), title: `${p.title}: ${p.blurb}`,
+      onClick: () => { noteUse('bending', p.id, { uid: usageUid() }); onPick(p.id); },
+    }, art, h('span', { class: 'bend-pick-name' }, p.name));
+  }));
+}
 
 // ---------------------------------------------------------------------------
 // State (survives route changes; remembered per device)
@@ -587,11 +612,11 @@ function calculatorView(root) {
       ui.button('My benders', { icon: 'wrench', href: '#/bending/profiles' }),
     ],
   },
-  h('div', { class: 'bend-tabs no-print' }, ui.tabs(TABS, kind, (id) => {
+  bendPicker(kind, (id) => {
     // a saved bend stays open only on its own kind, so Save can't turn a saddle into an offset
     if (state.editing && state.editing.kind !== id) state.editing = null;
     state.kind = id; remember(); ctx.nav('#/bending/' + id);
-  })),
+  }),
   body);
   root.append(page);
   let observer = null;
@@ -628,13 +653,13 @@ function calculatorView(root) {
       benderBar(rerender),
       h('div', { class: 'bend-layout' },
         h('form', { class: 'card bend-form', onSubmit: (e) => e.preventDefault() },
-          h('p', { class: 'bend-blurb' }, k.blurb),
           formHost,
           h('div', { class: 'bend-actions' },
             ui.button(state.editing ? 'Save changes' : 'Save', { variant: 'primary', icon: 'save', onClick: () => saveSheet() }),
             state.editing ? ui.button('Save as new', { icon: 'copy', onClick: () => saveSheet({ asNew: true }) }) : null,
             ui.button('Print', { icon: 'printer', onClick: () => (current ? printBend(current, state.editing) : ui.toast('Fix the inputs first', 'error')) }),
             ui.button(state.editing ? 'Close' : 'Reset', { variant: 'ghost', onClick: () => { if (!state.editing) delete state.forms[kind]; state.editing = null; remember(); rerenderAll(); } })),
+          h('details', { class: 'bend-ref bend-about' }, h('summary', null, 'About this bend'), h('p', { class: 'bend-blurb' }, k.blurb)),
           offsetReference(kind)),
         out));
     formHost.append(formView(kind, f, calc, redraw));
@@ -1113,6 +1138,25 @@ function calibrateSheet(onDone) {
 
 // ---------------------------------------------------------------------------
 
+/** The bending screen for the route: the calculator, saved bends, or the bender profiles. */
+function renderView(root, c) {
+  ctx = c; ui = c.ui; h = ui.h; store = c.store;
+  units = getUnits(store.settings().units);
+  const [p0, p1] = c.params;
+  if (p0 === 'saved') return savedView(root);
+  if (p0 === 'profiles') return profilesView(root);
+  if (p0 === 'open') {
+    if (!openSaved(p1)) {
+      root.append(ui.page({ title: 'Pipe bending' }, ui.empty({ icon: 'wrench', title: 'Bend not found', text: 'It may have been deleted.', action: ui.button('Saved bends', { href: '#/bending/saved' }) })));
+      return undefined;
+    }
+    // further re-renders (units, reset) must not reload the saved copy over your edits
+    history.replaceState(null, '', '#/bending/' + state.kind);
+  } else if (p0 && (KINDS[p0] || p0 === 'pull')) state.kind = p0;
+  if (!KINDS[state.kind] && state.kind !== 'pull') state.kind = 'offset';
+  return calculatorView(root);
+}
+
 export default {
   id: 'bending',
   title: 'Pipe bending',
@@ -1120,20 +1164,11 @@ export default {
   group: 'field',
   perm: 'calcs',
   render(root, c) {
-    ctx = c; ui = c.ui; h = ui.h; store = c.store;
-    units = getUnits(store.settings().units);
-    const [p0, p1] = c.params;
-    if (p0 === 'saved') return savedView(root);
-    if (p0 === 'profiles') return profilesView(root);
-    if (p0 === 'open') {
-      if (!openSaved(p1)) {
-        root.append(ui.page({ title: 'Pipe bending' }, ui.empty({ icon: 'wrench', title: 'Bend not found', text: 'It may have been deleted.', action: ui.button('Saved bends', { href: '#/bending/saved' }) })));
-        return undefined;
-      }
-      // further re-renders (units, reset) must not reload the saved copy over your edits
-      history.replaceState(null, '', '#/bending/' + state.kind);
-    } else if (p0 && (KINDS[p0] || p0 === 'pull')) state.kind = p0;
-    if (!KINDS[state.kind] && state.kind !== 'pull') state.kind = 'offset';
-    return calculatorView(root);
+    const done = renderView(root, c);
+    return () => {
+      if (typeof done === 'function') done();
+      // leaving the bending screens: the picker is ranked afresh next time
+      if (!String(globalThis.location?.hash || '').startsWith('#/bending')) pickOrder = null;
+    };
   },
 };

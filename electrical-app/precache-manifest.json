@@ -81,6 +81,7 @@
   "./js/lib/arc-flash.js",
   "./js/lib/assemblies.js",
   "./js/lib/assistant-api.js",
+  "./js/lib/bend-art.js",
   "./js/lib/bending-profiles.js",
   "./js/lib/bending-svg.js",
   "./js/lib/bending.js",
