@@ -2,8 +2,11 @@
 // a pen (trusted CDP pen events, and synthesized PointerEvents with pressure and coalesced
 // samples) and checks every letter's strokes and the V's corner; a pointercancel mid-V keeps the
 // stroke; a palm landing mid-V is ignored; a fast eraser swipe (Area and Whole stroke); area-erasing
-// the middle of a long line; tool sizes; smoothness 0 vs 80; two- and three-finger taps (undo, redo)
-// versus a pan, a long press and the Pencil; finger pan and pinch; mouse and finger drawing.
+// the middle of a long line; tool sizes; smoothness 0 vs 80 vs 100 (a ruler); two- and three-finger taps
+// (undo, redo) versus a pan, a long press and the Pencil; finger pan and pinch; mouse and finger drawing;
+// tool colour dots (light and dark); four-finger tap; two-finger rotate; draw with finger off (pan, tap
+// to select, hold for the eyedropper); hold-to-snap; Pencil hover; the iOS Pencil bridge (double-tap,
+// squeeze); the Gestures sheet.
 //   node electrical-app/tests/e2e/pen.e2e.mjs [appDir] [port] [profileDir]
 // Needs python (static server) and Chrome (CHROME_PATH to override).
 import { spawn } from 'node:child_process';
@@ -468,6 +471,170 @@ try {
     await ev(`document.querySelector('.dialog .sheet-head button').click()`); await sleep(100);
     await resetOpts();
     await ev(`kelbeCanvas.setTool('pen')`);
+  }
+  // 8. smoothness 100 is a ruler: a wobbly stroke becomes the straight line from where it began to where it lifted
+  {
+    // the label dialog from 7b can still be open: cancel it, or it covers the canvas for the CDP input below
+    await ev(`[...document.querySelectorAll('.dialog button')].filter((b) => b.textContent === 'Cancel').forEach((b) => b.click())`);
+    await sleep(300);
+    await openCanvas();
+    const [cx, cy] = await canvasOrigin();
+    await ev(`kelbeCanvas.opts.pen.smooth = 100`);
+    const wob = [];
+    for (let i = 0; i <= 40; i++) wob.push([cx + 200 + i * 8, cy + 300 + Math.sin(i / 3) * 25]);
+    await synthStroke(wob, { id: 81 });
+    const s = (await state()).strokes.at(-1);
+    const v = (await state()).view;
+    const a = toWorld(v, wob[0]), b = toWorld(v, wob.at(-1));
+    check('smoothness 100 commits a 2-point straight line, start to end', s.pts.length === 2 && Math.hypot(s.pts[0][0] - a[0], s.pts[0][1] - a[1]) < 0.01 && Math.hypot(s.pts[1][0] - b[0], s.pts[1][1] - b[1]) < 0.01, JSON.stringify(s.pts));
+    await resetOpts();
+  }
+
+  // 9. every colour tool shows its colour, picked or not, in light and dark
+  {
+    await openCanvas();
+    await ev(`kelbeCanvas.opts.wire.color = '#1d7044'; kelbeCanvas.setTool('marker')`);
+    const sw = await ev(`(() => { const out = {}; for (const b of document.querySelectorAll('.cv-wheel-tool, .cv-shapes .cv-btn')) { const d = b.querySelector('.cv-tool-swatch'); if (d) out[b.getAttribute('aria-label')] = { bg: getComputedStyle(d).backgroundColor, shown: d.getBoundingClientRect().width > 6, pressed: b.getAttribute('aria-pressed') }; } return out; })()`);
+    const names = Object.keys(sw);
+    check('pens, highlighter, wire and shapes each wear a colour dot', ['Pen', 'Pencil', 'Marker', 'Highlighter', 'Wire', 'Line', 'Rectangle', 'Text', 'Measure'].every((t) => names.some((n) => n.startsWith(t + ','))), names.join(' | '));
+    check('an unselected tool shows its own colour', sw['Wire, Green (ground)']?.bg === 'rgb(29, 112, 68)' && sw['Wire, Green (ground)'].pressed === 'false' && sw['Wire, Green (ground)'].shown, JSON.stringify(sw['Wire, Green (ground)']));
+    check('the selected tool stays obvious', (await ev(`(() => { const b = document.querySelector('.cv-wheel-tool[aria-pressed="true"]'); return !!b && b.style.background !== '' && getComputedStyle(b).boxShadow !== 'none'; })()`)));
+    const shotL = await send('Page.captureScreenshot', { format: 'png' });
+    (await import('node:fs')).writeFileSync(PROFILE + '-tools-light.png', Buffer.from(shotL.data, 'base64'));
+    await ev(`document.documentElement.dataset.theme = 'dark'`); await sleep(200);
+    check('dark theme: the dots still show with a ring', await ev(`[...document.querySelectorAll('.cv-tool-swatch')].every((d) => getComputedStyle(d).boxShadow !== 'none' && d.getBoundingClientRect().width > 6)`));
+    const shotD = await send('Page.captureScreenshot', { format: 'png' });
+    (await import('node:fs')).writeFileSync(PROFILE + '-tools-dark.png', Buffer.from(shotD.data, 'base64'));
+    await ev(`delete document.documentElement.dataset.theme`);
+    await resetOpts();
+    await ev(`kelbeCanvas.setTool('pen')`);
+  }
+
+  // 10. four-finger tap: full screen and back; two-finger twist rotates, snaps back to level, and ink lands under the pen
+  {
+    await openCanvas();
+    await sleep(500);
+    const tap = async (pts) => { await cdpTouch('touchStart', pts); await sleep(60); await cdpTouch('touchEnd', []); await sleep(150); };
+    await tap([[400, 400], [460, 380], [520, 380], [580, 400]]);
+    check('four-finger tap hides the toolbars', await ev(`document.querySelector('.cv').classList.contains('ui-hidden') && getComputedStyle(document.querySelector('.cv-wheel')).display === 'none'`));
+    await tap([[400, 400], [460, 380], [520, 380], [580, 400]]);
+    check('four-finger tap again brings them back', await ev(`!document.querySelector('.cv').classList.contains('ui-hidden')`));
+    const twist = async (deg) => {
+      const c = [500, 450], r = 80;
+      await cdpTouch('touchStart', [[c[0] - r, c[1]], [c[0] + r, c[1]]]);
+      for (let i = 1; i <= 8; i++) { const a = (deg * Math.PI / 180) * i / 8; await cdpTouch('touchMove', [[c[0] - r * Math.cos(a), c[1] - r * Math.sin(a)], [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)]]); }
+      await cdpTouch('touchEnd', []); await sleep(150);
+    };
+    await twist(45);
+    const r1 = await ev(`(kelbeCanvas.st.view.rot || 0) * 180 / Math.PI`);
+    check('a two-finger twist rotates the canvas (past a small dead zone)', Math.abs(r1 - 37) < 1.5, `${r1.toFixed(1)}°`);
+    check('the angle shows, tap to level', await ev(`!document.querySelector('.cv-rot-label').hidden && /37°/.test(document.querySelector('.cv-rot-label').textContent)`));
+    // a pen stroke on the turned canvas lands under the pen
+    const [cx, cy] = await canvasOrigin();
+    await cdpPenStroke(samples([[300, 300], [380, 340]], 9));
+    const hit = await ev(`(async () => { const g = await import('./js/canvas/gestures.js'); const s = kelbeCanvas.d.strokes.at(-1).points[0]; const w = g.screenToWorld(kelbeCanvas.st.view, ${300 - cx}, ${300 - cy}); return Math.hypot(s[0] - w[0], s[1] - w[1]); })()`);
+    check('ink on a turned canvas lands under the pen', hit < 0.5, `off by ${hit}`);
+    await sleep(500); // past the palm window after the pen lifts
+    await twist(-40);
+    check('turning back near level snaps to exactly level', await ev(`!kelbeCanvas.st.view.rot && document.querySelector('.cv-rot-label').hidden`), String(await ev(`kelbeCanvas.st.view.rot`)));
+  }
+
+  // 11. draw with finger off: one finger pans, a tap selects, a held finger is the eyedropper
+  {
+    await openCanvas();
+    await ev(`localStorage.setItem('ft.gestures', JSON.stringify({ fingerDraw: 'off' }))`);
+    await ev(`kelbeCanvas.opts.pen.color = '#c62f2f'`);
+    await cdpMouseStroke(samples([[300, 300], [500, 300]], 9));
+    await ev(`kelbeCanvas.opts.pen.color = '#1c1b19'`);
+    const b = await state();
+    await cdpTouch('touchStart', [[600, 500]]);
+    for (let i = 1; i <= 6; i++) await cdpTouch('touchMove', [[600 + i * 10, 500]]);
+    await cdpTouch('touchEnd', []); await sleep(100);
+    const a = await state();
+    check('draw with finger off: a finger pans instead of drawing, before any Pencil', a.n === b.n && Math.abs(a.view.x - b.view.x - 60) < 2, `n ${b.n}->${a.n} dx ${a.view.x - b.view.x}`);
+    await cdpTouch('touchStart', [[400 + 60, 300]]); await sleep(60); await cdpTouch('touchEnd', []); await sleep(120);
+    check('a finger tap selects the stroke under it', (await ev(`kelbeCanvas.st.selection.length`)) === 1 && (await ev(`kelbeCanvas.st.tool`)) === 'pen');
+    await ev(`kelbeCanvas.st.selection = []`);
+    await cdpTouch('touchStart', [[420 + 60, 300]]); await sleep(800); await cdpTouch('touchEnd', []); await sleep(120);
+    check('a held finger picks up the colour under it (eyedropper)', (await ev(`kelbeCanvas.opts.pen.color`)) === '#c62f2f', await ev(`kelbeCanvas.opts.pen.color`));
+    check('and the view is where it was', JSON.stringify((await state()).view) === JSON.stringify(a.view));
+    await ev(`localStorage.removeItem('ft.gestures')`);
+    await resetOpts();
+  }
+
+  // 12. hold-to-snap: a wobbly stroke held still at its end becomes a line; a held loop a circle
+  {
+    await openCanvas();
+    const [cx, cy] = await canvasOrigin();
+    const held = (pts, id) => ev(`(async () => {
+      const cv = document.querySelector('.cv-canvas'), pts = ${JSON.stringify(pts)};
+      const mk = (type, x, y) => new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: ${id}, pointerType: 'pen', isPrimary: true, clientX: x, clientY: y, pressure: type === 'pointerup' ? 0 : 0.6, buttons: type === 'pointerup' ? 0 : 1 });
+      cv.dispatchEvent(mk('pointerdown', ...pts[0]));
+      for (const p of pts.slice(1)) { cv.dispatchEvent(mk('pointermove', ...p)); await new Promise((r) => setTimeout(r, 8)); }
+      await new Promise((r) => setTimeout(r, 800));
+      const [x, y] = pts.at(-1);
+      cv.dispatchEvent(mk('pointerup', x + 1, y));
+      return [...document.querySelectorAll('.toast')].map((t) => t.textContent);
+    })()`);
+    const wob = [];
+    for (let i = 0; i <= 30; i++) wob.push([cx + 200 + i * 8, cy + 250 + Math.sin(i / 2) * 12]);
+    const t1 = await held(wob, 82);
+    const s1 = (await state()).strokes.at(-1);
+    check('holding at the end of a stroke straightens it into a line', s1.pts.length === 2 && t1.includes('Line'), `${s1.pts.length} pts, ${t1}`);
+    const loop = [];
+    for (let i = 0; i <= 60; i++) { const a = (i / 60) * Math.PI * 2; loop.push([cx + 500 + 70 * Math.cos(a) + Math.sin(i * 1.7) * 2, cy + 420 + 70 * Math.sin(a)]); }
+    const t2 = await held(loop, 83);
+    const s2 = (await state()).strokes.at(-1);
+    check('a held loop snaps to a circle', s2.pts.length > 40 && t2.includes('Circle'), `${s2.pts.length} pts, ${t2}`);
+    await ev(`localStorage.setItem('ft.gestures', JSON.stringify({ holdSnap: false }))`);
+    await held(wob.map(([x, y]) => [x, y + 150]), 84);
+    check('hold-to-snap can be turned off', (await state()).strokes.at(-1).pts.length > 5);
+    await ev(`localStorage.removeItem('ft.gestures')`);
+  }
+
+  // 13. the Pencil hovering (iPad Pro) shows the brush; double-tap and squeeze through the iOS bridge
+  {
+    await openCanvas();
+    check('without the iOS app there is no Pencil bridge, and nothing breaks', (await ev(`kelbeCanvas.pencil().available`)) === false);
+    await ev(`document.querySelector('.cv-canvas').dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 90, pointerType: 'pen', clientX: 400, clientY: 300, buttons: 0, pressure: 0 }))`);
+    check('Pencil hover shows the brush preview', await ev(`!!kelbeCanvas.st.penHover`));
+    await ev(`document.querySelector('.cv-canvas').dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, pointerId: 90, pointerType: 'pen' }))`);
+    check('and it goes when the Pencil leaves', await ev(`!kelbeCanvas.st.penHover`));
+    // a stand-in for the native FishtapePencil plugin, then a fresh canvas that connects to it
+    await ev(`window.__pl = {}; globalThis.Capacitor = { isNativePlatform: () => false, Plugins: { FishtapePencil: {
+      addListener: (n, fn) => { __pl[n] = fn; return Promise.resolve({ remove() { delete __pl[n]; } }); },
+      status: async () => ({ available: true, preferredTapAction: 'switchEraser', prefersPencilOnlyDrawing: false }) } } }`);
+    await openCanvas();
+    check('with the bridge, the canvas listens for double-tap and squeeze', (await ev(`kelbeCanvas.pencil().available && typeof __pl.doubleTap === 'function' && typeof __pl.squeeze === 'function'`)));
+    await ev(`__pl.doubleTap({ preferred: 'switchEraser' })`);
+    check('double-tap (iPad setting: switch to eraser) picks the eraser', (await ev(`kelbeCanvas.st.tool`)) === 'eraser');
+    await ev(`__pl.doubleTap({ preferred: 'switchEraser' })`);
+    check('and again goes back to the pen', (await ev(`kelbeCanvas.st.tool`)) === 'pen');
+    await ev(`__pl.squeeze({ phase: 'began' })`);
+    check('squeeze waits for the squeeze to end', await ev(`document.querySelector('.cv-pop').hidden`));
+    await ev(`__pl.squeeze({ phase: 'ended' })`);
+    check('squeeze (Pencil Pro) shows the tool palette', await ev(`!document.querySelector('.cv-pop').hidden`));
+    await ev(`localStorage.setItem('ft.gestures', JSON.stringify({ pencilDoubleTap: 'colors' }))`);
+    await ev(`document.querySelector('.cv-pop').hidden = true; __pl.doubleTap({ preferred: 'switchEraser' })`);
+    check('double-tap set to Show colour picker opens the colours', await ev(`!document.querySelector('.cv-pop').hidden && !!document.querySelector('.cv-pop .cv-swatches') && !document.querySelector('.cv-pop input[name="size"]')`));
+    await ev(`localStorage.removeItem('ft.gestures'); document.querySelector('.cv-pop').hidden = true`);
+    await ev(`kelbeCanvas.pencil().off(); delete globalThis.Capacitor`);
+  }
+
+  // 14. the Gestures sheet lists every gesture with a picker
+  {
+    await openCanvas();
+    await ev(`document.querySelector('.cv-wheel-center').click()`);
+    await waitFor(`!!document.querySelector('.cv-pop:not([hidden]) .cv-pop-link')`);
+    await ev(`document.querySelector('.cv-pop .cv-pop-link').click()`);
+    await waitFor(`!!document.querySelector('.sheet .cv-gestures')`);
+    const names = await ev(`[...document.querySelectorAll('.sheet .cv-gestures select, .sheet .cv-gestures input')].map((x) => x.name)`);
+    const want = ['fingerDraw', 'twoFingerTap', 'threeFingerTap', 'fourFingerTap', 'pinchZoom', 'rotate', 'longPress', 'pencilHold', 'holdSnap', 'pencilDoubleTap', 'pencilSqueeze', 'hover'];
+    check('the Gestures sheet has a control for every gesture', want.every((n) => names.includes(n)), names.join(','));
+    await ev(`(() => { const s = document.querySelector('.sheet select[name="fourFingerTap"]'); s.value = 'undo'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    check('choosing an action is remembered', (await ev(`JSON.parse(localStorage.getItem('ft.gestures')).fourFingerTap`)) === 'undo');
+    await ev(`localStorage.removeItem('ft.gestures'); document.querySelector('.sheet .sheet-head button')?.click()`);
+    await sleep(150);
   }
 } catch (err) {
   check('run', false, err.stack);
