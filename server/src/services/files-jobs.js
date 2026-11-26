@@ -1,4 +1,4 @@
-// Worker job for Files (migration 0189): `files_purge_trash` removes, for every company, the files
+// Worker job for Files (migration 0185): `files_purge_trash` removes, for every company, the files
 // that have been in Recently deleted longer than FILES_TRASH_DAYS (row and bytes), with an audit event
 // for each. Scheduled daily by the worker's hourly housekeeping (deduplicated while queued).
 import { enqueue } from './queue.js';

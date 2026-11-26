@@ -1,4 +1,4 @@
-// Files store (migration 0189): where the bytes of each company's documents live, what may be stored,
+// Files store (migration 0185): where the bytes of each company's documents live, what may be stored,
 // and how rows look to the PWA. The route (routes/v1/files.js) wires this to HTTP.
 //
 // Storage follows the HQ Mail store (email/storage.js), not the /media/ store: FILES_DIR must be

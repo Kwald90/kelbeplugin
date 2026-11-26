@@ -1,4 +1,4 @@
-// Files (#/files, migration 0189): uploads land in FILES_DIR (never a web root), are checked by their
+// Files (#/files, migration 0185): uploads land in FILES_DIR (never a web root), are checked by their
 // bytes and size, count against the company quota, are filed by AI or the keyword rules, are readable
 // only signed in and only by the company that owns them, and every upload, move and delete is audited.
 import { test, before, after, describe } from 'node:test';
