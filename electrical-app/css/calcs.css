@@ -2,16 +2,46 @@
 .calc-disclaimer { display: flex; gap: var(--s2); align-items: center; color: var(--text-muted); font-size: var(--fs-xs); margin: 0 0 var(--s4); }
 .calc-disclaimer svg { flex: none; }
 
-/* Hub: the 21 calculators grouped into sections of tappable cards (replaces the long tab strip). */
-.calc-index { display: flex; flex-direction: column; gap: var(--s4); }
-.calc-cat { margin: 0 0 calc(-1 * var(--s1)); font-size: var(--fs-xs); font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
-.calc-cards { display: grid; gap: var(--s2); grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
-.calc-card { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); color: inherit; text-decoration: none; min-height: 60px; }
-.calc-card:hover { border-color: var(--accent-fill); background: var(--surface-2); }
-.calc-card-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.calc-card-text strong { font-size: var(--fs-base); line-height: var(--lh-base); }
-.calc-card-desc { font-size: var(--fs-xs); line-height: var(--lh-sm); }
-.calc-card svg { flex: none; color: var(--text-muted); }
+/* Line-art pictures (js/lib/calc-art.js). Shared: any screen that uses art() gets these. The drawing
+   is currentColor; .a / .af carry the one accent (amber), which reads on light and dark surfaces. */
+.ft-art { display: block; flex: none; overflow: visible; }
+.ft-art .a { stroke: var(--accent); }
+.ft-art .af { fill: var(--accent-fill); }
+
+/* Hub: the calculators as picture cards in labelled sections, most-used first (replaces the long
+   tab strip). The picture is the button; the short name sits under it; the description is the
+   card's tooltip and accessible name. */
+.calc-index { display: flex; flex-direction: column; gap: var(--s5); }
+.calc-group, .calc-recent { display: flex; flex-direction: column; gap: var(--s2); }
+.calc-cat { margin: 0; font-size: var(--fs-xs); font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.calc-cards { display: grid; gap: var(--s2); grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
+.calc-card {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s2);
+  padding: var(--s3) var(--s2); min-height: 132px; text-align: center;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md);
+  color: var(--text); text-decoration: none; -webkit-tap-highlight-color: transparent;
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+.calc-card .ft-art { width: 64px; height: 64px; }
+.calc-card-title { font-size: var(--fs-sm); line-height: var(--lh-sm); font-weight: 600; overflow-wrap: anywhere; }
+.calc-card:hover, .calc-chip:hover { border-color: var(--accent-fill); background: var(--surface-2); }
+.calc-card:active, .calc-chip:active { transform: scale(.97); background: var(--accent-soft); }
+.calc-card:focus-visible, .calc-chip:focus-visible { outline: 3px solid var(--accent-fill); outline-offset: 2px; }
+@media (max-width: 520px) {
+  .calc-cards { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+  .calc-card { min-height: 116px; padding: var(--s2); }
+  .calc-card .ft-art { width: 56px; height: 56px; }
+}
+/* "Most used": up to four chips above the sections once a person has a few favourites. */
+.calc-recent-row { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.calc-chip {
+  display: inline-flex; align-items: center; gap: var(--s2); min-height: 52px; padding: 6px var(--s4) 6px 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill);
+  color: var(--text); text-decoration: none; font-weight: 600; font-size: var(--fs-sm);
+  -webkit-tap-highlight-color: transparent; transition: border-color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+.calc-chip .ft-art { width: 36px; height: 36px; }
+@media (prefers-reduced-motion: reduce) { .calc-card, .calc-chip { transition: none; } .calc-card:active, .calc-chip:active { transform: none; } }
 
 /* Open-calculator header: back to the hub + a grouped "Jump to" picker. */
 .calc-head { align-items: center; gap: var(--s2); margin-bottom: var(--s3); flex-wrap: wrap; }
