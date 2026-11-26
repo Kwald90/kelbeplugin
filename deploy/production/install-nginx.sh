@@ -49,6 +49,10 @@ render_container_site() { # src -> stdout
       gsub(/[ \t]*http2 on;\n/, "", s)
       gsub(/[ \t]*include \/etc\/nginx\/snippets\/fishtape-tls\.conf;\n/, "", s)
       gsub(/X-Forwarded-Proto \$scheme;/, "X-Forwarded-Proto https;", s)
+      # nginx only sees http on 8443, so its own redirects (rewrite, trailing slash) would point at
+      # http://host:8443/..., which nobody can reach. Relative Location headers keep the visitor
+      # on the https name they used.
+      s = gensub(/\n([ \t]*)server_name ([^;\n]*);\n/, "\n\\1server_name \\2;\n\\1absolute_redirect off;\n", "g", s)
       return s
     }
   ' "$1"

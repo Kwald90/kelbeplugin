@@ -248,7 +248,11 @@ if [ "$MODE" = marketing ] || [ "$MODE" = status ]; then
     # Old /site/*.html addresses redirect to the clean URL.
     fetch "/site/about.html"
     loc="$(hdr location)"
-    if [[ "$CODE" =~ ^30[178]$ ]] && [[ "$loc" == */about ]]; then ok "/site/about.html -> $CODE $loc"; else bad "/site/about.html should redirect to /about, got $CODE '${loc}'"; fi
+    # The target must be the same name over https (or relative): a redirect to http:// or to a
+    # host:port means nginx built it from the internal listener behind a front door (absolute_redirect).
+    if [[ "$CODE" =~ ^30[178]$ ]] && [[ "$loc" == */about ]] && { [[ "$loc" == /* ]] || [[ "$loc" =~ ^https://[^/:]+/ ]]; }; then
+      ok "/site/about.html -> $CODE $loc"
+    else bad "/site/about.html should redirect to /about on the same https name, got $CODE '${loc}'"; fi
     # Page-shaped paths that are not pages, and traversal through the page routes, stay 404.
     for p in /features/ /features/Wire-Runs /features/wire_runs /features/a/b /for/ /for/../.env /features/..%2f..%2f.env /about.html /about/ /site/features/ /site/for/x.php /sitemap.xml.bak /robots.txt~ /site/sitemap.xml /tools/site/build.mjs /tools/site/serve.mjs; do
       fetch "$p"
