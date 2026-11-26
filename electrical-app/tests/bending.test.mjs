@@ -551,3 +551,232 @@ test('animated bend: every shade layer of every pipe animates together', () => {
   const pointAnims = (svg.match(/attributeName="points"/g) || []).length;
   assert.equal(pointAnims, r.pipes.length * S.pipeLayers(10).length, 'each shade layer animates for each pipe');
 });
+
+// ---------------------------------------------------------------------------
+// Layout: labels never collide, the pipe clears the obstruction, nothing is cropped
+// ---------------------------------------------------------------------------
+// The renderers return their scene (bentLayout, animatedBendLayout, marksLayout, rollLayout): every
+// label with its box (S.textBox: characters × font size, one approximation used everywhere), every
+// element's box, the drawn pipe centrelines with their outside half-width, and the obstruction.
+
+const OD = inToM(0.922); // 3/4" EMT
+const R = inToM(5.13);   // its hand bender's centreline radius
+const fmtLay = (m) => `${(m / 0.0254).toFixed(2).replace(/\.?0+$/, '')}"`;
+
+/** A sweep of inputs per bend kind, across the ranges the screen allows. */
+function layoutCases() {
+  const out = [];
+  const add = (kind, input) => out.push([kind, input]);
+  for (const rise of [1, 6, 24]) for (const a of [10, 30, 60]) for (const m of [{}, { obstacleM: inToM(36) }, { firstBendM: inToM(12) }]) for (const r of [0, R]) add('offset', { riseM: inToM(rise), angleDeg: a, ...m, radiusM: r || undefined, odM: OD });
+  for (const rise of [1, 8]) for (const a of [10, 22.5, 45]) add('kick', { riseM: inToM(rise), angleDeg: a, radiusM: R, odM: OD });
+  for (const ht of [0.5, 2, 6]) for (const c of [20, 45, 60]) for (const m of [{}, { centerM: inToM(24) }]) for (const r of [0, R]) add('saddle3', { heightM: inToM(ht), centerAngleDeg: c, ...m, radiusM: r || undefined, odM: OD });
+  for (const ht of [1, 4, 8]) for (const w of [4, 30]) for (const a of [22.5, 30, 45]) for (const m of [{}, { obstacleM: inToM(36) }]) add('saddle4', { heightM: inToM(ht), widthM: inToM(w), angleDeg: a, ...m, radiusM: R, odM: OD });
+  for (const s of [6, 24, 60]) {
+    for (const o of [{}, { otherLegM: inToM(30) }]) {
+      add('stub90', { stubM: inToM(s), takeUpM: inToM(5), radiusM: inToM(4.1875), odM: inToM(0.706), ...o });
+      add('stub90', { stubM: inToM(s), radiusM: inToM(5), odM: inToM(1.05), heat: true, ...o });
+    }
+  }
+  for (const bb of [12, 30, 80]) add('backToBack', { stubM: inToM(10), backToBackM: inToM(bb), takeUpM: inToM(5), radiusM: inToM(4.1875), odM: inToM(0.706) });
+  for (const r of [0.25, 1]) for (const a of [10, 30]) add('boxOffset', { riseM: inToM(r), angleDeg: a, radiusM: R, odM: OD });
+  add('boxOffset', { target: 'bracket', riseM: inToM(1.5), angleDeg: 22.5, obstacleM: inToM(24), radiusM: R, odM: OD });
+  for (const [ri, ro] of [[2, 3], [12, 4]]) for (const m of [{}, { obstacleM: inToM(40) }]) add('rolling', { riseM: inToM(ri), rollM: inToM(ro), angleDeg: 45, ...m, radiusM: R, odM: OD });
+  for (const n of [2, 6]) for (const a of [22.5, 45]) for (const m of [{}, { obstacleM: inToM(36) }]) add('parallel', { riseM: inToM(6), angleDeg: a, count: n, centersM: inToM(2), ...m, radiusM: R, odM: OD });
+  for (const a of [30, 90]) {
+    for (const sh of [2, 4, 20]) {
+      add('segment', a === 90
+        ? { radiusM: inToM(30), angleDeg: a, shots: sh, stubM: inToM(60), odM: inToM(2.375) }
+        : { radiusM: inToM(30), angleDeg: a, shots: sh, startM: inToM(12), odM: inToM(2.375) });
+    }
+  }
+  for (const n of [2, 6]) for (const sh of [1, 9]) add('concentric', { count: n, centersM: inToM(4), innerRadiusM: inToM(20), startM: inToM(12), shots: sh, odM: inToM(2.375) });
+  return out;
+}
+
+// Independent geometry for the checks (not the renderer's own helpers).
+const toBox = (x, y, b) => Math.hypot(Math.max(b.x0 - x, 0, x - b.x1), Math.max(b.y0 - y, 0, y - b.y1));
+/** Smallest gap between a drawn pipe (centreline ± halfW) and a rect or circle (negative = overlap). */
+function pipeGap(pipe, shape) {
+  let best = Infinity;
+  for (let k = 1; k < pipe.points.length; k++) {
+    const [ax, ay] = pipe.points[k - 1], [bx, by] = pipe.points[k];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 0.5));
+    for (let j = 0; j <= n; j++) {
+      const x = ax + ((bx - ax) * j) / n, y = ay + ((by - ay) * j) / n;
+      const inside = shape.shape !== 'circle' && x >= shape.x0 && x <= shape.x1 && y >= shape.y0 && y <= shape.y1;
+      const d = shape.shape === 'circle' ? Math.hypot(x - shape.cx, y - shape.cy) - shape.r : inside ? -1 : toBox(x, y, shape);
+      best = Math.min(best, d);
+    }
+  }
+  return best - pipe.halfW;
+}
+const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+
+function checkLayout(L, name, { result, hero = false }) {
+  const [, , vw, vh] = L.viewBox;
+  assert.equal(vw, L.width, `${name}: fits the width, not scaled down`);
+  // no two labels touch, whatever they are: marks, dimensions, angles, titles, END, warnings
+  for (let i = 0; i < L.labels.length; i++) {
+    for (let j = i + 1; j < L.labels.length; j++) {
+      const a = L.labels[i], b = L.labels[j];
+      assert.ok(!overlaps(a.box, b.box), `${name}: "${a.text}" overlaps "${b.text}"`);
+    }
+  }
+  // everything drawn is inside the view box (nothing cropped)
+  for (const e of L.elements) {
+    const b = e.box;
+    assert.ok(b.x0 >= -0.01 && b.y0 >= -0.01 && b.x1 <= vw + 0.01 && b.y1 <= vh + 0.01, `${name}: ${e.kind} outside the view ${JSON.stringify(b)} of ${vw}×${vh}`);
+  }
+  if (!hero) return;
+  // no label sits on the pipe
+  for (const l of L.labels) for (const p of L.pipes) assert.ok(pipeGap(p, { shape: 'rect', ...l.box }) >= -0.05, `${name}: "${l.text}" on the pipe`);
+  // the pipe never runs through the obstruction; when it truly can't clear, the bend warns and the
+  // obstruction is drawn as an outline instead
+  const warns = result.warnings.some((w) => /won't clear/.test(w));
+  if (L.obstacle) {
+    assert.equal(!!L.obstacle.clash, warns, `${name}: clash drawing matches the warning`);
+    if (!L.obstacle.clash) for (const p of L.pipes) assert.ok(pipeGap(p, L.obstacle) >= -0.05, `${name}: pipe overlaps the obstruction by ${(-pipeGap(p, L.obstacle)).toFixed(2)}px`);
+  }
+}
+
+test('layout: text boxes come from one approximation (characters × font size)', () => {
+  const b = S.textBox(100, 50, '25.61"', 'bd-pos', 'middle');
+  near(b.x1 - b.x0, S.textWidth('25.61"', 'bd-pos'), 1e-9);
+  near(b.y1 - b.y0, S.TEXT_SIZE['bd-pos'], 1e-9);
+  near((b.x0 + b.x1) / 2, 100, 1e-9);
+  assert.ok(S.textWidth('1 · 22.5°', 'bd-angle') > S.textWidth('1 · 22.5°', 'bd-note'), 'bigger font, wider text');
+  assert.equal(S.textBox(0, 0, 'END', 'bd-endtext', 'start').x0, 0);
+  assert.equal(S.textBox(0, 0, 'END', 'bd-endtext', 'end').x1, 0);
+});
+
+test('layout: every bend, across its inputs, at phone and iPad widths: no text collides, nothing cropped, the pipe clears', () => {
+  let checked = 0;
+  for (const [kind, input] of layoutCases()) {
+    let r;
+    try { r = B.compute(kind, input, { fmt: fmtLay }); } catch (e) { if (e instanceof B.BendError) continue; throw e; }
+    for (const width of [320, 700]) {
+      const tag = `${kind} ${JSON.stringify(input)} @${width}`;
+      checkLayout(S.bentLayout(r, { fmt: fmtLay, width, odM: input.odM }), `${tag} bent`, { result: r, hero: true });
+      checkLayout(S.marksLayout(r, { fmt: fmtLay, width }), `${tag} marks`, { result: r });
+      checked += 2;
+    }
+    if (r.endView) checkLayout(S.rollLayout(r, { fmt: fmtLay }), `${kind} roll`, { result: r });
+  }
+  assert.ok(checked > 300, `checked ${checked} layouts`);
+});
+
+test('layout: the animation keeps the same guarantees, and every frame stays in view', () => {
+  const cases = [
+    ['saddle3', { heightM: inToM(2), centerM: inToM(24), radiusM: R, odM: OD }],
+    ['saddle4', { heightM: inToM(4), widthM: inToM(10), obstacleM: inToM(36), radiusM: R, odM: OD }],
+    ['offset', { riseM: inToM(6), angleDeg: 30, obstacleM: inToM(36), radiusM: R, odM: OD }],
+    ['parallel', { riseM: inToM(6), angleDeg: 30, count: 4, centersM: inToM(2), obstacleM: inToM(36), radiusM: R, odM: OD }],
+    ['stub90', animCases.stub90],
+  ];
+  for (const [kind, input] of cases) {
+    const r = B.compute(kind, input, { fmt: fmtLay });
+    for (const width of [320, 480, 700]) {
+      const L = S.animatedBendLayout(r, { fmt: fmtLay, width, odM: input.odM });
+      checkLayout(L, `${kind} animated @${width}`, { result: r, hero: true });
+      const frames = [...L.svg.matchAll(/attributeName="points"[^>]*values="([^"]*)"/g)].flatMap((m) => m[1].split(';'));
+      const [tx, ty] = L.svg.match(/translate\(([-\d.]+),([-\d.]+)\)/).slice(1).map(Number);
+      for (const f of frames) {
+        for (const pt of f.trim().split(/\s+/)) {
+          const [x, y] = pt.split(',').map(Number);
+          assert.ok(x + tx >= 0 && x + tx <= L.viewBox[2] && y + ty >= 0 && y + ty <= L.viewBox[3], `${kind} @${width}: a frame point is outside the view`);
+        }
+      }
+    }
+  }
+});
+
+test('layout: 3- and 4-point saddles fill the view (not zoomed in, not lost in it)', () => {
+  const cases = [
+    ['saddle3', { heightM: inToM(2), centerAngleDeg: 45, radiusM: R, odM: OD }],
+    ['saddle3', { heightM: inToM(2), centerM: inToM(24), radiusM: R, odM: OD }],
+    ['saddle4', { heightM: inToM(4), widthM: inToM(10), radiusM: R, odM: OD }],
+    ['saddle4', { heightM: inToM(4), widthM: inToM(10), obstacleM: inToM(36), angleDeg: 22.5, radiusM: R, odM: OD }],
+  ];
+  for (const [kind, input] of cases) {
+    const r = B.compute(kind, input, { fmt: fmtLay });
+    for (const width of [320, 700]) {
+      const L = S.bentLayout(r, { fmt: fmtLay, width, odM: OD });
+      const xs = L.pipes.flatMap((p) => p.points.map((q) => q[0]));
+      const span = Math.max(...xs) - Math.min(...xs);
+      assert.ok(span >= 0.5 * width && span <= width, `${kind} @${width}: the pipe spans ${Math.round(span)}px of ${width}`);
+      assert.ok(L.obstacle && !L.obstacle.clash, `${kind}: the obstruction is drawn under the pipe`);
+      assert.equal(L.labels.filter((l) => l.role === 'mark').length, r.marks.filter((m) => m.angleDeg).length, `${kind}: a label at every bend`);
+    }
+    // on the straight pipe every mark keeps its full label, even on a narrow phone
+    const M = S.marksLayout(r, { fmt: fmtLay, width: 300 });
+    assert.equal(M.viewBox[2], 300, `${kind} @300: the mark strip fits the phone`);
+    for (const m of r.marks) assert.ok(M.labels.some((l) => l.text === fmtLay(m.atM)), `${kind} @300: position of ${m.label}`);
+    assert.equal(M.labels.filter((l) => l.cls === 'bd-marktag').length, r.marks.length, `${kind} @300: number and angle of every mark`);
+  }
+});
+
+test('layout: bender tools on the mark strip never cover each other', () => {
+  const cases = [
+    ['saddle4', { heightM: inToM(1), widthM: inToM(30), obstacleM: inToM(36), angleDeg: 45 }],
+    ['saddle3', { heightM: inToM(2), centerAngleDeg: 45 }],
+    ['offset', { riseM: inToM(1), angleDeg: 60 }],
+  ];
+  for (const [kind, input] of cases) {
+    const r = B.compute(kind, input, { fmt: fmtLay });
+    for (const width of [300, 480]) {
+      const tools = S.marksLayout(r, { fmt: fmtLay, width }).elements.filter((e) => e.kind === 'tool');
+      assert.equal(tools.length, r.marks.filter((m) => m.angleDeg).length, `${kind}: a tool on every bend mark`);
+      for (let i = 0; i < tools.length; i++) for (let j = i + 1; j < tools.length; j++) assert.ok(!overlaps(tools[i].box, tools[j].box), `${kind} @${width}: tools ${i} and ${j} overlap`);
+    }
+  }
+});
+
+test('real geometry: corners rounded to the bend radius, the legs where the maths puts them', () => {
+  const r = B.offset({ riseM: inToM(6), angleDeg: 30, radiusM: R, odM: OD });
+  assert.equal(r.bendRadiusM, R);
+  const sharp = B.tracePath(r.segments, r.start).points;
+  const round = B.filletPoints(sharp, R, 8);
+  assert.equal(round.length, sharp.length + (sharp.length - 2) * 8, 'a fixed count per corner, so animation frames stay in step');
+  near(round[0][1], 0, 1e-12);
+  near(round[round.length - 1][1], inToM(6), 1e-12, 'the far run is still the rise up');
+  // the first corner's arc starts on the flat run and keeps radius R about its centre
+  const [ax, ay] = round[1];
+  near(ay, 0, 1e-12, 'the arc starts on the flat run');
+  for (const [x, y] of round.slice(1, 10)) near(Math.hypot(x - ax, y - (ay + R)), R, 1e-9, 'arc point');
+  // a zero angle (the animation's first frame) leaves the pipe straight
+  assert.ok(B.filletPoints([[0, 0], [1, 0], [2, 0]], R, 4).every(([, y]) => y === 0));
+  // sharp corners and no OD clear a 4-point saddle exactly
+  near(B.obstacleClearance(B.saddle4({ heightM: inToM(4), widthM: inToM(10), obstacleM: inToM(36) }), {}).clearM, 0, 1e-9);
+  // the bend radius eats a little into the allowance (within what "+ clearance" is for)
+  const c = B.obstacleClearance(B.saddle4({ heightM: inToM(4), widthM: inToM(10), obstacleM: inToM(36), radiusM: R, odM: OD }), { odM: OD, radiusM: R });
+  assert.ok(c.clearM < 0 && c.ok, `rounded corners dip ${inch(-c.clearM).toFixed(3)}" into the allowance`);
+});
+
+test('clearance warning: only when the pipe really would hit the obstruction', () => {
+  const wont = (r) => r.warnings.some((w) => /won't clear/.test(w));
+  // everyday saddles and offsets with a 3/4" EMT bender: fine
+  assert.ok(!wont(B.saddle3({ heightM: inToM(2), centerM: inToM(24), radiusM: R, odM: OD })));
+  assert.ok(!wont(B.saddle4({ heightM: inToM(4), widthM: inToM(10), obstacleM: inToM(36), radiusM: R, odM: OD })));
+  assert.ok(!wont(B.offset({ riseM: inToM(6), angleDeg: 30, obstacleM: inToM(36), radiusM: R, odM: OD })));
+  // a 1" saddle at 60° with that radius: the round centre bend sits well into the 1" allowance
+  const tight = B.saddle3({ heightM: inToM(1), centerAngleDeg: 60, centerM: inToM(24), radiusM: R, odM: OD }, { fmt: fmtLay });
+  assert.ok(wont(tight), 'warns');
+  assert.ok(tight.clearanceM < -inToM(0.25));
+  // the picture shows it as a clash outline with its own warning, not a pipe through a solid block
+  const L = S.bentLayout(tight, { fmt: fmtLay, width: 480, odM: OD });
+  assert.ok(L.obstacle.clash && L.labels.some((l) => l.role === 'warning'));
+  assert.ok(L.svg.includes('bd-clash'));
+  // marks too close for the bender's radius
+  assert.ok(B.saddle4({ heightM: inToM(1), widthM: inToM(30), obstacleM: inToM(36), angleDeg: 45, radiusM: R, odM: OD }).warnings.some((w) => /run into each other/.test(w)));
+});
+
+test('bend picker art: a picture for every bend, one view box, theme colours only', async () => {
+  const A = await import('../js/lib/bend-art.js');
+  for (const id of [...Object.keys(B.KINDS), 'pull']) {
+    const svg = A.bendArt(id);
+    assert.ok(A.BEND_ART[id], `art for ${id}`);
+    assert.match(svg, /^<svg class="bend-art" viewBox="0 0 64 40" aria-hidden="true"/, id);
+    assert.ok(/class="ba-pipe/.test(svg), `${id} draws the pipe`);
+    assert.ok(!/style=|#[0-9a-f]{3,6}\b|fill="|stroke="/i.test(svg), `${id}: no inline styles or fixed colours (currentColor via CSS)`);
+  }
+});
