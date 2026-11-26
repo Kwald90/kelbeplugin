@@ -80,8 +80,18 @@ container_mode() { # [--check]
     ["$tmp/deny"]="$conf_dir/run/snippets/fishtape-deny.conf"
     ["$tmp/proxy"]="$conf_dir/run/snippets/fishtape-proxy.conf"
   )
+  # Inside the container, at its mount points, is what it will load.
+  sees_installed() {
+    docker exec "$ctr" cat /etc/nginx/fishtape.conf 2>/dev/null | cmp -s - "$conf_dir/run-fishtape.conf" || return 1
+    local s
+    for s in headers deny proxy; do
+      docker exec "$ctr" cat "/etc/nginx/snippets/fishtape-$s.conf" 2>/dev/null | cmp -s - "$conf_dir/run/snippets/fishtape-$s.conf" || return 1
+    done
+  }
   if [ "${1:-}" = --check ]; then
     for src in "${!CF[@]}"; do cmp -s "$src" "${CF[$src]}" || exit 1; done
+    # Installed on disk is not enough: the container must see (and so load) the same files.
+    sees_installed || exit 1
     exit 0
   fi
   command -v docker >/dev/null || { echo "docker not found" >&2; exit 1; }
@@ -90,24 +100,45 @@ container_mode() { # [--check]
   chmod 700 "$BACKUP_DIR"
   for src in "${!CF[@]}"; do dst="${CF[$src]}"; [ -f "$dst" ] && cp -p "$dst" "$BACKUP_DIR/$(basename "$dst")"; done
   docker exec "$ctr" nginx -T > "$BACKUP_DIR/nginx-T.before.txt" 2>/dev/null || true
+  # Write IN PLACE (same inode): run-fishtape.conf is a single-file bind mount, and a file replaced
+  # by rename (install, cp to a temp + mv) stays invisible to the container, which keeps the old
+  # inode. Snippets sit in a mounted directory, but in-place writes are right there too.
+  put() { # src dst
+    if [ -f "$2" ]; then cat "$1" > "$2"; else install -m 0644 "$1" "$2"; fi
+    chown root:root "$2"; chmod 0644 "$2"
+  }
+  activate() { # test, then reload, or restart when a stale single-file mount hides the files
+    local out
+    if ! sees_installed; then
+      echo "$ctr does not see the installed files (stale single-file mount): testing them in a throwaway container, then restarting $ctr" >&2
+      out="$(docker run --rm -v "$conf_dir/run/nginx.conf:/etc/nginx/nginx.conf:ro" -v "$conf_dir/run-fishtape.conf:/etc/nginx/fishtape.conf:ro" \
+        -v "$conf_dir/run/snippets:/etc/nginx/snippets:ro" -v "$tmp:/var/log/fishtape-production" "$(docker inspect -f '{{.Config.Image}}' "$ctr")" nginx -t 2>&1)" \
+        || { printf '%s\n' "$out" >&2; return 1; }
+      docker restart -t 5 "$ctr" >/dev/null || return 1
+      sleep 2
+      docker inspect -f '{{.State.Running}}' "$ctr" | grep -qx true || return 1
+      sees_installed || { echo "$ctr still does not see the installed files after a restart" >&2; return 1; }
+      return 0
+    fi
+    out="$(docker exec "$ctr" nginx -t 2>&1)" || { printf '%s\n' "$out" >&2; return 1; }
+    printf '%s\n' "$out"
+    docker exec "$ctr" nginx -s reload
+  }
   restore_c() {
     echo "restoring the previous files from $BACKUP_DIR" >&2
     for src in "${!CF[@]}"; do
       dst="${CF[$src]}"
-      if [ -f "$BACKUP_DIR/$(basename "$dst")" ]; then cp -p "$BACKUP_DIR/$(basename "$dst")" "$dst"; else rm -f "$dst"; fi
+      if [ -f "$BACKUP_DIR/$(basename "$dst")" ]; then put "$BACKUP_DIR/$(basename "$dst")" "$dst"; else rm -f "$dst"; fi
     done
-    docker exec "$ctr" nginx -t || true
+    activate || echo "WARNING: could not re-activate the previous files in $ctr; check it now" >&2
   }
-  for src in "${!CF[@]}"; do install -o root -g root -m 0644 "$src" "${CF[$src]}"; done
-  if ! out="$(docker exec "$ctr" nginx -t 2>&1)"; then
-    printf '%s\n' "$out" >&2; echo "nginx -t failed in $ctr" >&2; restore_c; exit 1
+  for src in "${!CF[@]}"; do put "$src" "${CF[$src]}"; done
+  if ! activate; then echo "nginx config test or activation failed in $ctr" >&2; restore_c; exit 1; fi
+  # Loaded, not just installed: the new files are what the container answers with.
+  if ! docker exec "$ctr" nginx -T 2>/dev/null | grep -q 'absolute_redirect off'; then
+    echo "$ctr does not load the rendered config (no absolute_redirect in nginx -T)" >&2; restore_c; exit 1
   fi
-  printf '%s\n' "$out"
-  if ! docker exec "$ctr" nginx -T 2>/dev/null | grep -qE 'server_name[[:space:]]+([^;]*[[:space:]])?app\.fishtapehq\.com'; then
-    echo "nginx -t passed but $ctr does not load the Fishtape servers (is run-fishtape.conf mounted?)" >&2; restore_c; exit 1
-  fi
-  docker exec "$ctr" nginx -s reload
-  echo "nginx config (container $ctr) installed and reloaded; previous copies in $BACKUP_DIR"
+  echo "nginx config (container $ctr) installed and active; previous copies in $BACKUP_DIR"
   exit 0
 }
 
