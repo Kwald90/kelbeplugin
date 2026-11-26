@@ -378,3 +378,22 @@ needs to differ, the contract changes first in the owning workstream's branch.
 - One set per customer: `planSet { id: 'cust-<clientId>' | 'job-<jobId>', customer: true }`, opened from
   `#/drawings/customer?clientId=…&jobId=…`. Tests: `tests/drawing-collab.test.mjs`, `server/test/drawings.test.js`,
   `tests/e2e/drawings-collab.e2e.mjs`.
+
+### Files: documents by customer and job, filed by AI (migration 0189)
+
+- `#/files` (`modules/files.js`, switch `files`, plan `pro`). A file's place is `{ clientId, jobId, category, folderId }`;
+  `category` null and `folderId` null = "Inbox · needs sorting". Standard folders and the company area are in
+  `js/lib/files-classify.js` (shared with the server, with the keyword classifier); quotes, invoices and contracts are
+  hidden from people who can't see money, company folders from crew.
+- Server: tables `files`, `file_folders` (RLS forced, portal excluded); bytes in `FILES_DIR` (outside the checkout and
+  every web root, never served by nginx), read only through `GET /api/v1/files/:id/content` (signed in, nosniff,
+  sandbox CSP, no-store). Routes in `server/src/routes/v1/files.js`; uploads are raw bodies with `X-File-Name` and place
+  headers, checked by their bytes, `FILES_MAX_MB` (70) per file and `FILES_QUOTA_GB` (20) per company. Deletes go to
+  Recently deleted; the worker job `files_purge_trash` removes them after `FILES_TRASH_DAYS` (30). All writes audited
+  (`file.*`, `folder.*`).
+- AI filing: `POST /api/v1/files/:id/organize` (`services/files-ai.js`) uses the company's Anthropic key or the Gemini
+  platform key like the assistant, under the monthly cap (`ai_usage.feature = 'files'`); the keyword rules answer when
+  there is no key, the cap is reached, `settings.files.ai === false` or the answer doesn't fit the candidates. Files at
+  `AUTO_FILE_CONFIDENCE` (0.6) or above are moved; the rest stay in the Inbox with the suggestion.
+- Sharing in: Web Share Target (`manifest.webmanifest`, `sw.js`), iOS document types and Android intents through the
+  `FishtapeIncomingFiles` plugin; see `docs/mobile/send-to-fishtape.md`.
