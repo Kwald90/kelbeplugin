@@ -3,14 +3,19 @@
 // import/export and takeoff.
 import { uid } from '../store.js';
 import {
-  drawPaper, drawContent, drawStroke, drawObject, hitTest, itemBounds, textBounds,
+  drawPaper, drawContent, drawStroke, drawObject, hitTest, itemBounds, textBounds, inkFor,
   contentBounds, renderToCanvas, toSVG, takeoff, fmtWorldLength, segLen, wireLength, curveK, FREEHAND,
 } from './engine.js';
 import { SYMBOLS, SYMBOL_ORDER, symbolPreview } from './symbols.js';
 import { createRooms, swallowNextClick, ROOM_ICON, CHECK_ICON, WAND_ICON } from './rooms.js';
-import { createStabilizer, clampSmooth } from './stabilizer.js';
+import { createStabilizer, clampSmooth, SMOOTH_SCALE, fromOldSmooth } from './stabilizer.js';
+import { snapShape } from './ink.js';
 import { eraseStrokes, distToSeg, segSegDist } from './erase.js';
-import { createTapDetector, getGesture, getHoldMs, actionLabel, gesturePanel, tapRollback, TAP } from './gestures.js';
+import {
+  createTapDetector, getGesture, getHoldMs, getOption, actionLabel, gesturePanel, tapRollback, tapKey, TAP, fingerDraws, createStillness,
+  screenToWorld, worldToScreen, viewAt, twoFingerView, connectPencil, pencilAction,
+} from './gestures.js';
+import { noteUse, rankByUse } from '../lib/usage-rank.js';
 import { session, savePref } from '../session.js';
 import { getUnits, parseLength, fmtLength, M_PER_FT } from '../lib/units.js';
 import {
@@ -62,12 +67,14 @@ export const SWATCHES = [
 
 const PAPERS = [{ id: 'none', label: 'Blank' }, { id: 'dots', label: 'Dots' }, { id: 'grid', label: 'Grid' }, { id: 'iso', label: 'Isometric' }];
 
-// smooth: the stabilizer's 0–100 (./stabilizer.js); eraser mode: 'area' cuts strokes, 'stroke' removes them whole
+// smooth: the stabilizer's 0–100 (./stabilizer.js); eraser mode: 'area' cuts strokes, 'stroke' removes them whole.
+// v: the smoothness scale the saved values are on (settings saved before it are converted on load).
 const DEFAULT_OPTS = () => ({
-  pen: { size: 3, opacity: 1, color: '#1c1b19', smooth: 55 },
-  pencil: { size: 2, opacity: 1, color: '#5f5a51', smooth: 45 },
-  marker: { size: 7, opacity: 0.9, color: '#1f5fb8', smooth: 55 },
-  highlighter: { size: 20, opacity: 1, color: '#f5b301', smooth: 60 },
+  v: SMOOTH_SCALE,
+  pen: { size: 3, opacity: 1, color: '#1c1b19', smooth: 30 },
+  pencil: { size: 2, opacity: 1, color: '#5f5a51', smooth: 25 },
+  marker: { size: 7, opacity: 0.9, color: '#1f5fb8', smooth: 30 },
+  highlighter: { size: 20, opacity: 1, color: '#f5b301', smooth: 40 },
   eraser: { size: 18, mode: 'area' },
   line: { size: 2.5, opacity: 1, color: '#1c1b19' },
   rect: { size: 2.5, opacity: 1, color: '#1c1b19' },
@@ -112,6 +119,8 @@ function loadOpts(key) {
   try { saved = JSON.parse(localStorage.getItem(key) || localStorage.getItem('kc.canvas.opts') || '{}') || {}; } catch { /* use defaults */ }
   for (const [tool, o] of Object.entries(saved)) if (def[tool] && o && typeof o === 'object') def[tool] = { ...def[tool], ...o };
   for (const tool of Object.keys(TOOL_SIZES)) if (def[tool]) def[tool].size = clampSize(tool, def[tool].size);
+  // smoothness chosen on the old, weaker scale: the same feel on the new one (100 stays a ruler)
+  if (saved.v !== SMOOTH_SCALE) for (const tool of FREEHAND) if (saved[tool]?.smooth != null) def[tool].smooth = fromOldSmooth(saved[tool].smooth);
   return def;
 }
 function saveOpts(o, key) { try { localStorage.setItem(key, JSON.stringify(o)); } catch { /* ignore */ } }
@@ -195,8 +204,17 @@ export function openEditor(root, ctx, id) {
   const ctxBar = h('div', { class: 'cv-bar cv-ctx', hidden: true });
 
   const toolButtons = new Map();
+  // every tool that draws in a colour wears it, picked or not: a dot in the corner of its button
+  const toolSwatches = new Map();
+  const addSwatch = (tid, b) => {
+    if (!opts[tid]?.color) return;
+    const dot = h('span', { class: 'cv-tool-swatch', 'aria-hidden': 'true' });
+    b.classList.add('has-swatch');
+    b.append(dot);
+    toolSwatches.set(tid, dot);
+  };
   const shapes = h('div', { class: 'cv-bar cv-shapes', role: 'toolbar', 'aria-label': 'Shapes' },
-    SHAPE_TOOLS.map((t) => { const b = btn(t.icon, `${t.label} (${t.key.toUpperCase()})`, () => setTool(t.id)); toolButtons.set(t.id, b); return b; }),
+    SHAPE_TOOLS.map((t) => { const b = btn(t.icon, `${t.label} (${t.key.toUpperCase()})`, () => setTool(t.id)); addSwatch(t.id, b); toolButtons.set(t.id, b); return b; }),
     h('span', { class: 'cv-sep h' }),
     btn(RAW.outlet, 'Place a symbol', () => symbolsSheet()));
 
@@ -209,6 +227,7 @@ export function openEditor(root, ctx, id) {
       style: { left: `calc(50% + ${Math.cos(a) * 38}% )`, top: `calc(50% + ${Math.sin(a) * 38}% )` },
       onClick: () => setTool(t.id),
     }, icon(t.icon, 19));
+    addSwatch(t.id, b);
     toolButtons.set(t.id, b);
     wheel.append(b);
   });
@@ -222,8 +241,10 @@ export function openEditor(root, ctx, id) {
   const pop = h('div', { class: 'cv-pop', hidden: true, role: 'dialog', 'aria-label': 'Brush settings' });
 
   const zoomLabel = h('button', { class: 'cv-zoom-label', type: 'button', title: 'Reset to 100%', onClick: () => zoomTo(1) });
+  // shown while the canvas is turned (two-finger rotate): the angle, and a tap levels it again
+  const rotLabel = h('button', { class: 'cv-rot-label', type: 'button', title: 'Rotated: tap to level', hidden: true, onClick: () => levelView() });
   const zoomBar = h('div', { class: 'cv-bar cv-zoom' },
-    btn('minus', 'Zoom out', () => zoomBy(1 / 1.25), { size: 18 }), zoomLabel, btn('plus', 'Zoom in', () => zoomBy(1.25), { size: 18 }),
+    rotLabel, btn('minus', 'Zoom out', () => zoomBy(1 / 1.25), { size: 18 }), zoomLabel, btn('plus', 'Zoom in', () => zoomBy(1.25), { size: 18 }),
     h('span', { class: 'cv-sep' }), btn(RAW.fit, 'Fit drawing (0)', () => fit(), { size: 18 }));
 
   // plan set: previous / sheet list / next (only on drawings that are sheets of a set)
@@ -238,12 +259,20 @@ export function openEditor(root, ctx, id) {
   const sizeDotBtn = h('button', { class: 'cv-sizebar-dot', type: 'button', title: 'Size and brush settings', 'aria-label': 'Size and brush settings', onClick: () => togglePop(pop.hidden) });
   const sizeBar = h('div', { class: 'cv-bar cv-sizebar', role: 'group', 'aria-label': 'Brush size' }, sizeUp, sizeDotBtn, sizeDown);
 
-  const wrap = h('div', { class: 'cv' }, canvas, topLeft, topRight, ctxBar, shapes, wheel, sizeBar, pop, zoomBar, sheetBar);
+  // full screen (four-finger tap): every bar hides; this brings them back for anyone without the gesture
+  const uiRestore = h('button', { class: 'cv-ui-restore', type: 'button', title: 'Show toolbars (four-finger tap)', 'aria-label': 'Show toolbars', onClick: () => setUiHidden(false) }, icon(RAW.fit, 18));
+
+  const wrap = h('div', { class: 'cv' }, canvas, topLeft, topRight, ctxBar, shapes, wheel, sizeBar, pop, zoomBar, sheetBar, uiRestore);
   root.append(wrap);
 
   // ---------- helpers ----------
   const z = () => st.view.zoom;
-  const toWorld = (sx, sy) => [(sx - st.view.x) / st.view.zoom, (sy - st.view.y) / st.view.zoom];
+  const toWorld = (sx, sy) => screenToWorld(st.view, sx, sy);
+  /** Draw in world units on c for view v (zoom, pan and the two-finger rotation). */
+  const applyView = (c, v) => {
+    const r = v.rot || 0, k = dpr * v.zoom, cs = Math.cos(r) * k, sn = Math.sin(r) * k;
+    c.setTransform(cs, sn, -sn, cs, dpr * v.x, dpr * v.y);
+  };
   const layerOf = (lid) => d.layers.find((l) => l.id === lid);
   const usable = (l) => l.visible !== false && !l.locked;
   const COLL = { stroke: () => d.strokes, object: () => d.objects, text: () => d.texts, room: () => d.rooms };
@@ -368,7 +397,7 @@ export function openEditor(root, ctx, id) {
     const v = st.view;
     bg.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawPaper(bg, v, W, H, d.paper, paperColors());
-    bg.setTransform(dpr * v.zoom, 0, 0, dpr * v.zoom, dpr * v.x, dpr * v.y);
+    applyView(bg, v);
     drawContent(bg, d, { zoom: v.zoom, dark: isDark(), underlayImage: underImg, units: units() });
   }
 
@@ -380,7 +409,7 @@ export function openEditor(root, ctx, id) {
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, canvas.width, canvas.height);
     g.drawImage(base, 0, 0);
-    g.setTransform(dpr * v.zoom, 0, 0, dpr * v.zoom, dpr * v.x, dpr * v.y);
+    applyView(g, v);
     const al = layerOf(st.activeLayer);
     g.globalAlpha = al?.opacity ?? 1;
     if (op?.stroke) drawStroke(g, op.pred ? { ...op.stroke, points: [...op.stroke.points, ...op.pred] } : op.stroke, d, { zoom: v.zoom, dark, units: units() });
@@ -437,6 +466,18 @@ export function openEditor(root, ctx, id) {
       g.strokeStyle = dark ? '#ecebe7' : '#1c1b19'; g.lineWidth = 1 / v.zoom;
       g.beginPath(); g.arc(st.hover[0], st.hover[1], opts.eraser.size / 2 / v.zoom, 0, Math.PI * 2); g.stroke();
     }
+    // Pencil hover (iPad Pro): the brush at its size and colour, where the tip will land
+    const ho = st.penHover && !op && !st.placing && st.tool !== 'eraser' && getOption('hover') ? opts[st.tool] : null;
+    if (ho?.color && ho.size) {
+      const [hx, hy] = st.penHover, r = Math.max(ho.size / 2, 1.5 / v.zoom);
+      g.globalAlpha = 0.4 * (ho.opacity ?? 1);
+      g.fillStyle = inkFor(ho.color, dark);
+      g.beginPath(); g.arc(hx, hy, r, 0, Math.PI * 2); g.fill();
+      g.globalAlpha = 0.8;
+      g.strokeStyle = dark ? '#ecebe7' : '#1c1b19'; g.lineWidth = 1 / v.zoom;
+      g.beginPath(); g.arc(hx, hy, r + 1.5 / v.zoom, 0, Math.PI * 2); g.stroke();
+      g.globalAlpha = 1;
+    }
   }
 
   function label(c, p, text) {
@@ -454,28 +495,41 @@ export function openEditor(root, ctx, id) {
   }
 
   // ---------- view ----------
+  // A view is { x, y, zoom, rot? } (./gestures.js): rot is the two-finger rotation, left out when level.
+  const rot = () => st.view?.rot || 0;
   function zoomAt(sx, sy, factor) {
-    const v = st.view;
-    const nz = Math.min(24, Math.max(0.05, v.zoom * factor));
+    const nz = Math.min(24, Math.max(0.05, z() * factor));
     const [wx, wy] = toWorld(sx, sy);
-    v.zoom = nz; v.x = sx - wx * nz; v.y = sy - wy * nz;
+    st.view = viewAt(nz, rot(), wx, wy, sx, sy);
     viewChanged();
   }
   function zoomBy(f) { zoomAt(W / 2, H / 2, f); }
   function centerOn(x, y, zoom = z()) {
     const nz = Math.min(24, Math.max(0.05, zoom));
     const panelW = W > 760 ? 340 : 0, botPad = W > 760 ? 0 : H * 0.42;
-    st.view = { zoom: nz, x: (W - panelW) / 2 - x * nz, y: (H - botPad) / 2 - y * nz };
+    st.view = viewAt(nz, rot(), x, y, (W - panelW) / 2, (H - botPad) / 2);
     viewChanged();
   }
   function zoomTo(nz) { zoomAt(W / 2, H / 2, nz / z()); }
+  /** Turn the canvas back to level about the middle of the screen. */
+  function levelView() {
+    if (!rot()) return;
+    const [wx, wy] = toWorld(W / 2, H / 2);
+    st.view = viewAt(z(), 0, wx, wy, W / 2, H / 2);
+    viewChanged();
+  }
   function fit(initial) {
     const b = contentBounds(d);
     const topPad = 76, botPad = W < 700 ? 200 : 110, sidePad = 40;
-    if (!b) { st.view = { x: W / 2 - 200, y: H / 2 - 150, zoom: 1 }; if (!initial) viewChanged(); return; }
-    const bw = Math.max(40, b.x1 - b.x0), bh = Math.max(40, b.y1 - b.y0);
+    const r = rot();
+    if (!b) { st.view = viewAt(1, r, 0, 0, W / 2 - 200, H / 2 - 150); if (!initial) viewChanged(); return; }
+    // the content's box as the (possibly turned) screen shows it
+    const c = Math.cos(r), sn = Math.sin(r);
+    const xs = [], ys = [];
+    for (const [x, y] of [[b.x0, b.y0], [b.x1, b.y0], [b.x0, b.y1], [b.x1, b.y1]]) { xs.push(c * x - sn * y); ys.push(sn * x + c * y); }
+    const bw = Math.max(40, Math.max(...xs) - Math.min(...xs)), bh = Math.max(40, Math.max(...ys) - Math.min(...ys));
     const zoom = Math.min(2, Math.max(0.05, Math.min((W - sidePad * 2) / bw, (H - topPad - botPad) / bh)));
-    st.view = { zoom, x: (W - bw * zoom) / 2 - b.x0 * zoom, y: topPad + (H - topPad - botPad - bh * zoom) / 2 - b.y0 * zoom };
+    st.view = viewAt(zoom, r, (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, W / 2, topPad + (H - topPad - botPad) / 2);
     if (!initial) viewChanged(); else updateZoom();
   }
 
@@ -629,13 +683,23 @@ export function openEditor(root, ctx, id) {
   function local(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
   const owns = (e) => !op || op.pid == null || op.pid === e.pointerId;
 
-  // Finger gestures (./gestures.js): a two- or three-finger tap and a one-finger hold run the
-  // person's chosen action. Palms never reach the detector, and the Pencil touching down cancels
-  // any tap in progress. A tap's fingers start a pinch like any two fingers; if they turn out to
-  // be a tap, the view goes back to where it was, and so does anything the first finger did with
-  // the tool before the others landed (in finger-drawing mode: an erase, a symbol, a move).
+  // Gestures (./gestures.js), chosen in the Gestures sheet like Concepts' gesture settings:
+  //  - Taps with two, three or four fingers and a one-finger hold run the person's chosen action.
+  //    Palms never reach the detector, and the Pencil touching down cancels any tap in progress.
+  //    A tap's fingers start a pinch like any two fingers; if they turn out to be a tap, the view
+  //    goes back to where it was, and so does anything the first finger did with the tool before
+  //    the others landed (in finger-drawing mode: an erase, a symbol, a move).
+  //  - Draw with finger: when a finger doesn't draw, one finger pans, a tap selects, and a finger
+  //    on the selection drags it; the Pencil draws.
+  //  - Two fingers pinch to zoom, twist to rotate (snapping back to level) and drag to pan.
+  //  - Held still: a finger, or the Pencil, before it moves runs its hold action (eyedropper,
+  //    select…); a stroke held still at its end snaps into a line or a shape.
+  //  - The Apple Pencil's double-tap and squeeze come from the iOS app (connectPencil, below).
   const taps = createTapDetector({ holdMs: getHoldMs });
-  let holdTimer = 0, tapView = null, tapMark = null;
+  let holdTimer = 0, tapView = null, tapMark = null, holdAt = null, stillTimer = 0;
+  let pencil = null; // the iOS app's Pencil bridge, when there is one
+  const STILL_SLOP = 6; // screen px a held pen or finger may wobble and still be still
+  const fingerDrawsNow = () => fingerDraws({ mode: getOption('fingerDraw'), penSeen: st.penSeen, pencilOnly: !!pencil?.pencilOnly });
 
   function takeBackTapFinger() {
     const back = tapRollback(tapMark, undo);
@@ -644,29 +708,126 @@ export function openEditor(root, ctx, id) {
     restore(back.snap); undo = back.undo; redo = back.redo; changed();
   }
 
-  function runGesture(key, view0) {
-    const act = getGesture(key);
+  /**
+   * Run a gesture's action. view0: the view to go back to first (a tap's fingers may have started
+   * a pinch); at: the world point it happened at (holds); pid: the pointer still down (a hold that
+   * selects carries on as a drag); preferred: the iPad's own Pencil setting, for 'system'.
+   */
+  function runGesture(key, view0, at = null, pid = null, preferred = null) {
+    let act = getGesture(key);
+    if (key === 'pencilDoubleTap' || key === 'pencilSqueeze') act = pencilAction(act, preferred);
     if (act === 'none') return;
-    if (view0 && st.view && (view0.zoom !== st.view.zoom || view0.x !== st.view.x || view0.y !== st.view.y)) { st.view = view0; viewChanged(); }
-    let msg = actionLabel(act);
-    if (act === 'undo') { if (!undo.length && op?.type !== 'wire') msg = 'Nothing to undo'; else doUndo(); }
-    else if (act === 'redo') { if (!redo.length) msg = 'Nothing to redo'; else doRedo(); }
-    else if (act === 'wheel') msg = wrap.classList.toggle('wheel-min') ? 'Tool wheel hidden' : 'Tool wheel';
-    else if (act === 'lastTool') {
-      if (!st.prevTool) msg = 'No other tool yet';
-      else { setTool(st.prevTool); msg = ALL_TOOLS.find((t) => t.id === st.tool)?.label || msg; }
-    } else if (act === 'fit') fit();
-    else if (act === 'duplicate') { if (!st.selection.length) msg = 'Nothing selected'; else duplicateSel(); }
-    else if (act === 'picker') symbolsSheet();
-    ui.toast(msg, 'info', 1200);
+    if (view0 && st.view && (view0.zoom !== st.view.zoom || view0.x !== st.view.x || view0.y !== st.view.y || (view0.rot || 0) !== rot())) { st.view = view0; viewChanged(); }
+    const msg = runAction(act, at, pid, key);
+    if (msg) ui.toast(msg, 'info', 1200);
     if (globalThis.kelbeCanvas?.d === d) globalThis.kelbeCanvas.lastGesture = { key, act };
   }
+
+  /** One gesture action; returns the toast to show, if any. */
+  function runAction(act, at, pid, key) {
+    const toolName = () => ALL_TOOLS.find((t) => t.id === st.tool)?.label || actionLabel(act);
+    switch (act) {
+      case 'undo': if (!undo.length && op?.type !== 'wire') return 'Nothing to undo'; doUndo(); return actionLabel(act);
+      case 'redo': if (!redo.length) return 'Nothing to redo'; doRedo(); return actionLabel(act);
+      case 'wheel': setUiHidden(false); return wrap.classList.toggle('wheel-min') ? 'Tool wheel hidden' : 'Tool wheel';
+      case 'toggleUI':
+        return setUiHidden(!wrap.classList.contains('ui-hidden')) ? `Toolbars hidden${key === 'fourFingerTap' ? '. Four-finger tap to show them' : ''}` : 'Toolbars shown';
+      case 'eraser':
+        setTool(st.tool !== 'eraser' ? 'eraser' : st.prevTool && st.prevTool !== 'eraser' ? st.prevTool : 'pen');
+        return toolName();
+      case 'lastTool': if (!st.prevTool) return 'No other tool yet'; setTool(st.prevTool); return toolName();
+      case 'colors': setUiHidden(false); if (!pop.hidden) pop.hidden = true; else togglePop(true, { colours: true }); return null;
+      case 'palette': setUiHidden(false); wrap.classList.remove('wheel-min'); togglePop(pop.hidden); return null;
+      case 'eyedropper': return at ? eyedrop(at) : null;
+      case 'select': return at ? holdSelect(at, pid) : null;
+      case 'duplicate': if (!st.selection.length) return 'Nothing selected'; duplicateSel(); return actionLabel(act);
+      case 'picker': symbolsSheet(); return actionLabel(act);
+      case 'fit': fit(); return actionLabel(act);
+      default: return null;
+    }
+  }
+
+  /** Full screen: hide every bar (four-finger tap), or bring them back. Returns whether hidden. */
+  function setUiHidden(on) {
+    wrap.classList.toggle('ui-hidden', !!on);
+    if (on) pop.hidden = true;
+    return !!on;
+  }
+
+  const colourName = (c) => SWATCHES.find((x) => x.c.toLowerCase() === String(c).toLowerCase())?.n || String(c).toUpperCase();
+  /** The plan's own pixel colour at a world point (an imported PDF or photo), or null off the plan. */
+  function underlayColour(wx, wy) {
+    const ux = d.underlayX || 0, uy = d.underlayY || 0;
+    if (!d.underlay || !d.underlayW || wx < ux || wy < uy || wx > ux + d.underlayW || wy > uy + d.underlayH) return null;
+    try {
+      if (baseDirty) renderBase();
+      const [sx, sy] = worldToScreen(st.view, wx, wy);
+      const px = bg.getImageData(Math.round(sx * dpr), Math.round(sy * dpr), 1, 1).data;
+      return '#' + [px[0], px[1], px[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
+    } catch { return null; }
+  }
+  /** Eyedropper: the colour of the ink (or the plan) under a point becomes the tool's colour. */
+  function eyedrop([wx, wy]) {
+    const hit = hitTest(d, wx, wy, 8 / z(), (l) => l.visible !== false);
+    const col = hit?.item?.color || underlayColour(wx, wy);
+    if (!/^#[0-9a-f]{6}$/i.test(String(col || ''))) return 'No colour there';
+    const t = opts[st.tool]?.color ? st.tool : 'pen';
+    opts[t].color = col.toLowerCase(); lastColor = opts[t].color;
+    saveOpts(opts, OPTS_KEY);
+    if (t !== st.tool) setTool(t); else updateChrome();
+    return `Colour: ${colourName(col)}`;
+  }
+  /** Hold to select: pick up what is under the finger or Pencil; while it stays down it drags it. */
+  function holdSelect([wx, wy], pid) {
+    const hit = hitTest(d, wx, wy, 10 / z(), usable);
+    if (!hit) return 'Nothing to select there';
+    setTool('select');
+    st.selection = [{ kind: hit.kind, id: hit.item.id }];
+    if (pid != null && pointers.has(pid)) op = { type: 'move', pid, last: [wx, wy], cp: false };
+    updateChrome(); requestFrame();
+    return null;
+  }
+  /** A tap with a finger that doesn't draw: select what is under it, or clear the selection. */
+  function tapSelect([wx, wy]) {
+    const hit = hitTest(d, wx, wy, 10 / z(), usable);
+    const next = hit ? [{ kind: hit.kind, id: hit.item.id }] : [];
+    if (!next.length && !st.selection.length) return;
+    st.selection = next;
+    updateChrome(); requestFrame();
+  }
+
   function onHold() {
-    // a finger that is drawing keeps drawing; one that pans (or rests) can be a hold
-    if (op && op.type !== 'pan') return;
+    // a finger that pans or rests can be a hold, and so can a drawing finger that hasn't moved yet
+    if (op && op.type !== 'pan' && !(op.type === 'draw' && !op.moved)) return;
     if (!taps.holdDue(performance.now())) return;
-    if (op?.type === 'pan') { if (st.view && op.vx != null) { st.view.x = op.vx; st.view.y = op.vy; viewChanged(); } op = null; wrap.classList.remove('panning'); }
-    runGesture('longPress');
+    if (op?.type === 'pan') { if (st.view && op.vx != null) { st.view.x = op.vx; st.view.y = op.vy; viewChanged(); } wrap.classList.remove('panning'); }
+    op = null; clearTimeout(stillTimer);
+    requestFrame();
+    runGesture('longPress', null, holdAt ? toWorld(...holdAt.xy) : null, holdAt?.pid);
+  }
+
+  // Hold-to-snap and the Pencil's hold: a drawing pointer that stays still for the hold time.
+  const SNAP_LABEL = { line: 'Line', circle: 'Circle', ellipse: 'Ellipse', rect: 'Rectangle', polygon: 'Shape' };
+  function armStill() { clearTimeout(stillTimer); stillTimer = setTimeout(onStill, getHoldMs()); }
+  function onStill() {
+    stillTimer = 0;
+    if (destroyed || op?.type !== 'draw' || op.snapped || op.straight) return;
+    if (!op.moved) {
+      // held where it touched, before drawing: the Pencil's hold (a finger's is the tap detector's)
+      if (op.kind !== 'pen' || getGesture('pencilHold') === 'none') return;
+      const { start, pid } = op;
+      op = null; requestFrame();
+      runGesture('pencilHold', null, start, pid);
+      return;
+    }
+    if (!getOption('holdSnap')) return;
+    const shape = snapShape(op.raw);
+    if (!shape) return;
+    op.snapped = shape.kind;
+    op.stroke.points = shape.points;
+    op.pred = null;
+    ui.toast(shape.kind === 'polygon' && shape.points.length === 4 ? 'Triangle' : SNAP_LABEL[shape.kind], 'info', 900);
+    requestFrame();
   }
 
   function onDown(e) {
@@ -677,10 +838,10 @@ export function openEditor(root, ctx, id) {
       for (const [pid, p] of pointers) if (p.type === e.pointerType) pointers.delete(pid);
       if (touch) { pinch = null; palms.clear(); taps.cancel(); }
     }
-    if (pen) { taps.cancel(); clearTimeout(holdTimer); }
+    if (pen) { taps.cancel(); clearTimeout(holdTimer); st.penHover = null; }
     if (touch) {
       const [tx, ty] = local(e);
-      if (!taps.active) { tapView = st.view ? { ...st.view } : null; tapMark = { undo: undo.slice(), redo: redo.slice() }; }
+      if (!taps.active) { tapView = st.view ? { ...st.view } : null; tapMark = { undo: undo.slice(), redo: redo.slice() }; holdAt = { xy: [tx, ty], pid: e.pointerId }; }
       taps.down(e.pointerId, tx, ty, e.timeStamp);
       clearTimeout(holdTimer);
       if (taps.active === 1 && getGesture('longPress') !== 'none') holdTimer = setTimeout(onHold, getHoldMs() + 20);
@@ -704,6 +865,7 @@ export function openEditor(root, ctx, id) {
     if (touches.length >= 2) {
       // second finger: abandon any stroke in progress and start a pinch
       if (op?.type !== 'wire') op = null; // moves/erases already applied stay applied
+      clearTimeout(stillTimer);
       rooms.cancelGesture();
       startPinch(touches);
       requestFrame();
@@ -711,7 +873,15 @@ export function openEditor(root, ctx, id) {
     }
     if (pinch) return;
     const [wx, wy] = toWorld(sx, sy);
-    const panTool = e.button === 1 || st.space || st.tool === 'hand' || (touch && st.penSeen);
+    const panTool = e.button === 1 || st.space || st.tool === 'hand';
+    if (touch && !panTool && !fingerDrawsNow()) {
+      // a finger that doesn't draw: on the selection it drags it; anywhere else it pans, and a tap selects
+      const hit = st.selection.length ? hitTest(d, wx, wy, 10 / z(), usable) : null;
+      if (hit && st.selection.some((x) => x.id === hit.item.id)) { op = { type: 'move', pid: e.pointerId, last: [wx, wy], cp: false }; return; }
+      op = { type: 'pan', pid: e.pointerId, sx, sy, vx: st.view.x, vy: st.view.y, tap: { w: [wx, wy], t: e.timeStamp } };
+      wrap.classList.add('panning');
+      return;
+    }
     if (panTool) { op = { type: 'pan', pid: e.pointerId, sx, sy, vx: st.view.x, vy: st.view.y }; wrap.classList.add('panning'); return; }
     if (e.button === 2) return;
     if (!st.placing && rooms.down(e, wx, wy)) { op = null; updateChrome(); requestFrame(); return; }
@@ -732,7 +902,13 @@ export function openEditor(root, ctx, id) {
       // the stabilizer owns the points: it may rewrite the last few when it finds a corner
       const stab = createStabilizer({ smoothness: o.smooth ?? 0, zoom: z(), minDist: 0.8 / z() });
       stab.add([wx, wy, p], e.timeStamp);
-      op = { type: 'draw', pid: e.pointerId, start: [wx, wy], last: [wx, wy, p], stab, stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: stab.points } };
+      op = {
+        type: 'draw', kind: e.pointerType, pid: e.pointerId, start: [wx, wy], last: [wx, wy, p], stab,
+        raw: [[wx, wy, p]], s0: [sx, sy], moved: false, still: createStillness({ slop: STILL_SLOP }), // for holds and hold-to-snap
+        stroke: { id: uid(), layer: st.activeLayer, tool: t, color: o.color, size: o.size, opacity: o.opacity, points: stab.points },
+      };
+      op.still.move(sx, sy, e.timeStamp);
+      armStill();
     } else if (t === 'line' || t === 'rect' || t === 'measure') {
       if (!st.setScale && !needLayer()) return;
       const o = opts[t];
@@ -783,27 +959,40 @@ export function openEditor(root, ctx, id) {
     if (!owns(e)) return;
     const [wx, wy] = toWorld(sx, sy);
     st.hover = [wx, wy];
+    // the Pencil above the glass (iPad Pro hover): the brush preview follows it
+    const hovering = e.pointerType === 'pen' && !pointers.has(e.pointerId);
+    st.penHover = hovering ? [wx, wy] : null;
     if ((!op || op.type !== 'pan') && rooms.move(e, wx, wy, pointers.has(e.pointerId))) { requestFrame(); return; }
     if (!op) {
-      if (st.tool === 'eraser' || st.placing) requestFrame();
+      if (st.tool === 'eraser' || st.placing || hovering) requestFrame();
       return;
     }
     switch (op.type) {
       case 'pan':
         st.view.x = op.vx + (sx - op.sx); st.view.y = op.vy + (sy - op.sy);
+        if (op.tap && Math.hypot(sx - op.sx, sy - op.sy) > TAP.slop) op.tap = null; // a drag, not a tap
         viewChanged();
         break;
       case 'draw': {
         const pts = op.stroke.points;
+        if (op.snapped) {
+          // a snapped line keeps following the pen like a ruler; a snapped shape stays until the pen lifts
+          if (op.snapped === 'line') op.stroke.points = [pts[0], [wx, wy, pts[pts.length - 1][2]]];
+          break;
+        }
         if (e.shiftKey || op.straight) { op.stroke.points = [pts[0], [wx, wy, pts[0][2]]]; op.straight = true; break; }
         // every sample since the last frame (a fast V can be only a few events apart otherwise),
         // through the stabilizer, which keeps corner tips exactly where they were (./stabilizer.js)
         let evs = e.getCoalescedEvents?.();
         if (!evs?.length) evs = [e];
         for (const ev of evs) {
-          const [qx, qy] = toWorld(...local(ev));
+          const ls = local(ev);
+          const [qx, qy] = toWorld(...ls);
           op.last = [qx, qy, ev.pointerType === 'pen' ? (ev.pressure || 0.5) : 0.5];
           op.stab.add(op.last, ev.timeStamp);
+          op.raw.push(op.last);
+          if (!op.moved && Math.hypot(ls[0] - op.s0[0], ls[1] - op.s0[1]) > STILL_SLOP) op.moved = true;
+          if (op.still.move(ls[0], ls[1], ev.timeStamp)) armStill(); // moved on: the hold starts again here
         }
         // where the pen is heading, drawn this frame only (raw ink only: smoothed ink trails the tip on purpose)
         const pred = op.stab.smoothness ? [] : e.getPredictedEvents?.() || [];
@@ -873,7 +1062,7 @@ export function openEditor(root, ctx, id) {
     if (e.pointerType === 'touch') {
       const n = e.type === 'pointercancel' ? (taps.cancel(), null) : taps.up(e.pointerId, e.timeStamp);
       if (!taps.active) clearTimeout(holdTimer);
-      if (n) { pinch = null; if (op?.type !== 'wire') op = null; wrap.classList.remove('panning'); takeBackTapFinger(); runGesture(n === 2 ? 'twoFingerTap' : 'threeFingerTap', tapView); return; }
+      if (n) { pinch = null; if (op?.type !== 'wire') op = null; clearTimeout(stillTimer); wrap.classList.remove('panning'); takeBackTapFinger(); runGesture(tapKey(n), tapView); return; }
     }
     if (pinch) {
       if ([...pointers.values()].filter((p) => p.type === 'touch').length < 2) pinch = null;
@@ -886,14 +1075,16 @@ export function openEditor(root, ctx, id) {
     const cur = op;
     if (cur.type === 'wire') return; // wires are click-by-click
     op = null;
+    clearTimeout(stillTimer);
     // A cancelled finger stroke is usually a gesture starting; drop it. A cancelled Pencil or
     // mouse stroke (iPadOS taking the stroke for Scribble or a system gesture) keeps what was drawn.
     const cancelled = e.type === 'pointercancel';
     if (cancelled && (cur.type === 'shape' || (cur.type === 'draw' && e.pointerType === 'touch'))) { requestFrame(); return; }
     if (cur.type === 'text') { if (!cancelled) textAt(...cur.at); return; }
+    if (cur.type === 'pan' && cur.tap && !cancelled && e.timeStamp - cur.tap.t < 350) { tapSelect(cur.tap.w); return; }
     if (cur.type === 'draw') {
       const s = cur.stroke;
-      if (!cur.straight) cur.stab.end(cur.last); // catch up to the last sample, not e: a cancel's coordinates can be 0,0
+      if (!cur.straight && !cur.snapped) cur.stab.end(cur.last); // catch up to the last sample, not e: a cancel's coordinates can be 0,0
       if (s.points.length === 1) s.points.push([s.points[0][0] + 0.01, s.points[0][1], s.points[0][2]]);
       checkpoint(); d.strokes.push(s); changed();
     } else if (cur.type === 'shape') {
@@ -932,20 +1123,16 @@ export function openEditor(root, ctx, id) {
     requestFrame();
   }
 
+  // two fingers: pinch to zoom, twist to rotate (snapping back to level), drag to pan (./gestures.js)
   function startPinch(touches) {
     const [a, b] = touches;
-    pinch = { d0: Math.hypot(b.x - a.x, b.y - a.y) || 1, c0: [(a.x + b.x) / 2, (a.y + b.y) / 2], v0: { ...st.view } };
+    pinch = { a0: [a.x, a.y], b0: [b.x, b.y], v0: { ...st.view } };
   }
   function movePinch() {
     const touches = [...pointers.values()].filter((p) => p.type === 'touch');
     if (touches.length < 2) return;
     const [a, b] = touches;
-    const dist = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-    const c = [(a.x + b.x) / 2, (a.y + b.y) / 2];
-    const v0 = pinch.v0;
-    const nz = Math.min(24, Math.max(0.05, v0.zoom * dist / pinch.d0));
-    const wx = (pinch.c0[0] - v0.x) / v0.zoom, wy = (pinch.c0[1] - v0.y) / v0.zoom;
-    st.view = { zoom: nz, x: c[0] - wx * nz, y: c[1] - wy * nz };
+    st.view = twoFingerView(pinch.v0, pinch.a0, pinch.b0, [a.x, a.y], [b.x, b.y], { zoom: getOption('pinchZoom'), rotate: getOption('rotate') });
     viewChanged();
   }
 
@@ -956,7 +1143,7 @@ export function openEditor(root, ctx, id) {
     else { st.view.x -= e.deltaX; st.view.y -= e.deltaY; viewChanged(); }
   }
 
-  function onLeave() { st.hover = null; requestFrame(); }
+  function onLeave() { st.hover = null; st.penHover = null; requestFrame(); }
 
   // Safari pinch on trackpads. On an iPad, Safari also sends these for any two touches, the
   // Pencil plus a resting palm included: pointers handle touch there, so with anything on the
@@ -990,7 +1177,7 @@ export function openEditor(root, ctx, id) {
     if (mod && k === 's') { e.preventDefault(); save(); ui.toast('Saved', 'success'); return; }
     if (mod) return;
     if (k === 'delete' || k === 'backspace') { if (st.selection.length) { e.preventDefault(); deleteSel(); } return; }
-    if (k === 'escape') { if (op?.type === 'wire') { op = null; st.snap = null; } st.placing = null; st.setScale = false; st.selection = []; pop.hidden = true; updateChrome(); requestFrame(); return; }
+    if (k === 'escape') { setUiHidden(false); if (op?.type === 'wire') { op = null; st.snap = null; } st.placing = null; st.setScale = false; st.selection = []; pop.hidden = true; updateChrome(); requestFrame(); return; }
     if (k === 'enter') { finishWire(); return; }
     if (k === 'pageup' || k === 'pagedown') { e.preventDefault(); goSheet(k === 'pageup' ? -1 : 1); return; }
     if (k === '0') { fit(); return; }
@@ -1073,7 +1260,14 @@ export function openEditor(root, ctx, id) {
   }
 
   // ---------- chrome ----------
-  function updateZoom() { zoomLabel.textContent = `${Math.round(z() * 100)}%`; renderSizeBar(); }
+  function updateZoom() {
+    zoomLabel.textContent = `${Math.round(z() * 100)}%`;
+    const deg = Math.round((rot() * 180) / Math.PI);
+    rotLabel.hidden = !rot();
+    rotLabel.textContent = `${deg}°`;
+    rotLabel.setAttribute('aria-label', `Rotated ${deg} degrees. Level the canvas`);
+    renderSizeBar();
+  }
 
   let sizeBarKey = '';
   function renderSizeBar() {
@@ -1103,13 +1297,22 @@ export function openEditor(root, ctx, id) {
     titleBtn.textContent = d.name || 'Untitled';
     undoBtn.disabled = !undo.length && op?.type !== 'wire';
     redoBtn.disabled = !redo.length;
+    const dark = isDark();
     for (const [tid, b] of toolButtons) {
       const active = tid === st.tool && !st.placing;
       b.setAttribute('aria-pressed', String(active));
-      // Tint the active tool with the colour it draws in, so the wheel shows what you're inking with.
+      // Every colour tool shows its colour (a dot), picked or not; the picked one is filled with it.
       const col = tid === 'eraser' ? null : opts[tid]?.color;
       b.style.background = active && col ? col : '';
       b.style.color = active && col ? readableOn(col) : '';
+      const dot = toolSwatches.get(tid);
+      if (dot && col) {
+        dot.style.background = inkFor(col, dark); // as the ink shows on this paper (near-black reads light on dark)
+        const t = ALL_TOOLS.find((x) => x.id === tid);
+        const label = `${t.label}, ${colourName(col)}`;
+        b.setAttribute('aria-label', label);
+        b.title = `${label} (${t.key.toUpperCase()})`;
+      }
     }
     wrap.dataset.tool = st.placing ? 'place' : st.tool;
     paperBtn.title = `Paper: ${PAPERS.find((p) => p.id === d.paper)?.label}`;
@@ -1237,14 +1440,24 @@ export function openEditor(root, ctx, id) {
     drawStroke(x, { tool: t, color: o.color, size: Math.min(6, Math.max(1.5, o.size)), opacity: o.opacity ?? 1, points: stab.points }, d, { dark });
   }
 
-  function togglePop(force) {
+  /** The brush popover. colours: just the colour swatches for the tool in hand (Pencil double-tap, gestures). */
+  function togglePop(force, { colours = false } = {}) {
     if (force == null && wrap.classList.contains('wheel-min')) { wrap.classList.remove('wheel-min'); return; } // a tucked-away wheel opens first
     const show = force ?? pop.hidden;
     pop.hidden = !show;
     if (!show) return;
     ui.clear(pop);
     const t = st.tool;
-    if (t === 'select' || t === 'hand') {
+    if (colours && opts[t]?.color) {
+      const o = opts[t];
+      const pick = (c) => { o.color = c; lastColor = c; saveOpts(opts, OPTS_KEY); updateChrome(); pop.hidden = true; };
+      pop.append(h('div', { class: 'cv-pop-title' }, `${ALL_TOOLS.find((x) => x.id === t)?.label || 'Brush'} colour`),
+        h('div', { class: 'cv-swatches', role: 'group', 'aria-label': 'Colours' },
+          SWATCHES.map((sw) => h('button', { type: 'button', class: ['cv-swatch', sw.c.toLowerCase() === String(o.color).toLowerCase() ? 'on' : null], title: sw.n, 'aria-label': sw.n, style: { background: sw.c }, onClick: () => pick(sw.c) })),
+          h('label', { class: 'cv-swatch custom', title: 'Custom colour' }, h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(o.color) ? o.color : '#1c1b19', 'aria-label': 'Custom colour', onChange: (e) => pick(e.target.value) }))));
+      return;
+    }
+    if (t === 'select' || t === 'hand' || colours) {
       // no brush here: just the colour used by "Apply current colour" and the next pen
       const pick = (c) => { lastColor = c; opts.pen.color = c; saveOpts(opts, OPTS_KEY); if (st.selection.length) recolorSel(c); updateChrome(); togglePop(true); };
       pop.append(h('div', { class: 'cv-pop-title' }, st.selection.length ? 'Colour selection' : 'Colour'),
@@ -1299,32 +1512,34 @@ export function openEditor(root, ctx, id) {
         SWATCHES.map((s) => h('button', { type: 'button', class: ['cv-swatch', s.c.toLowerCase() === String(o.color).toLowerCase() ? 'on' : null], title: s.n, 'aria-label': s.n, style: { background: s.c }, onClick: () => pick(s.c) })),
         h('label', { class: 'cv-swatch custom', title: 'Custom colour' }, h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(o.color) ? o.color : '#1c1b19', 'aria-label': 'Custom colour', onChange: (e) => pick(e.target.value) }))));
     }
-    rows.push(h('button', { type: 'button', class: 'cv-pop-link', onClick: () => { pop.hidden = true; gesturesSheet(); } }, icon('sliders', 16), 'Finger gestures'));
+    rows.push(h('button', { type: 'button', class: 'cv-pop-link', onClick: () => { pop.hidden = true; gesturesSheet(); } }, icon('sliders', 16), 'Gestures'));
     pop.append(...rows);
     if (squiggle) drawSquiggle(squiggle, t, o);
   }
 
   function gesturesSheet() {
     ui.openSheet({
-      title: 'Finger gestures',
+      title: 'Gestures',
       body: h('div', { class: 'stack' },
-        h('p', { class: 'muted', style: { margin: 0 } }, 'What a tap with two or three fingers does on a drawing. Also in Settings → Drawing.'),
-        gesturePanel(ui, (k, v) => savePref(session.me, k, v))),
+        h('p', { class: 'muted', style: { margin: 0 } }, 'What your fingers and the Apple Pencil do on a drawing. Also in Settings → Drawing.'),
+        gesturePanel(ui, (k, v) => savePref(session.me, k, v), { pencil: !!pencil?.available })),
     });
   }
 
   // ---------- sheets ----------
+  const usageUid = ctx.auth?.account?.userId || ctx.auth?.current?.()?.id || null;
   function symbolsSheet() {
     const ink = isDark() ? '#ecebe7' : '#1c1b19';
     const items = store.list('items', (i) => i.symbol);
+    const order = rankByUse('canvas.symbols', SYMBOL_ORDER, (sid) => sid, { uid: usageUid });
     const s = ui.openSheet({
       title: 'Symbols',
       body: h('div', { class: 'stack' },
         h('p', { class: 'muted', style: { margin: 0 } }, 'Pick a symbol, then tap the plan to place it. Keep tapping to place more. Symbols count toward the takeoff.'),
-        h('div', { class: 'cv-symbol-grid' }, SYMBOL_ORDER.map((sid) => {
+        h('div', { class: 'cv-symbol-grid' }, order.map((sid) => {
           const priced = items.find((i) => i.symbol === sid);
           return h('button', { type: 'button', class: ['cv-symbol', st.placing === sid ? 'on' : null], dataset: { symbol: sid },
-            onClick: () => { if (st.tool === 'eraser' || st.tool === 'hand') st.tool = 'select'; st.placing = sid; st.selection = []; s.close(); updateChrome(); ui.toast(`Tap the plan to place: ${SYMBOLS[sid].label}`); } },
+            onClick: () => { noteUse('canvas.symbols', sid, { uid: usageUid }); if (st.tool === 'eraser' || st.tool === 'hand') st.tool = 'select'; st.placing = sid; st.selection = []; s.close(); updateChrome(); ui.toast(`Tap the plan to place: ${SYMBOLS[sid].label}`); } },
           symbolPreview(sid, ink, 48), h('span', null, SYMBOLS[sid].label), priced && seesMoney ? h('small', { class: 'muted' }, ui.fmtMoney(priced.priceCents)) : null);
         }))),
     });
@@ -1473,7 +1688,7 @@ export function openEditor(root, ctx, id) {
           row(COLLAB_ICON, 'Changes', 'History by person and day, and who drew what', () => collab.open('history')),
           seesMoney ? row('dollar', 'Cost impact', d.jobId ? 'What the changes do to the estimate; create a change order' : 'Link to a job with an estimate first', () => collab.open('cost')) : null,
           row('sliders', 'Placement & check settings', 'Mounting heights, alarms, live check', () => rooms.settingsSheet()),
-          row('pointer', 'Finger gestures', `Two-finger tap: ${actionLabel(getGesture('twoFingerTap'))} · three-finger tap: ${actionLabel(getGesture('threeFingerTap'))}`, gesturesSheet),
+          row('pointer', 'Gestures', `Two-finger tap: ${actionLabel(getGesture('twoFingerTap'))} · three-finger tap: ${actionLabel(getGesture('threeFingerTap'))} · four-finger tap: ${actionLabel(getGesture('fourFingerTap'))}`, gesturesSheet),
           row('upload', 'Import plan', 'Image or PDF. A PDF with several pages becomes a plan set, one drawing per sheet', importUnderlay),
           d.planSet?.id ? row('layers', 'Sheets in this set', `${d.planSet.name}: jump to any sheet`, sheetsSheet) : null,
           row('list', 'Takeoff — counts & wire length', 'Symbol counts, total wire run length, and create an estimate', takeoffSheet),
@@ -1720,12 +1935,22 @@ export function openEditor(root, ctx, id) {
   canvas.addEventListener('touchmove', noTouchDefault, { passive: false });
   addEventListener('keydown', onKey);
   addEventListener('keyup', onKey);
+  // The Apple Pencil's double-tap and squeeze (iOS app only; nothing happens without the bridge)
+  const pencilAt = (ev) => {
+    if (!Number.isFinite(ev?.x) || !Number.isFinite(ev?.y) || !st.view) return null;
+    const r = canvas.getBoundingClientRect();
+    return toWorld(ev.x - r.left, ev.y - r.top);
+  };
+  pencil = connectPencil({
+    onDoubleTap: (ev) => { if (!destroyed && !document.querySelector('.sheet, .dialog')) runGesture('pencilDoubleTap', null, pencilAt(ev), null, ev.preferred); },
+    onSqueeze: (ev) => { if (!destroyed && ev.phase === 'ended' && !document.querySelector('.sheet, .dialog')) runGesture('pencilSqueeze', null, pencilAt(ev), null, ev.preferred); },
+  });
   const ro = new ResizeObserver(resize);
   ro.observe(wrap);
   const mo = new MutationObserver(() => { baseDirty = true; updateChrome(); requestFrame(); });
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   const mq = matchMedia('(prefers-color-scheme: dark)');
-  const onScheme = () => { baseDirty = true; requestFrame(); };
+  const onScheme = () => { baseDirty = true; updateChrome(); requestFrame(); };
   mq.addEventListener?.('change', onScheme);
   const onHide = () => { if (document.visibilityState === 'hidden') flushSave(); };
   document.addEventListener('visibilitychange', onHide);
@@ -1764,11 +1989,14 @@ export function openEditor(root, ctx, id) {
   globalThis.kelbeCanvas = {
     d, st, setTool, fit, takeoff: () => takeoff(d), save: () => save(), rooms, opts, undoDepth: () => undo.length, redoDepth: () => redo.length,
     importFile: (file) => importUnderlay(file), sheets: () => setSheets(), goSheet, collab,
+    gesture: (key, at, preferred) => runGesture(key, null, at, null, preferred), pencil: () => pencil,
   };
 
   return () => {
     destroyed = true;
     clearTimeout(holdTimer);
+    clearTimeout(stillTimer);
+    pencil?.off();
     flushSave();
     offRemote();
     collab.destroy();

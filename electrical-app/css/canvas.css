@@ -177,6 +177,39 @@ body.canvas-open .wheel-fab, body.canvas-open .wheel, body.canvas-open .wheel-sc
 .cv-sizebar-well { width: 28px; height: 28px; display: grid; place-items: center; }
 .cv-sizebar-num { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-muted); }
 .cv-gestures .field select { width: 100%; }
+.cv-gesture-group { gap: var(--s2); }
+.cv-gesture-group + .cv-gesture-group { padding-top: var(--s3); border-top: 1px solid var(--border); }
+.cv-gesture-head { margin: 0; font-size: var(--fs-xs); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.cv-gesture-opt { display: flex; flex-direction: column; gap: 2px; }
+.cv-gesture-opt .hint, .cv-gesture-note { font-size: var(--fs-xs); }
+
+/* every colour tool wears its colour, picked or not: a dot in the corner of its button */
+.cv-btn.has-swatch { position: relative; }
+.cv-tool-swatch {
+  position: absolute; right: 3px; bottom: 3px; width: 11px; height: 11px; border-radius: 50%; pointer-events: none;
+  box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 2.5px var(--border-input);
+}
+.cv-wheel-tool .cv-tool-swatch { right: 1px; bottom: 1px; width: 10px; height: 10px; }
+/* the picked tool is filled with its colour; a ring keeps it obvious when that colour is near the bar's (white, yellow, black in dark) */
+.cv-wheel-tool[aria-pressed="true"], .cv-btn.has-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent-fill); }
+[aria-pressed="true"] > .cv-tool-swatch { box-shadow: 0 0 0 1.5px currentColor; }
+
+/* the canvas turned with two fingers: its angle, tap to level */
+.cv-rot-label {
+  border: 0; background: var(--accent-soft); color: var(--text); min-width: 48px; height: 34px; padding: 0 8px; border-radius: var(--r-pill);
+  font-weight: 650; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.cv-rot-label[hidden] { display: none; }
+
+/* full screen (four-finger tap): every bar hides; a small button brings them back */
+.cv.ui-hidden .cv-bar, .cv.ui-hidden .cv-wheel, .cv.ui-hidden .cv-pop, .cv.ui-hidden .cv-attr-chip { display: none !important; }
+.cv-ui-restore {
+  display: none; position: absolute; z-index: 3; right: var(--s3); top: var(--s3); width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); opacity: .7; cursor: pointer; place-items: center;
+  box-shadow: var(--shadow-float);
+}
+.cv-ui-restore:hover { opacity: 1; color: var(--text); }
+.cv.ui-hidden .cv-ui-restore { display: grid; }
 
 /* tool wheel tucked away (a finger gesture can do this): just its centre, tap to bring it back */
 .cv.wheel-min .cv-wheel { width: 64px; height: 64px; }

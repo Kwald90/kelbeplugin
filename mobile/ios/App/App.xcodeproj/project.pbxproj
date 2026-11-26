@@ -25,6 +25,7 @@
 		F15A7A9E0000000000000006 /* FishtapePrintPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000016 /* FishtapePrintPlugin.swift */; };
 		F15A7A9E0000000000000007 /* FishtapeGeofencePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E0000000000000017 /* FishtapeGeofencePlugin.swift */; };
 		F15A7A9E00000000000000A1 /* FishtapeSpeechPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E00000000000000A2 /* FishtapeSpeechPlugin.swift */; };
+		F15A7A9E000000000000D7A1 /* FishtapePencilPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F15A7A9E000000000000D7A2 /* FishtapePencilPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +49,7 @@
 		F15A7A9E0000000000000016 /* FishtapePrintPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FishtapePrintPlugin.swift; sourceTree = "<group>"; };
 		F15A7A9E0000000000000017 /* FishtapeGeofencePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FishtapeGeofencePlugin.swift; sourceTree = "<group>"; };
 		F15A7A9E00000000000000A2 /* FishtapeSpeechPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FishtapeSpeechPlugin.swift; sourceTree = "<group>"; };
+		F15A7A9E000000000000D7A2 /* FishtapePencilPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FishtapePencilPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -116,6 +118,7 @@
 				F15A7A9E0000000000000016 /* FishtapePrintPlugin.swift */,
 				F15A7A9E0000000000000017 /* FishtapeGeofencePlugin.swift */,
 				F15A7A9E00000000000000A2 /* FishtapeSpeechPlugin.swift */,
+				F15A7A9E000000000000D7A2 /* FishtapePencilPlugin.swift */,
 			);
 			path = Plugins;
 			sourceTree = "<group>";
@@ -212,6 +215,7 @@
 				F15A7A9E0000000000000006 /* FishtapePrintPlugin.swift in Sources */,
 				F15A7A9E0000000000000007 /* FishtapeGeofencePlugin.swift in Sources */,
 				F15A7A9E00000000000000A1 /* FishtapeSpeechPlugin.swift in Sources */,
+				F15A7A9E000000000000D7A1 /* FishtapePencilPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

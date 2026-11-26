@@ -30,52 +30,67 @@ export function inkFor(color, dark) {
 const needsHalo = (color, dark) => !dark && lum(color) > 0.85;
 
 // ---------- paper ----------
-/** Paper pattern in screen space for the given view. */
+/**
+ * Paper pattern in screen space for the given view. A rotated view (view.rot, radians) turns the
+ * pattern with the drawing: it is drawn in the turned frame, over the part of it the screen shows.
+ */
 export function drawPaper(ctx, view, w, h, paper, colors) {
   ctx.fillStyle = colors.bg;
   ctx.fillRect(0, 0, w, h);
   if (!paper || paper === 'none') return;
+  const rot = view.rot || 0;
+  if (!rot) { paperPattern(ctx, view, 0, 0, w, h, paper, colors, true); return; }
+  const c = Math.cos(rot), sn = Math.sin(rot);
+  const turned = [[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) => [(x - view.x) * c + (y - view.y) * sn, -(x - view.x) * sn + (y - view.y) * c]);
+  const xs = turned.map((q) => q[0]), ys = turned.map((q) => q[1]);
+  ctx.save();
+  ctx.translate(view.x, view.y);
+  ctx.rotate(rot);
+  paperPattern(ctx, { x: 0, y: 0, zoom: view.zoom }, Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), paper, colors, false);
+  ctx.restore();
+}
+
+/** The paper's lines or dots over x0..x1, y0..y1 (in the frame the view is in); crisp: snap to pixels. */
+function paperPattern(ctx, view, x0, y0, x1, y1, paper, colors, crisp) {
   let step = 24;
   while (step * view.zoom < 10) step *= 5;
   const s = step * view.zoom;
+  const px = crisp ? (v) => Math.round(v) + 0.5 : (v) => v;
+  const first = (o, lo, gap) => o + Math.ceil((lo - o) / gap) * gap; // the first line at or after lo
   ctx.save();
   ctx.strokeStyle = colors.line;
   ctx.fillStyle = colors.line;
   ctx.lineWidth = 1;
   if (paper === 'grid' || paper === 'dots') {
-    const ox = ((view.x % s) + s) % s, oy = ((view.y % s) + s) % s;
     if (paper === 'grid') {
-      ctx.beginPath();
-      for (let x = ox; x < w; x += s) { ctx.moveTo(Math.round(x) + 0.5, 0); ctx.lineTo(Math.round(x) + 0.5, h); }
-      for (let y = oy; y < h; y += s) { ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(w, Math.round(y) + 0.5); }
-      ctx.stroke();
+      const lines = (gap) => {
+        ctx.beginPath();
+        for (let x = first(view.x, x0, gap); x < x1; x += gap) { ctx.moveTo(px(x), y0); ctx.lineTo(px(x), y1); }
+        for (let y = first(view.y, y0, gap); y < y1; y += gap) { ctx.moveTo(x0, px(y)); ctx.lineTo(x1, px(y)); }
+        ctx.stroke();
+      };
+      lines(s);
       // every 5th line a little stronger, like engineering paper
-      const big = s * 5;
-      const bx = ((view.x % big) + big) % big, by = ((view.y % big) + big) % big;
       ctx.globalAlpha = 0.9;
-      ctx.beginPath();
-      for (let x = bx; x < w; x += big) { ctx.moveTo(Math.round(x) + 0.5, 0); ctx.lineTo(Math.round(x) + 0.5, h); }
-      for (let y = by; y < h; y += big) { ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(w, Math.round(y) + 0.5); }
-      ctx.stroke();
+      lines(s * 5);
     } else {
       const r = Math.max(1, Math.min(1.8, s / 14));
-      for (let x = ox; x < w; x += s) for (let y = oy; y < h; y += s) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+      for (let x = first(view.x, x0, s); x < x1; x += s) for (let y = first(view.y, y0, s); y < y1; y += s) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
     }
   } else if (paper === 'iso') {
     // isometric: verticals every s*cos30, plus two families at ±30°
     const dx = s * Math.cos(Math.PI / 6);
     const t = Math.tan(Math.PI / 6);
     ctx.beginPath();
-    const ox = ((view.x % dx) + dx) % dx;
-    for (let x = ox; x < w; x += dx) { ctx.moveTo(x, 0); ctx.lineTo(x, h); }
-    // lines y = ±t*(x - view.x) + view.y + k*s  -> intercept at screen x=0
+    for (let x = first(view.x, x0, dx); x < x1; x += dx) { ctx.moveTo(x, y0); ctx.lineTo(x, y1); }
+    // lines y = ±t*(x - view.x) + view.y + k*s
     for (const sign of [1, -1]) {
       const base = view.y - sign * t * view.x; // y at x=0 for k=0
-      const span = t * w;
-      const kMin = Math.floor((-span - base) / s) - 1, kMax = Math.ceil((h + span - base) / s) + 1;
+      const ya = sign * t * x0, yb = sign * t * x1;
+      const kMin = Math.floor((y0 - base - Math.max(ya, yb)) / s) - 1, kMax = Math.ceil((y1 - base - Math.min(ya, yb)) / s) + 1;
       for (let k = kMin; k <= kMax; k++) {
-        const y0 = base + k * s;
-        ctx.moveTo(0, y0); ctx.lineTo(w, y0 + sign * t * w);
+        const c0 = base + k * s;
+        ctx.moveTo(x0, c0 + ya); ctx.lineTo(x1, c0 + yb);
       }
     }
     ctx.stroke();
