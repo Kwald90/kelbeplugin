@@ -69,6 +69,8 @@ mkdir -p "$STATE_DIR/status" "$WWW_DIR/releases"
 install -d -o 1000 -g 1000 -m 755 "$STATE_DIR/media"
 # HQ Mail files: only the containers' user (uid 1000) may read them.
 install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/mail"
+# Files (#/files): company documents, read only through the authenticated API. Never served.
+install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/files"
 # Restore tests and offsite drill results (RESTORE_TESTS_FILE): hq-api appends uploaded drills,
 # restore-test.sh appends local tests, the worker reads them for the hourly backup alerts.
 install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/drills"

@@ -23,6 +23,7 @@ import { FINANCE_HANDLERS, scheduleFinanceJobs } from './services/hq-finance.js'
 import { STATUS_HANDLERS, scheduleStatusProbes } from './services/status-page.js';
 import { createMaterialHandlers, scheduleMaterialRequestSends } from './services/materials.js';
 import { createWalkthroughMediaHandlers } from './services/walkthrough-media.js';
+import { createFilesHandlers, scheduleFilesJobs } from './services/files-jobs.js';
 import { LOCATION_HANDLERS, scheduleLocationJobs } from './services/location.js';
 import { registerAmountDueAdjuster } from './integrations/payments.js';
 import { createQboHandlers, scheduleQboJobs } from './qbo/jobs.js';
@@ -48,7 +49,7 @@ async function main() {
   // With db, refused system writes are recorded in sync_rejections (r1-get-paid.md 2.6).
   const records = createRecords({ validator: createValidator(), config, db });
   // The QuickBooks alerts run in the general pool: they watch the QuickBooks pool and must not wait in it.
-  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }), ...createMaterialHandlers({ config }), ...createWalkthroughMediaHandlers({ config, sealer }), ...QBO_ALERT_HANDLERS, ...createPlatformEmailHandlers({ sealer }) };
+  const handlers = { ...HANDLERS, ...createAiHandlers({ config }), ...createNotificationHandlers({ config }), ...createMaterialHandlers({ config }), ...createWalkthroughMediaHandlers({ config, sealer }), ...createFilesHandlers({ config }), ...QBO_ALERT_HANDLERS, ...createPlatformEmailHandlers({ sealer }) };
   const qboHandlers = {
     ...createQboHandlers({ sealer, config, records, workerId }),
     ...createQboPlatformHandlers({ sealer, config }),
@@ -74,6 +75,7 @@ async function main() {
     await scheduleStatusProbes(db);
     await scheduleMaterialRequestSends(db);
     await scheduleLocationJobs(db);
+    await scheduleFilesJobs(db);
     await scheduleQboJobs(db, { config });
     await scheduleQboPlatformJobs(db);
     await scheduleQboAlerts(db);
