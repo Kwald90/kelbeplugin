@@ -276,10 +276,16 @@ export function isJunkStem(stem) {
   return JUNK_STEM.test(s);
 }
 
-/** A safe stored name: no path separators or control characters, at most NAME_MAX characters, extension kept. */
+/**
+ * A safe stored name: the person's own name, minus path separators, characters file systems refuse and
+ * control characters, with no leading dots, at most NAME_MAX characters, extension kept. (Tidying the
+ * wording is suggestName's job, offered rather than imposed.)
+ */
 export function safeName(name, fallback = 'File') {
   const ext = extOf(name);
-  let stem = cleanStem(stemOf(name)).slice(0, NAME_MAX - (ext ? ext.length + 1 : 0)).trim();
+  let stem = String(stemOf(name) || '').normalize('NFC').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s{2,}/g, ' ').replace(/^[\s.-]+|[\s.]+$/g, '');
+  stem = stem.slice(0, NAME_MAX - (ext ? ext.length + 1 : 0)).trim();
   if (!stem) stem = fallback;
   return ext ? `${stem}.${ext}` : stem;
 }
@@ -299,7 +305,7 @@ export function suggestName({ name, category, job = null, client = null, date = 
     const who = job ? [job.number, job.title].filter(Boolean).join(' ') : (client?.name || '');
     out = [String(date || '').slice(0, 10), noun, who].filter(Boolean).join(' ');
   }
-  return safeName(ext ? `${out}.${ext}` : out);
+  return safeName(ext ? `${cleanStem(out)}.${ext}` : cleanStem(out));
 }
 
 // ---- the whole decision ------------------------------------------------------------------------

@@ -174,7 +174,9 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     // X-Walkthrough-Id / X-Duration-Ms: the walkthrough video upload sends these, so the cross-origin
     // iOS app (capacitor://localhost) needs them on the CORS preflight or the upload is blocked.
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Fishtape', 'X-Fishtape-Device', 'X-Request-Id', 'If-Match', 'X-Walkthrough-Id', 'X-Duration-Ms'],
+    // X-File-Name / X-Client-Id / X-Job-Id / X-Category / X-Folder-Id / X-Source: Files uploads (routes/v1/files.js).
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Fishtape', 'X-Fishtape-Device', 'X-Request-Id', 'If-Match', 'X-Walkthrough-Id', 'X-Duration-Ms',
+      'X-File-Name', 'X-Client-Id', 'X-Job-Id', 'X-Category', 'X-Folder-Id', 'X-Source'],
     exposedHeaders: ['X-Request-Id'],
     maxAge: 600,
   });

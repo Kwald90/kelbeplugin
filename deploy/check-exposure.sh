@@ -277,7 +277,8 @@ if [ "$API" -eq 1 ]; then
   if [[ "$CODE" == 2* ]]; then bad "/api/hq/health answered $CODE without credentials"; else ok "/api/hq/health without credentials -> $CODE"; fi
   # Files (#/files): uploaded company documents are only readable signed in, through the API.
   if [ "$MODE" = app ] || [ "$MODE" = production ]; then
-    for p in /api/v1/files /api/v1/files/00000000-0000-4000-8000-000000000000/content              "/api/v1/files/00000000-0000-4000-8000-000000000000/content?inline=1" /api/v1/file-folders; do
+    FILE_PROBE=/api/v1/files/00000000-0000-4000-8000-000000000000
+    for p in /api/v1/files "$FILE_PROBE/content" "$FILE_PROBE/content?inline=1" /api/v1/file-folders; do
       fetch "$p"
       if [[ "$CODE" == 2* ]]; then bad "$p answered $CODE without credentials"; else ok "$p without credentials -> $CODE"; fi
     done

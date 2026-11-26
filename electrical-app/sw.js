@@ -36,3 +36,33 @@ self.addEventListener('fetch', (e) => {
     return res;
   }).catch(() => caches.match(req).then((r) => r || caches.match('./index.html'))));
 });
+
+// Web Share Target (manifest.webmanifest share_target): files shared to the installed app from another
+// app arrive here as a multipart POST. They are kept in IndexedDB "fishtape-share" (the same store and
+// shape js/lib/files-share.js reads) and the Files screen opens with the Import sheet. Nothing is sent
+// anywhere from here; the upload happens signed in, from the page.
+function stashShared(files) {
+  return new Promise((resolve) => {
+    const req = indexedDB.open('fishtape-share', 1);
+    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains('files')) req.result.createObjectStore('files', { autoIncrement: true }); };
+    req.onerror = () => resolve();
+    req.onsuccess = () => {
+      const db = req.result;
+      const t = db.transaction('files', 'readwrite');
+      for (const f of files) t.objectStore('files').add({ name: f.name || 'Shared file', type: f.type || '', blob: f, at: Date.now(), via: 'share' });
+      t.oncomplete = t.onerror = t.onabort = () => { db.close(); resolve(); };
+    };
+  });
+}
+self.addEventListener('fetch', (e) => {
+  const url = new URL(e.request.url);
+  if (e.request.method !== 'POST' || url.origin !== location.origin || url.pathname !== new URL('./share-target', self.registration.scope).pathname) return;
+  e.respondWith((async () => {
+    try {
+      const form = await e.request.formData();
+      const files = form.getAll('files').filter((f) => f && typeof f === 'object' && f.size > 0);
+      if (files.length) await stashShared(files);
+    } catch { /* nothing usable was shared */ }
+    return Response.redirect(new URL('./#/files?shared=1', self.registration.scope).href, 303);
+  })());
+});

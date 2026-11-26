@@ -50,7 +50,8 @@ describe('what may be stored (checked by bytes, not names)', () => {
   });
 
   test('names from headers are decoded and made safe; storage paths only from 32-hex keys', () => {
-    assert.equal(headerName(encodeURIComponent('FW_ ../../etc/Permit (2).pdf')), 'etc-Permit.pdf');
+    assert.equal(headerName(encodeURIComponent('FW_ ../../etc/Permit (2).pdf')), 'FW_ ..-..-etc-Permit (2).pdf', 'no path separators; the wording is kept');
+    assert.equal(headerName(encodeURIComponent('../.env')), 'File.env', 'never a dotfile or a path');
     assert.equal(headerName(encodeURIComponent('Ünïcode plan.pdf')), 'Ünïcode plan.pdf');
     assert.equal(headerName(''), 'File');
     assert.throws(() => storagePath('/srv/files', '../etc/passwd'));

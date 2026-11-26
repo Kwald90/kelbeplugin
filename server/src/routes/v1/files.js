@@ -16,6 +16,7 @@
 import { ApiError, badRequest, forbidden, notFound } from '../../errors.js';
 import { appendAudit } from '../../services/audit.js';
 import { requireModule } from '../../services/modules.js';
+import { requireFeature } from '../../services/entitlements.js';
 import { readAiConfig } from '../../ai/config.js';
 import { classifyFile } from '../../services/files-ai.js';
 import {
@@ -50,7 +51,10 @@ export default async function filesRoutes(app, { db, config }) {
   const needStore = () => { if (store.problem) throw new ApiError(503, 'files_unavailable', `File storage is off on this server: ${store.problem}`); };
   const canUse = (p) => p.perms.has('jobs');
   const needUse = (p) => { if (!canUse(p)) throw forbidden('You cannot open Files.'); };
-  const writeGuard = requireModule(db, 'files');
+  // Writes need the plan feature and the module switch; reads never do (a downgrade keeps every file readable).
+  const planGuard = requireFeature(db, 'files');
+  const switchGuard = requireModule(db, 'files');
+  const writeGuard = async (req) => { await planGuard(req); await switchGuard(req); };
 
   // Upload bodies for this plugin only: the stream is left for the handler (type and size checked there).
   app.addContentTypeParser('application/octet-stream', (req, payload, done) => done(null));
@@ -359,7 +363,6 @@ export default async function filesRoutes(app, { db, config }) {
       .header('x-content-type-options', 'nosniff')
       // Even opened on its own, the file can't run script or load anything.
       .header('content-security-policy', "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox")
-      .header('cross-origin-resource-policy', 'same-origin')
       .header('cache-control', 'private, no-store');
     return reply.send(opened.stream);
   });
