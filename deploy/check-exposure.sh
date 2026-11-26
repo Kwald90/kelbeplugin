@@ -31,6 +31,8 @@
 #                       /api/v1/public/status; other site pages redirect to the apex; no PWA,
 #                       no other API route
 #   --no-api            skip API checks (staging before server/ exists)
+#   --verbose           list every sensitive path probed with the status it answered (the deploy
+#                       report shows this list: Kelvin's rule, every path and its status)
 #   --media-dir DIR     run on the box: also probe the real private files in DIR (MEDIA_DIR on the
 #                       host, e.g. /var/lib/fishtape-production/media) by name at /media/
 #   --resolve H:P:ADDR  passed to curl, e.g. run on the box itself:
@@ -44,6 +46,7 @@ shift
 MODE=app
 API=1
 MEDIA_DIR=""
+VERBOSE=0
 CURL_EXTRA=()
 HTTP_EXTRA=()
 while [ $# -gt 0 ]; do
@@ -53,6 +56,7 @@ while [ $# -gt 0 ]; do
     --marketing) MODE=marketing; shift ;;
     --status) MODE=status; shift ;;
     --no-api) API=0; shift ;;
+    --verbose) VERBOSE=1; shift ;;
     --media-dir) MEDIA_DIR="${2:-}"; shift 2 ;;
     --resolve)
       CURL_EXTRA+=(--resolve "${2:-}")
@@ -124,6 +128,8 @@ SENSITIVE=(
 exposed=0
 for p in "${SENSITIVE[@]}"; do
   fetch "$p"
+  [ "$VERBOSE" -eq 1 ] && printf '      %s  %s
+' "$CODE" "$p"
   if [[ "$CODE" == 2* ]]; then bad "$p answered $CODE (must not be served)"; exposed=1
   elif looks_secret; then bad "$p answered $CODE with secret-looking content"; exposed=1
   fi

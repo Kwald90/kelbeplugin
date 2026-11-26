@@ -307,6 +307,48 @@ GitHub → Settings → Environments → `production`: required reviewer Kelvin,
 (`fishtape-prod-deploy`), `PRODUCTION_KNOWN_HOSTS`; then the repository variable
 `PRODUCTION_DEPLOY_ENABLED=true`.
 
+## Hosts where nginx runs in a container (the dotmoose VPS)
+
+Production moved to the dotmoose VPS (vps-bhs-1001.dotmoose.com, user `kelvin`, passwordless sudo)
+on 2026-11-25. That box differs from the CloudPanel layout above:
+
+- Apache (httpd) owns :80/:443 and terminates TLS (`/etc/httpd/conf.d/fleet-fishtapehq.conf`,
+  certificate `/etc/letsencrypt/live/app.fishtapehq.com/`). It proxies every Fishtape name to
+  `http://127.0.0.1:8443/`.
+- nginx for Fishtape is the `fishtape-nginx` container (host network). Its config lives in
+  `/home/fleet-staging/fishtape-nginx/` (`run-fishtape.conf`, `run/snippets/`), mounted read-only.
+- The web root the container serves is `/home/fleet-staging/trees/srv/fishtape/www` (mounted at
+  `/srv/fishtape/www`).
+- Containers, volumes and `/var/lib/fishtape-production` are as above. The migrated `.env` and
+  `backup-recipients.txt` live in `/home/fleet-staging/run/fishtape-prod/`.
+
+`update.sh` and `install-nginx.sh` read a **host profile**, `/etc/fishtape/production.env`
+(root-owned, not group/world-writable), for these differences. The dotmoose one is
+`host-profiles/dotmoose.env.example`. With `NGINX_MODE=container`, `install-nginx.sh` renders the
+repo's `nginx/` files for the container (no port-80 server, `listen 127.0.0.1:8443`, no TLS lines,
+`X-Forwarded-Proto https`), tests them with `docker exec fishtape-nginx nginx -t`, reloads, and puts
+the old files back if the test fails. `install-nginx.sh --render` prints the rendered site config.
+
+One-time setup on such a box (done once; every later deploy is the usual `update.sh --tag`):
+
+```bash
+sudo git clone https://github.com/Kwald90/kelbeplugin.git /srv/fishtape/repo
+sudo git -C /srv/fishtape/repo checkout --detach <sha now running>   # docker inspect fishtape-production-api-1
+sudo ln -s /home/fleet-staging/run/fishtape-prod/.env /srv/fishtape/repo/deploy/production/.env
+sudo ln -s /home/fleet-staging/run/fishtape-prod/backup-recipients.txt /srv/fishtape/repo/deploy/production/backup-recipients.txt
+sudo install -d -m 755 /etc/fishtape
+sudo install -m 644 /srv/fishtape/repo/deploy/production/host-profiles/dotmoose.env.example /etc/fishtape/production.env
+# Let update.sh roll back to what is running now:
+echo <sha now running> | sudo tee /var/lib/fishtape-production/current-image
+sudo docker tag fishtape.invalid/server:current fishtape.invalid/server:<sha now running>
+```
+
+Known gaps on this box (2026-11-25): job-site media and promotion hero files are not mounted into the
+nginx container, so `/media/` answers 404 on every host (hero videos on the apex do not show); the
+cron backups (`/etc/cron.d/fishtape`) run from the run folder, so they are named `fishtape-prod` and
+write their status to `/var/lib/fishtape-fishtape-prod/status`, which the API does not read (HQ
+health shows no backup); `/var/lib/fishtape-production/files` is not in any backup yet.
+
 ## Day to day
 
 ```bash

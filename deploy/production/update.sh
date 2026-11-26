@@ -12,15 +12,33 @@
 #    /srv/fishtape/www/releases/<sha>, flip the `current` symlink atomically, and check
 #    app.fishtapehq.com through nginx (a failure here rolls back)
 # 6. install the nginx files when the installed ones differ from the release's, check the apex,
-#    status. and hq. through nginx, then run deploy/check-exposure.sh on each: warnings only (the
-#    API and the app are already live and fine; a failed nginx install is one too). hq. is skipped
-#    with a warning while it doesn't resolve or isn't on the certificate yet.
+#    status. and hq. through nginx (warnings only). hq. is skipped with a warning while it doesn't
+#    resolve or isn't on the certificate yet.
+# 7. the exposure gate (deploy/check-exposure.sh) on every public host, from the box, listing every
+#    path and its status. Any failure FAILS THE DEPLOY (exit 1, result "exposure_failed" in the log):
+#    the release stays live (rolling back rarely closes a web-server hole), but nobody may call it
+#    done until the gate passes. Run the same gate from outside too (README).
 # Any failure in 1-5 rolls back the containers and the symlink. Every run appends one JSON line to
 # /var/lib/fishtape-production/deploy-log.jsonl. Migrations are not rolled back: they must be
 # expand/contract (docs/compliance/change-management.md). There is no seed in production.
 set -Eeuo pipefail
 trap '' HUP
 umask 022
+
+# Host profile: where this box keeps things when it differs from the defaults below (REPO_DIR,
+# WWW_DIR, CERT_FILE, NGINX_MODE=container + NGINX_CONTAINER + NGINX_CONF_DIR...). README "Host
+# profile". Root-owned and not group/world-writable, since root sources it.
+HOST_PROFILE="${FISHTAPE_HOST_PROFILE:-/etc/fishtape/production.env}"
+if [ -f "$HOST_PROFILE" ]; then
+  read -r hp_uid hp_mode < <(stat -c '%u %a' "$HOST_PROFILE")
+  if [ "$hp_uid" != 0 ] || [ $(( 8#$hp_mode & 8#022 )) -ne 0 ]; then
+    echo "refusing $HOST_PROFILE: must be owned by root and not group/world-writable (uid $hp_uid, mode $hp_mode)" >&2; exit 1
+  fi
+  set -a
+  # shellcheck source=/dev/null
+  . "$HOST_PROFILE"
+  set +a
+fi
 
 ENV_NAME=production
 REPO_DIR="${REPO_DIR:-/srv/fishtape/repo}"
@@ -285,16 +303,18 @@ fi
 
 say "done: production is on $TAG (${TARGET:0:12}) in $(( $(date +%s) - START ))s"
 
-# ---- 8. exposure checks ----
-# Is anything sensitive served, is any header missing? Warns only (the release is live); the
-# output is kept for the evidence bundle. The deploy workflow runs the same checks from outside.
+# ---- 8. exposure gate: fails the deploy ----
+# Is anything private served, is any header missing? Every probed path and its status is printed
+# here and kept in $EXPOSURE_OUT for the deploy report. A failure exits 1: the release is live, but
+# the deploy is not done until this passes (see the header). Run it from outside as well.
 EXPOSURE_OUT="$STATE_DIR/last-exposure-check.txt"
 : > "$EXPOSURE_OUT"
+chmod 640 "$EXPOSURE_OUT"
 expo_failed=""
 expo() { # label base-url mode-args...
   local label="$1" base="$2" host="${2#https://}"
   shift 2
-  if ! "$REPO_DIR/deploy/check-exposure.sh" "$base" "$@" --resolve "$host:443:127.0.0.1" --media-dir "$STATE_DIR/media" >> "$EXPOSURE_OUT" 2>&1; then
+  if ! "$REPO_DIR/deploy/check-exposure.sh" "$base" "$@" --verbose --resolve "$host:443:127.0.0.1" --media-dir "$STATE_DIR/media" 2>&1 | tee -a "$EXPOSURE_OUT"; then
     expo_failed="$expo_failed $label"
   fi
 }
@@ -303,7 +323,10 @@ if [ "$APEX_OK" -eq 1 ]; then expo apex "https://$APEX_HOST" --marketing; fi
 if [ "$STATUS_OK" -eq 1 ]; then expo status "https://$STATUS_HOST" --status; fi
 if [ "$HQ_OK" -eq 1 ]; then expo hq "https://$HQ_HOST" --hq; fi
 if [ -z "$expo_failed" ]; then
-  say "exposure checks passed"
+  say "exposure gate passed on every host (each path and status above, and in $EXPOSURE_OUT)"
 else
-  say "WARNING: exposure check failed for:$expo_failed; see $EXPOSURE_OUT"
+  say "FAILED: the exposure gate failed for:$expo_failed. Something private may be reachable."
+  say "The release is live but this deploy is NOT done: fix it and re-run. Details in $EXPOSURE_OUT."
+  record exposure_failed "deployed $TAG but the exposure gate failed for:$expo_failed"
+  exit 1
 fi
