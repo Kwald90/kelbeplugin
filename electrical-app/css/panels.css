@@ -1,0 +1,101 @@
+/* Panel schedule sheet (js/lib/panel-sheet.js, js/modules/panels.js): the company's spreadsheet
+   template on screen and on paper. The sheet itself is a white "paper" grid with black rules in
+   both themes, like the printed schedule it becomes; everything around it uses tokens. */
+
+/* ---------- toolbar ---------- */
+.ps-grid { margin-bottom: var(--s4); }
+.ps-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin-bottom: var(--s2); }
+.ps-seg { display: inline-flex; border: 1px solid var(--border-input); border-radius: var(--r-pill); overflow: hidden; background: var(--surface); }
+.ps-seg-btn { border: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-xs); font-weight: 600; padding: 0 12px; min-height: 36px; cursor: pointer; white-space: nowrap; }
+.ps-seg-btn + .ps-seg-btn { border-left: 1px solid var(--border-input); }
+.ps-seg-btn.on { background: var(--accent-fill); color: var(--on-accent); }
+.ps-seg-btn:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
+.ps-hint { margin: var(--s2) 2px 0; }
+.ps-google ol { margin: 0; padding-left: 1.3em; display: flex; flex-direction: column; gap: 6px; }
+.ps-google p { margin: 0; }
+
+/* ---------- the sheet (screen) ---------- */
+.ps-scroll { position: relative; overflow-x: auto; -webkit-overflow-scrolling: touch; background: #ffffff; border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-card); padding: var(--s2); }
+.ps-table { --ps-row: 24px; border-collapse: collapse; table-layout: fixed; width: 100%; background: #ffffff; color: #000000; font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
+.ps-live { min-width: 560px; max-width: 960px; margin: 0 auto; }
+.ps-col-desc { width: 29%; }
+.ps-col-cct { width: 12%; }
+.ps-col-amp { width: 9%; }
+.ps-col-rh { width: 0; }
+.ps-table td, .ps-table th { border: 1px solid #000000; padding: 0 6px; height: var(--ps-row); text-align: center; vertical-align: middle; overflow: hidden; font-weight: 400; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.ps-table td.ps-rh { border: 0; padding: 0; width: 0; height: var(--ps-row); }
+.ps-table td.ps-void { background: #f3f3f3; }
+
+/* titleblock and column heads: light grey like the template */
+.ps-title th, .ps-title td, .ps-colhead th { background: #d9d9d9; }
+.ps-tl { text-align: left !important; white-space: nowrap; font-size: 12px; }
+.ps-tv { text-align: left !important; font-weight: 700; }
+.ps-svc { font-size: 13px; }
+.ps-colhead th { font-size: 12px; white-space: nowrap; padding: 0 3px; }
+.ps-colhead th:first-child, .ps-colhead th:nth-child(6) { text-align: left; }
+
+/* body cells */
+.ps-table .ps-desc { text-align: left; }
+.ps-table .ps-amp { background: #d9d9d9; }
+.ps-table .ps-desc.ps-hl { font-weight: 700; }
+.ps-table .ps-dt { border-top: 1px dotted #000000; }
+.ps-table .ps-db { border-bottom: 1px dotted #000000; }
+.ps-table .ps-mid-l { border-right: 3px double #000000; }
+.ps-table .ps-mid-r { border-left: 3px double #000000; }
+.ps-table .ps-cct { padding: 0; font-weight: 400; }
+.ps-cct.ps-leg-A { background: var(--ps-leg-A, #e06666); color: var(--ps-leg-A-fg, #000000); }
+.ps-cct.ps-leg-B { background: var(--ps-leg-B, #999999); color: var(--ps-leg-B-fg, #000000); }
+.ps-cct.ps-leg-C { background: var(--ps-leg-C, #6fa8dc); color: var(--ps-leg-C-fg, #000000); }
+
+/* editing: borderless inputs that read as cell text; the focused cell gets a spreadsheet outline */
+.ps-in { display: block; width: 100%; min-width: 0; height: calc(var(--ps-row) - 2px); border: 0; border-radius: 0; margin: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-size: 16px; line-height: 1.2; text-align: inherit; outline: none; box-shadow: none; -webkit-appearance: none; appearance: none; }
+.ps-amp .ps-in { text-align: center; }
+.ps-title-in { font-weight: inherit; }
+.ps-table td:focus-within { outline: 2px solid #1a73e8; outline-offset: -2px; }
+.ps-table td.ps-desc, .ps-table td.ps-amp { cursor: text; }
+.ps-num { display: block; width: 100%; height: 100%; min-height: calc(var(--ps-row) - 2px); border: 0; margin: 0; padding: 0 2px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.ps-st-empty .ps-num, .ps-st-emptyHalf .ps-num { opacity: .85; }
+.ps-num:hover { text-decoration: underline; }
+.ps-num:focus-visible { outline: 2px solid #1a73e8; outline-offset: -2px; }
+
+/* the logo block at the bottom */
+.ps-table .ps-logo-cell { height: 104px; padding: 6px; }
+.ps-logo-box { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 92px; }
+.ps-logo { display: block; max-height: 84px; max-width: 60%; object-fit: contain; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.ps-logo-name { font-size: 22px; font-weight: 700; }
+.ps-contact { font-size: 12px; white-space: pre-wrap; }
+.ps-qr { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+.ps-qr svg { display: block; width: 72px; height: 72px; }
+.ps-status { font-size: .8em; text-transform: uppercase; }
+
+/* description / size pick-list, most-used first */
+.ps-pick { position: absolute; z-index: 20; display: flex; flex-direction: column; max-width: 320px; max-height: 320px; overflow-y: auto; padding: 4px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); box-shadow: var(--shadow-float); }
+.ps-pick[hidden] { display: none; }
+.ps-pick-item { text-align: left; border: 0; background: transparent; color: inherit; font: inherit; font-size: var(--fs-sm); padding: 0 10px; min-height: 36px; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-pick-item:hover, .ps-pick-item.on { background: var(--accent-soft); }
+
+/* ---------- the sheet on paper (print, and the iOS app's print sheet) ----------
+   --ps-row and --ps-fs are set per panel in drawPrint() so any size fits one portrait page. */
+.ps-print { width: 100%; max-width: 7.5in; margin: 0 auto; }
+.ps-print .ps-table { font-size: var(--ps-fs, 9pt); }
+.ps-print .ps-table td, .ps-print .ps-table th { height: var(--ps-row, .2in); padding: 0 3pt; line-height: 1.05; border-width: .6pt; font-size: var(--ps-fs, 9pt); }
+.ps-print .ps-table td.ps-rh { border: 0; padding: 0; }
+.ps-print .ps-title th, .ps-print .ps-title td, .ps-print .ps-colhead th { height: .2in; font-size: 9pt; }
+.ps-print .ps-tv { font-size: 10pt; }
+.ps-print .ps-desc:not(.ps-tall), .ps-print .ps-amp, .ps-print .ps-cct { white-space: nowrap; text-overflow: ellipsis; }
+.ps-print .ps-table td.ps-dt { border-top: .6pt dotted #000000; }
+.ps-print .ps-table td.ps-db { border-bottom: .6pt dotted #000000; }
+.ps-print .ps-table .ps-mid-l { border-right: 3pt double #000000; }
+.ps-print .ps-table .ps-mid-r { border-left: 3pt double #000000; }
+.ps-legend-leg { display: inline-block; width: 10pt; height: 8pt; border: .6pt solid #000000; vertical-align: middle; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.ps-print .ps-table .ps-logo-cell { height: 1.05in; padding: 3pt; }
+.ps-print .ps-logo-box { min-height: .95in; gap: 2pt; }
+.ps-print .ps-logo { max-height: .85in; }
+.ps-print .ps-logo-name { font-size: 16pt; }
+.ps-print .ps-contact { font-size: 8pt; }
+.ps-print .ps-qr svg { width: .8in; height: .8in; }
+.ps-print .print-legend { margin-top: 4pt; }
+@media print {
+  .ps-print { page-break-inside: avoid; break-inside: avoid; }
+}
+html.is-printing .ps-print { page-break-inside: avoid; break-inside: avoid; }
