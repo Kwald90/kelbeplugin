@@ -19,6 +19,8 @@ import { evaluateTest as groundTest, potentialProbeDistance, TARGETS as GND_TARG
 import { solarPv, CONNECTION as PV_CONNECTION } from '../lib/solar-pv.js';
 import { sizeEss, CHEMISTRIES as ESS_CHEMISTRIES } from '../lib/ess.js';
 import { sizeGenerator, PHASES as GEN_PHASES } from '../lib/generator.js';
+import { art } from '../lib/calc-art.js';
+import { noteUse, rankByUse, topUsed } from '../lib/usage-rank.js';
 
 const FT2 = M_PER_FT * M_PER_FT; // m² per ft²
 const ML_PER_IN3 = 16.387064;
@@ -86,19 +88,56 @@ const CALC_GROUPS = [
   ] },
 ];
 
-/** The hub: calculators grouped into labelled sections of tappable cards. */
+export { TABS as CALC_TABS, CALC_GROUPS };
+const CALC_IDS = CALC_GROUPS.flatMap((g) => g.items.map(([id]) => id));
+const CALC_DESC = Object.fromEntries(CALC_GROUPS.flatMap((g) => g.items));
+const USAGE_LIST = 'calcs';
+const RECENT_MAX = 4;
+const userId = (ctx) => ctx?.auth?.current?.()?.id;
+
+/**
+ * The hub's sections, most-used first. `ranked` is every calculator id in usage order (rankByUse:
+ * used ones by score, then the rest in their designed order). Each section sorts its cards by that
+ * order and the sections sort by their best card, so with no usage the hub is exactly CALC_GROUPS.
+ */
+export function orderGroups(groups, ranked) {
+  const pos = new Map(ranked.map((id, i) => [id, i]));
+  const at = (id) => pos.get(id) ?? Infinity;
+  return groups
+    .map((g, i) => {
+      const items = [...g.items].sort((a, b) => at(a[0]) - at(b[0]));
+      return { ...g, items, best: items.length ? at(items[0][0]) : Infinity, i };
+    })
+    .sort((a, b) => a.best - b.best || a.i - b.i)
+    .map(({ best, i, ...g }) => g);
+}
+
+/** One calculator's card: the picture is the button, the short name sits under it. */
+function calcCard(id) {
+  return h('a', { class: 'calc-card', href: '#/calcs/' + id, title: CALC_DESC[id], 'aria-label': `${TAB_LABEL[id]}: ${CALC_DESC[id]}` },
+    art(id, { size: 64 }),
+    h('span', { class: 'calc-card-title' }, TAB_LABEL[id]));
+}
+
+/** The hub: a "Most used" strip, then the calculators grouped into sections of picture cards. */
 function calcIndex(ctx) {
+  const uid = userId(ctx);
+  const ranked = rankByUse(USAGE_LIST, CALC_IDS, (id) => id, { uid });
+  const recent = topUsed(USAGE_LIST, RECENT_MAX + 4, { uid }).filter((id) => TAB_LABEL[id]).slice(0, RECENT_MAX);
   const wrap = h('div', { class: 'calc-index' });
-  for (const g of CALC_GROUPS) {
-    wrap.append(
+  // Two or more: with one, it is already the first card of the first section.
+  if (recent.length >= 2) {
+    wrap.append(h('section', { class: 'calc-recent', 'aria-labelledby': 'calc-recent-h' },
+      h('h3', { class: 'calc-cat', id: 'calc-recent-h' }, 'Most used'),
+      h('div', { class: 'calc-recent-row' }, recent.map((id) =>
+        h('a', { class: 'calc-chip', href: '#/calcs/' + id, title: CALC_DESC[id] },
+          art(id, { size: 36 }),
+          h('span', null, TAB_LABEL[id]))))));
+  }
+  for (const g of orderGroups(CALC_GROUPS, ranked)) {
+    wrap.append(h('section', { class: 'calc-group' },
       h('h3', { class: 'calc-cat' }, g.title),
-      h('div', { class: 'calc-cards' }, g.items.map(([id, desc]) =>
-        h('a', { class: 'calc-card', href: '#/calcs/' + id },
-          h('span', { class: 'calc-card-text' },
-            h('strong', null, TAB_LABEL[id]),
-            h('span', { class: 'calc-card-desc muted' }, desc)),
-          ui.icon('chevron-right', 18)))),
-    );
+      h('div', { class: 'calc-cards' }, g.items.map(([id]) => calcCard(id)))));
   }
   return wrap;
 }
@@ -119,6 +158,7 @@ const MATERIALS = [{ value: 'cu', label: 'Copper' }, { value: 'al', label: 'Alum
 const PHASES = [{ value: '1', label: 'Single phase' }, { value: '3', label: 'Three phase' }];
 
 let ui, h, units, book, province;
+let opened = { tab: null, hash: '' }; // the calculator last counted as opened (see render)
 
 // ---------------------------------------------------------------------------
 // Inputs with units. Fields declared with `qty: 'length' | 'area'` are shown in
@@ -1423,11 +1463,18 @@ export default {
         ' ', h('a', { href: '#/settings' }, 'Change code book or units')),
       body,
     ));
+    const hash = globalThis.location?.hash || '';
     if (tab) {
+      // Count an open once: a re-render of the same open calculator (a shell rebuild) is not a use.
+      if (!(opened.tab === tab && opened.hash === hash)) noteUse(USAGE_LIST, tab, { uid: userId(ctx) });
+      opened = { tab, hash };
       const draw = () => { ui.clear(body); body.append(views[tab](draw)); };
       draw();
     } else {
+      opened = { tab: null, hash: '' };
       body.append(calcIndex(ctx));
     }
+    // Leaving for another route (the hash has changed by now) means the next open counts again.
+    return () => { if ((globalThis.location?.hash || '') !== hash) opened = { tab: null, hash: '' }; };
   },
 };
