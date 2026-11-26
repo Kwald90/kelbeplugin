@@ -7,23 +7,29 @@ import {
 } from '../src/services/walkthrough-media.js';
 
 describe('walkthrough media views', () => {
-  const base = { id: 'm1', walkthrough_id: 'wt1', duration_ms: 90500, width: 720, height: 1280, bytes: 12345 };
+  const base = { id: 'm1', tenant_id: 't1', walkthrough_id: 'wt1', duration_ms: 90500, width: 720, height: 1280, bytes: 12345 };
+  // Playback urls are signed (services/media-url.js); a stand-in signer shows which file kind was signed.
+  const sign = ({ mediaId, tenantId, kind }) => ({ url: `/signed/${tenantId}/${mediaId}/${kind}`, expiresAt: '2026-11-25T12:00:00.000Z' });
 
   test('a ready row exposes the optimised MP4 and its poster', () => {
-    const v = mediaRowView({ ...base, status: 'ready', output_file: 'a'.repeat(32) + '.mp4', poster_file: 'b'.repeat(32) + '.jpg' });
+    const v = mediaRowView({ ...base, status: 'ready', output_file: 'a'.repeat(32) + '.mp4', poster_file: 'b'.repeat(32) + '.jpg' }, { sign });
     assert.equal(v.status, 'ready');
-    assert.equal(v.url, `/media/${'a'.repeat(32)}.mp4`);
-    assert.equal(v.posterUrl, `/media/${'b'.repeat(32)}.jpg`);
+    assert.equal(v.url, '/signed/t1/m1/video');
+    assert.equal(v.posterUrl, '/signed/t1/m1/poster');
+    assert.equal(v.urlExpiresAt, '2026-11-25T12:00:00.000Z');
+    const unsigned = mediaRowView({ ...base, status: 'ready', output_file: 'a'.repeat(32) + '.mp4', poster_file: 'b'.repeat(32) + '.jpg' });
+    assert.equal(unsigned.url, null, 'no signer, no url: file names are never handed out');
+    assert.ok(!JSON.stringify(unsigned).includes('a'.repeat(32)));
     assert.equal(v.durationMs, 90500);
     assert.equal(v.bytes, 12345);
     assert.equal(v.error, null);
   });
 
   test('a processing MP4 original plays immediately; a WebM original waits', () => {
-    const mp4 = mediaRowView({ ...base, status: 'processing', original_mime: 'video/mp4', original_file: 'c'.repeat(32) + '.mp4' });
-    assert.equal(mp4.url, `/media/${'c'.repeat(32)}.mp4`);
+    const mp4 = mediaRowView({ ...base, status: 'processing', original_mime: 'video/mp4', original_file: 'c'.repeat(32) + '.mp4' }, { sign });
+    assert.equal(mp4.url, '/signed/t1/m1/video');
     assert.equal(mp4.posterUrl, null);
-    const webm = mediaRowView({ ...base, status: 'processing', original_mime: 'video/webm', original_file: 'd'.repeat(32) + '.webm' });
+    const webm = mediaRowView({ ...base, status: 'processing', original_mime: 'video/webm', original_file: 'd'.repeat(32) + '.webm' }, { sign });
     assert.equal(webm.url, null);
   });
 

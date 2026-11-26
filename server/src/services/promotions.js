@@ -3,14 +3,18 @@
 // sniffing) are exported for tests; routes/promotions.js wires them to HTTP.
 //
 // Settings come from the environment (tests pass config.promotions / config.media):
-//   MEDIA_DIR                 where uploads are written (outside the code checkout; nginx serves it at /media/)
+//   MEDIA_DIR                 where uploads are written (outside the code checkout). Only its public/
+//                             folder is published (nginx serves MEDIA_DIR/public at /media/): promotion
+//                             media and hand-copied hero files. Job-site video (walkthroughs, wire runs)
+//                             sits in MEDIA_DIR itself, which nothing serves; the API streams it for
+//                             signed URLs (services/media-url.js).
 //   MEDIA_MAX_VIDEO_MB        per video, default 150
 //   MEDIA_MAX_IMAGE_MB        per poster image, default 15
 //   PROMOTION_MEDIA_ORIGINS   extra https origins allowed for video/poster URLs (a CDN); the CSP must allow them too
 //   PROMOTION_LINK_ORIGINS    extra https origins allowed for button links (PUBLIC_ORIGIN always is)
 //   PROMOTIONS_CACHE_S        how long the public endpoint caches the live list, default 30
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, open, rename, unlink, chmod } from 'node:fs/promises';
+import { copyFile, link, mkdir, open, readdir, rename, stat, unlink, chmod } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ApiError, validationFailed } from '../errors.js';
@@ -73,7 +77,49 @@ export function mediaSettings(config, env = process.env) {
     ...(config.media || {}),
   };
   s.problem = mediaDirProblem(s.dir);
+  // The only published folder (nginx: /media/ -> MEDIA_DIR/public). Promotion uploads go here.
+  s.publicDir = s.dir ? join(s.dir, 'public') : '';
   return s;
+}
+
+/** Hand-copied hero files have readable names; uploads (promotion or job-site) are 32-hex names. */
+const UPLOAD_NAME = /^[a-f0-9]{32}\.(mp4|webm|jpg|png|webp)$/;
+const PUBLISHABLE = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}\.(mp4|webm|jpe?g|png|webp)$/i;
+
+/**
+ * Publish the files that are meant to be public into MEDIA_DIR/public, once, at hq-api start:
+ * every promotion upload (hq_media), every /media/ file a promotion's slides name, and hand-copied
+ * hero files (readable names in MEDIA_DIR). Job-site video stays where it is, unserved. Files are
+ * hard-linked (copied across file systems), never moved, so an old nginx config that still serves
+ * MEDIA_DIR keeps the landing page working until the new one is installed. Idempotent.
+ * @param {{ withHq: Function }} db
+ * @param {{ dir: string, publicDir: string, problem?: string|null }} media
+ * @returns {Promise<{ published: string[], missing: string[] }>}
+ */
+export async function publishPromotionMedia(db, media, log = null) {
+  if (media.problem || !media.publicDir) return { published: [], missing: [] };
+  await mkdir(media.publicDir, { recursive: true, mode: 0o755 });
+  const names = new Set();
+  const rows = await db.withHq(async (c) => ({
+    uploads: (await c.query('SELECT file_name FROM hq_media')).rows.map((r) => r.file_name),
+    slides: (await c.query('SELECT slides::text AS t FROM promotions')).rows.map((r) => r.t),
+  }));
+  for (const n of rows.uploads) names.add(n);
+  for (const t of rows.slides) for (const m of String(t).matchAll(/\/media\/([A-Za-z0-9._-]+)/g)) names.add(m[1]);
+  let entries = [];
+  try { entries = await readdir(media.dir, { withFileTypes: true }); } catch { /* empty */ }
+  for (const e of entries) if (e.isFile() && !UPLOAD_NAME.test(e.name) && PUBLISHABLE.test(e.name)) names.add(e.name);
+  const published = [], missing = [];
+  for (const name of names) {
+    if (!PUBLISHABLE.test(name) || name.startsWith('.')) continue;
+    const from = join(media.dir, name), to = join(media.publicDir, name);
+    try { await stat(to); continue; } catch { /* not published yet */ }
+    try { await stat(from); } catch { missing.push(name); continue; }
+    try { await link(from, to); } catch { await copyFile(from, to); await chmod(to, 0o644).catch(() => {}); }
+    published.push(name);
+  }
+  if (published.length) log?.info?.({ count: published.length }, 'published promotion media to MEDIA_DIR/public');
+  return { published, missing };
 }
 
 /** Why a MEDIA_DIR can't be used, or null. */

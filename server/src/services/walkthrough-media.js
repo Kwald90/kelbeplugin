@@ -41,12 +41,16 @@ export function randomMediaName(ext) {
 }
 
 /**
- * What a media row looks like to the client. `url`/`posterUrl` are site-relative /media/ paths
- * (the client prefixes the API base in the iOS app); the caller never gets a path to anything but
- * an uploaded file. While still `processing`, an MP4 original can already play, so its url is
+ * What a media row looks like to the client. `url`/`posterUrl` are short-lived signed API paths
+ * (/api/v1/media/:id/:kind?..., services/media-url.js; the client prefixes the API base in the iOS
+ * app) from `sign({ mediaId, tenantId, kind })`, and `urlExpiresAt` says when to fetch the row again.
+ * Without a signer there are no urls: a file name is never handed out, and nginx doesn't serve
+ * these files. While still `processing`, an MP4 original can already play, so its url is
  * returned; a WebM original can't play on iOS, so url stays null until the MP4 output is ready.
+ * @param {object} row
+ * @param {{ sign?: ((o: { mediaId: string, tenantId: string, kind: string }) => { url: string, expiresAt: string }) | null }} [opts]
  */
-export function mediaRowView(row) {
+export function mediaRowView(row, { sign = null } = {}) {
   const out = {
     id: row.id,
     walkthroughId: row.walkthrough_id,
@@ -57,13 +61,19 @@ export function mediaRowView(row) {
     bytes: row.bytes == null ? null : Number(row.bytes),
     url: null,
     posterUrl: null,
+    urlExpiresAt: null,
     error: row.status === 'failed' ? (row.error || 'The video could not be processed.') : null,
   };
-  if (row.status === 'ready' && row.output_file) {
-    out.url = `/media/${row.output_file}`;
-    if (row.poster_file) out.posterUrl = `/media/${row.poster_file}`;
-  } else if (row.status === 'processing' && row.original_mime === 'video/mp4' && row.original_file) {
-    out.url = `/media/${row.original_file}`; // iOS-recorded MP4 plays immediately while we optimise it
+  const signed = (kind) => {
+    const s = sign({ mediaId: row.id, tenantId: row.tenant_id, kind });
+    out.urlExpiresAt = s.expiresAt;
+    return s.url;
+  };
+  if (sign && row.status === 'ready' && row.output_file) {
+    out.url = signed('video');
+    if (row.poster_file) out.posterUrl = signed('poster');
+  } else if (sign && row.status === 'processing' && row.original_mime === 'video/mp4' && row.original_file) {
+    out.url = signed('video'); // iOS-recorded MP4 plays immediately while we optimise it
   }
   // AI transcription (migration 0170): the transcript, if any, and the poll state.
   out.transcript = row.transcript || null;

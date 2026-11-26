@@ -12,6 +12,9 @@
 #     answers 2xx, or any probe's body looks like a secret (env lines, private keys, git config,
 #     pg_dump or age headers, credentials in a postgres:// URL)
 #   - an unknown path answers 2xx (the app uses a hash router; there is no SPA fallback)
+#   - job-site media (walkthrough and wire-run video, posters, partial uploads) answers 2xx at
+#     /media/ (it is only ever streamed by the API for a signed URL), or /api/v1/media/ answers
+#     2xx without a valid signature
 #   - a required header is missing (HSTS, CSP with the key directives, nosniff, Referrer-Policy,
 #     Permissions-Policy, X-Frame-Options), or a version banner / X-Powered-By is present
 #   - /api/ responses lack Cache-Control: no-store, or API answers leak secrets, internal
@@ -28,6 +31,8 @@
 #                       /api/v1/public/status; other site pages redirect to the apex; no PWA,
 #                       no other API route
 #   --no-api            skip API checks (staging before server/ exists)
+#   --media-dir DIR     run on the box: also probe the real private files in DIR (MEDIA_DIR on the
+#                       host, e.g. /var/lib/fishtape-production/media) by name at /media/
 #   --resolve H:P:ADDR  passed to curl, e.g. run on the box itself:
 #                       --resolve tgelectrical.truecollarbuilt.com:443:127.0.0.1
 #                       (the http:// redirect check then goes to ADDR as well)
@@ -38,6 +43,7 @@ BASE="${1:-}"
 shift
 MODE=app
 API=1
+MEDIA_DIR=""
 CURL_EXTRA=()
 HTTP_EXTRA=()
 while [ $# -gt 0 ]; do
@@ -47,6 +53,7 @@ while [ $# -gt 0 ]; do
     --marketing) MODE=marketing; shift ;;
     --status) MODE=status; shift ;;
     --no-api) API=0; shift ;;
+    --media-dir) MEDIA_DIR="${2:-}"; shift 2 ;;
     --resolve)
       CURL_EXTRA+=(--resolve "${2:-}")
       # The plain-HTTP redirect check goes to the same address on port 80.
@@ -125,6 +132,41 @@ fetch "/this-path-does-not-exist-$RANDOM"
 if [[ "$CODE" == 2* ]]; then bad "unknown path answered $CODE (SPA fallback still on?)"; else ok "unknown path -> $CODE"; fi
 fetch "/js/"
 if [[ "$CODE" == 2* ]] && grep -qi '<title>Index of' "$TMP/b"; then bad "directory listing at /js/"; else ok "no directory listing (/js/ -> $CODE)"; fi
+
+# ---- 1b. job-site media: never from disk, never without a signed link ----
+# Synthetic names always; with --media-dir, real job-site files and partial uploads by their names.
+# A range of one byte, so a leak is caught without downloading a video.
+MEDIA_PROBES=(/media/0123456789abcdef0123456789abcdef.mp4 /media/0123456789abcdef0123456789abcdef.jpg
+  /media/.upload-0123456789abcdef0123456789abcdef.part /media/public/../0123456789abcdef0123456789abcdef.mp4)
+if [ -n "$MEDIA_DIR" ]; then
+  if [ -d "$MEDIA_DIR" ]; then
+    real=0
+    for f in "$MEDIA_DIR"/*.mp4 "$MEDIA_DIR"/*.webm "$MEDIA_DIR"/*.jpg "$MEDIA_DIR"/.upload-*.part; do
+      [ -f "$f" ] || continue
+      n="${f##*/}"
+      [[ "$n" =~ ^([a-f0-9]{32}\.(mp4|webm|jpg)|\.upload-[a-f0-9]{32}\.part)$ ]] || continue
+      [ -e "$MEDIA_DIR/public/$n" ] && continue   # an older promotion upload, published on purpose
+      MEDIA_PROBES+=("/media/$n" "/media/public/../$n")
+      real=$((real + 1))
+      [ "$real" -ge 6 ] && break
+    done
+    [ "$real" -gt 0 ] || note "no job-site media in $MEDIA_DIR yet: only synthetic /media/ names probed"
+  else
+    note "--media-dir $MEDIA_DIR is not a directory: only synthetic /media/ names probed"
+  fi
+fi
+leak=0
+for p in "${MEDIA_PROBES[@]}"; do
+  fetch "$p" -H 'Range: bytes=0-0'
+  if [[ "$CODE" == 2* ]]; then bad "$p answered $CODE: job-site media served without a signed link"; leak=1; fi
+done
+[ "$leak" -eq 0 ] && ok "${#MEDIA_PROBES[@]} job-site media paths at /media/: none served"
+if [ "$API" -eq 1 ] && { [ "$MODE" = app ] || [ "$MODE" = production ]; }; then
+  for p in "/api/v1/media/00000000-0000-4000-8000-000000000000/video"            "/api/v1/media/00000000-0000-4000-8000-000000000000/video?c=00000000-0000-4000-8000-000000000000&e=9999999999&s=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; do
+    fetch "$p" -H 'Range: bytes=0-0'
+    if [[ "$CODE" == 2* ]]; then bad "$p answered $CODE without a valid signature"; else ok "unsigned/forged media link -> $CODE"; fi
+  done
+fi
 
 # ---- 2. headers on the main page ----
 fetch /

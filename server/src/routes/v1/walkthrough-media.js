@@ -14,6 +14,7 @@ import { requireFeature } from '../../services/entitlements.js';
 import { enqueue } from '../../services/queue.js';
 import { geminiConfigured } from '../../services/gemini.js';
 import { errorResponses, tenantCtx } from '../util.js';
+import { createMediaSigner } from '../../services/media-url.js';
 import {
   MAX_MEDIA_PER_TENANT, WALKTHROUGH_UPLOAD_TYPES, mediaRowView, receiveWalkthroughUpload,
   removeMediaFiles, walkthroughMediaSettings,
@@ -32,6 +33,9 @@ function clampInt(v, min, max) {
 /** @param {import('fastify').FastifyInstance} app */
 export default async function walkthroughMediaRoutes(app, { db, config }) {
   const media = walkthroughMediaSettings(config);
+  // Playback urls are signed and short-lived (services/media-url.js); every view below carries fresh ones.
+  const signer = createMediaSigner(app.sealer);
+  const view = (row) => mediaRowView(row, { sign: signer.sign });
   const inTenant = (req, fn, opts) => db.withTenant(tenantCtx(req.principal), fn, opts);
   const needMedia = () => { if (media.problem) throw new ApiError(503, 'media_unavailable', `Walkthrough video is off on this server: ${media.problem}`); };
 
@@ -86,7 +90,7 @@ export default async function walkthroughMediaRoutes(app, { db, config }) {
     }
     reply.removeHeader('connection');
     reply.code(201);
-    return mediaRowView(row);
+    return view(row);
   });
 
   app.get('/api/v1/walkthrough-media/:id', {
@@ -97,7 +101,7 @@ export default async function walkthroughMediaRoutes(app, { db, config }) {
     if (!canRead(p, 'walkthroughs')) throw forbidden('You cannot read walkthrough video.');
     const row = await inTenant(req, async (tx) => (await tx.query("SELECT * FROM walkthrough_media WHERE id = $1 AND owner_kind = 'walkthrough'", [req.params.id])).rows[0]);
     if (!row) throw notFound('No such video.');
-    return { ...mediaRowView(row), aiTranscription: await geminiConfigured(db) };
+    return { ...view(row), aiTranscription: await geminiConfigured(db) };
   });
 
   app.post('/api/v1/walkthrough-media/:id/transcribe', {
@@ -125,7 +129,7 @@ export default async function walkthroughMediaRoutes(app, { db, config }) {
       return updated;
     }, { write: true });
     if (!row) throw notFound('No such video.');
-    return { ...mediaRowView(row), aiTranscription: true };
+    return { ...view(row), aiTranscription: true };
   });
 
   app.delete('/api/v1/walkthrough-media/:id', {

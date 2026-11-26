@@ -231,7 +231,9 @@ describe('HQ promotions: lifecycle and the active window', { skip }, () => {
 });
 
 describe('HQ media uploads', { skip }, () => {
-  const files = () => readdirSync(mediaDir);
+  // HQ uploads land in the published folder, MEDIA_DIR/public (nginx serves only that).
+  const pub = () => join(mediaDir, 'public');
+  const files = () => (existsSync(pub()) ? readdirSync(pub()) : []);
 
   test('accepted by magic bytes: MP4, WebM, JPG, PNG, WebP (random names, listed, audited)', async () => {
     const cases = [[mp4(), 'video/mp4', 'mp4'], [ebml('webm'), 'video/webm', 'webm'], [jpeg(), 'image/jpeg', 'jpg'], [png(), 'image/png', 'png'], [webp(), 'image/webp', 'webp'], [jpeg(), 'application/octet-stream', 'jpg']];
@@ -243,7 +245,7 @@ describe('HQ media uploads', { skip }, () => {
       assert.equal(m.url, `/media/${m.name}`);
       assert.equal(m.bytes, buf.length);
       assert.equal(m.label, 'Spring clip 1.mov');
-      const st = statSync(join(mediaDir, m.name));
+      const st = statSync(join(pub(), m.name));
       assert.equal(st.size, buf.length);
       if (process.platform !== 'win32') assert.equal(st.mode & 0o777, 0o644);
     }
@@ -304,7 +306,7 @@ describe('HQ media uploads', { skip }, () => {
     assert.equal((await call(app, { method: 'DELETE', url: `/api/hq/media/${vid.name}`, token: admin.token })).status, 409);
     await call(app, { method: 'DELETE', url: `/api/hq/promotions/${used.id}`, token: admin.token });
     assert.equal((await call(app, { method: 'DELETE', url: `/api/hq/media/${vid.name}`, token: admin.token })).status, 204);
-    assert.ok(!existsSync(join(mediaDir, vid.name)));
+    assert.ok(!existsSync(join(pub(), vid.name)));
   });
 
   test('uploads are off (503) without MEDIA_DIR, or with one inside the code checkout', async () => {

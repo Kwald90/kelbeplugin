@@ -1,8 +1,8 @@
 // Wire-run video to and from the server (/api/v1/wirerun-media, server/src/routes/v1/wirerun-media.js),
 // and the background queue that sends attached videos up in chunks, resuming where the server got
 // to after a dropped signal, a closed app or a reload. Same video store as walkthroughs: the server
-// transcodes it (walkthrough_transcode) and plays it from /media/ (mediaUrl prefixes the API origin
-// in the iOS app).
+// transcodes it (walkthrough_transcode) and streams it back for short-lived signed links only
+// (/api/v1/media/..., renewed by keepMediaFresh; mediaUrl prefixes the API origin in the iOS app).
 //
 // Status lives on the run's video entry (synced, so other devices see "uploading"/"ready"); the
 // progress of the upload running on this device is kept here in memory for the screen.
@@ -10,7 +10,7 @@ import { api, apiFetch, ApiError } from '../session.js';
 import { getBlob } from './local-blobs.js';
 import { MAX_UPLOAD_BYTES, normalizeVideos, patchVideoList, runChunkedUpload, unreachable } from './wirerun-video.js';
 
-export { mediaUrl } from './walkthrough-upload.js';
+export { mediaUrl, keepMediaFresh } from './walkthrough-upload.js';
 
 const PATH = '/api/v1/wirerun-media';
 const enc = encodeURIComponent;

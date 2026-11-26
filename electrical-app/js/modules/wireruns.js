@@ -657,6 +657,7 @@ function renderEditor(root, ctx, id) {
     let src = '', local = false;
     if (v.localId) { src = (await blobUrl(v.localId)) || ''; local = !!src; }
     if (!src && v.mediaId) {
+      // a signed link that expires in about 15 minutes; reviewSheet renews it if it runs out mid-watch
       try { const m = await U.fetchMedia(v.mediaId); if (m?.url) src = U.mediaUrl(m.url); } catch { /* offline */ }
     }
     if (!src) { ui.toast(online() ? 'The video is still being prepared on the server. Try again in a minute.' : 'This video is not on this device, and there is no connection to stream it.', 'info', 5000); return; }
@@ -665,7 +666,11 @@ function renderEditor(root, ctx, id) {
 
   function reviewSheet({ video, src, local }) {
     let markers = video.markers;
-    const vid = h('video', { class: 'wr-review-video', src, controls: true, playsInline: true, preload: 'auto' });
+    const vid = h('video', { class: 'wr-review-video', controls: true, playsInline: true, preload: 'auto' });
+    // A server copy: ask for it with CORS (the API allows the app's origins) so "Measure on this
+    // frame" may read its pixels, and renew the signed link if it expires while open.
+    if (!local) { vid.crossOrigin = 'anonymous'; U.keepMediaFresh(vid, () => U.fetchMedia(video.mediaId)); }
+    vid.src = src;
     const timeEl = h('span', { class: 'num wr-review-time' }, '0:00');
     const list = h('ol', { class: 'wr-review-marks' });
     const segList = h('ul', { class: 'wr-review-segs' });
@@ -712,7 +717,7 @@ function renderEditor(root, ctx, id) {
       const at = Math.round(vid.currentTime * 1000);
       let frame;
       try { frame = grabFrame(vid); } catch (e) {
-        ui.toast(e?.name === 'SecurityError' ? "This frame can't be measured here: the app may not read pixels of a video streamed from the server. Measure on the device that recorded it, or in the browser." : "Couldn't read this frame.", 'error', 7000);
+        ui.toast(e?.name === 'SecurityError' ? "This frame can't be read here: the server didn't allow this app to use the video's pixels. Measure on the device that recorded it, or in the browser." : "Couldn't read this frame.", 'error', 7000);
         return;
       }
       const ok = await ui.confirmDialog("AR can't re-measure a recorded frame: a still picture has no depth or tracking. You can measure on the picture against something of known length instead: set the scale by tapping both ends of it (a 4 ft sheet edge, a 2x4 box, a stud bay), then tap along the wire. It is only right along the same flat surface as the reference, seen square-on.", { title: 'Measure on this frame', okLabel: 'Set the scale', danger: false });

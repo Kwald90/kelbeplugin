@@ -57,8 +57,11 @@ install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/mail"
 # Restore tests and offsite drill results (RESTORE_TESTS_FILE): hq-api appends uploaded drills,
 # restore-test.sh appends local tests, the worker reads them for the hourly backup alerts.
 install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/drills"
-# Hero videos and posters: uploaded by hq-api (uid 1000), served read-only by nginx at /media/.
-install -d -o 1000 -g 1000 -m 755 "$STATE_DIR/media"
+# Media (uid 1000 = the containers). media/ holds private job-site video and posters, never served
+# from disk (the API streams them for signed URLs): 0711 lets nginx through to media/public, the
+# only folder it serves at /media/ (hero videos and promotion uploads), without listing media/.
+install -d -o 1000 -g 1000 -m 711 "$STATE_DIR/media"
+install -d -o 1000 -g 1000 -m 755 "$STATE_DIR/media/public"
 chmod 755 "$STATE_DIR" "$STATE_DIR/status"
 exec 9>"$STATE_DIR/deploy.lock"
 flock -n 9 || { echo "another deploy is running" >&2; exit 1; }
@@ -106,7 +109,7 @@ exposure_check() {
     say "nginx files differ from the installed ones: installing them"
     "$HERE/install-nginx.sh" > "$STATE_DIR/last-nginx-install.txt" 2>&1       || say "WARNING: install-nginx.sh failed, the previous nginx config is still live; see $STATE_DIR/last-nginx-install.txt"
   fi
-  local args=("https://$PUBLIC_HOST" --resolve "$PUBLIC_HOST:443:127.0.0.1")
+  local args=("https://$PUBLIC_HOST" --resolve "$PUBLIC_HOST:443:127.0.0.1" --media-dir "$STATE_DIR/media")
   [ "$SERVER" -eq 1 ] || args+=(--no-api)
   if "$REPO_DIR/deploy/check-exposure.sh" "${args[@]}" > "$STATE_DIR/last-exposure-check.txt" 2>&1; then
     say "exposure check passed"

@@ -168,6 +168,8 @@ describe('public endpoints and URLs', { skip }, () => {
       'ids', 'outcome', 'choice',
       // HQ Mail: "Show images" for one message (0|1), not data.
       'images',
+      // Signed job-site media links (/api/v1/media/:id/:kind): a company id, an expiry (unix s), a signature.
+      'c', 'e', 's',
       // Release 1: list filters on cost codes, company rules, signatures, equipment use and counts (codes and
       // record ids), and the closing and rules routes (YYYY-MM-DD dates and a province code). HQ Rules:
       // DELETE /api/hq/rules?key=&province=&effectiveFrom= (a rule key, a province code, a YYYY-MM-DD day).

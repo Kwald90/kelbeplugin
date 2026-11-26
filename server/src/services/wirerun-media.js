@@ -44,9 +44,12 @@ export function uploadPartPath(dir, name) {
   return p.startsWith(root + sep) ? p : null;
 }
 
-/** The client's view of a wire-run media row: the walkthrough view plus the run id and upload progress. */
-export function wireRunMediaView(row) {
-  const { walkthroughId, transcript, transcribeStatus, transcribeError, transcribedAt, ...v } = mediaRowView(row);
+/**
+ * The client's view of a wire-run media row: the walkthrough view (signed playback urls when `sign`
+ * is given, services/media-url.js) plus the run id and upload progress.
+ */
+export function wireRunMediaView(row, { sign = null } = {}) {
+  const { walkthroughId, transcript, transcribeStatus, transcribeError, transcribedAt, ...v } = mediaRowView(row, { sign });
   void walkthroughId; void transcript; void transcribeStatus; void transcribeError; void transcribedAt;
   const uploading = row.status === 'uploading';
   return {

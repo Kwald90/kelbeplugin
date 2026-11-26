@@ -12,6 +12,7 @@ import { canRead, canWrite } from '../../auth/access.js';
 import { requireFeature } from '../../services/entitlements.js';
 import { enqueue } from '../../services/queue.js';
 import { errorResponses, tenantCtx } from '../util.js';
+import { createMediaSigner } from '../../services/media-url.js';
 import { MAX_MEDIA_PER_TENANT, removeMediaFiles, walkthroughMediaSettings } from '../../services/walkthrough-media.js';
 import {
   MAX_VIDEOS_PER_RUN, STALE_UPLOAD_MS, checkNewUpload, chunkVerdict, createUploadPart, finishUploadPart,
@@ -26,6 +27,9 @@ const uuidParam = { type: 'object', required: ['id'], properties: { id: { type: 
 /** @param {import('fastify').FastifyInstance} app */
 export default async function wireRunMediaRoutes(app, { db, config }) {
   const media = walkthroughMediaSettings(config);
+  // Playback urls are signed and short-lived (services/media-url.js).
+  const signer = createMediaSigner(app.sealer);
+  const view = (row) => wireRunMediaView(row, { sign: signer.sign });
   const inTenant = (req, fn, opts) => db.withTenant(tenantCtx(req.principal), fn, opts);
   const needMedia = () => { if (media.problem) throw new ApiError(503, 'media_unavailable', `Wire-run video is off on this server: ${media.problem}`); };
   const mayWrite = (req) => { if (!canWrite(req.principal, 'wireRuns')) throw forbidden('You cannot add video to wire runs.'); };
@@ -80,7 +84,7 @@ export default async function wireRunMediaRoutes(app, { db, config }) {
       throw e;
     }
     reply.code(201);
-    return wireRunMediaView(row);
+    return view(row);
   });
 
   app.put('/api/v1/wirerun-media/:id/data', {
@@ -102,7 +106,7 @@ export default async function wireRunMediaRoutes(app, { db, config }) {
     if (row.status !== 'uploading') {
       req.raw.resume();
       // A resend of the last chunk after the upload already finished: report where it stands.
-      if (Number.isSafeInteger(offset) && offset <= Number(row.bytes)) return wireRunMediaView(row);
+      if (Number.isSafeInteger(offset) && offset <= Number(row.bytes)) return view(row);
       throw new ApiError(409, 'not_uploading', 'This video is no longer uploading.');
     }
     const received = Number(row.bytes) || 0;
@@ -126,9 +130,9 @@ export default async function wireRunMediaRoutes(app, { db, config }) {
     if (!updated) {
       const now = await inTenant(req, (tx) => getRow(tx, row.id));
       if (!now) throw notFound('No such video.');
-      return wireRunMediaView(now);
+      return view(now);
     }
-    if (Number(updated.bytes) < total) return wireRunMediaView(updated);
+    if (Number(updated.bytes) < total) return view(updated);
 
     // Every byte is in: check the file, give it its media name, queue the transcode.
     let file;
@@ -137,7 +141,7 @@ export default async function wireRunMediaRoutes(app, { db, config }) {
     } catch (e) {
       if (e?.code === 'ENOENT') { // another request finished it a moment ago
         const now = await inTenant(req, (tx) => getRow(tx, row.id));
-        if (now) return wireRunMediaView(now);
+        if (now) return view(now);
         throw notFound('No such video.');
       }
       if (e instanceof ApiError && e.code === 'unsupported_media') {
@@ -168,7 +172,7 @@ export default async function wireRunMediaRoutes(app, { db, config }) {
       await removeMediaFiles(media.dir, { original_file: file.fileName });
       throw notFound('No such video.');
     }
-    return wireRunMediaView(updated);
+    return view(updated);
   });
 
   app.get('/api/v1/wirerun-media/:id', {
@@ -178,7 +182,7 @@ export default async function wireRunMediaRoutes(app, { db, config }) {
     if (!canRead(req.principal, 'wireRuns')) throw forbidden('You cannot read wire-run video.');
     const row = await inTenant(req, (tx) => getRow(tx, req.params.id));
     if (!row) throw notFound('No such video.');
-    return wireRunMediaView(row);
+    return view(row);
   });
 
   app.delete('/api/v1/wirerun-media/:id', {

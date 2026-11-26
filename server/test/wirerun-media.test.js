@@ -69,8 +69,11 @@ describe('wire-run media helpers', () => {
     assert.equal(up.mimeType, 'video/mp4');
     assert.ok(!('transcript' in up) && !('walkthroughId' in up));
     assert.ok(!JSON.stringify(up).includes('.upload-'));
-    const ready = wireRunMediaView({ id: 'm1', walkthrough_id: 'run-1', status: 'ready', bytes: 9000, output_file: 'b'.repeat(32) + '.mp4', poster_file: 'c'.repeat(32) + '.jpg', original_mime: 'video/webm' });
-    assert.equal(ready.url, `/media/${'b'.repeat(32)}.mp4`);
+    const sign = ({ mediaId, kind }) => ({ url: `/signed/${mediaId}/${kind}`, expiresAt: '2026-11-25T12:00:00.000Z' });
+    const ready = wireRunMediaView({ id: 'm1', walkthrough_id: 'run-1', status: 'ready', bytes: 9000, output_file: 'b'.repeat(32) + '.mp4', poster_file: 'c'.repeat(32) + '.jpg', original_mime: 'video/webm' }, { sign });
+    assert.equal(ready.url, '/signed/m1/video');
+    assert.equal(ready.posterUrl, '/signed/m1/poster');
+    assert.ok(!JSON.stringify(ready).includes('b'.repeat(32)), 'never a file name');
     assert.equal(ready.totalBytes, 9000);
     assert.equal(ready.chunkBytes, null);
   });
@@ -158,9 +161,12 @@ describe('wire-run media routes', { skip }, () => {
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.status, 'processing');
     assert.equal(r.body.receivedBytes, video.length);
-    assert.match(r.body.url, /^\/media\/[a-f0-9]{32}\.mp4$/, 'an MP4 plays while it is optimised');
-    const name = r.body.url.slice('/media/'.length);
+    assert.match(r.body.url, new RegExp(String.raw`^/api/v1/media/${id}/video\?c=[0-9a-f-]{36}&e=\d+&s=[A-Za-z0-9_-]{43}$`), 'an MP4 plays (signed) while it is optimised');
+    const name = (await t.superPool.query('SELECT original_file FROM walkthrough_media WHERE id = $1', [id])).rows[0].original_file;
     assert.equal(statSync(join(mediaDir, name)).size, video.length);
+    const played = await app.inject({ method: 'GET', url: r.body.url, headers: { range: 'bytes=0-99' } });
+    assert.equal(played.statusCode, 206, 'the signed url streams the upload');
+    assert.equal(played.rawPayload.length, 100);
     assert.ok(!files().some((f) => f.endsWith('.part')), 'no partial left');
     const q = await t.superPool.query("SELECT count(*)::int AS n FROM jobs_queue WHERE kind = 'walkthrough_transcode' AND payload->>'mediaId' = $1", [id]);
     assert.equal(q.rows[0].n, 1);

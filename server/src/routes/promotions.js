@@ -193,7 +193,7 @@ export default async function promotionRoutes(app, { config, db }) {
     reply.header('connection', 'close'); // a refused upload may still be arriving; don't reuse the socket
     let file;
     try {
-      file = await receiveUpload(req.raw, { dir: media.dir, declaredType: req.headers['content-type'], contentLength: Number.isFinite(len) ? len : null, maxVideoBytes: media.maxVideoBytes, maxImageBytes: media.maxImageBytes });
+      file = await receiveUpload(req.raw, { dir: media.publicDir, declaredType: req.headers['content-type'], contentLength: Number.isFinite(len) ? len : null, maxVideoBytes: media.maxVideoBytes, maxImageBytes: media.maxImageBytes });
     } catch (e) {
       if (e instanceof ApiError) req.log.info({ code: e.code }, 'media upload refused');
       throw e;
@@ -222,7 +222,8 @@ export default async function promotionRoutes(app, { config, db }) {
     schema: { tags, summary: 'Delete an uploaded file (audited)', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-f0-9]{32}\\.(mp4|webm|jpg|png|webp)$' } } } },
   }, async (req, reply) => {
     needMedia();
-    const path = mediaPath(media.dir, req.params.name);
+    const path = mediaPath(media.publicDir, req.params.name);
+    const legacy = mediaPath(media.dir, req.params.name); // uploaded before MEDIA_DIR/public existed
     if (!path) throw new ApiError(400, 'bad_request', 'Not a media file name.');
     await db.withHq(async (c) => {
       const used = (await c.query("SELECT count(*)::int AS n FROM promotions WHERE status <> 'inactive' AND slides::text LIKE $1", [`%/media/${req.params.name}%`])).rows[0].n;
@@ -231,7 +232,9 @@ export default async function promotionRoutes(app, { config, db }) {
       if (!rows[0]) throw notFound('No such file.');
       await hqAudit(c, req, null, { action: 'hq.media_delete', collection: 'hq_media', recordId: req.params.name, summary: 'Deleted an uploaded file' });
     });
-    await unlink(path).catch((e) => { if (e.code !== 'ENOENT') req.log.warn({ code: e.code }, 'could not remove a media file'); });
+    for (const p of [path, legacy]) {
+      await unlink(p).catch((e) => { if (e.code !== 'ENOENT') req.log.warn({ code: e.code }, 'could not remove a media file'); });
+    }
     return reply.code(204).send();
   });
 }

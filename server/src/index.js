@@ -4,6 +4,7 @@ import { createDb, createPool } from './db.js';
 import { buildApp } from './app.js';
 import { createSealer } from './lib/crypto.js';
 import { overlayPlatformSecrets } from './services/platform-secrets.js';
+import { mediaSettings, publishPromotionMedia } from './services/promotions.js';
 
 /** Refuse to serve tenants through a database role that can see past RLS. */
 export async function checkAppRole(db, config, log) {
@@ -41,6 +42,11 @@ async function main() {
   };
   process.on('SIGTERM', close);
   process.on('SIGINT', close);
+  // HQ side (hq-api, or a single full API): make sure promotion media is in the published folder,
+  // MEDIA_DIR/public. Job-site video is never published (services/media-url.js). Never blocks start.
+  if (config.apiMode !== 'app' && config.hqDatabaseUrl) {
+    try { await publishPromotionMedia(db, mediaSettings(config), app.log); } catch (e) { app.log.warn({ err: e.message }, 'could not publish promotion media'); }
+  }
   await app.listen({ port: config.port, host: config.host });
 }
 

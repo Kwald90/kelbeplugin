@@ -1,5 +1,5 @@
 // Landing page + HQ Promotions, end to end: embedded Postgres 17 + the API in-process + a static
-// server that serves /, /site/, /hq/, /media/ (with ranges) and proxies /api/ like nginx, sending
+// server that serves /, /site/, /hq/, /media/ (MEDIA_DIR/public only, with ranges) and proxies /api/ like nginx, sending
 // the staging CSP, and headless Chrome over CDP.
 //   cd server && npm ci          (embedded-postgres, pg, otplib come from server/node_modules)
 //   node electrical-app/tests/e2e/landing.e2e.mjs [scratch dir]
@@ -121,7 +121,7 @@ const web = createServer((rq, rs) => {
     rq.pipe(up);
     return;
   }
-  const [base, prefix] = url.pathname.startsWith('/site/') ? [WT, ''] : url.pathname.startsWith('/hq/') ? [WT, ''] : url.pathname.startsWith('/media/') ? [mediaDir, '/media'] : [join(WT, 'electrical-app'), ''];
+  const [base, prefix] = url.pathname.startsWith('/site/') ? [WT, ''] : url.pathname.startsWith('/hq/') ? [WT, ''] : url.pathname.startsWith('/media/') ? [join(mediaDir, 'public'), '/media'] : [join(WT, 'electrical-app'), ''];
   let p = normalize(join(base, decodeURIComponent(url.pathname.slice(prefix.length))));
   if (!p.startsWith(resolvePath(base))) { rs.writeHead(403); rs.end(); return; }
   if (existsSync(p) && statSync(p).isDirectory()) p = join(p, 'index.html');
@@ -360,7 +360,7 @@ try {
     await waitFor('document.querySelectorAll(".hq-media").length === 9', 'nine uploads listed', 30000);
     const list = await evaluate('fetch("/api/hq/media", { credentials: "same-origin" }).then((r) => r.json()).then((b) => b.data.map((m) => [m.label, m.url]))');
     media = Object.fromEntries(list);
-    const onDisk = (await import('node:fs')).readdirSync(mediaDir);
+    const onDisk = (await import('node:fs')).readdirSync(join(mediaDir, 'public')); // HQ uploads are published from MEDIA_DIR/public
     if (onDisk.length !== 9 || !onDisk.every((f) => /^[a-f0-9]{32}\.(mp4|jpg)$/.test(f))) throw new Error(`media dir: ${onDisk}`);
     return Object.entries(media).map(([k, v]) => `${k}→${v.slice(7, 15)}…`).join(' ');
   });

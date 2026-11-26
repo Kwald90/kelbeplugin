@@ -65,8 +65,11 @@ done
 [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
 
 mkdir -p "$STATE_DIR/status" "$WWW_DIR/releases"
-# Hero videos and posters: uploaded by hq-api (uid 1000), served read-only by nginx.
-install -d -o 1000 -g 1000 -m 755 "$STATE_DIR/media"
+# Media (uid 1000 = the containers). media/ holds private job-site video and posters, never served
+# from disk (the API streams them for signed URLs): 0711 lets nginx through to media/public, the
+# only folder it serves (hero videos and promotion uploads), without listing media/ itself.
+install -d -o 1000 -g 1000 -m 711 "$STATE_DIR/media"
+install -d -o 1000 -g 1000 -m 755 "$STATE_DIR/media/public"
 # HQ Mail files: only the containers' user (uid 1000) may read them.
 install -d -o 1000 -g 1000 -m 700 "$STATE_DIR/mail"
 # Restore tests and offsite drill results (RESTORE_TESTS_FILE): hq-api appends uploaded drills,
@@ -289,7 +292,7 @@ expo_failed=""
 expo() { # label base-url mode-args...
   local label="$1" base="$2" host="${2#https://}"
   shift 2
-  if ! "$REPO_DIR/deploy/check-exposure.sh" "$base" "$@" --resolve "$host:443:127.0.0.1" >> "$EXPOSURE_OUT" 2>&1; then
+  if ! "$REPO_DIR/deploy/check-exposure.sh" "$base" "$@" --resolve "$host:443:127.0.0.1" --media-dir "$STATE_DIR/media" >> "$EXPOSURE_OUT" 2>&1; then
     expo_failed="$expo_failed $label"
   fi
 }

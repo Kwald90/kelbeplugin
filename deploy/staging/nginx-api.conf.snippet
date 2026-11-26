@@ -138,20 +138,21 @@ location ^~ /site/ {
 }
 
 # ---- Uploaded landing-page media (HQ > Promotions; docs/marketing/landing.md) ----
-# hq-api writes uploads to MEDIA_DIR under random names (32 hex + .mp4/.webm/.jpg/.png/.webp),
-# after checking their bytes. On the host that is /var/lib/fishtape-staging/media, bind-mounted
-# into the hq-api container (owned by the container's node user, 0755; files are 0644) and never
-# inside the code checkout. nginx only reads it: those five file types, everything else 404,
-# no listing, never executed (^~ stops any regex location, PHP included, from matching here).
+# ONLY MEDIA_DIR/public is served: /var/lib/fishtape-staging/media/public on the host. hq-api writes
+# promotion uploads there under random names (32 hex + .mp4/.webm/.jpg/.png/.webp) after checking
+# their bytes, and links older ones in at start. Job-site video and posters (walkthroughs, wire
+# runs) sit in media/ itself and are never served from disk: the API streams them for short-lived
+# signed URLs (/api/v1/media/...). nginx only reads public/: those five file types, everything else
+# 404, no listing, never executed (^~ stops any regex location, PHP included, from matching here).
 # Names never change, so a year's cache is safe; byte ranges (video seeking) are nginx's default.
 # Uploads arrive through /api/hq/ and so are capped by client_max_body_size in
 # fishtape-staging-proxy.conf (72m); the API's own cap is MEDIA_MAX_VIDEO_MB (70 in compose).
 location ^~ /media/ {
-    root /var/lib/fishtape-staging;
     autoindex off;
-    location ~ "^/media/[a-f0-9]{32}\.(?:mp4|webm|jpg|png|webp)$" {
+    disable_symlinks on from=/var/lib/fishtape-staging/media/public;
+    location ~ "^/media/([a-f0-9]{32}\.(?:mp4|webm|jpg|png|webp))$" {
+        alias /var/lib/fishtape-staging/media/public/$1;
         expires 1y;
-        try_files $uri =404;
     }
     return 404;
 }

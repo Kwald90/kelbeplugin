@@ -16,7 +16,7 @@ import {
 import { pickImages, downscaleImage } from '../lib/safety-capture.js';
 import { recordingSupported, startRecording, fmtClock, MAX_UPLOAD_BYTES } from '../lib/walkthrough-recorder.js';
 import { putBlob, getBlob, blobUrl, deleteBlob } from '../lib/local-blobs.js';
-import { uploadWalkthroughVideo, fetchWalkthroughMedia, deleteWalkthroughMedia, transcribeWalkthroughVideo, mediaUrl } from '../lib/walkthrough-upload.js';
+import { uploadWalkthroughVideo, fetchWalkthroughMedia, deleteWalkthroughMedia, transcribeWalkthroughVideo, mediaUrl, keepMediaFresh } from '../lib/walkthrough-upload.js';
 import { liveDictationSupported, startLiveDictation, appendPhrase, aiTranscriptionAvailable, setAiTranscription } from '../lib/transcribe.js';
 import { jobFocus, onJobFocus, rankJobs } from '../lib/job-focus.js';
 import { focusNote } from '../lib/job-focus-ui.js';
@@ -257,7 +257,8 @@ function detailView(root, ctx, id) {
     const playInto = async () => {
       let src = '';
       let poster;
-      const m = r.mediaId ? ((lastMedia && lastMedia.id === r.mediaId) ? lastMedia : await refreshMedia()) : null;
+      // Always a fresh row: its playback links are signed and expire after about 15 minutes.
+      const m = r.mediaId ? await refreshMedia() : null;
       if (m && m.url) { src = mediaUrl(m.url); if (m.posterUrl) poster = mediaUrl(m.posterUrl); }
       if (!src && r.localId) src = await blobUrl(r.localId);
       ui.clear(card); card.append(header());
@@ -267,7 +268,9 @@ function detailView(root, ctx, id) {
           : 'The video was recorded on another device and isn’t stored here. Photos and the transcript are still available.'));
         return;
       }
-      card.append(h('video', { class: 'wt-video-el', controls: true, src, playsInline: true, ...(poster ? { poster } : {}) }));
+      const video = h('video', { class: 'wt-video-el', controls: true, src, playsInline: true, ...(poster ? { poster } : {}) });
+      if (m && m.url && src === mediaUrl(m.url)) keepMediaFresh(video, refreshMedia); // a link that expires mid-watch is renewed
+      card.append(video);
     };
     card.append(header());
     if (status === 'failed' && r.error) card.append(h('div', { class: 'hint' }, 'The server couldn’t process this video; it still plays from this device. You can try Upload again.'));

@@ -57,6 +57,7 @@ import materialRoutes from './routes/v1/materials.js';
 import drawingRoutes from './routes/v1/drawings.js';
 import walkthroughMediaRoutes from './routes/v1/walkthrough-media.js';
 import wireRunMediaRoutes from './routes/v1/wirerun-media.js';
+import mediaRoutes from './routes/v1/media.js';
 import locationRoutes from './routes/v1/location.js';
 import qboConnectRoutes from './routes/v1/qbo-connect.js';
 import qboWebhookRoutes from './routes/v1/qbo-webhook.js';
@@ -251,6 +252,7 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
     await app.register(drawingRoutes, deps);
     await app.register(walkthroughMediaRoutes, deps);
     await app.register(wireRunMediaRoutes, deps);
+    await app.register(mediaRoutes, deps);
     await app.register(locationRoutes, deps);
     await app.register(qboConnectRoutes, deps);
     await app.register(qboWebhookRoutes, deps);

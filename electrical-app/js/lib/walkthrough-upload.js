@@ -3,8 +3,11 @@
 // (cookie on the web, Keychain bearer in the iOS app). The server streams it onto the media volume,
 // transcodes it (worker) and serves the result from /media/. See routes/v1/walkthrough-media.js.
 //
-// Playback URLs come back site-relative (/media/<file>); mediaUrl() prefixes the API base in the
-// iOS app, where the page is capacitor://localhost but the media lives on the API origin.
+// Playback URLs are short-lived signed API paths (/api/v1/media/<id>/<video|poster>?c=&e=&s=, see
+// server/src/services/media-url.js): job-site video is private and never served from disk. They come
+// back with every media row (with urlExpiresAt); fetch the row again for a fresh one, and
+// keepMediaFresh() does that by itself when a link expires mid-playback. mediaUrl() prefixes the
+// API base in the iOS app, where the page is capacitor://localhost but the media is on the API origin.
 import { apiFetch, API_BASE, ApiError } from '../session.js';
 
 const PATH = '/api/v1/walkthrough-media';
@@ -85,9 +88,37 @@ export async function deleteWalkthroughMedia(mediaId) {
   return readJson(res);
 }
 
-/** Resolve a server media path (/media/<file>) to a URL the page can load. */
+/** Resolve a server media path (a signed /api/v1/media/... link) to a URL the page can load. */
 export function mediaUrl(path) {
   if (!path) return '';
   if (/^https?:\/\//i.test(path)) return path;
   return API_BASE ? API_BASE + path : path;
+}
+
+/**
+ * Keep a <video> playing a signed server link past its expiry: when loading fails (an expired link
+ * answers 401), fetch a fresh link with refetch() (a media row: { url }) and carry on from the same
+ * moment, playing or paused as it was. At most one retry every 10 s, so a real failure still shows.
+ * Returns a function that stops watching.
+ * @param {HTMLVideoElement} video
+ * @param {() => Promise<{ url?: string } | null>} refetch
+ */
+export function keepMediaFresh(video, refetch) {
+  let last = 0;
+  const onError = async () => {
+    if (Date.now() - last < 10_000) return;
+    last = Date.now();
+    const at = video.currentTime || 0;
+    const wasPlaying = !video.paused;
+    let m = null;
+    try { m = await refetch(); } catch { return; }
+    if (!m?.url) return;
+    video.addEventListener('loadedmetadata', () => {
+      try { video.currentTime = at; } catch { /* not seekable yet */ }
+      if (wasPlaying) video.play().catch(() => {});
+    }, { once: true });
+    video.src = mediaUrl(m.url);
+  };
+  video.addEventListener('error', onError);
+  return () => video.removeEventListener('error', onError);
 }

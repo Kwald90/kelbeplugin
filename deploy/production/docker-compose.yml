@@ -52,7 +52,8 @@ x-server: &server
     # HQ Mail attachments and original messages (docs/email/README.md). Written by the api
     # (Inbound Parse), read by hq-api (downloads) and the worker (sending attachments).
     MAIL_DIR: /var/lib/fishtape/mail
-    # Hero videos and posters uploaded in HQ -> Promotions; nginx serves them at /media/.
+    # Media: promotion uploads in MEDIA_DIR/public (nginx serves that folder at /media/); job-site
+    # walkthrough and wire-run video in MEDIA_DIR itself, never served from disk (signed API URLs).
     MEDIA_DIR: /var/lib/fishtape/media
     # Under nginx's 72m request limit on /api/; hero clips at the documented specs are ~10 MB.
     MEDIA_MAX_VIDEO_MB: "70"

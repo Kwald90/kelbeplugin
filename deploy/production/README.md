@@ -17,7 +17,7 @@ The marketing site (`fishtapehq.com`) serves only: `/` (`site/index.html` if it 
 `site/pricing.html`), `/site/*`, `/pricing` and `/signup` (short routes to `site/pricing.html` and
 `site/signup.html`), the app assets the pages import (`/js/`, `/css/`, `/icons/`, `/vendor/`, read-only
 from the release's `electrical-app/`), `/media/*` (videos and images from
-`/var/lib/fishtape-production/media`), and the API routes `/api/v1/public/*`, `/api/v1/status` and
+`/var/lib/fishtape-production/media/public` only), and the API routes `/api/v1/public/*`, `/api/v1/status` and
 `/api/v1/webhooks/platform-stripe`, rate-limited. `/index.html` redirects to the app host,
 `/site/status.html` to the status host. Everything else is 404. Same security headers and CSP as the app.
 
@@ -317,10 +317,13 @@ cd /srv/fishtape/repo/deploy/production && sudo docker compose logs -f --tail=20
 sudo docker compose exec postgres psql -U postgres -d fishtape                     # admin; Postgres has no host port
 ```
 
-Hero media for the marketing site: copy files into `/var/lib/fishtape-production/media/`
+Hero media for the marketing site: copy files into `/var/lib/fishtape-production/media/public/`
 (`.mp4`, `.webm`, `.jpg`, `.png`, `.webp`; plain names, mode 644) and reference them as
 `/media/<name>`. They are cached 30 days, so give a changed file a new name
-(`hero-2026-11.mp4`) instead of overwriting it.
+(`hero-2026-11.mp4`) instead of overwriting it. Only `media/public/` is served. `media/` itself holds
+job-site walkthrough and wire-run video, which is private: nginx never serves it, and the API streams
+it at `/api/v1/media/...` for short-lived signed URLs only. (hq-api links promotion uploads and
+plainly named files left in `media/` into `public/` when it starts.)
 
 Rollback, restore, secret rotation and incidents: `docs/runbooks/` (production ports are 3420/3421).
 

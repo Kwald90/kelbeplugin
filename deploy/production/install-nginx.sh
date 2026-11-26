@@ -67,7 +67,10 @@ fi
 mkdir -p /etc/nginx/snippets "$AVAIL" "$ENABLED" /var/www/certbot "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 install -d -o root -g adm -m 0750 /var/log/fishtape-production
-install -d -m 0755 /var/lib/fishtape-production /var/lib/fishtape-production/media
+install -d -m 0755 /var/lib/fishtape-production
+# media/ is private (job-site video, streamed by the API for signed URLs); nginx serves media/public only.
+install -d -m 0711 /var/lib/fishtape-production/media
+install -d -m 0755 /var/lib/fishtape-production/media/public
 
 # ---- back up everything this run may change ----
 for src in "${!FILES[@]}"; do
