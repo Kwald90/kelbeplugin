@@ -120,6 +120,55 @@
   box-shadow: var(--shadow-float); pointer-events: none; text-align: center;
 }
 
+/* ---------- videos (recorded while measuring, or attached later) ---------- */
+.wr-rec-toggle { margin-top: var(--s2); }
+.wr-rec-toggle[hidden] { display: none; }
+.wr-videos { display: flex; flex-direction: column; }
+.wr-vid { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto auto; gap: var(--s2) var(--s3); align-items: center; padding: var(--s3) 0; border-bottom: 1px solid var(--border); }
+.wr-vid:last-child { border-bottom: 0; }
+.wr-vid-play { width: 48px; height: 48px; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); display: grid; place-items: center; cursor: pointer; }
+.wr-vid-play:disabled { opacity: 0.45; cursor: default; }
+.wr-vid-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wr-vid-name { min-height: 34px; font-weight: 600; }
+.wr-vid-progress { margin-top: var(--s1); }
+.wr-vid-err { color: var(--danger); }
+.wr-vid-store { font-size: var(--fs-xs); align-self: center; }
+.wr-vid-choice { border-top: 1px solid var(--border); padding-top: var(--s3); }
+.wr-linkbtn { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); text-decoration: underline; cursor: pointer; }
+@media (max-width: 640px) {
+  .wr-vid { grid-template-columns: 48px minmax(0, 1fr); }
+  .wr-vid > .badge { justify-self: start; grid-column: 2; }
+  .wr-vid > .wr-actions { grid-column: 1 / -1; justify-content: flex-end; flex-wrap: wrap; gap: var(--s1); }
+}
+
+/* re-check a run against its video (full screen) */
+.wr-review { position: fixed; inset: 0; z-index: 55; display: flex; flex-direction: column; background: var(--bg); }
+.wr-review.wr-review-hidden { display: none; }
+.wr-review-time { font-size: var(--fs-lg); line-height: var(--lh-lg); font-weight: 700; }
+.wr-review-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
+.wr-review-stage { display: flex; flex-direction: column; min-height: 0; background: #000; }
+.wr-review-video { flex: 1; min-height: 0; width: 100%; max-height: 100%; background: #000; object-fit: contain; display: block; }
+.wr-review-tools { display: flex; flex-wrap: wrap; gap: var(--s2); padding: var(--s2) var(--s3) max(var(--s2), env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--border); }
+.wr-review-side { overflow-y: auto; padding: var(--s3) var(--s4); background: var(--surface); border-left: 1px solid var(--border); }
+.wr-review-side h3 { margin: var(--s2) 0; font-size: var(--fs-sm); }
+.wr-review-marks { list-style: none; margin: 0 0 var(--s3); padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.wr-review-mark { width: 100%; display: flex; gap: var(--s3); align-items: baseline; text-align: left; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: inherit; font: inherit; padding: var(--s2); min-height: 44px; cursor: pointer; }
+.wr-review-mark:hover { background: var(--surface-2); }
+.wr-review-mark.on { border-color: var(--accent); background: var(--accent-soft); }
+.wr-review-at { font-weight: 700; min-width: 44px; }
+.wr-review-segs { list-style: none; margin: 0; padding: 0; font-size: var(--fs-xs); }
+.wr-review-segs li { display: flex; justify-content: space-between; gap: var(--s3); padding: var(--s1) var(--s2); border-radius: var(--r-sm); }
+.wr-review-segs li.on { background: var(--accent-soft); font-weight: 700; }
+.wr-review-help { font-size: var(--fs-xs); margin-top: var(--s3); }
+.wr-sheet-video { width: 100%; max-height: 70vh; border-radius: var(--r-md); background: #000; }
+@media (max-width: 900px) {
+  .wr-review-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 40%); }
+  .wr-review-side { border-left: 0; border-top: 1px solid var(--border); }
+}
+
+/* the WebXR recording canvas: in the page so the browser keeps drawing it, never seen */
+.wr-ar-rec { position: fixed; left: 0; top: 0; width: 2px; height: 2px; opacity: 0.01; pointer-events: none; }
+
 /* ---------- WebXR AR tape overlay (shown over the camera) ---------- */
 .wr-ar { display: none; position: fixed; inset: 0; z-index: 90; flex-direction: column; justify-content: space-between; background: transparent; color: var(--text); font-family: var(--font-sans); }
 .wr-ar.on { display: flex; }

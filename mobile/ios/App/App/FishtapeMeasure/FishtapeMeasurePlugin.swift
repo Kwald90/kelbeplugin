@@ -9,9 +9,17 @@ import UIKit
 /// `window.Capacitor.Plugins.FishtapeMeasure`:
 ///
 ///     isAvailable() -> { available: boolean }
-///     measurePath({ units: 'metric' | 'imperial' })
-///       -> { totalM, segments: [{ lengthM }], points: [{ x, y, z }], snapshot: 'data:image/jpeg;base64,...' }
+///     measurePath({ units: 'metric' | 'imperial', record?: boolean })
+///       -> { totalM, segments: [{ lengthM }], points: [{ x, y, z }], snapshot: 'data:image/jpeg;base64,...',
+///            pointTimesMs?: [number],          // with record: ms into the video when each point was added
+///            video?: { path, bytes, durationMs, mimeType: 'video/mp4' },   // with record: an MP4 in tmp
+///            videoNote?: string }              // with record, when there is no video: why
 ///       rejects with message and code 'cancelled' when the user backs out.
+///     discardRecording({ path }) -> {}        // delete a recording once the web view has read it
+///
+/// With `record`, the AR camera feed is written to an H.264 MP4 while measuring (ARVideoRecorder in
+/// MeasureViewController.swift). The web side reads the file through Capacitor's file URL, keeps it
+/// in IndexedDB and calls discardRecording, so nothing is left in tmp.
 ///
 /// Lengths are always metres in ARKit world space; `units` only sets the labels drawn in the AR view.
 /// Registered by MainViewController.capacitorDidLoad().
@@ -21,7 +29,8 @@ public class FishtapeMeasurePlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "FishtapeMeasure"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "isAvailable", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "measurePath", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "measurePath", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "discardRecording", returnType: CAPPluginReturnPromise)
     ]
 
     static let cameraDeniedMessage =
@@ -41,14 +50,15 @@ public class FishtapeMeasurePlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let units = MeasureUnits(rawValue: call.getString("units") ?? "") ?? .metric
+        let record = call.getBool("record") ?? false
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
-            DispatchQueue.main.async { self.present(call, units: units) }
+            DispatchQueue.main.async { self.present(call, units: units, record: record) }
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 DispatchQueue.main.async {
                     if granted {
-                        self.present(call, units: units)
+                        self.present(call, units: units, record: record)
                     } else {
                         self.cameraDenied(call)
                     }
@@ -59,8 +69,18 @@ public class FishtapeMeasurePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// Delete a recording measurePath returned. Only files ARVideoRecorder made (in tmp) can go.
+    @objc func discardRecording(_ call: CAPPluginCall) {
+        guard let path = call.getString("path"), let url = ARVideoRecorder.ownedFile(atPath: path) else {
+            call.reject("That is not a recording this app made.", "bad_path")
+            return
+        }
+        try? FileManager.default.removeItem(at: url)
+        call.resolve()
+    }
+
     @MainActor
-    private func present(_ call: CAPPluginCall, units: MeasureUnits) {
+    private func present(_ call: CAPPluginCall, units: MeasureUnits, record: Bool) {
         guard activeScreen == nil else {
             call.reject("AR measuring is already open.", "busy")
             return
@@ -69,7 +89,7 @@ public class FishtapeMeasurePlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("The app isn't ready to show the camera yet. Try again.", "no_view")
             return
         }
-        let screen = MeasureViewController(units: units)
+        let screen = MeasureViewController(units: units, record: record)
         screen.onFinish = { outcome in
             switch outcome {
             case .done(let result):

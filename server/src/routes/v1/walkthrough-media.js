@@ -95,7 +95,7 @@ export default async function walkthroughMediaRoutes(app, { db, config }) {
   }, async (req) => {
     const p = req.principal;
     if (!canRead(p, 'walkthroughs')) throw forbidden('You cannot read walkthrough video.');
-    const row = await inTenant(req, async (tx) => (await tx.query('SELECT * FROM walkthrough_media WHERE id = $1', [req.params.id])).rows[0]);
+    const row = await inTenant(req, async (tx) => (await tx.query("SELECT * FROM walkthrough_media WHERE id = $1 AND owner_kind = 'walkthrough'", [req.params.id])).rows[0]);
     if (!row) throw notFound('No such video.');
     return { ...mediaRowView(row), aiTranscription: await geminiConfigured(db) };
   });
@@ -114,7 +114,7 @@ export default async function walkthroughMediaRoutes(app, { db, config }) {
     needMedia();
     if (!(await geminiConfigured(db))) throw new ApiError(400, 'not_configured', 'AI transcription is not set up. An administrator adds the Gemini key in HQ → Platform keys.');
     const row = await inTenant(req, async (tx) => {
-      const r = (await tx.query('SELECT * FROM walkthrough_media WHERE id = $1', [req.params.id])).rows[0];
+      const r = (await tx.query("SELECT * FROM walkthrough_media WHERE id = $1 AND owner_kind = 'walkthrough'", [req.params.id])).rows[0];
       if (!r) return null;
       if (!r.output_file && !r.original_file) throw new ApiError(409, 'no_video', 'There is no stored video to transcribe.');
       if (r.transcribe_status === 'processing') return r; // already queued; just report it
@@ -135,7 +135,7 @@ export default async function walkthroughMediaRoutes(app, { db, config }) {
     const p = req.principal;
     if (!canWrite(p, 'walkthroughs')) throw forbidden('You cannot delete walkthrough video.');
     needMedia();
-    const row = await inTenant(req, async (tx) => (await tx.query('DELETE FROM walkthrough_media WHERE id = $1 RETURNING *', [req.params.id])).rows[0], { write: true });
+    const row = await inTenant(req, async (tx) => (await tx.query("DELETE FROM walkthrough_media WHERE id = $1 AND owner_kind = 'walkthrough' RETURNING *", [req.params.id])).rows[0], { write: true });
     if (!row) throw notFound('No such video.');
     await removeMediaFiles(media.dir, row);
     return reply.code(204).send();

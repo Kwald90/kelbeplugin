@@ -1,4 +1,6 @@
 import ARKit
+import AVFoundation
+import CoreImage
 import SceneKit
 import UIKit
 
@@ -20,10 +22,18 @@ private enum Palette {
 ///
 /// Points are raycast from the screen centre: detected planes and estimated planes, and on LiDAR
 /// devices the reconstructed mesh, so plain drywall works better there.
+///
+/// With `record`, the camera feed is recorded to an MP4 while measuring (ARVideoRecorder below) and
+/// the moment each point is added is kept, so the wire run can play the video back and jump to each
+/// point later.
 final class MeasureViewController: UIViewController {
     var onFinish: ((MeasureOutcome) -> Void)?
 
     private let units: MeasureUnits
+    private let recorder: ARVideoRecorder?
+    /// ms into the recording when each point in `points` was added (kept in step with `points`).
+    private var pointTimes: [Int] = []
+    private var saving = false
     private let sceneView = ARSCNView(frame: .zero)
     private let coaching = ARCoachingOverlayView()
 
@@ -53,6 +63,7 @@ final class MeasureViewController: UIViewController {
     private let totalLabel = UILabel()
     private let legLabel = UILabel()
     private let statusLabel = UILabel()
+    private let recLabel = UILabel()
     private let cancelButton = UIButton(type: .system)
     private let undoButton = UIButton(type: .system)
     private let addButton = UIButton(type: .system)
@@ -64,8 +75,9 @@ final class MeasureViewController: UIViewController {
     private let impact = UIImpactFeedbackGenerator(style: .medium)
     private let notice = UINotificationFeedbackGenerator()
 
-    init(units: MeasureUnits) {
+    init(units: MeasureUnits, record: Bool = false) {
         self.units = units
+        self.recorder = record ? ARVideoRecorder() : nil
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
         modalTransitionStyle = .crossDissolve
@@ -145,7 +157,16 @@ final class MeasureViewController: UIViewController {
         if isBeingDismissed {
             UIApplication.shared.isIdleTimerDisabled = false
             sceneView.session.pause()
+            if !finished {
+                recorder?.cancel()
+            }
         }
+    }
+
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        // Low on memory: stop recording (what is recorded so far is kept) so measuring carries on.
+        recorder?.stopEarly(note: "The recording stopped early because the device ran low on memory. The measurement is fine.")
     }
 
     override func viewWillLayoutSubviews() {
@@ -207,7 +228,12 @@ final class MeasureViewController: UIViewController {
         statusLabel.textColor = .white
         statusLabel.numberOfLines = 3
 
-        let stack = UIStackView(arrangedSubviews: [captionLabel, totalLabel, legLabel, statusLabel])
+        recLabel.font = .monospacedDigitSystemFont(ofSize: 14, weight: .bold)
+        recLabel.textColor = UIColor(red: 1, green: 0.36, blue: 0.33, alpha: 1)
+        recLabel.isHidden = recorder == nil
+        recLabel.accessibilityLabel = "Recording video"
+
+        let stack = UIStackView(arrangedSubviews: [captionLabel, totalLabel, legLabel, statusLabel, recLabel])
         stack.axis = .vertical
         stack.spacing = 2
         stack.setCustomSpacing(8, after: legLabel)
@@ -321,7 +347,7 @@ final class MeasureViewController: UIViewController {
     // MARK: - Actions
 
     @objc private func addPoint() {
-        guard !finished, !coaching.isActive else { return }
+        guard !finished, !saving, !coaching.isActive else { return }
         guard let aim else {
             say("No surface under the dot yet. Move slowly so the camera can find it.")
             notice.notificationOccurred(.warning)
@@ -331,6 +357,7 @@ final class MeasureViewController: UIViewController {
             return // a double tap on the same spot
         }
         points.append(aim)
+        pointTimes.append(recordingOffsetMs())
         let dot = Self.makePoint()
         dot.simdPosition = aim
         sceneView.scene.rootNode.addChildNode(dot)
@@ -350,8 +377,11 @@ final class MeasureViewController: UIViewController {
     }
 
     @objc private func undo() {
-        guard !finished, !points.isEmpty else { return }
+        guard !finished, !saving, !points.isEmpty else { return }
         points.removeLast()
+        if !pointTimes.isEmpty {
+            pointTimes.removeLast()
+        }
         pointNodes.removeLast().removeFromParentNode()
         if segmentNodes.count > max(0, points.count - 1) {
             segmentNodes.removeLast().removeFromParentNode()
@@ -362,7 +392,7 @@ final class MeasureViewController: UIViewController {
     }
 
     @objc private func done() {
-        guard !finished else { return }
+        guard !finished, !saving else { return }
         guard points.count >= 2 else {
             say("Add at least two points first.")
             notice.notificationOccurred(.warning)
@@ -373,11 +403,35 @@ final class MeasureViewController: UIViewController {
         liveLabel.isHidden = true
         let snapshot = makeSnapshot()
         notice.notificationOccurred(.success)
-        finish(.done(result(snapshot: snapshot)))
+        var out = result(snapshot: snapshot)
+        guard let recorder else {
+            finish(.done(out))
+            return
+        }
+        // Close the video file first (well under a second), then hand everything back.
+        saving = true
+        say("Saving the video…")
+        [addButton, undoButton, doneButton].forEach { $0.isEnabled = false }
+        recorder.finish { [weak self] recording in
+            guard let self else { return }
+            if let recording {
+                out["video"] = [
+                    "path": recording.url.path,
+                    "bytes": recording.bytes,
+                    "durationMs": recording.durationMs,
+                    "mimeType": "video/mp4"
+                ]
+                out["pointTimesMs"] = self.pointTimes.map { min($0, recording.durationMs) }
+            } else {
+                out["videoNote"] = recorder.note ?? "The video could not be saved. The measurement is fine."
+            }
+            self.saving = false
+            self.finish(.done(out))
+        }
     }
 
     @objc private func cancel() {
-        guard !finished else { return }
+        guard !finished, !saving else { return }
         guard !points.isEmpty else {
             finish(.cancelled)
             return
@@ -396,6 +450,12 @@ final class MeasureViewController: UIViewController {
     private func finish(_ outcome: MeasureOutcome) {
         guard !finished else { return }
         finished = true
+        switch outcome {
+        case .done:
+            break // done() already closed the recording
+        case .cancelled, .failed:
+            recorder?.cancel()
+        }
         sceneView.session.pause()
         UIApplication.shared.isIdleTimerDisabled = false
         let callback = onFinish
@@ -407,6 +467,7 @@ final class MeasureViewController: UIViewController {
 
     private func clearPoints() {
         points.removeAll()
+        pointTimes.removeAll()
         (pointNodes + segmentNodes).forEach { $0.removeFromParentNode() }
         pointNodes.removeAll()
         segmentNodes.removeAll()
@@ -434,6 +495,26 @@ final class MeasureViewController: UIViewController {
         totalLabel.text = MeasureFormat.length(totalMetres, units: units)
         undoButton.isEnabled = !points.isEmpty
         doneButton.isEnabled = points.count >= 2
+    }
+
+    /// ms into the recording now (0 when not recording).
+    private func recordingOffsetMs() -> Int {
+        guard let recorder, let frame = sceneView.session.currentFrame else { return 0 }
+        return recorder.offsetMs(at: frame.timestamp)
+    }
+
+    private func updateRecLabel(_ frame: ARFrame) {
+        guard let recorder else { return }
+        let text: String
+        if recorder.isRecording {
+            let s = recorder.offsetMs(at: frame.timestamp) / 1000
+            text = String(format: "● REC %d:%02d", s / 60, s % 60)
+        } else {
+            text = recorder.note == nil ? "● REC" : "Not recording"
+        }
+        if recLabel.text != text {
+            recLabel.text = text
+        }
     }
 
     private func frameUpdate() {
@@ -692,6 +773,10 @@ final class MeasureViewController: UIViewController {
 // ARKit calls these on the main queue (the session's delegateQueue is nil).
 extension MeasureViewController: ARSessionDelegate {
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        if let recorder, !finished, !saving {
+            recorder.append(frame, orientation: view.window?.windowScene?.interfaceOrientation ?? .portrait)
+            updateRecLabel(frame)
+        }
         frameUpdate()
     }
 
@@ -864,5 +949,239 @@ private final class CrosshairView: UIView {
     private func update() {
         ring.lineDashPattern = locked ? nil : [6, 5]
         alpha = locked ? 1 : 0.7
+    }
+}
+
+// MARK: - Recording
+
+/// Records the AR camera feed (ARFrame.capturedImage) to an H.264 MP4 in the app's temporary folder
+/// while measuring. Frames are turned upright for the screen orientation at the first frame, scaled
+/// to at most 1280 px on the long side and written at up to 30 fps, about 2 Mbit/s (~15 MB a minute).
+/// The copy into the writer's own buffer pool happens straight away, so ARKit's camera buffers are
+/// never held. Recording stops by itself after ten minutes, when the writer fails, or on a memory
+/// warning; the measurement carries on either way.
+///
+/// append/finish/cancel are called on the main thread; the writer lives on a private serial queue.
+final class ARVideoRecorder {
+    struct Recording {
+        let url: URL
+        let bytes: Int
+        let durationMs: Int
+    }
+
+    static let maxDuration: TimeInterval = 10 * 60
+    static let filePrefix = "ar-run-"
+    private static let maxSide: CGFloat = 1280
+    private static let frameInterval: TimeInterval = 1.0 / 30.0
+
+    let url: URL
+    /// Why recording stopped or never started, for the web side (nil while all is well).
+    private(set) var note: String?
+
+    // main thread
+    private var startTime: TimeInterval?
+    private var lastTime: TimeInterval = 0
+    private var stopped = false
+    /// Camera buffers handed to the writer queue and not yet copied. ARKit's buffer pool is small,
+    /// so frames are dropped rather than holding more than two.
+    private var inFlight = 0
+
+    // writer queue
+    private let queue = DispatchQueue(label: "com.fishtapehq.measure.recorder")
+    private let ciContext = CIContext(options: [.cacheIntermediates: false])
+    private var writer: AVAssetWriter?
+    private var input: AVAssetWriterInput?
+    private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
+    private var imageOrientation: CGImagePropertyOrientation = .right
+    private var scale: CGFloat = 1
+    private var writeFailed = false
+
+    init() {
+        url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(Self.filePrefix)\(UUID().uuidString).mp4")
+    }
+
+    var isRecording: Bool { !stopped && startTime != nil }
+
+    /// A file this class made, from a path the web side sends back; nil for anything else.
+    static func ownedFile(atPath path: String) -> URL? {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let tmp = FileManager.default.temporaryDirectory.standardizedFileURL
+        guard url.deletingLastPathComponent().path == tmp.path,
+              url.lastPathComponent.hasPrefix(filePrefix),
+              url.pathExtension == "mp4" else { return nil }
+        return url
+    }
+
+    /// ms into the recording for an ARFrame timestamp (0 before the first frame).
+    func offsetMs(at timestamp: TimeInterval) -> Int {
+        guard let startTime else { return 0 }
+        let end = stopped ? lastTime : timestamp
+        return max(0, Int(((end - startTime) * 1000).rounded()))
+    }
+
+    func append(_ frame: ARFrame, orientation: UIInterfaceOrientation) {
+        guard !stopped else { return }
+        let t = frame.timestamp
+        if let startTime {
+            guard t - lastTime >= Self.frameInterval - 0.002 else { return }
+            if t - startTime > Self.maxDuration {
+                stopEarly(note: "The recording stopped at ten minutes. Measure long runs in parts to record them all.")
+                return
+            }
+        } else {
+            startTime = t
+        }
+        guard inFlight < 2 else { return }
+        lastTime = t
+        let buffer = frame.capturedImage
+        let seconds = t - (startTime ?? t)
+        let upright = Self.uprightOrientation(for: orientation)
+        inFlight += 1
+        queue.async { [weak self] in
+            self?.write(buffer, at: seconds, orientation: upright)
+            DispatchQueue.main.async { self?.inFlight -= 1 }
+        }
+    }
+
+    /// Stop taking frames but keep what was recorded (finish() still closes the file).
+    func stopEarly(note: String) {
+        guard !stopped else { return }
+        stopped = true
+        self.note = note
+    }
+
+    /// Close the file. Calls back on the main thread with the recording, or nil (see `note`).
+    func finish(_ done: @escaping (Recording?) -> Void) {
+        let durationMs = offsetMs(at: lastTime)
+        stopped = true
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard let writer = self.writer, writer.status == .writing, !self.writeFailed else {
+                self.writer?.cancelWriting()
+                try? FileManager.default.removeItem(at: self.url)
+                DispatchQueue.main.async {
+                    if self.note == nil { self.note = "No video was recorded." }
+                    done(nil)
+                }
+                return
+            }
+            self.input?.markAsFinished()
+            writer.finishWriting {
+                let ok = writer.status == .completed
+                let bytes = ok ? ((try? self.url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) : 0
+                if !ok || bytes == 0 {
+                    try? FileManager.default.removeItem(at: self.url)
+                }
+                DispatchQueue.main.async {
+                    if ok && bytes > 0 {
+                        done(Recording(url: self.url, bytes: bytes, durationMs: durationMs))
+                    } else {
+                        self.note = "The video could not be saved (\(writer.error?.localizedDescription ?? "unknown error"))."
+                        done(nil)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Throw the recording away (measuring was cancelled or failed).
+    func cancel() {
+        stopped = true
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.writer?.cancelWriting()
+            try? FileManager.default.removeItem(at: self.url)
+        }
+    }
+
+    // MARK: writer queue
+
+    private func write(_ buffer: CVPixelBuffer, at seconds: TimeInterval, orientation: CGImagePropertyOrientation) {
+        guard !writeFailed else { return }
+        if writer == nil {
+            setUp(for: buffer, orientation: orientation)
+        }
+        guard let writer, writer.status == .writing, let input, let adaptor else { return }
+        guard input.isReadyForMoreMediaData else { return } // encoder busy: drop this frame
+        guard let pool = adaptor.pixelBufferPool else { return }
+        var out: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &out)
+        guard let out else { return }
+        var image = CIImage(cvPixelBuffer: buffer).oriented(imageOrientation)
+        image = image.transformed(by: CGAffineTransform(translationX: -image.extent.origin.x, y: -image.extent.origin.y))
+        if scale < 1 {
+            image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        }
+        ciContext.render(image, to: out)
+        if !adaptor.append(out, withPresentationTime: CMTime(seconds: seconds, preferredTimescale: 600)) {
+            failWriting()
+        }
+    }
+
+    private func setUp(for buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) {
+        imageOrientation = orientation
+        let sensor = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
+        let sideways = orientation == .right || orientation == .left
+        let upright = sideways ? CGSize(width: sensor.height, height: sensor.width) : sensor
+        scale = min(1, Self.maxSide / max(upright.width, upright.height))
+        // the encoder wants even dimensions
+        let width = max(2, Int((upright.width * scale / 2).rounded(.down)) * 2)
+        let height = max(2, Int((upright.height * scale / 2).rounded(.down)) * 2)
+        do {
+            let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+            let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height,
+                AVVideoCompressionPropertiesKey: [
+                    AVVideoAverageBitRateKey: 2_000_000,
+                    // a key frame every second, so playback can jump straight to each point
+                    AVVideoMaxKeyFrameIntervalKey: 30,
+                    AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
+                ]
+            ])
+            input.expectsMediaDataInRealTime = true
+            let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()
+            ])
+            guard writer.canAdd(input) else {
+                failWriting()
+                return
+            }
+            writer.add(input)
+            writer.shouldOptimizeForNetworkUse = true
+            guard writer.startWriting() else {
+                failWriting()
+                return
+            }
+            writer.startSession(atSourceTime: .zero)
+            self.writer = writer
+            self.input = input
+            self.adaptor = adaptor
+        } catch {
+            failWriting()
+        }
+    }
+
+    private func failWriting() {
+        writeFailed = true
+        let message = "The video stopped recording (\(writer?.error?.localizedDescription ?? "the encoder failed")). The measurement is fine."
+        DispatchQueue.main.async { [weak self] in
+            self?.stopEarly(note: message)
+        }
+    }
+
+    /// How to turn the back camera's landscape sensor image upright for the screen orientation.
+    static func uprightOrientation(for orientation: UIInterfaceOrientation) -> CGImagePropertyOrientation {
+        switch orientation {
+        case .landscapeRight: return .up
+        case .landscapeLeft: return .down
+        case .portraitUpsideDown: return .left
+        default: return .right // portrait
+        }
     }
 }
