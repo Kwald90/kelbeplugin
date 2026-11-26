@@ -4,6 +4,7 @@
 // js/lib/units.js in the user's units.
 import { fmtLength, M_PER_FT } from './units.js';
 import { createPdf, createFlow, PDF_COLORS } from './pdf.js';
+import { normalizeVideos } from './wirerun-video.js';
 
 // ---------- code values and trade defaults ----------
 /**
@@ -31,7 +32,8 @@ export const STICK_M = 3.05;
 export const AR_TYPICAL_ERROR_PCT = 2;
 
 export const METHODS = [{ id: 'cable', label: 'Cable' }, { id: 'conduit', label: 'Conduit' }];
-export const SOURCES = { ar: 'AR', plan: 'Plan', manual: 'Typed' };
+/** Where a segment's length came from. 'video': measured on a still frame of a run's video, against a scale set on the frame. */
+export const SOURCES = { ar: 'AR', plan: 'Plan', manual: 'Typed', video: 'Video frame' };
 
 export const CONDUIT_TYPES = [
   { id: 'EMT', label: 'EMT' },
@@ -116,15 +118,17 @@ export function normalizeRun(run = {}) {
     },
     conductors: (run.conductors || []).map((c) => ({ id: c.id || newId(), description: c.description ?? '', size: c.size ?? '', material: c.material === 'al' ? 'al' : 'cu', type: c.type ?? '', count: c.count ?? 1, itemId: c.itemId || null })),
     photos: run.photos || [],
+    // Videos recorded while measuring or attached later (lib/wirerun-video.js): references and markers, never bytes.
+    videos: normalizeVideos(run.videos),
     notes: run.notes ?? '',
   };
 }
 
-/** A copy with fresh ids, ready for store.add. */
+/** A copy with fresh ids, ready for store.add. Videos stay with the original (one copy of the bytes, one owner). */
 export function duplicateRun(run, suffix = ' (copy)') {
   const r = normalizeRun(run);
-  const { id, createdAt, updatedAt, ...rest } = r;
-  void id; void createdAt; void updatedAt;
+  const { id, createdAt, updatedAt, videos, ...rest } = r;
+  void id; void createdAt; void updatedAt; void videos;
   return {
     ...structuredClone(rest),
     name: `${r.name || 'Run'}${suffix}`,
@@ -227,7 +231,7 @@ export function runTotals(run) {
   const r = normalizeRun(run);
   const a = r.allowances;
   const runM = sum(r.segments.map((s) => s.lengthM));
-  const bySource = { ar: 0, plan: 0, manual: 0 };
+  const bySource = { ar: 0, plan: 0, manual: 0, video: 0 };
   for (const s of r.segments) bySource[s.source] += s.lengthM;
   const drops = a.drops.map((d) => ({ ...d, totalM: r3(d.count * d.lengthM) }));
   const dropsM = sum(drops.map((d) => d.count * d.lengthM));
@@ -248,7 +252,7 @@ export function runTotals(run) {
   const conduitM = r.wiringMethod === 'conduit' ? (runM + dropsM) * (1 + wastePct / 100) : 0;
   return {
     segmentCount: r.segments.length,
-    runM: r3(runM), bySource: { ar: r3(bySource.ar), plan: r3(bySource.plan), manual: r3(bySource.manual) },
+    runM: r3(runM), bySource: { ar: r3(bySource.ar), plan: r3(bySource.plan), manual: r3(bySource.manual), video: r3(bySource.video) },
     drops, dropsM: r3(dropsM), dropCount: sum(a.drops.map((d) => d.count)),
     boxCount: pos(a.boxCount), boxMakeupM: pos(a.boxMakeupM), boxesM: r3(boxesM), panelM: r3(panelM),
     allowancesM: r3(allowancesM), subtotalM: r3(subtotalM), wastePct, wasteM: r3(wasteM), totalM: r3(totalM),
@@ -534,7 +538,7 @@ export function buildRunPdf(run, { company = {}, job = null, client = null, date
     ['Site', job?.address || ''],
     ['Location', r.location],
     ['Wiring method', methodLabel(r)],
-    ['Measured', [t.bySource.ar ? `AR tape ${fmtTotal(t.bySource.ar, units)}` : '', t.bySource.plan ? `plan ${fmtTotal(t.bySource.plan, units)}` : '', t.bySource.manual ? `typed ${fmtTotal(t.bySource.manual, units)}` : ''].filter(Boolean).join(', ') || 'No segments yet'],
+    ['Measured', [t.bySource.ar ? `AR tape ${fmtTotal(t.bySource.ar, units)}` : '', t.bySource.plan ? `plan ${fmtTotal(t.bySource.plan, units)}` : '', t.bySource.manual ? `typed ${fmtTotal(t.bySource.manual, units)}` : '', t.bySource.video ? `video frames ${fmtTotal(t.bySource.video, units)}` : ''].filter(Boolean).join(', ') || 'No segments yet'],
     drawingName ? ['Drawing', drawingName] : null,
   ], { columns: 3 });
 
@@ -589,6 +593,7 @@ export function buildRunPdf(run, { company = {}, job = null, client = null, date
   const cautions = [];
   if (t.bySource.ar) cautions.push(`AR tape lengths are estimates (typically within about ${AR_TYPICAL_ERROR_PCT}% in good light on textured surfaces). Check critical lengths with a tape before cutting.`);
   if (t.bySource.plan) cautions.push('Plan-traced lengths are only as good as the drawing scale.');
+  if (t.bySource.video) cautions.push('Lengths measured on video frames use a scale set by hand on the picture; they are approximate and only hold along the reference surface.');
   cautions.push(`Box makeup default follows ${CEC_FREE_CONDUCTOR_REF} (${Math.round(CEC_FREE_CONDUCTOR_M * 1000)} mm free conductor). Check local amendments.`);
   flow.space(2);
   for (const c of cautions) flow.paragraph(c, { size: 8, color: MUTED, gap: 1 });

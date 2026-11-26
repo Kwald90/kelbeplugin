@@ -1,9 +1,24 @@
 // Wire runs: named, saved runs measured with an AR tape, traced on a drawing or
 // typed in, with drops and box allowances, totals per conductor, suggested rolls,
 // a PDF report and "add to estimate". The maths lives in js/lib/wireruns.js.
+//
+// Video: the AR tape can record the camera while it measures, and a run can hold videos (recorded
+// then, or recorded/picked later) to play back with a marker at each measured point and re-check
+// the run. Small videos attach at once and upload in the background, resuming after a dropped
+// signal; big ones, or ones made offline or on a device short of memory, wait on the device under
+// Videos on this device (#/wireruns/recordings) until someone attaches them. Rules: lib/wirerun-video.js,
+// device storage: lib/wirerun-recordings.js, server: lib/wirerun-video-upload.js.
+//   #/wireruns               runs (filtered to the "Working on" job when one is chosen)
+//   #/wireruns/:id           a run
+//   #/wireruns/recordings    videos on this device: unattached recordings and storage
 import { getUnits, fmtLength, parseLength, M_PER_FT } from '../lib/units.js';
 import * as W from '../lib/wireruns.js';
+import * as V from '../lib/wirerun-video.js';
+import * as R from '../lib/wirerun-recordings.js';
+import * as U from '../lib/wirerun-video-upload.js';
+import { blobUrl, deleteBlob } from '../lib/local-blobs.js';
 import { getArSupport, measurePath, isCancelled, AR_TIPS } from '../lib/ar-measure.js';
+import { jobFocus, onJobFocus } from '../lib/job-focus.js';
 import { isNativeApp } from '../lib/native.js';
 import { BRAND } from '../brand.js';
 
@@ -16,6 +31,8 @@ const MAX_PHOTOS = 12;
 const PHOTO_MAX_SIDE = 1600;
 const PHOTO_MAX_BYTES = 400 * 1024;
 const TIPS_KEY = 'ft.wireruns.arTipsSeen';
+const RECORD_KEY = 'ft.wireruns.arRecord';
+const ICON_VIDEO = '<rect x="2.5" y="6" width="13" height="12" rx="2"/><path d="M15.5 10.5l6-3.5v10l-6-3.5z"/>';
 const LIGHT_PAPER = '#f7f6f2';
 
 export default {
@@ -26,7 +43,10 @@ export default {
   perm: 'drawings',
   render(root, ctx) {
     const [sub] = ctx.params;
+    U.hookResumeOnOnline(ctx.store);
+    U.resumeUploads(ctx.store);
     if (sub === 'new') return createRun(ctx);
+    if (sub === 'recordings') return renderRecordings(root, ctx);
     if (sub) return renderEditor(root, ctx, sub);
     return renderList(root, ctx);
   },
@@ -43,15 +63,26 @@ function debounce(fn, ms) {
   return d;
 }
 
+// What the editor saves. Videos are left out: they change in the background (uploads) and are
+// written on their own through lib/wirerun-recordings.js and lib/wirerun-video-upload.js.
 function pick(run) {
-  const { id, createdAt, updatedAt, ...rest } = run;
-  void id; void createdAt; void updatedAt;
+  const { id, createdAt, updatedAt, videos, ...rest } = run;
+  void id; void createdAt; void updatedAt; void videos;
   return rest;
 }
 
+const recordPref = () => { try { return localStorage.getItem(RECORD_KEY) !== '0'; } catch { return true; } };
+const setRecordPref = (on) => { try { localStorage.setItem(RECORD_KEY, on ? '1' : '0'); } catch { /* storage blocked */ } };
+const online = () => globalThis.navigator?.onLine !== false;
+/** What happens to a video just attached, in words. */
+const attachedNote = (store, bytes) => (bytes > V.MAX_UPLOAD_BYTES ? 'Attached. It is too big to upload, so it plays on this device only.'
+  : store.synced === false ? 'Attached. The demo has no server, so it stays on this device.' : 'Attached. Uploading in the background.');
+const deviceMemoryGb = () => (Number(globalThis.navigator?.deviceMemory) > 0 ? Number(globalThis.navigator.deviceMemory) : null);
+
 // ---------- create ----------
-function createRun({ store, query }) {
-  const job = query.jobId ? store.get('jobs', query.jobId) : null;
+function createRun({ store, query, auth }) {
+  const jobId = query.jobId || jobFocus(store, auth);
+  const job = jobId ? store.get('jobs', jobId) : null;
   const n = store.count('wireRuns', (r) => (job ? r.jobId === job.id : true)) + 1;
   const rec = store.add('wireRuns', W.newRun({ name: `Run ${n}`, jobId: job?.id || null }));
   location.replace(`#/wireruns/${rec.id}?fresh=1`);
@@ -59,11 +90,12 @@ function createRun({ store, query }) {
 
 // ---------- list ----------
 function renderList(root, ctx) {
-  const { store, ui, nav, query } = ctx;
+  const { store, ui, nav, query, auth } = ctx;
   const { h } = ui;
   const units = unitsFor(store);
   let q = '';
-  let jobId = query.jobId || '';
+  // An explicit ?jobId= wins; otherwise the "Working on" job, if one is chosen.
+  let jobId = query.jobId || jobFocus(store, auth);
   const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
   const jobById = new Map(jobs.map((j) => [j.id, j]));
   const host = h('div', { class: 'stack' });
@@ -109,7 +141,11 @@ function renderList(root, ctx) {
       ui.clear(tableHost);
       tableHost.append(ui.table({
         columns: [
-          { key: 'name', label: 'Run', render: (r) => h('div', null, h('div', { class: 'wr-name' }, r.name || 'Untitled run'), r.location ? h('div', { class: 'muted wr-sub' }, r.location) : null), sort: (r) => (r.name || '').toLowerCase() },
+          { key: 'name', label: 'Run', render: (r) => {
+            const vids = (r.videos || []).length;
+            const sub = [r.location, vids ? `${vids} video${vids === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+            return h('div', null, h('div', { class: 'wr-name' }, r.name || 'Untitled run'), sub ? h('div', { class: 'muted wr-sub' }, sub) : null);
+          }, sort: (r) => (r.name || '').toLowerCase() },
           { key: 'job', label: 'Job', render: (r) => (jobById.get(r.jobId) ? jobLabel(jobById.get(r.jobId)) : '—'), sort: (r) => jobById.get(r.jobId)?.number || '' },
           { key: 'method', label: 'Method', render: (r) => W.methodLabel(W.normalizeRun(r)) },
           { key: 'run', label: 'Run length', align: 'right', render: (r) => W.fmtTotal(totals.get(r.id).runM, units), sort: (r) => totals.get(r.id).runM },
@@ -132,13 +168,23 @@ function renderList(root, ctx) {
     }
   }
 
+  const recCount = () => R.listRecordings(store).length;
+  const videosBtn = ui.button(`Videos on this device${recCount() ? ` (${recCount()})` : ''}`, { icon: ICON_VIDEO, href: '#/wireruns/recordings' });
   root.append(ui.page({
     title: 'Wire runs',
     subtitle: 'Measure runs along walls and conduit, add allowances, and see how much wire to pull and buy.',
-    actions: [ui.button('New run', { variant: 'primary', icon: 'plus', onClick: () => nav(newHref()) })],
+    actions: [videosBtn, ui.button('New run', { variant: 'primary', icon: 'plus', onClick: () => nav(newHref()) })],
   }, host));
   draw();
-  return store.on('wireRuns', draw);
+  const offRuns = store.on('wireRuns', draw);
+  const offFocus = onJobFocus((f) => {
+    if (query.jobId) return; // a link to one job keeps it
+    jobId = f;
+    for (const o of jobSelect.options) o.selected = o.value === jobId;
+    draw();
+  });
+  const offRecs = R.onRecordingsChange(() => { const n = recCount(); videosBtn.lastChild.textContent = `Videos on this device${n ? ` (${n})` : ''}`; });
+  return () => { offRuns(); offFocus(); offRecs(); };
 }
 
 async function renameRun({ store, ui }, r) {
@@ -149,8 +195,16 @@ async function renameRun({ store, ui }, r) {
 }
 
 async function deleteRun({ store, ui }, r) {
-  if (!(await ui.confirmDialog(`Delete "${r.name || 'this run'}"? Its segments and photos go too. This can't be undone.`, { okLabel: 'Delete' }))) return false;
+  const videos = V.normalizeVideos(store.get('wireRuns', r.id)?.videos || r.videos);
+  const what = videos.length ? `Its segments, photos and ${videos.length} video${videos.length === 1 ? '' : 's'} go too` : 'Its segments and photos go too';
+  if (!(await ui.confirmDialog(`Delete "${r.name || 'this run'}"? ${what}. This can't be undone.`, { okLabel: 'Delete' }))) return false;
   store.remove('wireRuns', r.id);
+  // The videos' bytes on this device and on the server go with the run. Offline, the server copy
+  // stays until someone deletes it there (an unfinished upload is dropped after a week).
+  await Promise.all(videos.map(async (v) => {
+    if (v.localId) await deleteBlob(v.localId);
+    if (v.mediaId) await U.deleteMedia(v.mediaId).catch(() => {});
+  }));
   ui.toast('Run deleted');
   return true;
 }
@@ -253,7 +307,7 @@ function renderEditor(root, ctx, id) {
     ui.clear(segHost);
     if (!run.segments.length) segHost.append(h('div', { class: 'wr-empty muted' }, 'No segments yet. Measure with the AR tape, trace a plan, or type a length.'));
     run.segments.forEach((s, i) => {
-      const tone = s.source === 'ar' ? 'info' : s.source === 'plan' ? 'accent' : 'neutral';
+      const tone = s.source === 'ar' ? 'info' : s.source === 'plan' ? 'accent' : s.source === 'video' ? 'warning' : 'neutral';
       segHost.append(h('div', { class: 'wr-seg' },
         h('span', { class: 'wr-seg-n num', 'aria-hidden': 'true' }, i + 1),
         h('div', { class: 'wr-seg-main' },
@@ -277,9 +331,13 @@ function renderEditor(root, ctx, id) {
   // ----- AR -----
   let arSupport = null;
   const arNote = h('span', { class: 'wr-ar-note muted' }, 'Checking for AR…');
+  const recordToggle = h('label', { class: 'field check wr-rec-toggle', hidden: true },
+    h('input', { type: 'checkbox', checked: recordPref(), onChange: (e) => setRecordPref(e.target.checked) }),
+    h('span', null, 'Record video while measuring'));
   getArSupport().then((s) => {
     arSupport = s;
     arNote.textContent = s.mode === 'native' ? 'AR ready (ARKit)' : s.mode === 'webxr' ? 'AR ready (WebXR)' : 'No AR on this device';
+    recordToggle.hidden = s.mode === 'none';
   });
   const addFromAr = () => {
     if (!arSupport) { ui.toast('Still checking for AR, try again in a moment'); return; }
@@ -290,11 +348,30 @@ function renderEditor(root, ctx, id) {
   };
   function startAr() {
     // measurePath must start inside the tap handler: WebXR needs the user's gesture.
-    measurePath({ units }).then((path) => confirmPath(path, { source: 'ar' })).catch((e) => {
+    const record = recordPref();
+    measurePath({ units, record }).then(afterAr).catch((e) => {
       if (isCancelled(e)) return;
       console.error(e);
       ui.toast(e?.message || 'AR measuring stopped', 'error', 4500);
     });
+  }
+  // Keep the recording on the device straight away (nothing is lost if the app closes), then ask.
+  async function afterAr(path) {
+    let recording = null;
+    if (path.video?.blob) {
+      try {
+        recording = await R.saveRecording(store, path.video.blob, {
+          durationMs: path.video.durationMs, mimeType: path.video.mimeType, source: path.video.source,
+          jobId: run.jobId, runId: id, label: `${run.name || 'Wire run'}: AR path`, totalM: path.totalM,
+          markers: V.markersFromPath(path),
+        });
+      } catch (e) { ui.toast(e?.message || "The video couldn't be kept on this device.", 'error', 7000); }
+    }
+    if (!alive) {
+      if (recording) ui.toast('The AR measurement was not added (you left the run). Its video is under Wire runs > Videos on this device.', 'info', 6000);
+      return;
+    }
+    confirmPath(path, { source: 'ar', recording, videoNote: recording ? '' : (path.videoNote || '') });
   }
   function arTipsSheet() {
     const dont = h('input', { type: 'checkbox' });
@@ -319,7 +396,7 @@ function renderEditor(root, ctx, id) {
       title: 'AR measuring is not available here', dialog: true,
       body: h('div', { class: 'stack' },
         h('p', { class: 'wr-p' }, reason || 'This device has no AR support.'),
-        h('p', { class: 'wr-p muted' }, 'The AR tape works in Chrome on Android phones that support ARCore, and in the Fishtape iOS app. You can still trace the run on a plan or type the length.')),
+        h('p', { class: 'wr-p muted' }, 'The AR tape works in Chrome on Android phones that support ARCore, and in the Fishtape iOS app. You can still trace the run on a plan or type the length, and record or pick a video of the run under Videos to re-check it later.')),
       actions: [
         ui.button('Close', { variant: 'ghost', onClick: () => s.close() }),
         ui.button('Type a length', { icon: 'edit', onClick: () => { s.close(); addManual(); } }),
@@ -357,21 +434,42 @@ function renderEditor(root, ctx, id) {
   }
 
   // ----- confirm a measured path -----
-  function confirmPath(path, { source, label = '', note = '', drawingId = null }) {
+  function confirmPath(path, { source, label = '', note = '', drawingId = null, recording = null, videoNote = '' }) {
     const legs = path.segments || [];
-    const labelIn = h('input', { class: 'input', value: label || (source === 'ar' ? `AR path ${run.segments.length + 1}` : 'Plan trace') });
+    const labelIn = h('input', { class: 'input', value: label || (source === 'ar' ? `AR path ${run.segments.length + 1}` : source === 'video' ? 'Frame measurement' : 'Plan trace') });
     const split = h('input', { type: 'checkbox' });
     const keepSnap = h('input', { type: 'checkbox', checked: true });
+    // A recording made while measuring: attach now, keep on the device for later, or drop it.
+    let videoChoice = null;
+    let decision = null;
+    let added = false;
+    let videoBlock = null;
+    if (recording) {
+      decision = V.attachDecision({ bytes: recording.bytes, online: online(), deviceMemoryGb: deviceMemoryGb() });
+      videoChoice = decision.action;
+      const opt = (value, text) => h('label', { class: 'field check' },
+        h('input', { type: 'radio', name: `wr-vid-${recording.id}`, value, checked: videoChoice === value, onChange: () => { videoChoice = value; } }),
+        h('span', null, text));
+      videoBlock = h('div', { class: 'wr-vid-choice stack' },
+        h('div', { class: 'wr-sub-head' }, h('strong', null, `Video ${V.fmtClock(recording.durationMs)} · ${V.fmtBytes(recording.bytes)}`), h('span', { class: 'muted' }, decision.message)),
+        opt('attach', 'Attach it to this run'),
+        opt('keep', 'Keep it on this device and attach it later'),
+        opt('delete', "Don't keep the video"));
+    } else if (videoNote) {
+      videoBlock = h('p', { class: 'wr-p muted' }, `No video this time: ${videoNote}`);
+    }
     const s = ui.openSheet({
-      title: source === 'ar' ? 'Add AR measurement' : 'Add plan trace', dialog: true,
+      title: source === 'ar' ? 'Add AR measurement' : source === 'video' ? 'Add frame measurement' : 'Add plan trace', dialog: true,
       body: h('div', { class: 'stack' },
         h('div', { class: 'wr-big num' }, W.fmtSeg(path.totalM, units)),
         legs.length > 1 ? h('ol', { class: 'wr-legs muted' }, legs.map((l) => h('li', { class: 'num' }, W.fmtSeg(l.lengthM, units)))) : null,
         source === 'ar' ? h('p', { class: 'wr-p muted' }, `AR lengths are estimates, typically within about ${W.AR_TYPICAL_ERROR_PCT}% in good conditions.`) : null,
+        source === 'video' ? h('p', { class: 'wr-caution' }, 'Measured on a still frame from a scale you set. It is only right along the flat surface your reference lies on, seen square-on; anything at an angle or nearer the camera comes out wrong. Use it as a check.') : null,
         labeled('Label', labelIn),
         legs.length > 1 ? h('label', { class: 'field check' }, split, h('span', null, `Add each leg as its own segment (${legs.length})`)) : null,
         path.snapshot ? h('img', { class: 'wr-snap', src: path.snapshot, alt: 'AR snapshot' }) : null,
-        path.snapshot ? h('label', { class: 'field check' }, keepSnap, h('span', null, 'Save the snapshot with the photos')) : null),
+        path.snapshot ? h('label', { class: 'field check' }, keepSnap, h('span', null, 'Save the snapshot with the photos')) : null,
+        videoBlock),
       actions: [
         ui.button('Discard', { variant: 'ghost', onClick: () => s.close() }),
         ui.button('Add', { variant: 'primary', icon: 'check', onClick: () => {
@@ -382,12 +480,295 @@ function renderEditor(root, ctx, id) {
             run.photos.push({ id: W.newId(), dataUrl: path.snapshot, caption: labelIn.value.trim(), takenAt: new Date().toISOString() });
             drawPhotos();
           }
+          added = true;
           s.close();
           drawSegs(); changed();
+          save.flush();
           ui.toast(`Added ${W.fmtSeg(path.totalM, units)}`, 'success');
+          if (recording) placeVideo(recording, path, segs, videoChoice, decision);
         } }),
       ],
+      onClose: () => { if (recording && !added) keepOrDropVideo(recording); },
     });
+  }
+
+  // The measurement was added: put its video where the person chose, with a marker per point.
+  async function placeVideo(rec, path, segs, choice, decision) {
+    if (choice === 'delete') { await R.deleteRecording(store, rec.id); return; }
+    R.updateRecording(store, rec.id, { markers: V.markersFromPath(path, { segIds: segs.map((x) => x.id) }) });
+    if (choice === 'keep') {
+      ui.toast(decision?.action === 'keep' ? decision.message : 'The video is on this device. Attach it from Videos on this run when you need it.', 'info', 8000);
+      drawVideos();
+      return;
+    }
+    try {
+      const v = R.attachRecording(store, rec.id, id, { actorId: store.actorId });
+      drawVideos();
+      U.uploadVideo(store, id, v.id).catch(() => { /* offline: resumes when the connection is back */ });
+    } catch (e) { ui.toast(e?.message || "Couldn't attach the video", 'error', 5000); }
+  }
+
+  // The measurement was discarded: ask whether its video is still wanted.
+  function keepOrDropVideo(rec) {
+    const d = ui.openSheet({
+      title: 'Keep the video?', dialog: true,
+      body: h('p', { class: 'wr-p' }, `The measurement was not added. Keep its ${V.fmtClock(rec.durationMs)} video (${V.fmtBytes(rec.bytes)}) on this device to attach later?`),
+      actions: [
+        ui.button('Delete the video', { variant: 'ghost danger', onClick: () => { R.deleteRecording(store, rec.id); d.close(); } }),
+        ui.button('Keep it', { variant: 'primary', onClick: () => { d.close(); drawVideos(); ui.toast('Kept under Videos on this device', 'success'); } }),
+      ],
+    });
+  }
+
+  // ----- videos -----
+  const videoHost = h('div', { class: 'wr-videos' });
+  const videoFoot = h('div', { class: 'row wr-add' });
+  let localIds = new Set(); // localIds whose bytes are on this device
+  let pollTimer = null;
+  const runVideos = () => V.normalizeVideos(store.get('wireRuns', id)?.videos);
+  async function refreshLocal() {
+    localIds = await R.presentLocally(runVideos().map((v) => v.localId));
+    if (alive) drawVideos();
+  }
+  let videoDrawPending = false;
+  videoHost.addEventListener('focusout', () => setTimeout(() => { if (videoDrawPending && !videoHost.contains(document.activeElement)) drawVideos(); }, 0));
+  function drawVideos() {
+    if (!alive) return;
+    // don't pull a name field out from under someone typing in it; redraw when they leave it
+    if (videoHost.contains(document.activeElement) && document.activeElement?.tagName === 'INPUT') { videoDrawPending = true; return; }
+    videoDrawPending = false;
+    ui.clear(videoHost);
+    const vids = runVideos();
+    if (!vids.length) videoHost.append(h('div', { class: 'wr-empty muted' }, 'No videos. Tick "Record video while measuring" before using the AR tape, or record or pick a video of the run.'));
+    vids.forEach((v, i) => videoHost.append(videoRow(v, i)));
+    const recs = R.listRecordings(store);
+    const mine = recs.filter((r) => r.runId === id).length;
+    ui.clear(videoFoot).append(
+      ui.button('Record or pick a video', { size: 'sm', icon: ICON_VIDEO, onClick: addVideoFile }),
+      ui.button(`Attach a recording${recs.length ? ` (${recs.length})` : ''}`, { size: 'sm', icon: 'plus', disabled: !recs.length, onClick: attachSheet }),
+      h('a', { class: 'wr-vid-store', href: '#/wireruns/recordings' }, mine ? `${mine} recording${mine === 1 ? '' : 's'} of this run waiting on this device` : 'Videos on this device'));
+    schedulePoll(vids);
+  }
+  function videoRow(v, i) {
+    const hasLocal = localIds.has(v.localId);
+    const st = V.videoStatus(v, { hasLocal });
+    const prog = U.uploadProgress(v.id);
+    const meta = [V.VIDEO_SOURCES[v.source], V.fmtClock(v.durationMs), V.fmtBytes(v.bytes), v.markers.length ? `${v.markers.length} marker${v.markers.length === 1 ? '' : 's'}` : null, ui.fmtDate(v.recordedAt)].filter(Boolean).join(' · ');
+    const playable = hasLocal || (v.mediaId && ['ready', 'processing'].includes(v.status));
+    const name = h('input', { class: 'input wr-vid-name', value: v.label || `Video ${i + 1}`, 'aria-label': `Video ${i + 1} name`,
+      onChange: (e) => U.patchRunVideo(store, id, v.id, { label: e.target.value.trim() }) });
+    const pct = prog ? Math.round((prog.sent / Math.max(1, prog.total)) * 100) : 0;
+    return h('div', { class: 'wr-vid' },
+      h('button', { type: 'button', class: 'wr-vid-play', title: playable ? 'Play and re-check' : 'Not playable on this device yet', 'aria-label': `Play ${v.label || `video ${i + 1}`}`, disabled: !playable, onClick: () => openReview(v.id) }, ui.icon('play', 22)),
+      h('div', { class: 'wr-vid-main' }, name, h('div', { class: 'muted wr-sub' }, meta),
+        prog ? h('div', { class: 'progress wr-vid-progress', role: 'progressbar', 'aria-label': 'Upload progress', 'aria-valuenow': String(pct), 'aria-valuemin': '0', 'aria-valuemax': '100' }, h('i', { style: { width: `${pct}%` } })) : null,
+        v.status === 'failed' && v.error ? h('div', { class: 'wr-sub wr-vid-err' }, v.error) : null),
+      ui.badge(prog ? `uploading ${pct}%` : st.label, st.tone),
+      h('div', { class: 'wr-actions' },
+        V.needsUpload(v, { hasLocal }) && !U.isUploading(v.id) ? iconBtn('upload', 'Upload now', () => uploadNow(v)) : null,
+        !v.mediaId && hasLocal ? iconBtn('<path d="M9 14l-5-5 5-5"/><path d="M4 9h11a5 5 0 010 10h-3"/>', 'Detach (keep it on this device to attach later)', () => detach(v)) : null,
+        v.status === 'ready' && hasLocal ? iconBtn('eraser', `Free ${V.fmtBytes(v.bytes)} on this device (the server keeps the video)`, () => freeCopy(v)) : null,
+        iconBtn('trash', 'Remove video', () => removeVid(v), { danger: true })));
+  }
+  function uploadNow(v) {
+    if (!online()) { ui.toast('No connection. It uploads by itself when you are back online.', 'info', 4000); return; }
+    U.uploadVideo(store, id, v.id).then(() => drawVideos()).catch((e) => ui.toast(e?.message || 'Upload stopped; it will try again later.', 'warning', 5000));
+    drawVideos();
+  }
+  function detach(v) {
+    try { R.detachVideo(store, id, v.id); ui.toast('Moved to Videos on this device', 'success'); } catch (e) { ui.toast(e.message, 'error'); }
+    drawVideos();
+  }
+  async function freeCopy(v) {
+    if (!(await ui.confirmDialog(`Remove the ${V.fmtBytes(v.bytes)} copy on this device? The video stays on the server and still plays here when you are online (measuring on a frame needs a connection then).`, { title: 'Free up space', okLabel: 'Remove the copy', danger: false }))) return;
+    await R.dropLocalCopy(store, id, v.id);
+    await refreshLocal();
+    ui.toast('Space freed', 'success');
+  }
+  async function removeVid(v) {
+    if (!(await ui.confirmDialog(`Remove "${v.label || 'this video'}" from the run? It is deleted from this device${v.mediaId ? ' and the server' : ''}. The measurements stay.`, { okLabel: 'Remove' }))) return;
+    const { serverError } = await R.removeVideo(store, id, v.id, { deleteServer: U.deleteMedia });
+    if (serverError) ui.toast("Removed here, but the server copy couldn't be deleted right now.", 'warning', 5000);
+    else ui.toast('Video removed');
+    drawVideos();
+  }
+  // Uploads finishing elsewhere and the server's optimising: check every few seconds while open.
+  function schedulePoll(vids) {
+    const waiting = vids.some((v) => v.mediaId && ['uploading', 'processing'].includes(v.status) && !U.isUploading(v.id));
+    if (!waiting || pollTimer || !online()) return;
+    pollTimer = setTimeout(async () => {
+      pollTimer = null;
+      if (!alive) return;
+      try { await U.refreshServerStatus(store, id); } catch { /* try again next time */ }
+      drawVideos();
+    }, 5000);
+  }
+  async function addVideoFile() {
+    const file = await pickVideo();
+    if (!file) return;
+    let rec;
+    try {
+      const durationMs = await probeDuration(file);
+      rec = await R.saveRecording(store, file, { durationMs, mimeType: file.type, source: 'file', jobId: run.jobId, runId: id, label: (file.name || '').replace(/\.[a-z0-9]+$/i, '').slice(0, 80) || `${run.name || 'Wire run'} video` });
+    } catch (e) { ui.toast(e?.message || "Couldn't keep that video", 'error', 6000); return; }
+    const d = V.attachDecision({ bytes: rec.bytes, online: online(), deviceMemoryGb: deviceMemoryGb() });
+    if (d.action === 'keep') { ui.toast(d.message, 'info', 8000); drawVideos(); return; }
+    try {
+      const v = R.attachRecording(store, rec.id, id, { actorId: store.actorId });
+      U.uploadVideo(store, id, v.id).catch(() => {});
+      ui.toast(d.message, 'success', 4000);
+    } catch (e) { ui.toast(e.message, 'error'); }
+    await refreshLocal();
+  }
+  function attachSheet() {
+    const recs = R.listRecordings(store);
+    const rank = (r) => (r.runId === id ? 0 : r.jobId && r.jobId === run.jobId ? 1 : 2);
+    const sorted = [...recs].sort((a, b) => rank(a) - rank(b) || b.recordedAt.localeCompare(a.recordedAt));
+    const jobById = new Map(jobs.map((j) => [j.id, j]));
+    const sheet = ui.openSheet({
+      title: 'Attach a recording',
+      body: h('div', { class: 'stack' },
+        h('p', { class: 'wr-p muted' }, 'Recordings kept on this device. Attaching one adds it to this run with its markers and uploads it in the background.'),
+        h('div', { class: 'list' }, sorted.map((r) => h('button', {
+          type: 'button', class: 'list-row click wr-dw-row',
+          onClick: () => {
+            try {
+              const v = R.attachRecording(store, r.id, id, { actorId: store.actorId });
+              sheet.close();
+              U.uploadVideo(store, id, v.id).catch(() => {});
+              ui.toast(attachedNote(store, r.bytes), 'success', 4000);
+              refreshLocal();
+            } catch (e) { ui.toast(e.message, 'error'); }
+          },
+        },
+        h('span', { class: 'wr-dw-thumb' }, ui.icon('play', 20)),
+        h('span', { class: 'grow' },
+          h('span', { class: 'title' }, r.label || 'Recording'),
+          h('span', { class: 'meta' }, [r.runId === id ? 'made on this run' : jobLabel(jobById.get(r.jobId)) || 'no job', V.fmtClock(r.durationMs), V.fmtBytes(r.bytes), r.markers.length ? `${r.markers.length} markers` : null, ui.fmtDate(r.recordedAt)].filter(Boolean).join(' · '))),
+        ui.icon('chevron-right', 18))))),
+    });
+  }
+
+  // ----- re-check: play a video beside the run's measurements -----
+  let closeReview = null;
+  async function openReview(videoId) {
+    const v = runVideos().find((x) => x.id === videoId);
+    if (!v) return;
+    let src = '', local = false;
+    if (v.localId) { src = (await blobUrl(v.localId)) || ''; local = !!src; }
+    if (!src && v.mediaId) {
+      try { const m = await U.fetchMedia(v.mediaId); if (m?.url) src = U.mediaUrl(m.url); } catch { /* offline */ }
+    }
+    if (!src) { ui.toast(online() ? 'The video is still being prepared on the server. Try again in a minute.' : 'This video is not on this device, and there is no connection to stream it.', 'info', 5000); return; }
+    reviewSheet({ video: v, src, local });
+  }
+
+  function reviewSheet({ video, src, local }) {
+    let markers = video.markers;
+    const vid = h('video', { class: 'wr-review-video', src, controls: true, playsInline: true, preload: 'auto' });
+    const timeEl = h('span', { class: 'num wr-review-time' }, '0:00');
+    const list = h('ol', { class: 'wr-review-marks' });
+    const segList = h('ul', { class: 'wr-review-segs' });
+    const segById = () => new Map(run.segments.map((x, i) => [x.id, { seg: x, n: i + 1 }]));
+    let active = -1;
+    const seek = (ms) => { vid.pause(); vid.currentTime = Math.max(0, ms / 1000); };
+    const stepFrame = (dir) => { vid.pause(); vid.currentTime = Math.max(0, vid.currentTime + dir / 30); };
+    const jump = (dir) => { const i = V.stepMarker(markers, vid.currentTime * 1000, dir); if (i >= 0) seek(markers[i].atMs); };
+    function drawMarks() {
+      ui.clear(list);
+      const segs = segById();
+      if (!markers.length) list.append(h('li', { class: 'muted wr-review-none' }, 'No markers. Use "Mark this moment" to add your own.'));
+      markers.forEach((m, i) => {
+        const s = m.segId ? segs.get(m.segId) : null;
+        list.append(h('li', null, h('button', { type: 'button', class: ['wr-review-mark', i === active ? 'on' : null], onClick: () => seek(m.atMs) },
+          h('span', { class: 'num wr-review-at' }, V.fmtClock(m.atMs, { tenths: true })),
+          h('span', { class: 'grow' }, m.label,
+            m.legM != null ? h('span', { class: 'muted' }, ` · leg ${W.fmtSeg(m.legM, units)}`) : null,
+            s ? h('span', { class: 'muted' }, ` · segment ${s.n}${s.seg.label ? ` (${s.seg.label})` : ''}`) : null))));
+      });
+      const activeSeg = active >= 0 ? markers[active].segId : null;
+      ui.clear(segList);
+      run.segments.forEach((x, i) => segList.append(h('li', { class: x.id === activeSeg ? 'on' : null },
+        h('span', null, `${i + 1}. ${x.label || 'Segment'}`), h('span', { class: 'num' }, W.fmtSeg(x.lengthM, units)))));
+      if (!run.segments.length) segList.append(h('li', { class: 'muted' }, 'No segments yet.'));
+    }
+    vid.addEventListener('timeupdate', () => {
+      timeEl.textContent = V.fmtClock(vid.currentTime * 1000, { tenths: true });
+      const i = V.markerAt(markers, vid.currentTime * 1000);
+      if (i !== active) { active = i; drawMarks(); }
+    });
+    vid.addEventListener('error', () => ui.toast("This video won't play here. A WebM recording may need the server's optimised copy; try again once it shows \"on the server\".", 'error', 6000));
+    const markHere = async () => {
+      vid.pause();
+      const at = Math.round(vid.currentTime * 1000);
+      const label = await ui.promptDialog(`Name the moment at ${V.fmtClock(at)}`, { title: 'Mark this moment', okLabel: 'Add marker', value: '' });
+      if (label == null) return;
+      markers = V.withMarker(markers, { atMs: at, label }, video.durationMs || null);
+      U.patchRunVideo(store, id, video.id, { markers });
+      drawMarks();
+    };
+    const measureFrame = async () => {
+      vid.pause();
+      const at = Math.round(vid.currentTime * 1000);
+      let frame;
+      try { frame = grabFrame(vid); } catch (e) {
+        ui.toast(e?.name === 'SecurityError' ? "This frame can't be measured here: the app may not read pixels of a video streamed from the server. Measure on the device that recorded it, or in the browser." : "Couldn't read this frame.", 'error', 7000);
+        return;
+      }
+      const ok = await ui.confirmDialog("AR can't re-measure a recorded frame: a still picture has no depth or tracking. You can measure on the picture against something of known length instead: set the scale by tapping both ends of it (a 4 ft sheet edge, a 2x4 box, a stud bay), then tap along the wire. It is only right along the same flat surface as the reference, seen square-on.", { title: 'Measure on this frame', okLabel: 'Set the scale', danger: false });
+      if (!ok) return;
+      el.classList.add('wr-review-hidden');
+      const res = await traceSheet(ui, { name: `${video.label || 'Video'} at ${V.fmtClock(at)}`, underlay: frame.dataUrl, underlayX: 0, underlayY: 0, underlayW: frame.width, underlayH: frame.height, scale: null }, units);
+      el.classList.remove('wr-review-hidden');
+      if (!res) return;
+      const scaleNote = `scale set on the frame (${Math.round(res.scale * 10) / 10} px per ft)`;
+      confirmPath(res.path, { source: 'video', label: `Frame at ${V.fmtClock(at)}`, note: `Measured on a still frame at ${V.fmtClock(at)} of "${video.label || 'video'}", ${scaleNote}. Approximate.` });
+    };
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      closeReview = null;
+      document.removeEventListener('keydown', onKey);
+      vid.pause();
+      vid.removeAttribute('src');
+      vid.load();
+      el.remove();
+      if (local) URL.revokeObjectURL(src);
+    };
+    const onKey = (e) => {
+      if (document.querySelector('.scrim, .wr-trace')) return;
+      if (e.target?.closest?.('input, textarea')) return;
+      if (e.key === 'Escape') close();
+      else if (e.key === 'ArrowRight' && e.shiftKey) jump(1);
+      else if (e.key === 'ArrowLeft' && e.shiftKey) jump(-1);
+      else if (e.key === 'ArrowRight' || e.key === '.') stepFrame(1);
+      else if (e.key === 'ArrowLeft' || e.key === ',') stepFrame(-1);
+      else return;
+      e.preventDefault();
+    };
+    document.addEventListener('keydown', onKey);
+    const el = h('div', { class: 'wr-review', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Re-check ${video.label || 'video'}` },
+      h('header', { class: 'wr-trace-head' },
+        h('div', { class: 'wr-trace-title' }, h('strong', null, video.label || 'Video'), h('span', { class: 'muted wr-trace-scale' }, [V.VIDEO_SOURCES[video.source], V.fmtClock(video.durationMs), local ? 'from this device' : 'streamed from the server'].filter(Boolean).join(' · '))),
+        timeEl,
+        ui.button('', { variant: 'ghost', icon: 'x', title: 'Close', onClick: close })),
+      h('div', { class: 'wr-review-body' },
+        h('div', { class: 'wr-review-stage' }, vid,
+          h('div', { class: 'wr-review-tools' },
+            ui.button('Previous point', { size: 'sm', icon: 'chevron-left', onClick: () => jump(-1) }),
+            ui.button('', { size: 'sm', icon: '<path d="M11 6l-6 6 6 6"/><path d="M19 6v12"/>', title: 'Back one frame', onClick: () => stepFrame(-1) }),
+            ui.button('', { size: 'sm', icon: '<path d="M13 6l6 6-6 6"/><path d="M5 6v12"/>', title: 'Forward one frame', onClick: () => stepFrame(1) }),
+            ui.button('Next point', { size: 'sm', icon: 'chevron-right', onClick: () => jump(1) }),
+            ui.button('Mark this moment', { size: 'sm', icon: 'marker', onClick: markHere }),
+            ui.button('Measure on this frame', { size: 'sm', variant: 'primary', icon: 'ruler', onClick: measureFrame }))),
+        h('aside', { class: 'wr-review-side' },
+          h('h3', null, 'Points in the video'), list,
+          h('h3', null, 'Run measurements'), segList,
+          h('p', { class: 'wr-p muted wr-review-help' }, 'Tap a point to jump to it. Arrow keys step a frame; Shift+arrow jumps between points.'))));
+    document.body.append(el);
+    closeReview = close;
+    drawMarks();
   }
 
   // ----- allowances -----
@@ -522,7 +903,8 @@ function renderEditor(root, ctx, id) {
       run.wiringMethod === 'conduit' && t.conduitM ? h('div', { class: 'wr-tcond' },
         h('div', { class: 'wr-trow' }, h('span', null, `Conduit ${W.conduitLabel(run)}`), h('strong', { class: 'num' }, W.fmtTotal(t.conduitM, units))),
         h('div', { class: 'muted wr-rolls' }, `About ${t.conduitSticks} sticks of ${W.STICK_M} m (10 ft)`)) : null,
-      t.bySource.ar ? h('p', { class: 'wr-caution' }, `${W.fmtTotal(t.bySource.ar, units)} was measured with the AR tape (typically within about ${W.AR_TYPICAL_ERROR_PCT}%). Check critical lengths with a tape.`) : null);
+      t.bySource.ar ? h('p', { class: 'wr-caution' }, `${W.fmtTotal(t.bySource.ar, units)} was measured with the AR tape (typically within about ${W.AR_TYPICAL_ERROR_PCT}%). Check critical lengths with a tape.`) : null,
+      t.bySource.video ? h('p', { class: 'wr-caution' }, `${W.fmtTotal(t.bySource.video, units)} was measured on still video frames against a scale set by hand. Treat it as approximate.`) : null);
     for (const c of t.conductors) {
       const live = liveCond.get(c.id);
       if (!live) continue;
@@ -661,7 +1043,12 @@ function renderEditor(root, ctx, id) {
         h('div', { class: 'row wr-add' },
           ui.button('AR tape', { variant: 'primary', icon: ICON_AR, onClick: addFromAr }),
           ui.button('Trace on a plan', { icon: 'pen', onClick: addFromPlan }),
-          ui.button('Type a length', { icon: 'edit', onClick: addManual }))),
+          ui.button('Type a length', { icon: 'edit', onClick: addManual })),
+        recordToggle),
+      h('section', { class: 'card' },
+        h('div', { class: 'wr-card-head' }, h('h3', null, 'Videos'), h('span', { class: 'muted' }, 'Play back the run with a marker at each measured point')),
+        videoHost,
+        videoFoot),
       h('section', { class: 'card' }, h('h3', null, 'Allowances'), allowHost),
       h('section', { class: 'card' },
         h('h3', null, run.wiringMethod === 'conduit' ? 'Conductors' : 'Cable and conductors'),
@@ -693,10 +1080,23 @@ function renderEditor(root, ctx, id) {
   drawAllowances();
   drawConductors();
   drawPhotos();
+  drawVideos();
+  refreshLocal();
   refreshTotals();
   if (query.fresh) { nameInput.focus(); nameInput.select(); history.replaceState(null, '', '#/wireruns/' + id); }
 
-  return () => { alive = false; if (!removed) save.flush(); };
+  // Video entries change underneath the editor (uploads, other devices): redraw just that card.
+  const offRun = store.on('wireRuns', (e) => { if (e?.record?.id === id || !e?.record) drawVideos(); });
+  const offUpload = U.onUploadChange((videoId) => { if (runVideos().some((v) => v.id === videoId)) drawVideos(); });
+  const offRecs = R.onRecordingsChange(() => drawVideos());
+
+  return () => {
+    alive = false;
+    offRun(); offUpload(); offRecs();
+    clearTimeout(pollTimer);
+    closeReview?.();
+    if (!removed) save.flush();
+  };
 }
 
 function undoToast(ui, message, undo) {
@@ -708,6 +1108,210 @@ function undoToast(ui, message, undo) {
     btn.closest('.toast')?.remove();
   } }, 'Undo');
   ui.toast(ui.h('span', { class: 'wr-undo-msg' }, message, btn), 'info', 6000);
+}
+
+// ---------- video files ----------
+/** Ask for one video: the camera (on phones the picker offers to record) or the library. Resolves File or null. */
+function pickVideo() {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'video/*';
+    input.style.display = 'none';
+    const done = (file) => { input.remove(); resolve(file || null); };
+    input.addEventListener('change', () => done(input.files?.[0]));
+    input.addEventListener('cancel', () => done(null));
+    document.body.append(input);
+    input.click();
+  });
+}
+
+/** A video file's length in ms (0 when the browser can't read it). */
+function probeDuration(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    let settled = false;
+    const done = (ms) => { if (settled) return; settled = true; URL.revokeObjectURL(url); v.removeAttribute('src'); resolve(ms); };
+    v.preload = 'metadata';
+    v.muted = true;
+    v.onloadedmetadata = () => done(Number.isFinite(v.duration) ? Math.round(v.duration * 1000) : 0);
+    v.onerror = () => done(0);
+    setTimeout(() => done(0), 8000);
+    v.src = url;
+  });
+}
+
+/** The paused frame as a JPEG data URL (long side at most 1920). Throws SecurityError on a cross-origin video. */
+function grabFrame(video) {
+  const w = video.videoWidth, hgt = video.videoHeight;
+  if (!w || !hgt) throw new Error('no frame');
+  const k = Math.min(1, 1920 / Math.max(w, hgt));
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * k); c.height = Math.round(hgt * k);
+  c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+  return { dataUrl: c.toDataURL('image/jpeg', 0.85), width: c.width, height: c.height };
+}
+
+// ---------- videos on this device ----------
+function renderRecordings(root, ctx) {
+  const { store, ui, nav, auth } = ctx;
+  const { h } = ui;
+  const host = h('div', { class: 'stack' });
+  const storageHost = h('div', { class: 'grid wr-stats' });
+  const listHost = h('div');
+  const attachedHost = h('div');
+  let showAll = false;
+  let alive = true;
+  const jobsById = () => new Map(store.list('jobs').map((j) => [j.id, j]));
+
+  async function drawStorage() {
+    const recs = R.listRecordings(store);
+    const runs = store.list('wireRuns');
+    const present = await R.presentLocally(runs.flatMap((r) => (r.videos || []).map((v) => v.localId)));
+    const use = V.storageUse(recs, runs, (lid) => present.has(lid));
+    const est = await R.storageEstimate();
+    if (!alive) return;
+    ui.clear(storageHost).append(
+      ui.stat({ label: 'Waiting to attach', value: V.fmtBytes(use.unattachedBytes), hint: `${use.unattachedCount} recording${use.unattachedCount === 1 ? '' : 's'}` }),
+      ui.stat({ label: 'Attached, kept here', value: V.fmtBytes(use.attachedBytes), hint: `${use.attachedCount} video${use.attachedCount === 1 ? '' : 's'}` }),
+      ui.stat({ label: 'App storage', value: est?.usage != null ? V.fmtBytes(est.usage) : '—', hint: est?.quota ? `of about ${V.fmtBytes(est.quota)} this device allows` : 'The browser does not say how much room is left', tone: est?.quota && est.usage / est.quota > 0.8 ? 'accent' : undefined }));
+    drawAttached(runs, present);
+  }
+
+  function drawList() {
+    const focus = jobFocus(store, auth);
+    const all = R.listRecordings(store);
+    const { shown, hidden } = showAll ? { shown: all, hidden: 0 } : V.recordingsForFocus(all, focus);
+    const jobs = jobsById();
+    ui.clear(listHost);
+    const focusNote = focus && !showAll && hidden
+      ? h('p', { class: 'wr-p muted' }, `Showing ${jobLabel(jobs.get(focus))} (the job you're working on). `, h('button', { type: 'button', class: 'wr-linkbtn', onClick: () => { showAll = true; drawList(); } }, `Show ${hidden} more from other jobs`))
+      : null;
+    listHost.append(h('section', { class: 'card stack' },
+      h('div', { class: 'wr-card-head' }, h('h3', null, 'Waiting to attach'),
+        ui.button('Record or pick a video', { size: 'sm', icon: ICON_VIDEO, onClick: addLoose })),
+      focusNote,
+      shown.length ? h('div', { class: 'wr-rows' }, shown.map((r) => recRow(r, jobs))) : h('div', { class: 'wr-empty muted' },
+        all.length ? 'None for this job.' : 'No recordings waiting. Big AR recordings, and ones made offline, wait here until you attach them to a run.')));
+  }
+
+  function recRow(r, jobs) {
+    const run = r.runId ? store.get('wireRuns', r.runId) : null;
+    const meta = [V.VIDEO_SOURCES[r.source], V.fmtClock(r.durationMs), V.fmtBytes(r.bytes), r.markers.length ? `${r.markers.length} markers` : null, ui.fmtDate(r.recordedAt)].filter(Boolean).join(' · ');
+    return h('div', { class: 'wr-vid' },
+      h('button', { type: 'button', class: 'wr-vid-play', title: 'Play', 'aria-label': `Play ${r.label || 'recording'}`, onClick: () => playRec(r) }, ui.icon('play', 22)),
+      h('div', { class: 'wr-vid-main' },
+        h('input', { class: 'input wr-vid-name', value: r.label || 'Recording', 'aria-label': 'Recording name', onChange: (e) => R.updateRecording(store, r.id, { label: e.target.value.trim() }) }),
+        h('div', { class: 'muted wr-sub' }, meta),
+        h('div', { class: 'muted wr-sub' }, [jobs.get(r.jobId) ? jobLabel(jobs.get(r.jobId)) : 'No job', run ? `made on ${run.name || 'a run'}` : null].filter(Boolean).join(' · '))),
+      h('div', { class: 'wr-actions' },
+        ui.button(run ? `Attach to ${run.name || 'its run'}` : 'Attach to a run', { size: 'sm', icon: 'plus', onClick: () => (run ? attachTo(r, run.id) : pickRun(r)) }),
+        run ? ui.button('', { size: 'sm', variant: 'ghost', icon: 'more', title: 'Attach to another run', onClick: () => pickRun(r) }) : null,
+        ui.button('', { size: 'sm', variant: 'ghost danger', icon: 'trash', title: 'Delete recording', onClick: () => delRec(r) })));
+  }
+
+  function drawAttached(runs, present) {
+    const rows = [];
+    for (const run of runs) {
+      for (const v of V.normalizeVideos(run.videos)) if (v.localId && present.has(v.localId)) rows.push({ run, v });
+    }
+    ui.clear(attachedHost);
+    if (!rows.length) return;
+    attachedHost.append(h('section', { class: 'card stack' },
+      h('div', { class: 'wr-card-head' }, h('h3', null, 'Attached videos kept on this device'), h('span', { class: 'muted' }, 'Once the server has a video you can free the copy here')),
+      h('div', { class: 'wr-rows' }, rows.map(({ run, v }) => h('div', { class: 'wr-vid' },
+        h('span', { class: 'wr-vid-play' }, ui.icon('play', 22)),
+        h('div', { class: 'wr-vid-main' },
+          h('a', { href: `#/wireruns/${run.id}`, class: 'wr-name' }, `${run.name || 'Wire run'}: ${v.label || 'video'}`),
+          h('div', { class: 'muted wr-sub' }, [V.fmtClock(v.durationMs), V.fmtBytes(v.bytes), V.videoStatus(v, { hasLocal: true }).label].join(' · '))),
+        h('div', { class: 'wr-actions' },
+          v.status === 'ready'
+            ? ui.button(`Free ${V.fmtBytes(v.bytes)}`, { size: 'sm', icon: 'eraser', onClick: async () => { await R.dropLocalCopy(store, run.id, v.id); ui.toast('Space freed', 'success'); drawStorage(); } })
+            : h('span', { class: 'muted wr-sub' }, 'Not on the server yet')))))));
+  }
+
+  function playRec(r) {
+    blobUrl(r.localId).then((url) => {
+      if (!url) { ui.toast('That recording is no longer on this device.', 'error'); return; }
+      ui.openSheet({
+        title: r.label || 'Recording', wide: true,
+        body: h('div', { class: 'stack' }, h('video', { class: 'wr-sheet-video', src: url, controls: true, playsInline: true }),
+          r.markers.length ? h('p', { class: 'wr-p muted' }, `${r.markers.length} markers. Attach it to a run to step through them beside the measurements.`) : null),
+        onClose: () => URL.revokeObjectURL(url),
+      });
+    });
+  }
+
+  function attachTo(r, runId) {
+    try {
+      const v = R.attachRecording(store, r.id, runId, { actorId: store.actorId });
+      U.uploadVideo(store, runId, v.id).catch(() => {});
+      ui.toast(attachedNote(store, r.bytes), 'success', 4000);
+    } catch (e) { ui.toast(e.message, 'error'); }
+  }
+
+  function pickRun(r) {
+    const focus = jobFocus(store, auth);
+    const jobId = r.jobId || focus;
+    let q = '';
+    const jobs = jobsById();
+    const listEl = h('div', { class: 'list' });
+    const all = store.list('wireRuns').sort((a, b) => (Number(b.jobId === jobId && !!jobId) - Number(a.jobId === jobId && !!jobId)) || (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    const draw = () => {
+      ui.clear(listEl);
+      const rows = W.filterRuns(all, { q, jobs: [...jobs.values()] }).slice(0, 60);
+      if (!rows.length) listEl.append(h('div', { class: 'wr-empty muted' }, 'No runs match.'));
+      rows.forEach((run) => listEl.append(h('button', { type: 'button', class: 'list-row click wr-dw-row', onClick: () => { sheet.close(); attachTo(r, run.id); } },
+        h('span', { class: 'grow' }, h('span', { class: 'title' }, run.name || 'Untitled run'),
+          h('span', { class: 'meta' }, [jobs.get(run.jobId) ? jobLabel(jobs.get(run.jobId)) : 'No job', `${(run.videos || []).length} video${(run.videos || []).length === 1 ? '' : 's'}`, ui.fmtDate(run.updatedAt)].join(' · '))),
+        ui.icon('chevron-right', 18))));
+    };
+    const sheet = ui.openSheet({
+      title: 'Attach to a run',
+      body: h('div', { class: 'stack' },
+        ui.searchBox('Search runs', (v) => { q = v; draw(); }, ''),
+        listEl,
+        ui.button('New run for this video', { icon: 'plus', onClick: () => {
+          const n = store.count('wireRuns', (x) => (jobId ? x.jobId === jobId : true)) + 1;
+          const rec = store.add('wireRuns', W.newRun({ name: r.label || `Run ${n}`, jobId: jobId || null }));
+          sheet.close();
+          attachTo(r, rec.id);
+          nav('#/wireruns/' + rec.id);
+        } })),
+    });
+    draw();
+  }
+
+  async function delRec(r) {
+    if (!(await ui.confirmDialog(`Delete "${r.label || 'this recording'}" (${V.fmtBytes(r.bytes)}) from this device? It was never uploaded, so it is gone for good.`, { okLabel: 'Delete' }))) return;
+    await R.deleteRecording(store, r.id);
+    ui.toast('Recording deleted');
+  }
+
+  async function addLoose() {
+    const file = await pickVideo();
+    if (!file) return;
+    try {
+      const durationMs = await probeDuration(file);
+      await R.saveRecording(store, file, { durationMs, mimeType: file.type, source: 'file', jobId: jobFocus(store, auth) || null, label: (file.name || '').replace(/\.[a-z0-9]+$/i, '').slice(0, 80) || 'Video' });
+      ui.toast('Saved on this device. Attach it to a run when you are ready.', 'success', 4000);
+    } catch (e) { ui.toast(e?.message || "Couldn't keep that video", 'error', 6000); }
+  }
+
+  h(host, null,
+    h('p', { class: 'wr-p muted' }, "Recordings stay on this device until they're attached to a run; attached ones upload to the server in the background. Nothing here syncs to other devices by itself."),
+    storageHost, listHost, attachedHost);
+  root.append(ui.page({
+    title: 'Videos on this device',
+    subtitle: h('span', null, h('a', { href: '#/wireruns' }, 'Wire runs'), ' / Videos on this device'),
+  }, host));
+  const redraw = () => { if (!alive) return; drawList(); drawStorage(); };
+  redraw();
+  const offRecs = R.onRecordingsChange(redraw);
+  const offFocus = onJobFocus(() => { showAll = false; drawList(); });
+  const offRuns = store.on('wireRuns', () => drawStorage());
+  return () => { alive = false; offRecs(); offFocus(); offRuns(); };
 }
 
 // ---------- photos ----------

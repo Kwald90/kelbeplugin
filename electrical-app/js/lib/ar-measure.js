@@ -9,11 +9,27 @@
 // Phone-motion-only measuring (integrating the accelerometer) is deliberately not
 // offered: drift makes it wrong within seconds.
 //
+// With { record: true } the camera is recorded while measuring, so the run can be re-checked later
+// (lib/wirerun-video.js): the native plugin writes the AR camera to an MP4 and returns its file,
+// WebXR draws the camera image (the 'camera-access' feature) and the measuring lines into a canvas
+// that MediaRecorder records. Either way the result carries the video as a Blob and the moment each
+// point was dropped (pointTimesMs). When the phone can't record during AR, the measurement still
+// works and the result says why there is no video (videoNote).
+//
 // Everything that touches the DOM, WebXR or WebGL runs inside functions, so the
 // pure helpers at the bottom can be tested in Node.
 import { fmtLength } from './units.js';
 
-/** Returned paths: { totalM, segments: [{ lengthM }], points: [{ x, y, z }], snapshot? } (metres). */
+/**
+ * Returned paths: { totalM, segments: [{ lengthM }], points: [{ x, y, z }], snapshot?,
+ *   pointTimesMs?: [ms into the video, one per point], video?: { blob, durationMs, mimeType, source }, videoNote? } (metres).
+ */
+
+/** Recording bitrate (~15 MB a minute); the server re-encodes for playback. */
+const RECORD_BPS = 2_000_000;
+/** Longest side of the WebXR recording, and its frame rate. */
+const RECORD_MAX_SIDE = 1280;
+const RECORD_FPS = 30;
 
 export const AR_TIPS = [
   'Good, even light. AR loses track in dim rooms and on shiny surfaces.',
@@ -71,19 +87,54 @@ export function getArSupport({ refresh = false } = {}) {
 }
 
 /**
- * Measure a path. Resolves to { totalM, segments, points, snapshot? }; rejects with
- * an error where isCancelled(e) is true when the user backs out.
+ * Measure a path. Resolves to { totalM, segments, points, snapshot?, pointTimesMs?, video?, videoNote? };
+ * rejects with an error where isCancelled(e) is true when the user backs out.
+ * `record` asks for a video of the camera while measuring (see the top of this file).
  * Call it straight from a tap handler: WebXR needs the user's gesture to start.
  */
-export async function measurePath({ units = 'metric' } = {}) {
+export async function measurePath({ units = 'metric', record = false } = {}) {
   const plugin = nativePlugin();
   if (plugin) {
     let raw;
-    try { raw = await plugin.measurePath({ units }); } catch (e) { throw isCancelled(e) ? cancelledError() : e; }
-    return normalizeResult(raw);
+    try { raw = await plugin.measurePath({ units, record: !!record }); } catch (e) { throw isCancelled(e) ? cancelledError() : e; }
+    const out = normalizeResult(raw);
+    if (out.videoRef) {
+      const ref = out.videoRef;
+      delete out.videoRef;
+      try { out.video = await loadNativeVideo(plugin, ref); } catch (e) {
+        delete out.pointTimesMs;
+        out.videoNote = `The video couldn't be brought into the app (${e?.message || e}). The measurement is fine.`;
+        try { await plugin.discardRecording?.({ path: ref.path }); } catch { /* the OS clears tmp eventually */ }
+      }
+    } else if (record) {
+      delete out.pointTimesMs;
+      out.videoNote = typeof raw?.videoNote === 'string' && raw.videoNote ? raw.videoNote.slice(0, 300) : 'This version of the app did not record a video.';
+    }
+    return out;
   }
-  if (globalThis.navigator?.xr) return webxrMeasure({ units });
+  if (globalThis.navigator?.xr) return webxrMeasure({ units, record: !!record });
   throw new Error('AR measuring is not available on this device.');
+}
+
+/** Biggest native recording the web view is asked to load. */
+const MAX_NATIVE_VIDEO_BYTES = 400 * 1024 * 1024;
+
+/**
+ * Read the plugin's recording (an MP4 in the app's temporary folder) into a Blob through
+ * Capacitor's file URL, then ask the plugin to delete its copy. The Blob goes to IndexedDB next.
+ */
+async function loadNativeVideo(plugin, ref) {
+  if (ref.bytes > MAX_NATIVE_VIDEO_BYTES) throw new Error('the recording is too large');
+  const cap = globalThis.window?.Capacitor;
+  const src = cap?.convertFileSrc ? cap.convertFileSrc(ref.path) : null;
+  if (!src) throw new Error('no file access');
+  const res = await fetch(src);
+  if (!res.ok) throw new Error(`file read failed (${res.status})`);
+  let blob = await res.blob();
+  if (!blob.size) throw new Error('the recording is empty');
+  if (!/^video\//.test(blob.type)) blob = new Blob([blob], { type: ref.mimeType || 'video/mp4' });
+  try { await plugin.discardRecording?.({ path: ref.path }); } catch { /* the OS clears tmp eventually */ }
+  return { blob, durationMs: ref.durationMs, mimeType: blob.type, source: 'ar-native' };
 }
 
 // ---------- WebXR ----------
@@ -127,14 +178,15 @@ function buildOverlay() {
   return { root, total, leg, status, cancel, undo, add, done };
 }
 
-async function webxrMeasure({ units }) {
+async function webxrMeasure({ units, record = false }) {
   const ui = buildOverlay();
   document.body.append(ui.root);
   let session;
   try {
     session = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay'],
+      // camera-access lets the recorder read the camera image (Chrome on ARCore phones)
+      optionalFeatures: record ? ['dom-overlay', 'camera-access'] : ['dom-overlay'],
       domOverlay: { root: ui.root },
     });
   } catch (e) {
@@ -144,6 +196,9 @@ async function webxrMeasure({ units }) {
   ui.root.classList.add('on');
 
   const points = [];
+  const times = []; // ms into the recording when each point was dropped
+  let recorder = null;
+  let videoNote = '';
   let reticle = null;
   let finished = false, result = null, ended = false;
   let hitSource = null;
@@ -168,21 +223,30 @@ async function webxrMeasure({ units }) {
     const addPoint = () => {
       if (!reticle) { setStatus('No surface under the dot yet. Move slowly so the camera can find it.'); return; }
       points.push({ ...reticle.position });
+      times.push(recorder ? recorder.elapsedMs() : 0);
       try { navigator.vibrate?.(12); } catch { /* not supported */ }
       refresh();
     };
     ui.add.addEventListener('click', addPoint);
-    ui.undo.addEventListener('click', () => { points.pop(); refresh(); });
+    ui.undo.addEventListener('click', () => { points.pop(); times.pop(); refresh(); });
     ui.done.addEventListener('click', () => { if (points.length >= 2) finish(true); });
     ui.cancel.addEventListener('click', () => finish(false));
     session.addEventListener('select', addPoint);
-    session.addEventListener('end', () => {
+    session.addEventListener('end', async () => {
       ended = true;
       try { hitSource?.cancel(); } catch { /* already gone */ }
-      ui.root.remove();
       // Leaving AR another way (back button, or no DOM overlay so no Done button) with 2+ points
       // keeps the measurement; the screen asks before adding it.
       if (!finished && points.length >= 2) result = pathFromPoints(points);
+      if (result && recorder) {
+        try {
+          const v = await recorder.stop();
+          if (v.blob.size) { result.video = { ...v, source: 'ar-webxr' }; result.pointTimesMs = times.slice(0, points.length); }
+          else videoNote = 'The recording came out empty.';
+        } catch { videoNote = 'The recording stopped with an error.'; }
+      } else recorder?.cancel();
+      ui.root.remove();
+      if (result && record && !result.video) result.videoNote = videoNote || 'This phone did not allow recording during AR.';
       if (result) resolve(result); else reject(cancelledError());
     });
 
@@ -195,6 +259,13 @@ async function webxrMeasure({ units }) {
       const viewerSpace = await session.requestReferenceSpace('viewer');
       hitSource = await session.requestHitTestSource({ space: viewerSpace });
       const renderer = createRenderer(gl);
+      if (record) {
+        const why = recordUnsupported(session, canvas);
+        if (why) videoNote = why;
+        else {
+          try { recorder = createXrRecorder(gl, canvas, session, ui.root); } catch (e) { videoNote = `Recording could not start (${e?.message || e}).`; }
+        }
+      }
       const onFrame = (t, frame) => {
         if (ended) return;
         session.requestAnimationFrame(onFrame);
@@ -215,7 +286,10 @@ async function webxrMeasure({ units }) {
           const vp = layer.getViewport(view);
           gl.viewport(vp.x, vp.y, vp.width, vp.height);
           const cam = { position: xyz(view.transform.position), matrix: Array.from(view.transform.matrix) };
-          renderer.draw(view.projectionMatrix, view.transform.inverse.matrix, sceneGeometry(points, reticle, cam));
+          const scene = sceneGeometry(points, reticle, cam);
+          renderer.draw(view.projectionMatrix, view.transform.inverse.matrix, scene);
+          // the recording: the camera image with the same lines on top, in the canvas MediaRecorder reads
+          if (recorder && view.camera) recorder.frame(t, view, () => renderer.draw(view.projectionMatrix, view.transform.inverse.matrix, scene));
         }
       };
       session.requestAnimationFrame(onFrame);
@@ -268,6 +342,116 @@ function createRenderer(gl) {
       pass(scene.dots, COLORS.dot);
       pass(scene.ring, scene.ringActive ? COLORS.ring : COLORS.ringIdle);
     },
+  };
+}
+
+// ---------- WebXR recording ----------
+/** A MediaRecorder type this browser can write, best for playback first ('' = its default). */
+export function pickRecordMime(isTypeSupported) {
+  const want = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  if (typeof isTypeSupported !== 'function') return '';
+  for (const m of want) { try { if (isTypeSupported(m)) return m; } catch { /* keep looking */ } }
+  return '';
+}
+
+/** Why this session can't be recorded, or '' when it can. */
+function recordUnsupported(session, canvas) {
+  if (typeof globalThis.MediaRecorder !== 'function') return 'This browser cannot record video.';
+  if (typeof canvas.captureStream !== 'function') return 'This browser cannot record from AR.';
+  if (typeof globalThis.XRWebGLBinding !== 'function') return 'This browser does not share the AR camera image, so the run could not be recorded.';
+  const features = session.enabledFeatures;
+  if (Array.isArray(features) && !features.includes('camera-access')) return 'Camera access in AR was not allowed, so the run could not be recorded.';
+  return '';
+}
+
+/** Recording size for a camera image: the long side capped at RECORD_MAX_SIDE, even numbers for the encoder. */
+export function recordSize(width, height, maxSide = RECORD_MAX_SIDE) {
+  const w = Math.max(2, Number(width) || 0), h = Math.max(2, Number(height) || 0);
+  const k = Math.min(1, maxSide / Math.max(w, h));
+  const even = (v) => Math.max(2, Math.round((v * k) / 2) * 2);
+  return { width: even(w), height: even(h) };
+}
+
+/**
+ * Records the AR view: each frame (at most RECORD_FPS) the camera image from the WebXR raw camera
+ * access is drawn into the session's own canvas as a full-screen quad, the measuring lines go on top
+ * with the same matrices as the AR view, and MediaRecorder records that canvas. The canvas sits,
+ * invisible, in the overlay so the browser keeps producing its frames.
+ */
+function createXrRecorder(gl, canvas, session, host) {
+  const binding = new XRWebGLBinding(session, gl);
+  const compile = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh) || 'shader error');
+    return sh;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, 'attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.0,1.0);}'));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, 'precision mediump float;uniform sampler2D cam;varying vec2 uv;void main(){gl_FragColor=texture2D(cam,uv);}'));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog) || 'link error');
+  const aP = gl.getAttribLocation(prog, 'p');
+  const uCam = gl.getUniformLocation(prog, 'cam');
+  const quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+
+  canvas.classList.add('wr-ar-rec');
+  host.append(canvas);
+  const stream = canvas.captureStream(0);
+  const track = stream.getVideoTracks()[0];
+  const manual = typeof track?.requestFrame === 'function';
+  const mime = pickRecordMime(globalThis.MediaRecorder.isTypeSupported?.bind(globalThis.MediaRecorder));
+  let rec;
+  try { rec = new MediaRecorder(manual ? stream : canvas.captureStream(RECORD_FPS), { videoBitsPerSecond: RECORD_BPS, ...(mime ? { mimeType: mime } : {}) }); }
+  catch { rec = new MediaRecorder(manual ? stream : canvas.captureStream(RECORD_FPS)); }
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+  const t0 = performance.now();
+  rec.start(1000); // 1 s slices, so most of the clip survives a crash mid-run
+  let last = -Infinity, sized = false;
+
+  const stopTracks = () => { for (const tr of stream.getTracks()) { try { tr.stop(); } catch { /* stopped */ } } canvas.remove(); };
+  return {
+    elapsedMs: () => Math.round(performance.now() - t0),
+    /** Draw this frame's camera image and lines into the recording (call inside the XR frame). */
+    frame(t, view, drawLines) {
+      if (t - last < 1000 / RECORD_FPS - 2) return;
+      const tex = binding.getCameraImage(view.camera);
+      if (!tex) return;
+      last = t;
+      if (!sized) {
+        const size = recordSize(view.camera.width, view.camera.height);
+        canvas.width = size.width; canvas.height = size.height;
+        sized = true;
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.disable(gl.BLEND);
+      gl.disable(gl.DEPTH_TEST);
+      gl.useProgram(prog);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.uniform1i(uCam, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+      gl.enableVertexAttribArray(aP);
+      gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      drawLines();
+      if (manual) track.requestFrame();
+    },
+    stop() {
+      return new Promise((resolve, reject) => {
+        const type = rec.mimeType || mime || 'video/webm';
+        rec.onstop = () => { stopTracks(); resolve({ blob: new Blob(chunks, { type: type.split(';')[0] === 'video/mp4' ? 'video/mp4' : type }), durationMs: Math.round(performance.now() - t0), mimeType: type }); };
+        rec.onerror = (e) => { stopTracks(); reject(e?.error || new Error('recording failed')); };
+        try { rec.stop(); } catch (e) { stopTracks(); reject(e); }
+      });
+    },
+    cancel() { try { rec.stop(); } catch { /* stopped */ } stopTracks(); },
   };
 }
 
@@ -338,6 +522,20 @@ export function normalizeResult(raw) {
   if (!(totalM > 0)) throw new Error('The measurement was empty.');
   const out = { totalM, segments: legs.map((lengthM) => ({ lengthM })), points: pts };
   if (typeof raw.snapshot === 'string' && /^data:image\/jpeg;base64,/.test(raw.snapshot)) out.snapshot = raw.snapshot;
+  // When each point was dropped, in ms into the recording: only kept when there is one per point.
+  if (Array.isArray(raw.pointTimesMs) && raw.pointTimesMs.length === pts.length && raw.pointTimesMs.every((t) => Number.isFinite(Number(t)) && Number(t) >= 0)) {
+    out.pointTimesMs = raw.pointTimesMs.map((t) => Math.round(Number(t)));
+  }
+  // The native recording: a file the screen reads in (measurePath does that), never the bytes.
+  const v = raw.video;
+  if (v && typeof v === 'object' && typeof v.path === 'string' && v.path) {
+    out.videoRef = {
+      path: v.path,
+      bytes: Math.max(0, Number(v.bytes) || 0),
+      durationMs: Math.max(0, Math.round(Number(v.durationMs) || 0)),
+      mimeType: typeof v.mimeType === 'string' && /^video\/[a-z0-9.+-]+$/i.test(v.mimeType) ? v.mimeType : 'video/mp4',
+    };
+  }
   return out;
 }
 
