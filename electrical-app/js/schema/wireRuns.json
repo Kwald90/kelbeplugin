@@ -123,6 +123,7 @@
               "ar",
               "plan",
               "manual",
+              "video",
               null
             ]
           },
@@ -346,6 +347,164 @@
               "number",
               "null"
             ]
+          }
+        }
+      }
+    },
+    "videos": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 12,
+      "description": "Videos of the run: recorded by the AR tape while measuring, or recorded/picked later (js/lib/wirerun-video.js). The bytes are never in the record: they live on the recording device (localId, IndexedDB) and, once uploaded, on the server (mediaId -> /api/v1/wirerun-media). markers are the moments each point was dropped.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "localId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "mediaId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "description": "Server walkthrough_media row id (owner_kind 'wirerun') once the upload has started."
+          },
+          "status": {
+            "enum": [
+              "local",
+              "uploading",
+              "processing",
+              "ready",
+              "failed",
+              null
+            ]
+          },
+          "bytes": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "durationMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "mimeType": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80
+          },
+          "source": {
+            "enum": [
+              "ar-native",
+              "ar-webxr",
+              "camera",
+              "file",
+              null
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300
+          },
+          "recordedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "attachedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?$"
+          },
+          "attachedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "markers": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 500,
+            "items": {
+              "type": "object",
+              "properties": {
+                "atMs": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "pointIndex": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 200
+                },
+                "segId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 128
+                },
+                "legM": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                }
+              }
+            }
           }
         }
       }

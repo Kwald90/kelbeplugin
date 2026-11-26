@@ -56,6 +56,7 @@ import kpiRoutes from './routes/v1/kpis.js';
 import materialRoutes from './routes/v1/materials.js';
 import drawingRoutes from './routes/v1/drawings.js';
 import walkthroughMediaRoutes from './routes/v1/walkthrough-media.js';
+import wireRunMediaRoutes from './routes/v1/wirerun-media.js';
 import locationRoutes from './routes/v1/location.js';
 import qboConnectRoutes from './routes/v1/qbo-connect.js';
 import qboWebhookRoutes from './routes/v1/qbo-webhook.js';
@@ -171,9 +172,10 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
     origin: (origin, cb) => cb(null, Boolean(origin) && config.corsOrigins.includes(origin)),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    // X-Walkthrough-Id / X-Duration-Ms: the walkthrough video upload sends these, so the cross-origin
-    // iOS app (capacitor://localhost) needs them on the CORS preflight or the upload is blocked.
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Fishtape', 'X-Fishtape-Device', 'X-Request-Id', 'If-Match', 'X-Walkthrough-Id', 'X-Duration-Ms'],
+    // X-Walkthrough-Id / X-Duration-Ms: the walkthrough video upload sends these, and X-Upload-Offset
+    // the wire-run video chunks, so the cross-origin iOS app (capacitor://localhost) needs them on the
+    // CORS preflight or the upload is blocked.
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Fishtape', 'X-Fishtape-Device', 'X-Request-Id', 'If-Match', 'X-Walkthrough-Id', 'X-Duration-Ms', 'X-Upload-Offset'],
     exposedHeaders: ['X-Request-Id'],
     maxAge: 600,
   });
@@ -248,6 +250,7 @@ export async function buildApp({ config, db, email = createEmail(), oidcProvider
     await app.register(materialRoutes, deps);
     await app.register(drawingRoutes, deps);
     await app.register(walkthroughMediaRoutes, deps);
+    await app.register(wireRunMediaRoutes, deps);
     await app.register(locationRoutes, deps);
     await app.register(qboConnectRoutes, deps);
     await app.register(qboWebhookRoutes, deps);
