@@ -214,6 +214,46 @@ test('AR results carry the point times and the native recording reference, check
   assert.equal(AR.normalizeResult({ ...raw, video: { path: '/x.mp4', mimeType: 'text/html' } }).videoRef.mimeType, 'video/mp4');
 });
 
+test('iOS AR tape: the recording is read in even though WKWebView reports a plain .mp4 read as status 0', async () => {
+  // What Capacitor 8 on iOS does for a capacitor://…/_capacitor_file_/…mp4 (checked in a WKWebView
+  // on the build Mac): a plain fetch comes back status 0, ok false; with a Range header, 206.
+  const bytes = new Uint8Array(4321).fill(7);
+  const reads = [], discarded = [];
+  const realFetch = globalThis.fetch, hadWindow = 'window' in globalThis;
+  globalThis.fetch = async (url, opt = {}) => {
+    reads.push({ url, range: opt.headers?.Range || null });
+    const blob = new Blob([bytes]);
+    return opt.headers?.Range ? new Response(blob, { status: 206, headers: { 'Content-Type': 'video/mp4' } })
+      : { ok: false, status: 0, blob: async () => blob };
+  };
+  globalThis.window = { Capacitor: {
+    convertFileSrc: (p) => `capacitor://localhost/_capacitor_file_${p}`,
+    Plugins: { FishtapeMeasure: {
+      measurePath: async () => ({ totalM: 2, segments: [{ lengthM: 2 }], points: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }], pointTimesMs: [0, 900],
+        video: { path: '/private/var/tmp/ar-run-1.mp4', bytes: bytes.length, durationMs: 1200, mimeType: 'video/mp4' } }),
+      discardRecording: async ({ path }) => { discarded.push(path); return {}; },
+    } },
+  } };
+  try {
+    const out = await AR.measurePath({ record: true });
+    assert.equal(out.videoNote, undefined, out.videoNote);
+    assert.equal(out.video.blob.size, bytes.length);
+    assert.equal(out.video.mimeType, 'video/mp4');
+    assert.equal(out.video.source, 'ar-native');
+    assert.deepEqual(out.pointTimesMs, [0, 900]);
+    assert.equal(reads[0].range, 'bytes=0-');
+    assert.deepEqual(discarded, ['/private/var/tmp/ar-run-1.mp4']);
+    // a short read is not passed off as the recording
+    globalThis.fetch = async () => new Response(new Blob([bytes.slice(0, 100)]), { status: 206 });
+    const short = await AR.measurePath({ record: true });
+    assert.equal(short.video, undefined);
+    assert.match(short.videoNote, /100 of 4321 bytes/);
+  } finally {
+    globalThis.fetch = realFetch;
+    if (!hadWindow) delete globalThis.window;
+  }
+});
+
 test('WebXR recording: the best type the browser can write, and an even size capped at 1280', () => {
   assert.equal(AR.pickRecordMime((m) => m.startsWith('video/webm')), 'video/webm;codecs=vp9');
   assert.equal(AR.pickRecordMime((m) => m === 'video/mp4'), 'video/mp4');

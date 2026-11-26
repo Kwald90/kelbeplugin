@@ -128,10 +128,15 @@ async function loadNativeVideo(plugin, ref) {
   const cap = globalThis.window?.Capacitor;
   const src = cap?.convertFileSrc ? cap.convertFileSrc(ref.path) : null;
   if (!src) throw new Error('no file access');
-  const res = await fetch(src);
-  if (!res.ok) throw new Error(`file read failed (${res.status})`);
+  // Ask for a byte range: for .mp4 files Capacitor's file handler answers a plain request with a
+  // non-HTTP response, which WKWebView's fetch reports as status 0 (ok false) even though the bytes
+  // arrive. With a Range header it answers 206 with the whole file. Status 0 with bytes is accepted
+  // too, in case a Capacitor update changes how the file is answered.
+  const res = await fetch(src, { headers: { Range: 'bytes=0-' } });
+  if (!res.ok && res.status !== 0) throw new Error(`file read failed (${res.status})`);
   let blob = await res.blob();
-  if (!blob.size) throw new Error('the recording is empty');
+  if (!blob.size) throw new Error(res.ok ? 'the recording is empty' : 'file read failed');
+  if (ref.bytes && blob.size !== ref.bytes) throw new Error(`only ${blob.size} of ${ref.bytes} bytes were read`);
   if (!/^video\//.test(blob.type)) blob = new Blob([blob], { type: ref.mimeType || 'video/mp4' });
   try { await plugin.discardRecording?.({ path: ref.path }); } catch { /* the OS clears tmp eventually */ }
   return { blob, durationMs: ref.durationMs, mimeType: blob.type, source: 'ar-native' };
