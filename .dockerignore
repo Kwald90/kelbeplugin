@@ -18,6 +18,8 @@
 !electrical-app/js/lib/materials.js
 !electrical-app/js/lib/customer-comms.js
 !electrical-app/js/lib/location-policy.js
+# Files (#/files): folders and the keyword classifier, shared with services/files*.js and routes/v1/files.js.
+!electrical-app/js/lib/files-classify.js
 # Release 1 shared libraries (docs/releases/r1-get-paid.md 2.12); harmless until a file exists.
 !electrical-app/js/lib/rules.js
 !electrical-app/js/lib/closing.js

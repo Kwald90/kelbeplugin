@@ -180,7 +180,9 @@ describe('public endpoints and URLs', { skip }, () => {
       'overallResult',
       // residential service plans / memberships: the Stripe subscription id a plan is billed on (an
       // opaque Stripe id like sub_..., no PII), used by the company's own Stripe webhook to find the plan
-      'stripeSubscriptionId']);
+      'stripeSubscriptionId',
+      // Files: DELETE ?forever=1 and GET content ?inline=1 are 0/1 flags, no data
+      'forever', 'inline']);
     for (const [path, ops] of Object.entries(spec.paths)) {
       for (const op of Object.values(ops)) {
         for (const p of op.parameters || []) {
