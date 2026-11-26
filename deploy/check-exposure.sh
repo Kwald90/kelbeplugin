@@ -118,6 +118,8 @@ SENSITIVE=(
   /index.html.bak /index.html~ /sw.js.bak
   /deploy-log.jsonl /status/last-deploy.json /media/../deploy-log.jsonl /media/..%2fdeploy-log.jsonl /media/%2e%2e/status/last-deploy.json
   /media/.env /media/.hidden.mp4 /media/x.sh /media/dump.sql /site/.env /site/../deploy/production/.env
+  /files/ /files/00/00000000000000000000000000000000 /var/lib/fishtape/files/ /media/../files/ /media/..%2ffiles/
+  /api/../files/ /static/../.env /js/../.env
 )
 exposed=0
 for p in "${SENSITIVE[@]}"; do
@@ -315,6 +317,16 @@ if [ "$API" -eq 1 ]; then
   if [[ "$CODE" == 2* ]]; then bad "/api/v1/clients answered $CODE without credentials"; else ok "/api/v1/clients without credentials -> $CODE"; fi
   fetch "/api/hq/health"
   if [[ "$CODE" == 2* ]]; then bad "/api/hq/health answered $CODE without credentials"; else ok "/api/hq/health without credentials -> $CODE"; fi
+  # Files (#/files): uploaded company documents are only readable signed in, through the API.
+  if [ "$MODE" = app ] || [ "$MODE" = production ]; then
+    FILE_PROBE=/api/v1/files/00000000-0000-4000-8000-000000000000
+    for p in /api/v1/files "$FILE_PROBE/content" "$FILE_PROBE/content?inline=1" /api/v1/file-folders; do
+      fetch "$p"
+      if [[ "$CODE" == 2* ]]; then bad "$p answered $CODE without credentials"; else ok "$p without credentials -> $CODE"; fi
+    done
+    fetch /api/v1/files -X POST -H 'Content-Type: application/octet-stream' -H 'X-File-Name: probe.txt' --data-binary 'probe'
+    if [[ "$CODE" == 2* ]]; then bad "an upload to /api/v1/files without credentials answered $CODE"; else ok "upload to /api/v1/files without credentials -> $CODE"; fi
+  fi
 fi
 if [ "$MODE" = production ]; then
   for p in /api/hq/health /api/hq/tenants /hq/ /api/docs /api/documentation; do

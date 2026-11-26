@@ -25,6 +25,7 @@ export const SWITCH_GROUPS = [
  */
 export const SWITCHES = [
   { id: 'schedule', group: 'work', label: 'Schedule', desc: 'Who is on which job, day by day.', modules: ['schedule'], core: true },
+  { id: 'files', group: 'work', label: 'Files', desc: 'Every document in folders by customer and job. Import or share a file into the app and the AI files it.', modules: ['files'], core: true },
   { id: 'drawings', group: 'work', label: 'Drawings', desc: 'Plans, markup and takeoff on an endless canvas.', modules: ['drawings'], core: true },
   { id: 'materials', group: 'work', label: 'Material requests', desc: 'Crew ask for material; the office gets one list a day.', modules: ['materials'], core: true },
   { id: 'calcs', group: 'work', label: 'Code calculators', desc: 'Voltage drop, conductor sizing, box fill and more.', modules: ['calcs'], core: true },

@@ -57,10 +57,16 @@ x-server: &server
     MEDIA_DIR: /var/lib/fishtape/media
     # Under nginx's 72m request limit on /api/; hero clips at the documented specs are ~10 MB.
     MEDIA_MAX_VIDEO_MB: "70"
+    # Files (#/files): each company's documents. Written and read only by the api through
+    # /api/v1/files (signed in, company-scoped); the worker purges Recently deleted. Never under a
+    # web root and never served by nginx (services/files.js). Uid 1000, chmod 700.
+    FILES_DIR: /var/lib/fishtape/files
+    FILES_MAX_MB: "70"
   volumes:
     - /var/lib/fishtape-production/status:/run/fishtape/status:ro
     - /var/lib/fishtape-production/mail:/var/lib/fishtape/mail
     - /var/lib/fishtape-production/media:/var/lib/fishtape/media
+    - /var/lib/fishtape-production/files:/var/lib/fishtape/files
   depends_on:
     postgres:
       condition: service_healthy
@@ -190,6 +196,7 @@ services:
       - /var/lib/fishtape-production/status:/run/fishtape/status:ro
       - /var/lib/fishtape-production/mail:/var/lib/fishtape/mail
       - /var/lib/fishtape-production/media:/var/lib/fishtape/media
+      - /var/lib/fishtape-production/files:/var/lib/fishtape/files
       - /var/lib/fishtape-production/drills:/var/lib/fishtape/drills:ro
     # A deploy stops the worker with SIGTERM: QuickBooks passes then end at their next step (up to a
     # few seconds) and a long one is never killed half way, which would keep its job "running".
