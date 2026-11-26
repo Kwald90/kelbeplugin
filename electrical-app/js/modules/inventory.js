@@ -18,6 +18,7 @@ import { reorderSuggestions, ordersFromReorder } from '../lib/reorder.js';
 import { qrSvgNode } from '../lib/qr.js';
 import { openScanner, resolveScan } from '../lib/scanner.js';
 import { BRAND } from '../brand.js';
+import { jobFocus } from '../lib/job-focus.js';
 
 /** Stock (shop, vans, moves) can be turned off while the price book stays (Settings → Modules). */
 const stockOn = (store) => switchOn(store.settings(), 'inventory');
@@ -219,12 +220,12 @@ export default {
         submitLabel: 'Record move',
         fields: [
           { label: 'Type', name: 'type', type: 'select', value: pre.type || 'transfer', options: MOVE_TYPES, span: true },
-          { label: 'Item', name: 'itemId', type: 'select', value: pre.itemId || '', options: ui.recordOptions(items, (i) => `${i.name}${i.sku ? ` (${i.sku})` : ''}`, '— pick an item —'), required: true, span: true },
+          { label: 'Item', name: 'itemId', type: 'select', rank: 'materials.items', value: pre.itemId || '', options: ui.recordOptions(items, (i) => `${i.name}${i.sku ? ` (${i.sku})` : ''}`, '— pick an item —'), required: true, span: true },
           { label: 'From location', name: 'fromLocationId', type: 'select', value: locs.find((l) => l.kind === 'shop')?.id || '', options: locOpts },
           { label: 'To location', name: 'toLocationId', type: 'select', value: locs.find((l) => l.kind === 'van')?.id || '', options: locOpts },
           { label: 'Quantity', name: 'qty', type: 'number', step: 'any', min: '0', value: 1, required: true },
           { label: 'Date', name: 'date', type: 'date', value: ui.today(), required: true },
-          { label: 'Job', name: 'jobId', type: 'select', value: '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`) },
+          { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: pre.jobId || jobFocus(store, auth), options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`) },
           { label: 'Use', name: 'use', type: 'select', value: '', options: [{ value: '', label: 'Billed to the job (resale)' }, ...OWN_USE_REASONS.map((x) => ({ value: x, label: `Own use: ${OWN_USE_REASON_LABEL[x]}` }))],
             hint: 'Own use (warranty, no charge, shop, truck, tools) is not resold: its RST is self-assessed.' },
           { label: 'Note', name: 'note', span: true },

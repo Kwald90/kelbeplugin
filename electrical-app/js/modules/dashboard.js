@@ -4,7 +4,10 @@ import { onboardingCard } from './onboarding.js';
 import { workplanTiles } from './workplan.js';
 import { weekHoursTile } from './time.js';
 import { moduleOn, switchOn, hrefModule } from '../lib/modules.js';
-import { WHEEL, wheelPrefs, orderWheel, addedShortcuts } from '../lib/wheel.js';
+import { WHEEL, wheelPrefs, orderWheelByUse, addedShortcuts } from '../lib/wheel.js';
+import { noteUse } from '../lib/usage-rank.js';
+import { jobFocus, onJobFocus, jobLabel } from '../lib/job-focus.js';
+import { workingOnPicker } from '../lib/job-focus-ui.js';
 import { renderWheelEditor } from '../lib/wheel-editor.js';
 import { MODULES } from './index.js';
 import { unbilledAcrossJobs } from '../lib/tm.js';
@@ -48,8 +51,14 @@ export default {
     // Due sequence steps are queued whenever the office opens the app (not when follow-ups are off).
     if (auth.can('sequences') && moduleOn(store.settings(), 'sequences')) import('./sequences.js').then((m) => m.processSequences?.(store)).catch(() => {});
 
+    // "Working on": built once (one focus listener for the screen's life); it repaints itself on a
+    // focus change and each draw refreshes its job list.
+    const picker = workingOnPicker(ctx);
+
     const draw = () => {
       ui.clear(root);
+      const focus = jobFocus(store, auth);
+      picker.refresh();
       const me = auth.current();
       const settings = store.settings();
       const money = moneyFormatter(settings);
@@ -105,7 +114,8 @@ export default {
       // ---- quick actions (home's own shortcut list, scope 'home' — independent of the + wheel) ----
       const wprefs = wheelPrefs(auth.current?.()?.id, 'home');
       const quickPool = [...WHEEL, ...addedShortcuts(wprefs)].filter((w) => auth.can(w.perm) && moduleEnabled(hrefModule('#/' + w.go)));
-      const quick = orderWheel(quickPool, wprefs).slice(0, 8);
+      // Their own arrangement wins; otherwise the shortcuts they use most come first.
+      const quick = orderWheelByUse(quickPool, wprefs).slice(0, 8);
       // Edit the home's quick actions right here: its own per-device list, separate from the + wheel.
       const openQuickEditor = () => {
         const host = h('div', { class: 'stack wheel-prefs' });
@@ -117,7 +127,7 @@ export default {
           h('h2', { id: 'dash-quick-title' }, 'Quick actions'),
           ui.button('Edit', { size: 'sm', variant: 'ghost', icon: 'sliders', onClick: openQuickEditor })),
         quick.length ? h('div', { class: 'dash-quick-grid' }, quick.map((w) =>
-          h('a', { class: 'dash-quick-tile', href: '#/' + w.go },
+          h('a', { class: 'dash-quick-tile', href: '#/' + w.go, onClick: () => noteUse('quick', w.id) },
             h('span', { class: 'dash-quick-icon', 'aria-hidden': 'true' }, ui.icon(w.icon, 20)),
             h('span', { class: 'dash-quick-label' }, w.label))))
           : h('p', { class: 'dash-section-intro' }, 'No shortcuts shown — tap Edit to add some.')) : null;
@@ -201,13 +211,13 @@ export default {
         h('strong', null, "You're up to date"), h('p', null, 'No action items in the modules you can access.'))));
 
       // ---- recent drawings ----
-      const drawings = store.list('drawings', null, { omit: ['underlay', 'strokes', 'texts', 'rooms'] }).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 4);
+      const drawings = store.list('drawings', (d) => !focus || d.jobId === focus, { omit: ['underlay', 'strokes', 'texts', 'rooms'] }).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 4);
       const drawingCards = auth.can('drawings') && on('drawings') ? h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' } },
         drawings.map((d) => h('a', { class: 'card click', href: `#/drawings/${d.id}`, style: { padding: '8px', color: 'inherit', textDecoration: 'none' } },
           h('div', { class: 'dash-thumb', style: { aspectRatio: '4 / 3', borderRadius: '12px', background: 'var(--paper)', border: '1px solid var(--border)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundImage: d.thumb ? `url(${d.thumb})` : 'none', display: 'grid', placeItems: 'center', color: 'var(--text-muted)' } }, d.thumb ? null : ui.icon('pen', 28)),
           h('div', { style: { padding: '8px 4px 2px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, d.name),
           h('div', { class: 'muted', style: { padding: '0 4px', fontSize: '12px' } }, jobById.get(d.jobId)?.number || 'No job'))),
-        h('a', { class: 'card click', href: '#/drawings/new', style: { display: 'grid', placeItems: 'center', minHeight: '160px', borderStyle: 'dashed', color: 'var(--text-muted)', textDecoration: 'none' } },
+        h('a', { class: 'card click', href: '#/drawings/new' + (focus ? `?jobId=${encodeURIComponent(focus)}` : ''), style: { display: 'grid', placeItems: 'center', minHeight: '160px', borderStyle: 'dashed', color: 'var(--text-muted)', textDecoration: 'none' } },
           h('div', { class: 'stack', style: { alignItems: 'center', gap: '6px' } }, ui.icon('plus', 28), 'New drawing'))) : null;
 
       // ---- activity ----
@@ -241,6 +251,7 @@ export default {
         ].filter(Boolean),
       },
       hero,
+      picker,
       quickGrid,
       h('section', { class: 'dash-focus', 'aria-labelledby': 'dash-attention-title' },
         h('div', { class: 'dash-section-head' }, h('h2', { id: 'dash-attention-title' }, 'Needs attention'),
@@ -252,7 +263,7 @@ export default {
       allowed('#/schedule') && allowed('#/jobs') ? detail('sites', byJob.size ? `Today on site · ${byJob.size}` : 'Today on site',
         h('div', { class: 'dash-section-head', style: { marginBottom: 'var(--s3)' } }, h('span', { class: 'grow' }), ui.button('Schedule', { href: '#/schedule', variant: 'ghost', icon: 'calendar' })), today) : null,
       wp || hours ? detail('crew', 'Crew progress & hours', wp, hours) : null,
-      drawingCards ? detail('drawings', 'Recent plans & drawings', drawingCards) : null,
+      drawingCards ? detail('drawings', focus ? `Recent plans & drawings · ${jobLabel(jobById.get(focus))}` : 'Recent plans & drawings', drawingCards) : null,
       activity ? detail('activity', 'Recent activity', activity) : null));
     };
 
@@ -269,6 +280,7 @@ export default {
     // Only the home's own list (scope 'home') matters here; ignore + wheel (scope 'wheel') edits.
     const onWheel = (e) => { if ((e.detail?.scope || 'wheel') !== 'home') return; clearTimeout(pending); pending = setTimeout(draw, 50); };
     addEventListener('ft:wheel-changed', onWheel);
-    return () => { clearInterval(timer); clearTimeout(pending); off(); removeEventListener('ft:wheel-changed', onWheel); };
+    const offFocus = onJobFocus(() => { clearTimeout(pending); pending = setTimeout(draw, 50); });
+    return () => { clearInterval(timer); clearTimeout(pending); off(); offFocus(); removeEventListener('ft:wheel-changed', onWheel); };
   },
 };

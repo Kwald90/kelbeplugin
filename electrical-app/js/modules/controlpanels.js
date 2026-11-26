@@ -12,6 +12,8 @@ import {
   IO_TYPES, ENCLOSURE_TYPES, MAX_COMPONENTS, MAX_IO, MAX_WIRES, MAX_NAMEPLATES,
 } from '../lib/controlpanels.js';
 import { moneyFormatter } from '../lib/money.js';
+import { jobFocus, onJobFocus, focusFilter } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/controlpanels.css"]')) return;
@@ -30,7 +32,8 @@ export default {
     loadCss();
     const [sub] = ctx.params;
     if (sub === 'new') {
-      const job = ctx.query.jobId ? ctx.store.get('jobs', ctx.query.jobId) : null;
+      // The job in the link, else the "Working on" job.
+      const job = ctx.store.get('jobs', ctx.query.jobId || jobFocus(ctx.store, ctx.auth)) || null;
       const n = ctx.store.count('controlPanels', (p) => (job ? p.jobId === job.id : true)) + 1;
       const rec = ctx.store.add('controlPanels', newPanel({ name: `Panel ${n}`, job, by: ctx.store.actorId }));
       ctx.nav(`#/controlpanels/${rec.id}`);
@@ -45,14 +48,19 @@ const jobLabel = (j) => (j ? `${j.number || ''}${j.number ? ' · ' : ''}${j.titl
 
 // ---------- list ----------
 function listView(root, ctx) {
-  const { store, ui, nav } = ctx;
+  const { store, ui, nav, auth } = ctx;
+  // Opens on the "Working on" job (lib/job-focus.js); "Show all" lifts it until the focus changes.
+  let showAll = false;
+  const listJob = () => (showAll ? '' : jobFocus(store, auth));
   const { h } = ui;
   const money = moneyFormatter(store.settings());
   const jobs = new Map(store.list('jobs').map((j) => [j.id, j]));
   const host = h('div', { class: 'stack' });
   const draw = () => {
     ui.clear(host);
-    const all = store.list('controlPanels').sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+    const note = focusNote(ctx, listJob(), () => { showAll = true; draw(); });
+    if (note) host.append(note);
+    const all = store.list('controlPanels', focusFilter(listJob())).sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
     host.append(all.length ? ui.table({
       columns: [
         { key: 'tag', label: 'Tag / name', render: (p) => panelLabel(p), sort: (p) => panelLabel(p).toLowerCase() },
@@ -75,7 +83,9 @@ function listView(root, ctx) {
     actions: [ui.button('New panel', { variant: 'primary', icon: 'plus', href: '#/controlpanels/new' })],
   }, host));
   draw();
-  return store.on('controlPanels', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offStore = store.on('controlPanels', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offFocus = onJobFocus(() => { showAll = false; draw(); });
+  return () => { offStore(); offFocus(); };
 }
 
 // ---------- detail ----------
@@ -114,7 +124,7 @@ function detail(root, ctx, id) {
   const headGrid = h('div', { class: 'form-grid' },
     fieldEl({ label: 'Panel name', name: 'name', value: p.name, placeholder: 'Main PLC panel' }, (v) => { p.name = v; titleEl.textContent = panelLabel(p); }),
     fieldEl({ label: 'Tag', name: 'tag', value: p.tag, placeholder: 'CP-101' }, (v) => { p.tag = v; titleEl.textContent = panelLabel(p); }),
-    fieldEl({ label: 'Job', name: 'jobId', type: 'select', value: p.jobId || '', options: [{ value: '', label: '—' }, ...ui.recordOptions(jobs, (j) => `${j.number} - ${j.title}`)] }, (v) => { p.jobId = v || null; const j = v && store.get('jobs', v); if (j) p.clientId = j.clientId || p.clientId; }, 0),
+    fieldEl({ label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: p.jobId || '', options: [{ value: '', label: '—' }, ...ui.recordOptions(jobs, (j) => `${j.number} - ${j.title}`)] }, (v) => { p.jobId = v || null; const j = v && store.get('jobs', v); if (j) p.clientId = j.clientId || p.clientId; }, 0),
     fieldEl({ label: 'Enclosure type', name: 'enclosureType', type: 'select', value: p.enclosureType || '', options: enclosureOpts }, (v) => { p.enclosureType = v; }, 0),
     fieldEl({ label: 'Enclosure rating / size', name: 'enclosureRating', value: p.enclosureRating, placeholder: 'e.g. 36x30x12, painted steel' }, (v) => { p.enclosureRating = v; }),
     fieldEl({ label: 'System voltage', name: 'systemVoltage', value: p.systemVoltage, placeholder: 'e.g. 600V 3PH 4W' }, (v) => { p.systemVoltage = v; }),

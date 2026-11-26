@@ -119,6 +119,14 @@ describe('the combined list', () => {
     assert.equal(MR.qtyText({ qty: 2.5, unit: 'ft' }), '2.5 ft');
     assert.equal(MR.withoutMoney({ id: 'r', costCents: 5 }).costCents, undefined);
   });
+
+  test('price-book matching: equally good matches put the most-used item first', () => {
+    const list = [{ id: 'a', name: 'Box connector 1/2' }, { id: 'b', name: 'Box connector 3/4' }];
+    assert.deepEqual(MR.matchItems('box connector', list).map((i) => i.id), ['a', 'b']);
+    assert.deepEqual(MR.matchItems('box connector', list, 6, { b: 3 }).map((i) => i.id), ['b', 'a']);
+    // usage never beats a better text match
+    assert.equal(MR.matchItems('connector 1/2', list, 6, { b: 9 })[0].id, 'a');
+  });
 });
 
 describe('undoing a "From stock" move', () => {

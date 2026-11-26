@@ -131,7 +131,7 @@ export function openLeadSheet(ctx, lead = null, { prefill = {} } = {}) {
     fields: [
       { label: 'What is the work?', name: 'title', value: l.title, required: true, span: true, placeholder: 'e.g. Panel upgrade 100A → 200A' },
       { label: 'Contact name', name: 'contactName', value: l.contactName },
-      { label: 'Client', name: 'clientId', type: 'select', value: l.clientId || '', options: ui.recordOptions(clients, 'name', '— not a client yet —') },
+      { label: 'Client', name: 'clientId', type: 'select', rank: 'clients', value: l.clientId || '', options: ui.recordOptions(clients, 'name', '— not a client yet —') },
       { label: 'Email', name: 'email', type: 'email', value: l.email },
       { label: 'Phone', name: 'phone', type: 'tel', value: l.phone },
       { label: 'Source', name: 'source', type: 'select', value: l.source || 'Website', options: sources },

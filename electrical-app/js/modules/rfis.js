@@ -6,6 +6,8 @@
 //   #/rfis?jobId=:id     the list for one job
 import { newRfi, answerPatch, closePatch, reopenPatch, isOpen, isAnswered, isClosed, isOverdue, filterRfis, sortRfis, summarize, statusLabel, rfiNo, rfiLabel, DISCIPLINES, STATUSES } from '../lib/rfis.js';
 import { photoStrip } from '../lib/safety-capture.js';
+import { jobFocus, onJobFocus, rankJobs } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/rfis.css"]')) return;
@@ -30,11 +32,13 @@ const jobLabel = (j) => (j ? [j.number, j.title].filter(Boolean).join(' · ') : 
 const statusTone = { open: 'info', answered: 'success', closed: 'neutral' };
 
 function listView(root, ctx) {
-  const { store, ui, query } = ctx;
+  const { store, ui, query, auth } = ctx;
   const { h } = ui;
-  let jobId = query.jobId || '';
+  // Opens on the "Working on" job (lib/job-focus.js) unless a link names one; "Show all" lifts it here.
+  let jobId = query.jobId || jobFocus(store, auth);
+  const newJobId = () => (jobId === '__none' ? null : jobId || jobFocus(store, auth) || null);
   let status = 'open';
-  const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
+  const jobs = rankJobs(store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || '')));
   const jobById = new Map(jobs.map((j) => [j.id, j]));
 
   const host = h('div', { class: 'stack' });
@@ -47,6 +51,7 @@ function listView(root, ctx) {
   h('option', { value: '' }, 'All jobs'),
   h('option', { value: '__none', selected: jobId === '__none' }, 'Not linked to a job'),
   jobs.map((j) => h('option', { value: j.id, selected: j.id === jobId }, jobLabel(j))));
+  const setJob = (id) => { jobId = id; jobSelect.value = id; history.replaceState(null, '', '#/rfis' + (id ? '?jobId=' + id : '')); draw(); };
 
   function draw() {
     ui.clear(host);
@@ -57,6 +62,7 @@ function listView(root, ctx) {
     const sum = summarize(forJob, today);
 
     h(host, null,
+      focusNote(ctx, jobId, () => setJob('')),
       h('div', { class: 'grid rfi-stats' },
         ui.stat({ label: 'Open', value: String(sum.open), hint: jobId && jobId !== '__none' ? jobLabel(jobById.get(jobId)) : 'All jobs' }),
         ui.stat({ label: 'Answered', value: String(sum.answered), tone: sum.answered ? 'success' : 'neutral' }),
@@ -66,7 +72,7 @@ function listView(root, ctx) {
         jobSelect,
         ui.button('Print register', { icon: 'printer', onClick: () => printRegister(ctx, { jobId, jobById }) }),
         h('span', { class: 'grow' }),
-        ui.button('New RFI', { variant: 'primary', icon: 'plus', onClick: () => editRfi(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) })),
+        ui.button('New RFI', { variant: 'primary', icon: 'plus', onClick: () => editRfi(ctx, null, { jobId: newJobId(), onDraw: draw }) })),
       h('div', { class: 'row rfi-tabs' },
         ui.tabs(
           [{ id: 'open', label: `Open (${sum.open})` }, { id: 'answered', label: `Answered (${sum.answered})` }, { id: 'closed', label: `Closed (${sum.closed})` }, { id: 'all', label: `All (${sum.total})` }],
@@ -92,7 +98,7 @@ function listView(root, ctx) {
           icon: 'send',
           title: all.length ? 'Nothing here' : 'No RFIs yet',
           text: all.length ? 'No RFIs match this job and status.' : 'Raise a Request for Information to the GC or engineer when the drawings are unclear — the question, who it is to and when you need it by — then log the answer and print the register.',
-          action: ui.button('New RFI', { variant: 'primary', icon: 'plus', onClick: () => editRfi(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) }),
+          action: ui.button('New RFI', { variant: 'primary', icon: 'plus', onClick: () => editRfi(ctx, null, { jobId: newJobId(), onDraw: draw }) }),
         }),
       }));
     }
@@ -101,10 +107,12 @@ function listView(root, ctx) {
   root.append(ui.page({
     title: 'RFIs',
     subtitle: 'Requests for Information to the GC or engineer, with the answer and a printable register.',
-    actions: [ui.button('New RFI', { variant: 'primary', icon: 'plus', onClick: () => editRfi(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) })],
+    actions: [ui.button('New RFI', { variant: 'primary', icon: 'plus', onClick: () => editRfi(ctx, null, { jobId: newJobId(), onDraw: draw }) })],
   }, host));
   draw();
-  return store.on('rfis', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offStore = store.on('rfis', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offFocus = onJobFocus((id) => setJob(id));
+  return () => { offStore(); offFocus(); };
 }
 
 function editRfi(ctx, id, { jobId = null, onDraw } = {}) {
@@ -114,11 +122,11 @@ function editRfi(ctx, id, { jobId = null, onDraw } = {}) {
   const r = id ? store.get('rfis', id) : newRfi({ job: jobId ? store.get('jobs', jobId) : null, items: all, by: store.actorId, date: ui.today() });
   if (!r) { ui.toast('That RFI is gone.', 'error'); return; }
   r.photos = r.photos || [];
-  const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
+  const jobs = rankJobs(store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || '')));
   const discList = h('datalist', { id: 'rfi-disc' }, DISCIPLINES.map((d) => h('option', { value: d })));
 
   const grid = ui.formGrid([
-    { label: 'Job', name: 'jobId', type: 'select', value: r.jobId || '', options: [{ value: '', label: '— none —' }, ...ui.recordOptions(jobs, (j) => jobLabel(j), '— none —').slice(1)] },
+    { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: r.jobId || '', options: [{ value: '', label: '— none —' }, ...ui.recordOptions(jobs, (j) => jobLabel(j), '— none —').slice(1)] },
     { label: 'Discipline', name: 'discipline', value: r.discipline, placeholder: 'Electrical' },
     { label: 'Subject', name: 'subject', value: r.subject, span: true, placeholder: 'Short title, e.g. Panel A location clash' },
     { label: 'Question', name: 'question', type: 'textarea', value: r.question, span: true, placeholder: 'What you need clarified, with the drawing / spec reference' },

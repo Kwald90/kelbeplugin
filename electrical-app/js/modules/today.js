@@ -7,6 +7,8 @@ import * as W from '../lib/workplan.js';
 import { openEntry } from '../lib/clock.js';
 import { fieldSyncStatus, personalShiftStatus, fieldSiteDetails } from '../lib/field-status.js';
 import { openSyncSheet } from './account.js';
+import { jobFocus, rankJobs } from '../lib/job-focus.js';
+import { workingOnPicker } from '../lib/job-focus-ui.js';
 
 // Clipboard with a check (24px grid, stroke): the rail icon for My day.
 export const ICON_TODAY = '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>';
@@ -30,6 +32,8 @@ export default {
     const host = h('div', { class: 'field-day' });
     const syncLine = h('div', { class: 'field-sync' });
     const available = (id) => auth.can(id) && (!ctx.on || ctx.on(id));
+    // "Working on": the job this device is set up for (lib/job-focus.js). My day still lists every task.
+    const picker = available('jobs') || available('time') ? workingOnPicker(ctx) : null;
     const canTime = available('time');
 
     const jobs = () => new Map((available('jobs') ? store.list('jobs') : []).map((j) => [j.id, j]));
@@ -310,6 +314,7 @@ export default {
     }
 
     const draw = () => {
+      picker?.refresh();
       const subtitle = ui.fmtDate(ui.today(), { weekday: 'long', month: 'long', day: 'numeric' });
       ui.clear(host).append(ui.page({
         title: view === 'crew' ? "Crew's day" : 'My day',
@@ -320,6 +325,7 @@ export default {
       },
       manager ? h('div', { style: { marginBottom: 'var(--s4)' } }, ui.tabs([{ id: 'mine', label: 'My tasks' }, { id: 'crew', label: 'Crew today' }], view, (id) => { view = id; draw(); })) : null,
       syncLine,
+      picker,
       view === 'mine' ? shiftCard() : null,
       view === 'crew' ? crew() : mine()));
     };
@@ -450,7 +456,8 @@ export async function downscalePhoto(file) {
 export function quickTaskSheet(ctx, { day, tomorrow, employeeId = '', planId = '', jobId = '', onSaved } = {}) {
   const { store, ui, auth } = ctx;
   const people = store.list('employees', (e) => e.active !== false).sort((a, b) => a.name.localeCompare(b.name));
-  const jobsList = store.list('jobs', (j) => ['scheduled', 'in-progress', 'on-hold'].includes(j.status) || j.id === jobId).sort((a, b) => String(a.number).localeCompare(String(b.number)));
+  const focus = jobFocus(store, auth);
+  const jobsList = rankJobs(store.list('jobs', (j) => ['scheduled', 'in-progress', 'on-hold'].includes(j.status) || j.id === jobId || j.id === focus).sort((a, b) => String(a.number).localeCompare(String(b.number))));
   const plans = store.list('workPlans', (p) => p.status !== 'archived');
   const templates = store.list('taskTemplates').sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const defaultPlan = planId || (jobId ? plans.find((p) => p.jobId === jobId)?.id : '') || '';
@@ -458,11 +465,11 @@ export function quickTaskSheet(ctx, { day, tomorrow, employeeId = '', planId = '
     title: 'Add a task',
     submitLabel: 'Add task',
     fields: [
-      templates.length ? { label: 'From a template', name: 'templateId', type: 'select', value: '', span: true, options: [{ value: '', label: '— none —' }, ...templates.map((t) => ({ value: t.id, label: t.name || t.title }))] } : null,
+      templates.length ? { label: 'From a template', name: 'templateId', type: 'select', value: '', span: true, rank: 'taskTemplates', options: [{ value: '', label: '— none —' }, ...templates.map((t) => ({ value: t.id, label: t.name || t.title }))] } : null,
       { label: 'Task', name: 'title', required: true, span: true, placeholder: 'e.g. Pull home runs to panel B' },
-      { label: 'Who', name: 'employeeId', type: 'select', value: employeeId, required: true, options: [{ value: '', label: 'Pick someone' }, ...people.map((p) => ({ value: p.id, label: p.name }))] },
+      { label: 'Who', name: 'employeeId', type: 'select', rank: 'employees', value: employeeId, required: true, options: [{ value: '', label: 'Pick someone' }, ...people.map((p) => ({ value: p.id, label: p.name }))] },
       { label: 'Day', name: 'date', type: 'select', value: day, options: [{ value: day, label: `Today (${ui.fmtDate(day, { weekday: 'short' })})` }, ...(tomorrow ? [{ value: tomorrow, label: `${tomorrow === W.addDays(day, 1) ? 'Tomorrow' : 'Next working day'} (${ui.fmtDate(tomorrow, { weekday: 'short' })})` }] : [])] },
-      { label: 'Job', name: 'jobId', type: 'select', value: jobId || store.get('workPlans', defaultPlan)?.jobId || '', options: ui.recordOptions(jobsList, (j) => `${j.number} · ${j.title}`, 'No job') },
+      { label: 'Job', name: 'jobId', type: 'select', value: jobId || store.get('workPlans', defaultPlan)?.jobId || focus || '', options: ui.recordOptions(jobsList, (j) => `${j.number} · ${j.title}`, 'No job') },
       plans.length ? { label: 'Work plan', name: 'planId', type: 'select', value: defaultPlan, options: [{ value: '', label: 'Not on a plan' }, ...plans.map((p) => ({ value: p.id, label: p.name || store.get('jobs', p.jobId)?.title || 'Plan' }))] } : null,
       { label: 'Hours', name: 'estHours', type: 'number', step: '0.25', min: '0', max: '24', value: 1 },
       { label: 'Quantity', name: 'qty', type: 'number', step: 'any', min: '0', value: '' },

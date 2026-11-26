@@ -15,6 +15,8 @@ import {
 } from '../lib/plansets.js';
 import { firstName } from '../lib/drawing-collab.js';
 import { isPdf, openPdf, pickPages, importPages, chooseDialog } from '../canvas/plansets-ui.js';
+import { jobFocus, onJobFocus, rankJobs, noteJobUse } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 const PAPER_LABEL = { none: 'Blank', dots: 'Dots', grid: 'Grid', iso: 'Isometric' };
 /** What the gallery doesn't need from a drawing: copying every sheet's underlay would cost megabytes per card. */
@@ -58,12 +60,17 @@ export function lastEdited(ui, d) {
   return `Edited ${ui.fmtDate(d?.updatedAt)}`;
 }
 
-function gallery(root, { store, ui, nav, query }) {
+function gallery(root, ctx) {
+  const { store, ui, nav, query, auth } = ctx;
   const { h, icon } = ui;
   let q = '';
-  let jobFilter = query.jobId || '';
   const clientFilter = query.clientId || '';
-  const jobs = store.list('jobs');
+  // "Working on" a job: the gallery opens on it (a client's link shows that client instead).
+  const focus = () => jobFocus(store, auth);
+  let jobFilter = query.jobId || (clientFilter ? '' : focus());
+  // New sheets go to the job on screen, else the focused job.
+  const newJob = () => (jobFilter === '__none' ? '' : jobFilter || focus());
+  const jobs = rankJobs(store.list('jobs'), { focus: focus() });
   const jobById = new Map(jobs.map((j) => [j.id, j]));
   const grid = h('div');
   const expanded = new Set(query.set ? [query.set] : []);
@@ -71,11 +78,12 @@ function gallery(root, { store, ui, nav, query }) {
   const reload = () => { all = store.list('drawings', null, { omit: GALLERY_OMIT }); };
 
   const jobSelect = h('select', { class: 'input', 'aria-label': 'Filter by job', style: { width: 'auto', minWidth: '180px', borderRadius: '999px' },
-    onChange: (e) => { jobFilter = e.target.value; history.replaceState(null, '', '#/drawings' + (jobFilter ? '?jobId=' + jobFilter : '')); draw(); } },
+    onChange: (e) => { jobFilter = e.target.value; if (jobFilter !== '__none') noteJobUse(jobFilter); history.replaceState(null, '', '#/drawings' + (jobFilter ? '?jobId=' + jobFilter : '')); draw(); } },
   h('option', { value: '' }, 'All jobs'), h('option', { value: '__none', selected: jobFilter === '__none' }, 'Not linked to a job'),
   jobs.map((j) => h('option', { value: j.id, selected: j.id === jobFilter }, `${j.number} · ${j.title}`)));
 
-  const newDrawing = () => nav('#/drawings/new' + (jobFilter && jobFilter !== '__none' ? '?jobId=' + jobFilter : ''));
+  const newDrawing = () => nav('#/drawings/new' + (newJob() ? '?jobId=' + newJob() : '?jobId='));
+  const setFilter = (id) => { jobFilter = id; jobSelect.value = id; history.replaceState(null, '', '#/drawings' + (id ? '?jobId=' + id : '')); draw(); };
   const thumbOf = (d, emptyIcon = 'pen') => (d.thumb ? h('img', { src: d.thumb, alt: '', loading: 'lazy' }) : h('span', { class: 'dw-thumb-empty' }, icon(emptyIcon, 28)));
   const countSymbols = (list) => list.reduce((a, d) => a + (d.objects || []).length, 0);
 
@@ -197,7 +205,7 @@ function gallery(root, { store, ui, nav, query }) {
     try {
       ui.toast('Reading PDF…', 'info', 1400);
       doc = await openPdf(file);
-      const preset = jobFilter && jobFilter !== '__none' ? jobFilter : '';
+      const preset = newJob();
       const jobPick = h('select', { name: 'jobId', 'aria-label': 'Job for these sheets' },
         ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`, 'Not linked to a job').map((o) => h('option', { value: o.value, selected: o.value === preset }, o.label)));
       const pages = doc.numPages > 1
@@ -228,8 +236,10 @@ function gallery(root, { store, ui, nav, query }) {
     }
   }
 
+  const noteHost = h('div');
   function draw() {
     ui.clear(grid);
+    ui.clear(noteHost).append(focusNote(ctx, jobFilter, () => setFilter('')) || '');
     const needle = q.trim().toLowerCase();
     let rows = all;
     if (clientFilter) {
@@ -243,7 +253,7 @@ function gallery(root, { store, ui, nav, query }) {
 
     const newTile = h('button', { class: 'card dw-card dw-new', type: 'button', onClick: newDrawing },
       h('span', { class: 'dw-new-ico' }, icon('plus', 28)), h('strong', null, 'New drawing'),
-      h('span', { class: 'muted' }, jobFilter && jobFilter !== '__none' ? `For ${jobById.get(jobFilter)?.number || 'this job'}` : 'Blank paper, grid or isometric'));
+      h('span', { class: 'muted' }, newJob() ? `For ${jobById.get(newJob())?.number || 'this job'}` : 'Blank paper, grid or isometric'));
     const forJob = jobFilter && jobFilter !== '__none' ? jobById.get(jobFilter) : null;
     const custClient = clientFilter ? store.get('clients', clientFilter) : forJob?.clientId ? store.get('clients', forJob.clientId) : null;
     const customerTile = custClient || forJob ? h('button', { class: 'card dw-card dw-new dw-customer', type: 'button',
@@ -294,6 +304,7 @@ function gallery(root, { store, ui, nav, query }) {
     ],
   },
   h('div', { class: 'row', style: { marginBottom: '16px' } }, ui.searchBox('Search drawings', (v) => { q = v; draw(); }), jobSelect),
+  noteHost,
   grid));
   reload();
   draw();
@@ -301,7 +312,8 @@ function gallery(root, { store, ui, nav, query }) {
   globalThis.kelbeDrawings = { importFile: (file) => importPlanSet(file) };
   // another device's sync can add or change sheets while the gallery is open
   const off = store.on('drawings', (e) => { if (e.remote) { reload(); draw(); } });
-  return () => { off(); if (globalThis.kelbeDrawings) delete globalThis.kelbeDrawings; };
+  const offFocus = onJobFocus((id) => setFilter(id));
+  return () => { off(); offFocus(); if (globalThis.kelbeDrawings) delete globalThis.kelbeDrawings; };
 }
 
 export default {
@@ -314,12 +326,14 @@ export default {
     const [sub] = ctx.params;
     if (!sub) return gallery(root, ctx);
     if (sub === 'new') {
-      const d = createDrawing(ctx.store, ctx.query.jobId);
+      // "+ Draw" with no job given files the new drawing under the focused job; ?jobId= (empty) means none.
+      const jobId = 'jobId' in ctx.query ? ctx.query.jobId : jobFocus(ctx.store, ctx.auth);
+      const d = createDrawing(ctx.store, jobId);
       location.replace('#/drawings/' + d.id);
       return;
     }
     if (sub === 'customer') {
-      const to = openCustomerSet(ctx.store, { clientId: ctx.query.clientId || null, jobId: ctx.query.jobId || null });
+      const to = openCustomerSet(ctx.store, { clientId: ctx.query.clientId || null, jobId: ctx.query.jobId || (ctx.query.clientId ? null : jobFocus(ctx.store, ctx.auth)) || null });
       location.replace(to ? '#/drawings/' + to : '#/drawings');
       return;
     }

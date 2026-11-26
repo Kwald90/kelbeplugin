@@ -86,3 +86,17 @@ test('added shortcuts show on the wheel alongside the defaults, honouring order 
   assert.ok(!ids(shown).includes('calc'), 'a hidden default stays hidden');
   assert.ok(ids(shown).includes('mod:bending'));
 });
+
+test('orderWheelByUse: most-used shortcuts first unless the person arranged their own order', async () => {
+  const { orderWheelByUse } = await import('../js/lib/wheel.js');
+  const { noteUse, resetUsage } = await import('../js/lib/usage-rank.js');
+  const opts = { uid: 'wheel-use' };
+  resetUsage('quick', opts);
+  const ids2 = (list) => list.map((w) => w.id);
+  assert.deepEqual(ids2(orderWheelByUse(WHEEL, {}, opts)), ids2(WHEEL), 'fresh install: the designed order');
+  noteUse('quick', 'sops', opts); noteUse('quick', 'sops', opts); noteUse('quick', 'calc', opts);
+  const used = ids2(orderWheelByUse(WHEEL, {}, opts));
+  assert.deepEqual(used.slice(0, 2), ['sops', 'calc']);
+  assert.ok(!ids2(orderWheelByUse(WHEEL, { hidden: ['sops'] }, opts)).includes('sops'), 'hidden stays hidden');
+  assert.deepEqual(ids2(orderWheelByUse(WHEEL, { order: ['job', 'clock'] }, opts)).slice(0, 2), ['job', 'clock'], 'their own order wins');
+});

@@ -10,6 +10,8 @@ import {
   isCurrent, latestRev, sortRevHistory, filterDrawings, sortDrawings, currentSet, groupByDiscipline,
   summarize, statusLabel, statusTone, statusRank, disciplineLabel, drawingLabel, DR_STATUSES, DISCIPLINES, MAX_REVISIONS,
 } from '../lib/drawing-revisions.js';
+import { jobFocus, onJobFocus, rankJobs } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/drawingrevisions.css"]')) return;
@@ -33,11 +35,13 @@ export default {
 const jobLabel = (j) => (j ? [j.number, j.title].filter(Boolean).join(' · ') : '—');
 
 function listView(root, ctx) {
-  const { store, ui, query } = ctx;
+  const { store, ui, query, auth } = ctx;
   const { h } = ui;
-  let jobId = query.jobId || '';
+  // Opens on the "Working on" job (lib/job-focus.js) unless a link names one; "Show all" lifts it here.
+  let jobId = query.jobId || jobFocus(store, auth);
+  const newJobId = () => (jobId === '__none' ? null : jobId || jobFocus(store, auth) || null);
   let status = 'all';
-  const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
+  const jobs = rankJobs(store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || '')));
   const jobById = new Map(jobs.map((j) => [j.id, j]));
 
   const host = h('div', { class: 'stack' });
@@ -50,6 +54,7 @@ function listView(root, ctx) {
   h('option', { value: '' }, 'All jobs'),
   h('option', { value: '__none', selected: jobId === '__none' }, 'Not linked to a job'),
   jobs.map((j) => h('option', { value: j.id, selected: j.id === jobId }, jobLabel(j))));
+  const setJob = (id) => { jobId = id; jobSelect.value = id; history.replaceState(null, '', '#/drawingrevisions' + (id ? '?jobId=' + id : '')); draw(); };
 
   function draw() {
     ui.clear(host);
@@ -59,6 +64,7 @@ function listView(root, ctx) {
     const sum = summarize(forJob);
 
     h(host, null,
+      focusNote(ctx, jobId, () => setJob('')),
       h('div', { class: 'grid dr-stats' },
         ui.stat({ label: 'Current', value: String(sum.current), hint: jobId && jobId !== '__none' ? jobLabel(jobById.get(jobId)) : 'All jobs', tone: 'accent' }),
         ui.stat({ label: 'Superseded', value: String(sum.superseded), tone: sum.superseded ? 'warning' : 'neutral' }),
@@ -68,7 +74,7 @@ function listView(root, ctx) {
         jobSelect,
         ui.button('Print register', { icon: 'printer', onClick: () => printRegister(ctx, { jobId, jobById }) }),
         h('span', { class: 'grow' }),
-        ui.button('Add drawing', { variant: 'primary', icon: 'plus', onClick: () => editDrawing(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) })),
+        ui.button('Add drawing', { variant: 'primary', icon: 'plus', onClick: () => editDrawing(ctx, null, { jobId: newJobId(), onDraw: draw }) })),
       h('div', { class: 'row dr-tabs' }, tabsRow()),
       tableHost);
 
@@ -97,7 +103,7 @@ function listView(root, ctx) {
           icon: 'layers',
           title: all.length ? 'Nothing here' : 'No drawings in the register yet',
           text: all.length ? 'No drawings match this job and status.' : 'Keep the current revision of every construction drawing straight — number, title, discipline and the rev in force — so the crew builds from the right set. Log each revision as it comes in and print a register for the trailer.',
-          action: ui.button('Add drawing', { variant: 'primary', icon: 'plus', onClick: () => editDrawing(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) }),
+          action: ui.button('Add drawing', { variant: 'primary', icon: 'plus', onClick: () => editDrawing(ctx, null, { jobId: newJobId(), onDraw: draw }) }),
         }),
       }));
     }
@@ -106,10 +112,12 @@ function listView(root, ctx) {
   root.append(ui.page({
     title: 'Drawing register',
     subtitle: 'Track the current revision of every construction drawing, with a rev history and a printable transmittal.',
-    actions: [ui.button('Add drawing', { variant: 'primary', icon: 'plus', onClick: () => editDrawing(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) })],
+    actions: [ui.button('Add drawing', { variant: 'primary', icon: 'plus', onClick: () => editDrawing(ctx, null, { jobId: newJobId(), onDraw: draw }) })],
   }, host));
   draw();
-  return store.on('drawingRevisions', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offStore = store.on('drawingRevisions', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offFocus = onJobFocus((id) => setJob(id));
+  return () => { offStore(); offFocus(); };
 }
 
 function editDrawing(ctx, id, { jobId = null, onDraw } = {}) {
@@ -118,11 +126,11 @@ function editDrawing(ctx, id, { jobId = null, onDraw } = {}) {
   const d = id ? store.get('drawingRevisions', id) : newDrawing({ job: jobId ? store.get('jobs', jobId) : null, by: store.actorId, rev: '', discipline: 'E' });
   if (!d) { ui.toast('That drawing is gone.', 'error'); return; }
   d.revHistory = d.revHistory || [];
-  const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
+  const jobs = rankJobs(store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || '')));
   const discList = h('datalist', { id: 'dr-disciplines' }, DISCIPLINES.map((x) => h('option', { value: x.id }, x.label)));
 
   const grid = ui.formGrid([
-    { label: 'Job', name: 'jobId', type: 'select', value: d.jobId || '', options: [{ value: '', label: '— none —' }, ...ui.recordOptions(jobs, (j) => jobLabel(j), '— none —').slice(1)] },
+    { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: d.jobId || '', options: [{ value: '', label: '— none —' }, ...ui.recordOptions(jobs, (j) => jobLabel(j), '— none —').slice(1)] },
     { label: 'Drawing number', name: 'number', value: d.number, placeholder: 'e.g. E-101' },
     { label: 'Title', name: 'title', value: d.title, placeholder: 'e.g. Second-floor power plan' },
     { label: 'Discipline', name: 'discipline', value: d.discipline || 'E', placeholder: 'E' },

@@ -10,6 +10,8 @@ import {
   inspectionLabel, SEVERITY_BANDS, severityOf, MAX_FINDINGS,
 } from '../lib/irinspection.js';
 import { photoStrip } from '../lib/safety-capture.js';
+import { jobFocus, onJobFocus, focusFilter } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/irinspection.css"]')) return;
@@ -27,7 +29,12 @@ export default {
   render(root, ctx) {
     loadCss();
     const [sub] = ctx.params;
-    if (sub === 'new') { const r = ctx.store.add('irInspections', newInspection({ by: ctx.store.actorId, date: ctx.ui.today() })); ctx.nav(`#/irinspection/${r.id}`); return; }
+    if (sub === 'new') {
+      // A new survey starts on the job in the link, else the "Working on" job.
+      const job = ctx.store.get('jobs', ctx.query.jobId || jobFocus(ctx.store, ctx.auth)) || null;
+      const r = ctx.store.add('irInspections', newInspection({ job, by: ctx.store.actorId, date: ctx.ui.today() }));
+      ctx.nav(`#/irinspection/${r.id}`); return;
+    }
     if (sub) return detail(root, ctx, sub);
     return listView(root, ctx);
   },
@@ -37,13 +44,18 @@ const jobLabel = (j) => (j ? [j.number, j.title].filter(Boolean).join(' · ') : 
 const sevTone = { none: 'success', investigate: 'info', 'repair-scheduled': 'warning', 'repair-immediate': 'danger' };
 
 function listView(root, ctx) {
-  const { store, ui, nav } = ctx;
+  const { store, ui, nav, auth } = ctx;
+  // Opens on the "Working on" job (lib/job-focus.js); "Show all" lifts it until the focus changes.
+  let showAll = false;
+  const listJob = () => (showAll ? '' : jobFocus(store, auth));
   const { h } = ui;
   const jobs = new Map(store.list('jobs').map((j) => [j.id, j]));
   const host = h('div', { class: 'stack' });
   const draw = () => {
     ui.clear(host);
-    const all = store.list('irInspections').sort((a, b) => String(b.date || b.createdAt).localeCompare(String(a.date || a.createdAt)));
+    const note = focusNote(ctx, listJob(), () => { showAll = true; draw(); });
+    if (note) host.append(note);
+    const all = store.list('irInspections', focusFilter(listJob())).sort((a, b) => String(b.date || b.createdAt).localeCompare(String(a.date || a.createdAt)));
     host.append(all.length ? ui.table({
       columns: [
         { key: 'date', label: 'Date', render: (r) => ui.fmtDate(r.date || r.createdAt), sort: (r) => r.date || r.createdAt },
@@ -57,7 +69,9 @@ function listView(root, ctx) {
   };
   root.append(ui.page({ title: 'Thermal / IR inspection', subtitle: 'Infrared surveys of electrical equipment, with severity and a printable report', actions: [ui.button('New inspection', { variant: 'primary', icon: 'plus', href: '#/irinspection/new' })] }, host));
   draw();
-  return store.on('irInspections', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offStore = store.on('irInspections', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offFocus = onJobFocus(() => { showAll = false; draw(); });
+  return () => { offStore(); offFocus(); };
 }
 
 function detail(root, ctx, id) {
@@ -86,7 +100,7 @@ function detail(root, ctx, id) {
   };
 
   const grid = h('div', { class: 'form-grid' },
-    fieldEl({ label: 'Job (optional)', name: 'jobId', type: 'select', value: r.jobId || '', options: [{ value: '', label: '—' }, ...ui.recordOptions(jobs, (j) => `${j.number} - ${j.title}`)] }, (v) => { r.jobId = v || null; const j = v && store.get('jobs', v); if (j) { r.clientId = j.clientId || r.clientId; if (!r.target) r.target = j.title || ''; } }, 0),
+    fieldEl({ label: 'Job (optional)', name: 'jobId', type: 'select', rank: 'jobs', value: r.jobId || '', options: [{ value: '', label: '—' }, ...ui.recordOptions(jobs, (j) => `${j.number} - ${j.title}`)] }, (v) => { r.jobId = v || null; const j = v && store.get('jobs', v); if (j) { r.clientId = j.clientId || r.clientId; if (!r.target) r.target = j.title || ''; } }, 0),
     fieldEl({ label: 'Asset (optional)', name: 'assetId', type: 'select', value: r.assetId || '', options: [{ value: '', label: '—' }, ...assetsFor().map((x) => ({ value: x.id, label: x.name || x.model || 'Asset' }))] }, (v) => { r.assetId = v || null; const a = v && store.get('assets', v); if (a && !r.target) r.target = a.name || ''; }, 0),
     fieldEl({ label: 'Target', name: 'target', value: r.target, placeholder: 'Panel / equipment surveyed', span: true }, (v) => { r.target = v; }),
     fieldEl({ label: 'Survey date', name: 'date', type: 'date', value: r.date }, (v) => { r.date = v; }, 0),

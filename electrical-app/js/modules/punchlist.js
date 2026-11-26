@@ -6,6 +6,8 @@
 //   #/punchlist?jobId=:id    the list for one job
 import { newPunchItem, resolvePatch, reopenPatch, isOpen, isOverdue, filterItems, sortItems, groupByArea, summarize, severityLabel, punchLabel, SEVERITIES, TRADES } from '../lib/punchlist.js';
 import { photoStrip } from '../lib/safety-capture.js';
+import { jobFocus, onJobFocus, rankJobs } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/punchlist.css"]')) return;
@@ -30,11 +32,13 @@ const jobLabel = (j) => (j ? [j.number, j.title].filter(Boolean).join(' · ') : 
 const severityTone = { high: 'danger', medium: 'warning', low: 'neutral' };
 
 function listView(root, ctx) {
-  const { store, ui, query } = ctx;
+  const { store, ui, query, auth } = ctx;
   const { h } = ui;
-  let jobId = query.jobId || '';
+  // Opens on the "Working on" job (lib/job-focus.js) unless a link names one; "Show all" lifts it here.
+  let jobId = query.jobId || jobFocus(store, auth);
+  const newJobId = () => (jobId === '__none' ? null : jobId || jobFocus(store, auth) || null);
   let status = 'open';
-  const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
+  const jobs = rankJobs(store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || '')));
   const jobById = new Map(jobs.map((j) => [j.id, j]));
   const empById = new Map(store.list('employees').map((e) => [e.id, e]));
   const empName = (id) => (id ? empById.get(id)?.name || '—' : '—');
@@ -49,6 +53,7 @@ function listView(root, ctx) {
   h('option', { value: '' }, 'All jobs'),
   h('option', { value: '__none', selected: jobId === '__none' }, 'Not linked to a job'),
   jobs.map((j) => h('option', { value: j.id, selected: j.id === jobId }, jobLabel(j))));
+  const setJob = (id) => { jobId = id; jobSelect.value = id; history.replaceState(null, '', '#/punchlist' + (id ? '?jobId=' + id : '')); draw(); };
 
   function draw() {
     ui.clear(host);
@@ -59,6 +64,7 @@ function listView(root, ctx) {
     const sum = summarize(forJob, today);
 
     h(host, null,
+      focusNote(ctx, jobId, () => setJob('')),
       h('div', { class: 'grid pl-stats' },
         ui.stat({ label: 'Open', value: String(sum.open), hint: jobId && jobId !== '__none' ? jobLabel(jobById.get(jobId)) : 'All jobs' }),
         ui.stat({ label: 'High severity', value: String(sum.high), tone: sum.high ? 'danger' : 'neutral' }),
@@ -68,7 +74,7 @@ function listView(root, ctx) {
         jobSelect,
         ui.button('Print report', { icon: 'printer', onClick: () => printReport(ctx, { jobId, jobById }) }),
         h('span', { class: 'grow' }),
-        ui.button('New item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) })),
+        ui.button('New item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: newJobId(), onDraw: draw }) })),
       h('div', { class: 'row pl-tabs' }, ...tabsRow()),
       tableHost);
 
@@ -99,7 +105,7 @@ function listView(root, ctx) {
           icon: 'list',
           title: all.length ? 'Nothing here' : 'No punch items yet',
           text: all.length ? 'No deficiencies match this job and status.' : 'Log the snags and deficiencies to fix before handover — area, trade, severity and a photo — then work the list down and print it for the client.',
-          action: ui.button('New item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) }),
+          action: ui.button('New item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: newJobId(), onDraw: draw }) }),
         }),
       }));
     }
@@ -108,10 +114,12 @@ function listView(root, ctx) {
   root.append(ui.page({
     title: 'Punch list',
     subtitle: 'Track deficiencies to clear before handover, with photos and a printable report.',
-    actions: [ui.button('New item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) })],
+    actions: [ui.button('New item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: newJobId(), onDraw: draw }) })],
   }, host));
   draw();
-  return store.on('punchItems', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offStore = store.on('punchItems', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offFocus = onJobFocus((id) => setJob(id));
+  return () => { offStore(); offFocus(); };
 }
 
 function editItem(ctx, id, { jobId = null, onDraw } = {}) {
@@ -120,16 +128,16 @@ function editItem(ctx, id, { jobId = null, onDraw } = {}) {
   const it = id ? store.get('punchItems', id) : newPunchItem({ job: jobId ? store.get('jobs', jobId) : null, by: store.actorId, date: ui.today() });
   if (!it) { ui.toast('That item is gone.', 'error'); return; }
   it.photos = it.photos || [];
-  const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
+  const jobs = rankJobs(store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || '')));
   const employees = store.list('employees').sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   const tradeList = h('datalist', { id: 'pl-trades' }, TRADES.map((t) => h('option', { value: t })));
 
   const grid = ui.formGrid([
-    { label: 'Job', name: 'jobId', type: 'select', value: it.jobId || '', options: [{ value: '', label: '— none —' }, ...ui.recordOptions(jobs, (j) => jobLabel(j), '— none —').slice(1)] },
+    { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: it.jobId || '', options: [{ value: '', label: '— none —' }, ...ui.recordOptions(jobs, (j) => jobLabel(j), '— none —').slice(1)] },
     { label: 'Area / location', name: 'area', value: it.area, placeholder: 'e.g. Level 2, Room 214' },
     { label: 'Trade', name: 'trade', value: it.trade, placeholder: 'Electrical' },
     { label: 'Severity', name: 'severity', type: 'select', value: it.severity || 'medium', options: SEVERITIES.map((s) => ({ value: s.id, label: s.label })) },
-    { label: 'Assigned to', name: 'assigneeId', type: 'select', value: it.assigneeId || '', options: [{ value: '', label: '— nobody —' }, ...employees.map((e) => ({ value: e.id, label: e.name || 'Employee' }))] },
+    { label: 'Assigned to', name: 'assigneeId', type: 'select', rank: 'employees', value: it.assigneeId || '', options: [{ value: '', label: '— nobody —' }, ...employees.map((e) => ({ value: e.id, label: e.name || 'Employee' }))] },
     { label: 'Due date', name: 'dueDate', type: 'date', value: it.dueDate },
     { label: 'Description', name: 'description', type: 'textarea', value: it.description, span: true, placeholder: 'What is wrong and what fixing it needs' },
     { label: 'Notes', name: 'notes', type: 'textarea', value: it.notes, span: true },

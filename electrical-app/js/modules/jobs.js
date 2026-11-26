@@ -177,6 +177,8 @@ function checklistSheet(ctx, job, list, { title, info, extra = null, actions = [
   return sheet;
 }
 import { lastEdited } from './drawings.js';
+import { jobFocus, onJobFocus, isOpenJob } from '../lib/job-focus.js';
+import { chooseFocus } from '../lib/job-focus-ui.js';
 
 const STATUSES = ['lead', 'scheduled', 'in-progress', 'on-hold', 'complete', 'invoiced', 'cancelled'];
 const ACTIVE = new Set(['scheduled', 'in-progress', 'on-hold']);
@@ -226,7 +228,7 @@ function jobForm(ctx, job, onSaved) {
     submitLabel: job ? 'Save' : 'Create job',
     fields: [
       { label: 'Title', name: 'title', value: job?.title, required: true, span: true, placeholder: 'e.g. Panel upgrade 200A' },
-      { label: 'Client', name: 'clientId', type: 'select', value: presetClient, options: ui.recordOptions(clients) },
+      { label: 'Client', name: 'clientId', type: 'select', rank: 'clients', value: presetClient, options: ui.recordOptions(clients) },
       { label: 'Status', name: 'status', type: 'select', value: job?.status || 'scheduled', options: STATUSES.map((s) => ({ value: s, label: s.replace(/-/g, ' ') })) },
       { label: 'Site address', name: 'address', value: job?.address, span: true },
       { label: 'Start date', name: 'startDate', type: 'date', value: job?.startDate || ui.today() },
@@ -374,8 +376,12 @@ function detailView(root, ctx, id) {
     STATUSES.map((s) => h('option', { value: s, selected: s === job.status }, s.replace(/-/g, ' '))));
     const hold = client?.credit?.hold?.on ? h('span', { class: 'ops-meta-item' }, ui.badge('Past due: hold work', 'danger')) : null;
 
+    // "Working on" (lib/job-focus.js): set the app up for this job on this device, or let it go.
+    const focused = jobFocus(store, auth) === job.id;
     const actions = [
       ui.button('', { icon: 'chevron-left', title: 'All jobs', href: '#/jobs' }),
+      isOpenJob(job) ? ui.button(focused ? 'Working on this job' : 'Work on this job', { icon: focused ? 'check' : 'briefcase', variant: focused ? 'secondary' : 'ghost',
+        title: focused ? 'Tap to show all jobs again' : 'Open plans, materials, logs and time on this job', onClick: () => chooseFocus(ctx, focused ? '' : job.id) }) : null,
       canEdit ? ui.button('Edit', { icon: 'edit', onClick: () => jobForm(ctx, job) }) : null,
       canEdit ? ui.button('', { icon: 'trash', variant: 'ghost danger', title: 'Delete job', onClick: async () => {
         if (!(await ui.confirmDialog(`Delete ${job.number} "${job.title}"? Drawings, estimates and invoices stay but lose the link.`, { okLabel: 'Delete job' }))) return;
@@ -615,7 +621,7 @@ function detailView(root, ctx, id) {
           { label: 'Our contract signed on', name: 'signedOn', type: 'date', value: c.signedOn || '' },
           { label: 'Prime contract signed on (subs)', name: 'primeSignedOn', type: 'date', value: c.primeSignedOn || '', hint: 'Blank: unknown (no prompt payment alarms)' },
           { label: 'Owner', name: 'ownerName', value: c.ownerName || '' },
-          { label: 'General contractor', name: 'gcClientId', type: 'select', value: c.gcClientId || '', options: ui.recordOptions(clients) },
+          { label: 'General contractor', name: 'gcClientId', type: 'select', rank: 'clients', value: c.gcClientId || '', options: ui.recordOptions(clients) },
           { label: 'Contract number', name: 'contractNo', value: c.contractNo || '' },
           { label: 'Contract value', name: 'valueCents', type: 'money', value: c.valueCents ?? null },
           { label: 'Holdback %', name: 'holdbackPct', type: 'number', step: '0.5', min: '0', max: '100', value: c.holdbackPct ?? '' },
@@ -1074,6 +1080,7 @@ function detailView(root, ctx, id) {
   root.append(host);
   draw();
   const offs = ['jobs', 'estimates', 'invoices', 'payments', 'timeEntries', 'schedule', 'drawings', 'permits', 'inspections', 'stockMoves', 'jobSafety', 'materialRequests', 'fieldTickets', 'clients', 'workTasks', 'employees', 'items'].map((c) => store.on(c, draw));
+  offs.push(onJobFocus(draw));
   return () => offs.forEach((f) => f());
 }
 

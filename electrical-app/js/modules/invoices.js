@@ -19,6 +19,7 @@ import { isLocked, locksFrom, zoneFor, REVERSAL_ACTION } from '../lib/closing.js
 import * as R from '../lib/receivables.js';
 import { promptPaymentDates, promptPaymentApplies, fmtDue, PP_DISCLAIMER, PP_CHECK_APPLIES } from '../lib/prompt-payment.js';
 import { lineTaxOffProblem } from '../lib/exemption.js';
+import { jobFocus } from '../lib/job-focus.js';
 
 const METHODS = ['e-transfer', 'cheque', 'card', 'cash', 'transfer'];
 const DELIVERY = [{ value: 'fishtape-email', label: 'Emailed from Fishtape' }, { value: 'email', label: 'Emailed (other)' }, { value: 'gc-portal', label: "Uploaded to the GC's portal" },
@@ -209,10 +210,12 @@ function limitWarning(ctx, clientId) {
 
 // ---------- new ----------
 async function createNew(ctx) {
-  const { store, ui, query } = ctx;
+  const { store, ui, query, auth } = ctx;
   const s = store.settings();
   const est = query.estimateId ? store.get('estimates', query.estimateId) : null;
-  const job = query.jobId ? store.get('jobs', query.jobId) : est?.jobId ? store.get('jobs', est.jobId) : null;
+  // The job in the link or estimate, else (unless a client was named) the "Working on" job.
+  const job = query.jobId ? store.get('jobs', query.jobId) : est?.jobId ? store.get('jobs', est.jobId)
+    : (!est && !query.clientId && store.get('jobs', jobFocus(store, auth))) || null;
   const clientId = est?.clientId || job?.clientId || query.clientId || null;
   const client = clientId ? store.get('clients', clientId) : null;
   const rec = {
@@ -398,8 +401,8 @@ function renderDetail(root, ctx, id) {
   // "Why no tax?" (QuickBooks contract 8.5): every company; each reason lands on its own GST return line.
   const noTax = noTaxReasonPicker(ctx, doc, { onChange: () => save(), readOnly });
   const header = h('div', { class: 'form-grid' },
-    fieldEl({ label: 'Client', name: 'clientId', type: 'select', value: doc.clientId || '', options: ui.recordOptions(clients) }, (v) => { doc.clientId = v || null; }),
-    fieldEl({ label: 'Job', name: 'jobId', type: 'select', value: doc.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`) }, (v) => { doc.jobId = v || null; taxNodes.refreshExemption?.(); }),
+    fieldEl({ label: 'Client', name: 'clientId', type: 'select', rank: 'clients', value: doc.clientId || '', options: ui.recordOptions(clients) }, (v) => { doc.clientId = v || null; }),
+    fieldEl({ label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: doc.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`) }, (v) => { doc.jobId = v || null; taxNodes.refreshExemption?.(); }),
     fieldEl({ label: 'Issue date', name: 'issueDate', type: 'date', value: doc.issueDate }, (v) => { doc.issueDate = v; taxNodes.recompute(); }),
     fieldEl({ label: 'Due date', name: 'dueDate', type: 'date', value: doc.dueDate }, (v) => { doc.dueDate = v; }),
     taxNodes, noTax);
@@ -862,7 +865,7 @@ function receiveView(root, ctx) {
   const draw = () => {
     ui.clear(host);
     const clients = store.list('clients').sort((a, b) => a.name.localeCompare(b.name));
-    const pick = ui.field({ label: 'Client', name: 'clientId', type: 'select', value: clientId, options: ui.recordOptions(clients, 'name', '— pick a client —') });
+    const pick = ui.field({ label: 'Client', name: 'clientId', type: 'select', rank: 'clients', value: clientId, options: ui.recordOptions(clients, 'name', '— pick a client —') });
     pick.querySelector('select').addEventListener('change', (e) => { clientId = e.target.value; draw(); });
     host.append(h('div', { class: 'card' }, h('div', { class: 'form-grid' }, pick)));
     if (!clientId) return;
@@ -961,7 +964,7 @@ function statementsView(root, ctx) {
     ui.clear(host);
     const clients = store.list('clients').sort((a, b) => a.name.localeCompare(b.name));
     const form = h('div', { class: 'form-grid' },
-      ui.field({ label: 'Client', name: 'clientId', type: 'select', value: clientId, options: ui.recordOptions(clients, 'name', '— pick a client —') }),
+      ui.field({ label: 'Client', name: 'clientId', type: 'select', rank: 'clients', value: clientId, options: ui.recordOptions(clients, 'name', '— pick a client —') }),
       ui.field({ label: 'From', name: 'from', type: 'date', value: from }), ui.field({ label: 'To', name: 'to', type: 'date', value: to }));
     form.addEventListener('change', () => { const v = ui.readForm(form); clientId = v.clientId; from = v.from; to = v.to; draw(); });
     host.append(h('div', { class: 'card' }, form));

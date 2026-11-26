@@ -12,8 +12,15 @@
 //   const rows = store.list('materialRequests', focusFilter(focus));
 //   new-record form: { name: 'jobId', value: entry?.jobId || focus || '' }
 //   const off = onJobFocus(() => draw());              // call off() when the screen unmounts
+//
+// Job pickers go most-used first: rankJobs(jobs) here, or `rank: 'jobs'` on a ui.field select.
+// The shell counts a use whenever this person files a record against a job (usageFromChange).
+
+import { noteUse, rankByUse } from './usage-rank.js';
 
 const EVENT = 'ft:jobfocus';
+/** Jobs in these states can't be the focus and drop out of the "Working on" list. */
+export const CLOSED_STATUSES = ['complete', 'invoiced', 'cancelled'];
 const key = (uid, db) => `ft.jobFocus.${db || 'local'}.${uid || 'local'}`;
 const storage = () => { try { return globalThis.localStorage || null; } catch { return null; } };
 const ids = (store, auth) => [auth?.current?.()?.id, store?.dbName];
@@ -43,7 +50,7 @@ export function jobFocus(store, auth) {
   const id = readFocus(uid, db);
   if (!id) return '';
   const job = store?.get?.('jobs', id);
-  if (!job || ['complete', 'invoiced', 'cancelled'].includes(job.status)) return '';
+  if (!job || CLOSED_STATUSES.includes(job.status)) return '';
   return id;
 }
 
@@ -72,4 +79,49 @@ export function onJobFocus(fn) {
 export function focusFilter(jobId, field = 'jobId') {
   if (!jobId) return () => true;
   return (r) => r?.[field] === jobId;
+}
+
+/** Can this job be worked on (and so be the focus)? */
+export const isOpenJob = (job) => Boolean(job) && !CLOSED_STATUSES.includes(job.status);
+
+/** "1234 · Smith reno" */
+export const jobLabel = (job) => (job ? [job.number, job.title].filter(Boolean).join(' · ') || 'Job' : '');
+
+/**
+ * Jobs most-used first, the rest in the order given. With `focus`, that job leads the list.
+ * opts.uid as in usage-rank (defaults to the signed-in person).
+ */
+export function rankJobs(jobs, { focus = '', uid, now } = {}) {
+  const ranked = rankByUse('jobs', jobs || [], (j) => j?.id, { uid, now });
+  const i = focus ? ranked.findIndex((j) => j?.id === focus) : -1;
+  return i > 0 ? [ranked[i], ...ranked.slice(0, i), ...ranked.slice(i + 1)] : ranked;
+}
+
+/** Choices for the "Working on" picker: All jobs, then the open jobs, most-used first. */
+export function focusChoices(jobs, opts = {}) {
+  const open = (jobs || []).filter(isOpenJob)
+    .sort((a, b) => String(b.number || '').localeCompare(String(a.number || ''), undefined, { numeric: true }));
+  return [{ value: '', label: 'All jobs' }, ...rankJobs(open, opts).map((j) => ({ value: j.id, label: jobLabel(j) }))];
+}
+
+/** Count one use of a job (picked, opened, focused or filed against). */
+export function noteJobUse(jobId, opts = {}) { if (jobId) noteUse('jobs', jobId, opts); }
+
+/** The job a list screen opens on: an explicit ?jobId wins, else the focus ('' = all). */
+export function startingJob(store, auth, queryJobId) { return queryJobId || jobFocus(store, auth); }
+
+/**
+ * Which pick-lists a store change counts toward: [[list, id], ...]. Only this person's own new
+ * records count (not edits, which autosave often, and not changes synced in from other devices).
+ */
+export function usageFromChange(change) {
+  const { coll, type, record, remote } = change || {};
+  if (remote || type !== 'add' || !record || !coll || coll === 'auditLog') return [];
+  const out = [];
+  if (coll === 'jobs') out.push(['jobs', record.id]);
+  else if (record.jobId) out.push(['jobs', record.jobId]);
+  if (coll === 'clients') out.push(['clients', record.id]);
+  else if (record.clientId) out.push(['clients', record.clientId]);
+  if (record.vendorId) out.push(['vendors', record.vendorId]);
+  return out.filter(([, id]) => id != null && id !== '');
 }

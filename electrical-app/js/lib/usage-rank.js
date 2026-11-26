@@ -8,12 +8,18 @@
 //   import { noteUse, rankByUse } from '../lib/usage-rank.js';
 //   const ordered = rankByUse('calcs', CALCS, (c) => c.id, { uid });
 //   button.onclick = () => { noteUse('calcs', c.id, { uid }); open(c); };
+//
+// The shell calls setUsageUser(id) when someone signs in, so screens may leave `uid` out.
 
 export const HALF_LIFE_DAYS = 30;
 const MAX_KEYS = 300; // per list; the least-used fall off so storage stays small
 const DAY = 86400000;
-const key = (list, uid) => `ft.usage.${uid || 'local'}.${list}`;
+let defaultUid = '';
+const key = (list, uid) => `ft.usage.${uid || defaultUid || 'local'}.${list}`;
 const storage = (opts) => { if (opts?.storage) return opts.storage; try { return globalThis.localStorage || null; } catch { return null; } };
+
+/** Whose counts calls without opts.uid read and write (the signed-in person). */
+export function setUsageUser(uid) { defaultUid = uid ? String(uid) : ''; }
 
 /** { id: { n, t } } for a list: n = decayed count as of t (ms). */
 export function readUsage(list, opts = {}) {
@@ -59,6 +65,12 @@ export function rankByUse(list, items, idOf = (x) => x?.id, opts = {}) {
   return [...top, ...rows.filter((r) => !topSet.has(r))].map((r) => r.item);
 }
 
+/** { id: decayed score } for a list, for screens that blend usage into their own ordering. */
+export function usageScores(list, opts = {}) {
+  const now = opts.now ?? Date.now();
+  return Object.fromEntries(Object.entries(readUsage(list, opts)).map(([id, e]) => [id, score(e, now)]));
+}
+
 /** The most-used ids in a list (for a "Frequent" strip), highest first. */
 export function topUsed(list, n = 5, opts = {}) {
   const now = opts.now ?? Date.now();
@@ -72,4 +84,15 @@ export function topUsed(list, n = 5, opts = {}) {
 
 export function resetUsage(list, opts = {}) {
   try { storage(opts)?.removeItem(key(list, opts.uid)); } catch { /* ignore */ }
+}
+
+/**
+ * Pick-list options most-used first, with the blank / "none" choices (value '') kept at the top.
+ * options: [{ value, label }] or plain strings.
+ */
+export function rankOptions(list, options, opts = {}) {
+  const valueOf = (o) => (o && typeof o === 'object' ? o.value : o);
+  const pinned = (options || []).filter((o) => valueOf(o) === '' || valueOf(o) == null);
+  const rest = (options || []).filter((o) => !(valueOf(o) === '' || valueOf(o) == null));
+  return [...pinned, ...rankByUse(list, rest, valueOf, opts)];
 }

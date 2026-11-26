@@ -4,6 +4,8 @@
 import { cecTemplates } from '../lib/cec/checklists.js';
 import { adoptionFor, permitAuthority, codeBookOf } from '../lib/cec/provinces.js';
 import { provinceName } from '../lib/tax.js';
+import { jobFocus, onJobFocus, rankJobs } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 // NEC 2023 checklist templates (article numbers); local amendments may differ,
 // so the inspector's reading wins.
@@ -174,7 +176,7 @@ export function newChecklistFromTemplate(ctx, kind, templates, defaults = {}) {
     submitLabel: 'Create',
     fields: [
       { label: 'Template', name: 'template', type: 'select', options: templates.map((t, i) => ({ value: i, label: t.title })), span: true },
-      kind === 'code' ? { label: 'Job', name: 'jobId', type: 'select', value: defaults.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`), span: true } : null,
+      kind === 'code' ? { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: defaults.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`), span: true } : null,
     ].filter(Boolean),
     onSubmit: (v) => {
       const t = templates[Number(v.template)];
@@ -194,20 +196,22 @@ export default {
   group: 'field',
   perm: 'compliance',
   render(root, ctx) {
-    const { store, ui, query } = ctx;
+    const { store, ui, query, auth } = ctx;
     const { h } = ui;
     const settings = store.settings();
     const province = settings.company?.province || '';
     const cec = codeBookOf(settings) === 'CEC-2024';
     const adoption = cec ? adoptionFor(province) : null;
     let tab = query.tab || 'permits';
-    const jobFilter = query.jobId || '';
+    // Opens on the job in the link, else the "Working on" job (lib/job-focus.js); "Show all" lifts it.
+    let jobFilter = query.jobId || jobFocus(store, auth);
+    const noteHost = h('div');
     const statsHost = h('div', { class: 'grid stat-grid' });
     const tabsHost = h('div', { class: 'row', style: { marginBottom: '16px' } });
     const body = h('div');
-    const job = jobFilter && store.get('jobs', jobFilter);
+    const job = query.jobId && store.get('jobs', query.jobId);
     const jobLabel = (id) => { const j = id && store.get('jobs', id); return j ? h('a', { href: `#/jobs/${j.id}`, onClick: (e) => e.stopPropagation() }, `${j.number} · ${j.title}`) : h('span', { class: 'muted' }, '—'); };
-    const jobOpts = () => ui.recordOptions(store.list('jobs'), (j) => `${j.number} · ${j.title}`);
+    const jobOpts = () => ui.recordOptions(rankJobs(store.list('jobs')), (j) => `${j.number} · ${j.title}`);
     const inJob = (r) => !jobFilter || r.jobId === jobFilter;
 
     const drawStats = () => {
@@ -241,7 +245,7 @@ export default {
       ui.formSheet({
         title: p ? `Permit ${p.number}` : 'New permit',
         fields: [
-          { label: 'Job', name: 'jobId', type: 'select', value: p?.jobId ?? jobFilter, options: jobOpts(), span: true },
+          { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: p?.jobId ?? (jobFilter || jobFocus(store, auth)), options: jobOpts(), span: true },
           { label: cec && province === 'ON' ? 'Notification / permit number' : 'Permit number', name: 'number', value: p?.number, required: true },
           { label: 'Authority', name: 'authority', value: p?.authority ?? (cec ? permitAuthority(province) : '') },
           { label: 'Type', name: 'type', value: p?.type ?? (cec && province === 'ON' ? 'Notification of work' : 'Electrical permit') },
@@ -260,7 +264,7 @@ export default {
       ui.formSheet({
         title: i ? 'Inspection' : 'Schedule inspection',
         fields: [
-          { label: 'Job', name: 'jobId', type: 'select', value: i?.jobId ?? jobFilter, options: jobOpts(), span: true },
+          { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: i?.jobId ?? (jobFilter || jobFocus(store, auth)), options: jobOpts(), span: true },
           { label: 'Permit', name: 'permitId', type: 'select', value: i?.permitId ?? '', options: ui.recordOptions(permits, (p) => `${p.number} · ${p.type}`) },
           { label: 'Type', name: 'type', type: 'select', value: i?.type ?? 'rough-in', options: ['rough-in', 'service', 'final', 'other'] },
           { label: 'Date', name: 'date', type: 'date', value: i?.date ?? ui.today(1), required: true },
@@ -309,10 +313,11 @@ export default {
       permits: ['New permit', () => editPermit(null)],
       inspections: ['Schedule inspection', () => editInspection(null)],
       certs: ['Add certificate', () => editCert(null)],
-      checklists: ['New checklist', () => newChecklistFromTemplate(ctx, 'code', templatesFor(store.settings()), { jobId: jobFilter })],
+      checklists: ['New checklist', () => newChecklistFromTemplate(ctx, 'code', templatesFor(store.settings()), { jobId: jobFilter || jobFocus(store, auth) })],
     };
 
     const draw = () => {
+      ui.clear(noteHost).append(focusNote(ctx, jobFilter, () => { jobFilter = ''; draw(); }) || '');
       drawStats();
       ui.clear(tabsHost);
       tabsHost.append(ui.tabs(TABS, tab, (t) => { tab = t; draw(); }), h('span', { class: 'grow' }), ui.button(ADD[tab][0], { variant: 'primary', icon: 'plus', onClick: ADD[tab][1] }));
@@ -378,9 +383,10 @@ export default {
     root.append(ui.page({
       title: 'Compliance',
       subtitle: job ? h('span', null, 'Filtered to ', h('a', { href: `#/jobs/${job.id}` }, `${job.number} · ${job.title}`), ' · ', h('a', { href: '#/compliance' }, 'show all')) : `Permits, inspections, licences and ${cec ? 'CEC 2024' : 'NEC 2023'} checklists`,
-    }, statsHost, tabsHost, body));
+    }, noteHost, statsHost, tabsHost, body));
     draw();
     const offs = ['permits', 'inspections', 'certifications', 'checklists', 'employees'].map((c) => store.on(c, draw));
+    offs.push(onJobFocus((id) => { jobFilter = id; draw(); }));
     return () => offs.forEach((f) => f());
   },
 };

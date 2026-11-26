@@ -10,6 +10,8 @@ import {
   newProcurementItem, isDelivered, atRiskReason, isAtRisk, riskLabel, markDeliveredPatch, reopenPatch,
   filterItems, sortItems, summarize, leadTimeLabel, procurementLabel, statusLabel, statusTone, statusRank, PROC_STATUSES,
 } from '../lib/procurement.js';
+import { jobFocus, onJobFocus, rankJobs } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/procurement.css"]')) return;
@@ -33,11 +35,13 @@ export default {
 const jobLabel = (j) => (j ? [j.number, j.title].filter(Boolean).join(' · ') : '—');
 
 function listView(root, ctx) {
-  const { store, ui, query } = ctx;
+  const { store, ui, query, auth } = ctx;
   const { h } = ui;
-  let jobId = query.jobId || '';
+  // Opens on the "Working on" job (lib/job-focus.js) unless a link names one; "Show all" lifts it here.
+  let jobId = query.jobId || jobFocus(store, auth);
+  const newJobId = () => (jobId === '__none' ? null : jobId || jobFocus(store, auth) || null);
   let status = 'outstanding';
-  const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
+  const jobs = rankJobs(store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || '')));
   const jobById = new Map(jobs.map((j) => [j.id, j]));
 
   const host = h('div', { class: 'stack' });
@@ -50,6 +54,7 @@ function listView(root, ctx) {
   h('option', { value: '' }, 'All jobs'),
   h('option', { value: '__none', selected: jobId === '__none' }, 'Not linked to a job'),
   jobs.map((j) => h('option', { value: j.id, selected: j.id === jobId }, jobLabel(j))));
+  const setJob = (id) => { jobId = id; jobSelect.value = id; history.replaceState(null, '', '#/procurement' + (id ? '?jobId=' + id : '')); draw(); };
 
   function draw() {
     ui.clear(host);
@@ -60,6 +65,7 @@ function listView(root, ctx) {
     const sum = summarize(forJob, asOf);
 
     h(host, null,
+      focusNote(ctx, jobId, () => setJob('')),
       h('div', { class: 'grid pr-stats' },
         ui.stat({ label: 'Outstanding', value: String(sum.outstanding), hint: jobId && jobId !== '__none' ? jobLabel(jobById.get(jobId)) : 'All jobs' }),
         ui.stat({ label: 'At risk', value: String(sum.atRisk), tone: sum.atRisk ? 'danger' : 'neutral' }),
@@ -69,7 +75,7 @@ function listView(root, ctx) {
         jobSelect,
         ui.button('Print log', { icon: 'printer', onClick: () => printLog(ctx, { jobId, jobById }) }),
         h('span', { class: 'grow' }),
-        ui.button('Add item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) })),
+        ui.button('Add item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: newJobId(), onDraw: draw }) })),
       h('div', { class: 'row pr-tabs' }, tabsRow()),
       tableHost);
 
@@ -102,7 +108,7 @@ function listView(root, ctx) {
           icon: 'truck',
           title: all.length ? 'Nothing here' : 'No long-lead items yet',
           text: all.length ? 'No items match this job and status.' : 'Track the gear with long lead times — switchgear, transformers, panels — so nothing holds up the job. Log the vendor, the PO, the need-by date and the lead time, and the log flags anything at risk of being late.',
-          action: ui.button('Add item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) }),
+          action: ui.button('Add item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: newJobId(), onDraw: draw }) }),
         }),
       }));
     }
@@ -111,10 +117,12 @@ function listView(root, ctx) {
   root.append(ui.page({
     title: 'Procurement log',
     subtitle: 'Track long-lead gear from quote to delivery, and flag anything at risk of being late.',
-    actions: [ui.button('Add item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) })],
+    actions: [ui.button('Add item', { variant: 'primary', icon: 'plus', onClick: () => editItem(ctx, null, { jobId: newJobId(), onDraw: draw }) })],
   }, host));
   draw();
-  return store.on('procurementItems', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offStore = store.on('procurementItems', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offFocus = onJobFocus((id) => setJob(id));
+  return () => { offStore(); offFocus(); };
 }
 
 function editItem(ctx, id, { jobId = null, onDraw } = {}) {
@@ -122,14 +130,14 @@ function editItem(ctx, id, { jobId = null, onDraw } = {}) {
   const { h } = ui;
   const it = id ? store.get('procurementItems', id) : newProcurementItem({ job: jobId ? store.get('jobs', jobId) : null, by: store.actorId });
   if (!it) { ui.toast('That item is gone.', 'error'); return; }
-  const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
+  const jobs = rankJobs(store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || '')));
   const orderJobId = it.jobId || jobId || null;
   const pos = store.list('purchaseOrders', (p) => (orderJobId ? p.jobId === orderJobId : true)).sort((a, b) => (b.number || '').localeCompare(a.number || ''));
   const poOpts = [{ value: '', label: '— none —' }, ...pos.map((p) => ({ value: p.id, label: `${p.number || 'PO'}${p.vendor ? ` · ${p.vendor}` : ''}` }))];
   if (it.purchaseOrderId && !pos.some((p) => p.id === it.purchaseOrderId)) poOpts.push({ value: it.purchaseOrderId, label: '(linked PO)' });
 
   const grid = ui.formGrid([
-    { label: 'Job', name: 'jobId', type: 'select', value: it.jobId || '', options: [{ value: '', label: '— none —' }, ...ui.recordOptions(jobs, (j) => jobLabel(j), '— none —').slice(1)] },
+    { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: it.jobId || '', options: [{ value: '', label: '— none —' }, ...ui.recordOptions(jobs, (j) => jobLabel(j), '— none —').slice(1)] },
     { label: 'Item description', name: 'description', value: it.description, placeholder: 'e.g. 600A main switchgear', span: true },
     { label: 'Vendor', name: 'vendor', value: it.vendor, placeholder: 'e.g. Schneider / EECOL' },
     { label: 'Purchase order', name: 'purchaseOrderId', type: 'select', value: it.purchaseOrderId || '', options: poOpts },

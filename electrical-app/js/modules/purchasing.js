@@ -26,6 +26,9 @@ import { pickItems } from '../lib/doc-view.js';
 import { downscaleImage } from '../lib/safety-capture.js';
 import { requestName, qtyText } from '../lib/materials.js';
 import { qboBadge, allowedFor, qboStatusCache, billPaidBy } from '../lib/qbo-ui.js';
+import { jobFocus, onJobFocus, rankJobs, focusFilter } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
+import { rankByUse } from '../lib/usage-rank.js';
 
 // A shopping cart (icons.js has none).
 const CART = '<circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h3l2.6 12.1a1 1 0 001 .9h9.7a1 1 0 001-.8L21 7H6"/>';
@@ -82,7 +85,8 @@ function subnav(ctx, active) {
 const vendorMap = (store) => new Map(store.list('vendors').map((v) => [v.id, v]));
 const jobMap = (store) => new Map(store.list('jobs').map((j) => [j.id, j]));
 const jobLabel = (j) => (j ? [j.number, j.title].filter(Boolean).join(' · ') : '—');
-const sortedJobs = (store) => store.list('jobs').sort((a, b) => String(b.number || '').localeCompare(String(a.number || ''), undefined, { numeric: true }));
+// Job pickers: most-used jobs first (lib/job-focus.js), the rest newest number first.
+const sortedJobs = (store) => rankJobs(store.list('jobs').sort((a, b) => String(b.number || '').localeCompare(String(a.number || ''), undefined, { numeric: true })));
 const kindLabel = (b) => (isRefund(b) ? 'Refund' : b.kind === 'receipt' ? 'Receipt' : 'Bill');
 const statusBadge = (ui, st, labels) => ui.badge(labels[st] || st, ui.STATUS_TONE[st] || 'neutral');
 const billLabel = (b, vendors) => [vendorName(vendors.get(b.vendorId)), b.number].filter(Boolean).join(' ') || 'Bill';
@@ -149,7 +153,8 @@ function vendorSelect(ctx, { value, onPick, name = 'vendorId', disabled = false 
   const sel = h('select', { name, disabled, 'aria-label': 'Supplier' });
   const fill = (cur) => {
     ui.clear(sel).append(h('option', { value: '' }, '— pick a supplier —'),
-      ...vendorChoices(store.list('vendors'), cur).map((v) => h('option', { value: v.id, selected: v.id === cur }, vendorName(v) + (vendorActive(v) ? '' : ' (inactive)'))),
+      // Suppliers this person files bills and orders with most come first.
+      ...rankByUse('vendors', vendorChoices(store.list('vendors'), cur)).map((v) => h('option', { value: v.id, selected: v.id === cur }, vendorName(v) + (vendorActive(v) ? '' : ' (inactive)'))),
       h('option', { value: '__new' }, 'New supplier…'));
     sel.value = cur || '';
   };
@@ -179,9 +184,12 @@ function inBillTab(tab, b, today) {
 }
 
 function renderBills(root, ctx) {
-  const { store, ui, nav, query } = ctx;
+  const { store, ui, nav, query, auth } = ctx;
   const { h } = ui;
   let tab = BILL_TABS.some((t) => t.id === query.tab) ? query.tab : 'all';
+  // Opens on the "Working on" job (lib/job-focus.js); "Show all" lifts it until the focus changes.
+  let showAll = false;
+  const listJob = () => (showAll ? '' : jobFocus(store, auth));
   let q = '';
   const host = h('div', { class: 'stack' });
   const tableHost = h('div');
@@ -190,10 +198,11 @@ function renderBills(root, ctx) {
   const draw = () => {
     ui.clear(host);
     const today = ui.today();
-    const all = store.list('bills', null, { omit: ['receipt'] });
+    const all = store.list('bills', focusFilter(listJob()), { omit: ['receipt'] });
     const sum = purchasingSummary(all, today);
     const counts = Object.fromEntries(BILL_TABS.map((t) => [t.id, all.filter((b) => inBillTab(t.id, b, today)).length]));
     h(host, null,
+      focusNote(ctx, listJob(), () => { showAll = true; draw(); }),
       h('div', { class: 'grid money-stats' },
         ui.stat({ label: 'To pay', value: money(sum.toPayCents, { whole: true }), hint: `${sum.toPay} bill${sum.toPay === 1 ? '' : 's'}`, tone: 'accent' }),
         ui.stat({ label: 'Overdue', value: money(sum.overdueCents, { whole: true }), hint: `${sum.overdue} past due`, tone: sum.overdue ? 'danger' : null }),
@@ -239,16 +248,17 @@ function renderBills(root, ctx) {
   }, subnav(ctx, 'bills'), host));
   draw();
   const offs = ['bills', 'vendors'].map((c) => store.on(c, draw));
+  offs.push(onJobFocus(() => { showAll = false; draw(); }));
   return () => offs.forEach((f) => f());
 }
 
 function createBill(ctx) {
-  const { store, ui, query } = ctx;
+  const { store, ui, query, auth } = ctx;
   const kind = query.kind === 'receipt' ? 'receipt' : 'bill';
   const po = query.poId ? store.get('purchaseOrders', query.poId) : null;
   const rec = po
     ? billFromPo(po, { bills: store.list('bills', null, { omit: ['receipt'] }), settings: store.settings(), today: ui.today() })
-    : newBill({ kind, settings: store.settings(), today: ui.today(), vendorId: query.vendorId || null, jobId: query.jobId || null });
+    : newBill({ kind, settings: store.settings(), today: ui.today(), vendorId: query.vendorId || null, jobId: query.jobId || jobFocus(store, auth) || null });
   if (!po && rec.vendorId && rec.kind === 'bill') rec.dueDate = dueFromTerms(store.get('vendors', rec.vendorId)?.terms, rec.date) || rec.dueDate;
   const created = store.add('bills', rec);
   // fresh: backing out before filling anything in deletes it again (renderBill).
@@ -642,7 +652,7 @@ function renderBill(root, ctx, id) {
  * so the receipt shows in Purchasing and rolls into the job's costs (lib/costing.js).
  */
 export async function quickReceipt(ctx) {
-  const { store, ui, nav } = ctx;
+  const { store, ui, nav, auth } = ctx;
   const { h } = ui;
   const file = await pickCapture();
   if (!file) return; // camera cancelled
@@ -667,7 +677,7 @@ export async function quickReceipt(ctx) {
   const field = (label, control, hint) => h('label', { class: 'field' }, h('span', null, label), control, hint ? h('span', { class: 'hint' }, hint) : null);
   const jobSel = h('select', { 'aria-label': 'Job' },
     h('option', { value: '' }, '— no job (overhead) —'),
-    jobs.map((j) => h('option', { value: j.id }, jobLabel(j))));
+    jobs.map((j) => h('option', { value: j.id, selected: j.id === jobFocus(store, auth) }, jobLabel(j))));
   const amountInp = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', placeholder: '0.00', 'aria-label': 'Amount' });
   const isImg = receiptType(photo.dataUrl) !== 'application/pdf';
 
@@ -848,17 +858,21 @@ const PO_TABS = [{ id: 'all', label: 'All' }, { id: 'open', label: 'Open' }, { i
 const inPoTab = (tab, p) => (tab === 'all' ? true : tab === 'open' ? poOpen(p) : (p.status || 'draft') === tab);
 
 function renderOrders(root, ctx) {
-  const { store, ui, nav } = ctx;
+  const { store, ui, nav, auth } = ctx;
   const { h } = ui;
   let tab = 'open', q = '';
+  // Opens on the "Working on" job (lib/job-focus.js); "Show all" lifts it until the focus changes.
+  let showAll = false;
+  const listJob = () => (showAll ? '' : jobFocus(store, auth));
   const host = h('div', { class: 'stack' });
   const tableHost = h('div');
   const money = moneyFormatter(store.settings());
   const draw = () => {
     ui.clear(host);
-    const all = store.list('purchaseOrders');
+    const all = store.list('purchaseOrders', focusFilter(listJob()));
     if (!all.some((p) => inPoTab(tab, p)) && tab === 'open' && all.length) tab = 'all';
     host.append(
+      focusNote(ctx, listJob(), () => { showAll = true; draw(); }) || '',
       h('div', { class: 'row' },
         ui.tabs(PO_TABS.map((t) => ({ id: t.id, label: `${t.label} ${all.filter((p) => inPoTab(t.id, p)).length || ''}`.trim() })), tab, (t) => { tab = t; draw(); }),
         h('span', { class: 'grow' }),
@@ -869,7 +883,7 @@ function renderOrders(root, ctx) {
   const drawTable = () => {
     const vendors = vendorMap(store), jobs = jobMap(store);
     const bills = store.list('bills', null, { omit: ['receipt'] });
-    const all = store.list('purchaseOrders');
+    const all = store.list('purchaseOrders', focusFilter(listJob()));
     const n = q.trim().toLowerCase();
     const rows = all.filter((p) => inPoTab(tab, p) && (!n || [p.number, vendorName(vendors.get(p.vendorId)), jobs.get(p.jobId)?.number, ...(p.lines || []).map((l) => l.description)].some((s) => String(s || '').toLowerCase().includes(n))))
       .sort((a, b) => String(b.number || '').localeCompare(String(a.number || ''), undefined, { numeric: true }));
@@ -906,6 +920,7 @@ function renderOrders(root, ctx) {
   subnav(ctx, 'orders'), host));
   draw();
   const offs = ['purchaseOrders', 'bills', 'vendors'].map((c) => store.on(c, draw));
+  offs.push(onJobFocus(() => { showAll = false; draw(); }));
   return () => offs.forEach((f) => f());
 }
 
@@ -929,9 +944,9 @@ function returnPoNumber(store, number) {
 }
 
 function createOrder(ctx) {
-  const { store, ui, query } = ctx;
+  const { store, ui, query, auth } = ctx;
   const vendor = query.vendorId ? store.get('vendors', query.vendorId) : null;
-  const rec = newPurchaseOrder({ number: takePoNumber(store), vendorId: vendor?.id || null, jobId: query.jobId || null, today: ui.today() });
+  const rec = newPurchaseOrder({ number: takePoNumber(store), vendorId: vendor?.id || null, jobId: query.jobId || jobFocus(store, auth) || null, today: ui.today() });
   const job = rec.jobId ? store.get('jobs', rec.jobId) : null;
   if (job?.address) rec.shipTo = job.address;
   const created = store.add('purchaseOrders', rec);

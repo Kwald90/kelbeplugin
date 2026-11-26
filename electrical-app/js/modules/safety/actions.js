@@ -2,7 +2,7 @@
 // evidence photo by the owner, verified by a manager.
 import { actionState } from '../../lib/safety.js';
 import { photoStrip } from '../../lib/safety-capture.js';
-import { me, jobLabel, nameOf, employeeOptions, jobOptions } from './common.js';
+import { me, jobLabel, nameOf, employeeOptions, jobOptions, focusOf } from './common.js';
 
 const STATE_TONE = { open: 'info', overdue: 'danger', done: 'warning', verified: 'success' };
 const STATE_LABEL = { open: 'open', overdue: 'overdue', done: 'done · to verify', verified: 'verified' };
@@ -23,7 +23,7 @@ export function newAction(ctx, src = {}, onSaved) {
       manager ? { label: 'Owner', name: 'ownerId', type: 'select', value: src.ownerId || '', options: employeeOptions(ctx, '— unassigned —') } : null,
       manager ? { label: 'Due', name: 'dueDate', type: 'date', value: src.dueDate || ui.today(7) } : null,
       { label: 'Priority', name: 'priority', type: 'select', value: src.priority || 'medium', options: ['low', 'medium', 'high'] },
-      src.jobId === undefined ? { label: 'Job', name: 'jobId', type: 'select', value: '', options: jobOptions(ctx) } : null,
+      src.jobId === undefined ? { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: focusOf(ctx), options: jobOptions(ctx) } : null,
     ].filter(Boolean),
     onSubmit(v) {
       const rec = store.add('correctiveActions', {

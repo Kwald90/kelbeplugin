@@ -1,6 +1,7 @@
 // UI kit: a tiny DOM builder plus the primitives from replica/design/components.md.
 import { icon } from './icons.js';
 import { isNativeApp, saveAndShare } from './lib/native.js';
+import { noteUse, rankOptions } from './lib/usage-rank.js';
 
 export { icon };
 
@@ -176,12 +177,14 @@ export function table({ columns, rows, onRowClick, empty: emptyNode }) {
  * field({ label, name, type, value, options, required, placeholder, step, min, max, hint, rows, span })
  * type: text | number | money | date | datetime-local | time | email | tel | select | textarea | checkbox | color
  * options: [{ value, label }] or ['a','b'].
+ * rank: a usage list name ('jobs', 'clients'…): the select lists the person's most-used choices
+ * first (blank choices stay on top) and counts each pick (lib/usage-rank.js).
  */
 export function field(f) {
-  const { label, name, type = 'text', value, options = [], required, placeholder, step, min, max, hint, rows, span, readonly } = f;
+  const { label, name, type = 'text', value, options = [], required, placeholder, step, min, max, hint, rows, span, readonly, rank } = f;
   let control;
   if (type === 'select') {
-    control = h('select', { name, required }, options.map((o) => {
+    control = h('select', { name, required, onChange: rank ? (e) => noteUse(rank, e.target.value) : null }, (rank ? rankOptions(rank, options) : options).map((o) => {
       const opt = typeof o === 'object' ? o : { value: o, label: o };
       return h('option', { value: opt.value, selected: String(opt.value) === String(value ?? '') }, opt.label);
     }));
@@ -326,6 +329,9 @@ export function pickFile(accept) {
     document.body.append(input); input.click();
   });
 }
+
+/** Options most-used first for a usage list (blank choices stay on top); see field({ rank }). */
+export { rankOptions, noteUse };
 
 /** <select> of records for forms: options('clients', 'name') -> [{value,label}] with a blank first row. */
 export function recordOptions(rows, labelKey = 'name', blank = '— none —') {

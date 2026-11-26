@@ -6,6 +6,7 @@ import { ROLES } from '../auth.js';
 import { PROVINCES, provinceName } from '../lib/tax.js';
 import { BREAKER_TYPES, breakerTypeLabel, listBreakerTemplates, listPanelTemplates } from '../lib/panel-templates.js';
 import { isStandard, filterStandards, visibleRequirements, standardProvinces, standardAuthority } from '../lib/job-standards.js';
+import { noteUse, rankByUse } from '../lib/usage-rank.js';
 
 // The document revision. The server owns a record's `version` (its row counter), so SOPs use
 // `revision`; acknowledgements made before that change still carry `version`.
@@ -50,7 +51,7 @@ export default {
     const { params } = ctx;
     if (params[0] === 'new') return editor(root, ctx, null);
     if (params[0] && params[1] === 'edit') return editor(root, ctx, ctx.store.get('sops', params[0]));
-    if (params[0]) return reader(root, ctx, params[0]);
+    if (params[0]) { noteUse('sops', params[0]); return reader(root, ctx, params[0]); }
     return library(root, ctx);
   },
 };
@@ -75,7 +76,8 @@ function library(root, ctx) {
     for (const s of sops) (groups[s.category || 'General'] ||= []).push(s);
     for (const cat of Object.keys(groups).sort()) {
       body.append(h('h2', { class: 'section' }, cat));
-      body.append(h('div', { class: 'grid' }, groups[cat].sort((a, b) => a.title.localeCompare(b.title)).map((s) => sopCard(s, me))));
+      // The ones this person opens most lead each category; the rest by title.
+      body.append(h('div', { class: 'grid' }, rankByUse('sops', groups[cat].sort((a, b) => a.title.localeCompare(b.title))).map((s) => sopCard(s, me))));
     }
   };
 
@@ -117,7 +119,7 @@ function library(root, ctx) {
     const regionSel = h('select', { class: 'input', 'aria-label': 'Region', onChange: (e) => { region = e.target.value; draw(); } },
       options.map((o) => h('option', { value: o.value, selected: String(o.value) === String(region) }, o.label)));
     body.append(h('div', { class: 'row', style: { alignItems: 'center', gap: '8px' } }, h('span', { class: 'muted' }, 'Region'), regionSel));
-    body.append(h('div', { class: 'grid' }, rows.map((s) => standardCard(s, me))));
+    body.append(h('div', { class: 'grid' }, rankByUse('sops', rows).map((s) => standardCard(s, me))));
   };
 
   const draw = () => {
