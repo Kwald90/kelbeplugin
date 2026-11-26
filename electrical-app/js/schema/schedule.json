@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://fishtapehq.com/schema/schedule.json",
   "title": "Schedule entry",
-  "description": "One employee booked on one job for one day. Known fields are typed; extra fields are allowed.",
+  "description": "One employee booked on one job for one day, from a start time to an end time (an end time before the start runs into the next day). Older records have only hours. Known fields are typed; extra fields are allowed.",
   "type": "object",
   "required": [
     "id"
@@ -51,11 +51,28 @@
       ],
       "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
     },
+    "startTime": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(([01]\\d|2[0-3]):[0-5]\\d)?$",
+      "description": "Local start time HH:MM on `date`."
+    },
+    "endTime": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(([01]\\d|2[0-3]):[0-5]\\d)?$",
+      "description": "Local end time HH:MM. Earlier than startTime means the shift ends the next day."
+    },
     "hours": {
       "type": [
         "number",
         "null"
-      ]
+      ],
+      "description": "Scheduled hours, start to end (kept as a number for the screens that total hours)."
     },
     "note": {
       "type": [
