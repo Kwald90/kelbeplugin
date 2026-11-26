@@ -289,7 +289,13 @@ async function webxrMeasure({ units, record = false }) {
           const scene = sceneGeometry(points, reticle, cam);
           renderer.draw(view.projectionMatrix, view.transform.inverse.matrix, scene);
           // the recording: the camera image with the same lines on top, in the canvas MediaRecorder reads
-          if (recorder && view.camera) recorder.frame(t, view, () => renderer.draw(view.projectionMatrix, view.transform.inverse.matrix, scene));
+          if (recorder && view.camera) {
+            try { recorder.frame(t, view, () => renderer.draw(view.projectionMatrix, view.transform.inverse.matrix, scene)); } catch (e) {
+              // never let the recording break the measuring: drop it and say why
+              recorder.cancel(); recorder = null;
+              videoNote = `The recording stopped (${e?.message || e}). The measurement is fine.`;
+            }
+          }
         }
       };
       session.requestAnimationFrame(onFrame);
