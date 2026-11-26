@@ -4,7 +4,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { skip, createTestDatabase } from './support/db.js';
 import { addMember, call, login, ownerTenant, startApp } from './support/app.js';
-import { cleanPrefs } from '../src/routes/v1/me.js';
+import { cleanPrefs, PREFS, GESTURE_ACTIONS } from '../src/routes/v1/me.js';
 import { createTenantWithOwner } from '../src/services/tenants.js';
 
 let t, app, A, B;
@@ -32,6 +32,18 @@ test('cleanPrefs keeps only known keys and values', () => {
   assert.deepEqual(cleanPrefs({ units: 'furlongs' }), {});
   assert.deepEqual(cleanPrefs(null), {});
   assert.deepEqual(cleanPrefs({ twoFingerTap: 'redo', threeFingerTap: 'wheel', longPress: 'explode' }), { twoFingerTap: 'redo', threeFingerTap: 'wheel' });
+});
+
+test('every action a synced gesture can pick in the app is allowed by the server', async () => {
+  const { GESTURES } = await import('../../electrical-app/js/canvas/gestures.js');
+  const synced = GESTURES.filter((g) => g.sync);
+  assert.ok(synced.length >= 3);
+  for (const g of synced) {
+    assert.ok(PREFS[g.key], `server PREFS is missing ${g.key}`);
+    for (const a of g.actions) assert.ok(GESTURE_ACTIONS.includes(a), `${g.key}: server rejects action '${a}'`);
+    assert.ok(GESTURE_ACTIONS.includes(g.def), `${g.key}: default '${g.def}' not allowed`);
+  }
+  assert.deepEqual(cleanPrefs({ fourFingerTap: 'toggleUI', longPress: 'eyedropper' }), { longPress: 'eyedropper' });
 });
 
 describe('GET /api/v1/me', { skip }, () => {

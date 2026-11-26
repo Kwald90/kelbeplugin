@@ -13,7 +13,11 @@ import { capCrewRole, permsForRole } from '../../auth/permissions.js';
 import { mfaState } from '../../auth/sessions.js';
 
 /** What a finger gesture on the drawing canvas can do (electrical-app/js/canvas/gestures.js). */
-const GESTURE_ACTIONS = ['undo', 'redo', 'wheel', 'lastTool', 'fit', 'none'];
+// Every action the synced gestures (two/three-finger tap, finger touch-and-hold) can pick. The body
+// schema below uses this as an enum, so an action missing here makes the whole PATCH /me/prefs fail
+// (units and theme included). server/test/me.test.js checks it against the app's GESTURES list.
+export const GESTURE_ACTIONS = ['undo', 'redo', 'toggleUI', 'wheel', 'eraser', 'lastTool', 'colors', 'palette',
+  'eyedropper', 'select', 'duplicate', 'picker', 'fit', 'none'];
 
 /** Preference keys and the values each may take. Anything else is dropped. */
 export const PREFS = {
