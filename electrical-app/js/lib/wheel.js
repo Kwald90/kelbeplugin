@@ -4,6 +4,8 @@
 // from WHEEL + orderWheel(); the Settings page edits the same prefs and then dispatches
 // 'ft:wheel-changed' so the shell rebuilds the wheel.
 
+import { rankByUse } from './usage-rank.js';
+
 // `run` names a handler app.js supplies by id (see WHEEL_RUN there); without one the item navigates
 // to `go`. `perm` gates the item against the signed-in person's permissions.
 export const WHEEL = [
@@ -65,4 +67,14 @@ export function orderWheel(items, prefs = {}) {
     return i >= 0 ? i : order.length + items.findIndex((x) => x.id === id);
   };
   return items.filter((w) => !hidden.has(w.id)).sort((a, b) => rank(a.id) - rank(b.id));
+}
+
+/**
+ * orderWheel, then most-used first (usage list 'quick', shared by the + wheel and the home's Quick
+ * actions). A person who arranged their own order keeps it exactly: usage only orders the rest.
+ */
+export function orderWheelByUse(items, prefs = {}, opts = {}) {
+  const shown = orderWheel(items, prefs);
+  if (Array.isArray(prefs.order) && prefs.order.length) return shown;
+  return rankByUse('quick', shown, (w) => w.id, opts);
 }

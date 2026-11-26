@@ -2,7 +2,7 @@
 // raise corrective actions, recurring due dates.
 import { TEMPLATES, templateById, newInspection, inspectionResult, inspectionSchedule, nextDueDate, failedItems } from '../../lib/safety-inspections.js';
 import { signaturePad, signatureOf, photoStrip } from '../../lib/safety-capture.js';
-import { me, jobOptions, jobLabel, nameOf, seg, signatureView, backBtn } from './common.js';
+import { me, jobOptions, jobLabel, nameOf, seg, signatureView, backBtn, focusOf, listJob, listNote } from './common.js';
 
 const RESULT_TONE = { pass: 'success', fail: 'danger', 'in-progress': 'warning' };
 const STATE_TONE = { overdue: 'danger', due: 'warning', ok: 'success' };
@@ -11,9 +11,10 @@ export function inspectionsList(el, ctx) {
   const { store, ui } = ctx;
   const { h } = ui;
   const t = ui.today();
-  const all = store.list('safetyInspections');
+  const job = listJob(ctx);
+  const all = store.list('safetyInspections', (i) => !job || i.jobId === job);
   const sched = inspectionSchedule(all, t);
-  el.append(h('div', { class: 'row sf-toolbar' }, h('span', { class: 'grow' }), ui.button('New inspection', { variant: 'primary', icon: 'plus', onClick: () => startInspection(ctx) })));
+  el.append(listNote(ctx) || '', h('div', { class: 'row sf-toolbar' }, h('span', { class: 'grow' }), ui.button('New inspection', { variant: 'primary', icon: 'plus', onClick: () => startInspection(ctx) })));
   el.append(...ui.section('Recurring', sched.length ? ui.table({
     columns: [
       { key: 'what', label: 'Equipment / area', render: (s) => h('span', null, h('strong', null, templateById(s.templateId)?.title || s.templateId), s.assetTag ? ` · ${s.assetTag}` : '') },
@@ -43,7 +44,7 @@ export function startInspection(ctx, preset = {}) {
     fields: [
       { label: 'What', name: 'templateId', type: 'select', value: preset.templateId || 'ladder', options: TEMPLATES.map((t) => ({ value: t.id, label: t.title })), span: true },
       { label: 'Equipment no. / area', name: 'assetTag', value: preset.assetTag || '', placeholder: 'e.g. L-03, 8 ft fibreglass' },
-      { label: 'Job', name: 'jobId', type: 'select', value: preset.jobId || ctx.query?.jobId || '', options: jobOptions(ctx) },
+      { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: preset.jobId || ctx.query?.jobId || focusOf(ctx), options: jobOptions(ctx) },
     ],
     onSubmit(v) {
       const t = templateById(v.templateId);

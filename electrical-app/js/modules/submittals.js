@@ -6,6 +6,8 @@
 //   #/submittals?jobId=:id   the list for one job
 import { newSubmittal, submitPatch, reviewPatch, revisePatch, isDraft, isOutstanding, isClosed, filterSubmittals, sortSubmittals, summarize, typeLabel, statusLabel, submittalNo, submittalLabel, TYPES, STATUSES, REVIEW_OUTCOMES } from '../lib/submittals.js';
 import { photoStrip } from '../lib/safety-capture.js';
+import { jobFocus, onJobFocus, rankJobs } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/submittals.css"]')) return;
@@ -33,11 +35,13 @@ const statusTone = {
 };
 
 function listView(root, ctx) {
-  const { store, ui, query } = ctx;
+  const { store, ui, query, auth } = ctx;
   const { h } = ui;
-  let jobId = query.jobId || '';
+  // Opens on the "Working on" job (lib/job-focus.js) unless a link names one; "Show all" lifts it here.
+  let jobId = query.jobId || jobFocus(store, auth);
+  const newJobId = () => (jobId === '__none' ? null : jobId || jobFocus(store, auth) || null);
   let status = 'outstanding';
-  const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
+  const jobs = rankJobs(store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || '')));
   const jobById = new Map(jobs.map((j) => [j.id, j]));
 
   const host = h('div', { class: 'stack' });
@@ -50,6 +54,7 @@ function listView(root, ctx) {
   h('option', { value: '' }, 'All jobs'),
   h('option', { value: '__none', selected: jobId === '__none' }, 'Not linked to a job'),
   jobs.map((j) => h('option', { value: j.id, selected: j.id === jobId }, jobLabel(j))));
+  const setJob = (id) => { jobId = id; jobSelect.value = id; history.replaceState(null, '', '#/submittals' + (id ? '?jobId=' + id : '')); draw(); };
 
   // The tabs map to the status groups in the lib; 'outstanding' spans submitted + under-review.
   const inGroup = (s, group) => {
@@ -68,6 +73,7 @@ function listView(root, ctx) {
     const sum = summarize(forJob);
 
     h(host, null,
+      focusNote(ctx, jobId, () => setJob('')),
       h('div', { class: 'grid sub-stats' },
         ui.stat({ label: 'Out for review', value: String(sum.outstanding), hint: jobId && jobId !== '__none' ? jobLabel(jobById.get(jobId)) : 'All jobs', tone: sum.outstanding ? 'info' : 'neutral' }),
         ui.stat({ label: 'Drafts', value: String(sum.draft), hint: 'Not sent yet' }),
@@ -77,7 +83,7 @@ function listView(root, ctx) {
         jobSelect,
         ui.button('Print register', { icon: 'printer', onClick: () => printRegister(ctx, { jobId, jobById }) }),
         h('span', { class: 'grow' }),
-        ui.button('New submittal', { variant: 'primary', icon: 'plus', onClick: () => editSubmittal(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) })),
+        ui.button('New submittal', { variant: 'primary', icon: 'plus', onClick: () => editSubmittal(ctx, null, { jobId: newJobId(), onDraw: draw }) })),
       h('div', { class: 'row sub-tabs' },
         ui.tabs(
           [{ id: 'outstanding', label: `Out for review (${sum.outstanding})` }, { id: 'draft', label: `Drafts (${sum.draft})` }, { id: 'closed', label: `Closed (${sum.closed})` }, { id: 'all', label: `All (${sum.total})` }],
@@ -103,7 +109,7 @@ function listView(root, ctx) {
           icon: 'file-text',
           title: all.length ? 'Nothing here' : 'No submittals yet',
           text: all.length ? 'No submittals match this job and status.' : 'Log the shop drawings, product data and samples you send to the GC or engineer for review — the spec section, the type and the review status — then track approvals and print the register.',
-          action: ui.button('New submittal', { variant: 'primary', icon: 'plus', onClick: () => editSubmittal(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) }),
+          action: ui.button('New submittal', { variant: 'primary', icon: 'plus', onClick: () => editSubmittal(ctx, null, { jobId: newJobId(), onDraw: draw }) }),
         }),
       }));
     }
@@ -112,10 +118,12 @@ function listView(root, ctx) {
   root.append(ui.page({
     title: 'Submittals',
     subtitle: 'Shop drawings, product data and samples sent for review, with a printable register.',
-    actions: [ui.button('New submittal', { variant: 'primary', icon: 'plus', onClick: () => editSubmittal(ctx, null, { jobId: jobId && jobId !== '__none' ? jobId : null, onDraw: draw }) })],
+    actions: [ui.button('New submittal', { variant: 'primary', icon: 'plus', onClick: () => editSubmittal(ctx, null, { jobId: newJobId(), onDraw: draw }) })],
   }, host));
   draw();
-  return store.on('submittals', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offStore = store.on('submittals', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
+  const offFocus = onJobFocus((id) => setJob(id));
+  return () => { offStore(); offFocus(); };
 }
 
 function editSubmittal(ctx, id, { jobId = null, onDraw } = {}) {
@@ -125,10 +133,10 @@ function editSubmittal(ctx, id, { jobId = null, onDraw } = {}) {
   const s = id ? store.get('submittals', id) : newSubmittal({ job: jobId ? store.get('jobs', jobId) : null, items: all, by: store.actorId });
   if (!s) { ui.toast('That submittal is gone.', 'error'); return; }
   s.photos = s.photos || [];
-  const jobs = store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || ''));
+  const jobs = rankJobs(store.list('jobs').sort((a, b) => (b.number || '').localeCompare(a.number || '')));
 
   const grid = ui.formGrid([
-    { label: 'Job', name: 'jobId', type: 'select', value: s.jobId || '', options: [{ value: '', label: '— none —' }, ...ui.recordOptions(jobs, (j) => jobLabel(j), '— none —').slice(1)] },
+    { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: s.jobId || '', options: [{ value: '', label: '— none —' }, ...ui.recordOptions(jobs, (j) => jobLabel(j), '— none —').slice(1)] },
     { label: 'Spec section', name: 'specSection', value: s.specSection, placeholder: 'e.g. 26 24 16' },
     { label: 'Type', name: 'type', type: 'select', value: s.type || 'shop-drawing', options: TYPES.map((t) => ({ value: t.id, label: t.label })) },
     { label: 'Status', name: 'status', type: 'select', value: s.status || 'draft', options: STATUSES.map((st) => ({ value: st.id, label: st.label })) },

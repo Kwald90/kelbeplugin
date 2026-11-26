@@ -12,6 +12,8 @@
 import * as W from '../lib/workplan.js';
 import * as K from '../lib/kpis.js';
 import { ICON_TODAY, linkButton, photoStrip, quickTaskSheet } from './today.js';
+import { jobFocus, onJobFocus } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 const ICON_PLAN = '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2.5v3M16 2.5v3"/><path d="M7 13h4M7 17h7M14 13h3"/>';
 const ICON_SPREAD = '<path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 4v4M12 10v4M16 16v4"/>';
@@ -212,7 +214,7 @@ function taskSheet(ctx, plan, task = null, preset = {}) {
     submitLabel: task ? 'Save' : 'Add task',
     wide: true,
     fields: [
-      !task && templates.length ? { label: 'From a template', name: 'templateId', type: 'select', value: '', span: true, options: [{ value: '', label: '— none —' }, ...templates.map((t) => ({ value: t.id, label: t.name || t.title }))] } : null,
+      !task && templates.length ? { label: 'From a template', name: 'templateId', type: 'select', rank: 'taskTemplates', value: '', span: true, options: [{ value: '', label: '— none —' }, ...templates.map((t) => ({ value: t.id, label: t.name || t.title }))] } : null,
       { label: 'Task', name: 'title', value: d.title, required: !templates.length || Boolean(task), span: true, placeholder: 'e.g. Mount device boxes, level 2 east' },
       { label: 'Phase / area', name: 'phaseId', type: 'select', value: d.phaseId || '', options: [{ value: '', label: 'No phase' }, ...(plan.phases || []).map((p) => ({ value: p.id, label: p.name }))] },
       { label: 'Day', name: 'date', type: 'select', value: d.date, options: (days.includes(d.date) || !d.date ? days : [d.date, ...days]).map((x) => ({ value: x, label: `${ui.fmtDate(x, { weekday: 'short', month: 'short', day: 'numeric' })}${W.isDayPublished(plan, x) ? ' · published' : ''}` })) },
@@ -312,7 +314,7 @@ function spreadSheet(ctx, plan, preset = {}) {
     submitLabel: 'Create tasks',
     wide: true,
     fields: [
-      templates.length ? { label: 'From a template', name: 'templateId', type: 'select', value: '', span: true, options: [{ value: '', label: '— none —' }, ...templates.map((t) => ({ value: t.id, label: t.name || t.title }))] } : null,
+      templates.length ? { label: 'From a template', name: 'templateId', type: 'select', rank: 'taskTemplates', value: '', span: true, options: [{ value: '', label: '— none —' }, ...templates.map((t) => ({ value: t.id, label: t.name || t.title }))] } : null,
       { label: 'Task', name: 'title', value: preset.title || '', span: true, placeholder: 'e.g. Mount device boxes' },
       { label: 'Phase / area', name: 'phaseId', type: 'select', value: preset.phaseId || plan.phases?.[0]?.id || '', options: [{ value: '', label: 'No phase' }, ...(plan.phases || []).map((p) => ({ value: p.id, label: p.name }))] },
       { label: 'Task type (for KPIs)', name: 'taskType', value: '', placeholder: 'Boxes' },
@@ -426,8 +428,11 @@ function renderList(root, ctx) {
   const { store, ui, auth } = ctx;
   const { h } = ui;
   const host = h('div');
+  // Opens on the "Working on" job (lib/job-focus.js); "Show all" lifts it until the focus changes.
+  let showAll = false;
+  const listJob = () => (showAll ? '' : jobFocus(store, auth));
   const draw = () => {
-    const plans = store.list('workPlans', (p) => p.status !== 'archived').sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
+    const plans = store.list('workPlans', (p) => p.status !== 'archived' && (!listJob() || p.jobId === listJob())).sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
     const t0 = today(ui);
     const allTasks = store.list('workTasks', null, { omit: ['photos'] });
     const cards = plans.map((p) => {
@@ -452,7 +457,7 @@ function renderList(root, ctx) {
         ui.button('My day', { icon: ICON_TODAY, href: '#/today' }),
         ui.button('New plan', { variant: 'primary', icon: 'plus', onClick: () => newPlanSheet(ctx) }),
       ].filter(Boolean),
-    }, plans.length ? h('div', { class: 'grid' }, cards)
+    }, focusNote(ctx, listJob(), () => { showAll = true; draw(); }), plans.length ? h('div', { class: 'grid' }, cards)
       : ui.empty({ icon: ICON_PLAN, title: 'No work plans yet', text: 'Pick a job, set its working days, split the work into tasks and publish each day\'s list to the crew.', action: ui.button('New plan', { variant: 'primary', icon: 'plus', onClick: () => newPlanSheet(ctx) }) })));
   };
   root.append(host);
@@ -460,16 +465,18 @@ function renderList(root, ctx) {
   let pending = null;
   const later = () => { clearTimeout(pending); pending = setTimeout(draw, 60); };
   const offs = ['workPlans', 'workTasks', 'jobs'].map((c) => store.on(c, later));
+  offs.push(onJobFocus(() => { showAll = false; later(); }));
   return () => { clearTimeout(pending); offs.forEach((f) => f()); };
 }
 
 function newPlanSheet(ctx) {
-  const { store, ui, nav } = ctx;
+  const { store, ui, nav, auth } = ctx;
   const { h } = ui;
   const jobs = store.list('jobs', (j) => !['complete', 'invoiced'].includes(j.status)).sort((a, b) => String(a.number).localeCompare(String(b.number)));
   if (!jobs.length) { ui.toast('Create the job first, then plan it', 'error'); return; }
   const crewAll = people(store);
-  const firstJob = jobs.find((j) => j.id === ctx.query.jobId) || jobs[0];
+  // The job in the link, else the "Working on" job (lib/job-focus.js), else the first.
+  const firstJob = jobs.find((j) => j.id === ctx.query.jobId) || jobs.find((j) => j.id === jobFocus(store, auth)) || jobs[0];
   const crew = new Set(firstJob.crewIds || []);
   const province = store.settings().company?.province || 'ON';
   const startDefault = (() => { let d = today(ui); while (W.isWeekend(d)) d = W.addDays(d, 1); return d; })();
@@ -483,7 +490,7 @@ function newPlanSheet(ctx) {
     submitLabel: 'Create plan',
     wide: true,
     fields: [
-      { label: 'Job', name: 'jobId', type: 'select', value: firstJob.id, required: true, span: true, options: jobs.map((j) => ({ value: j.id, label: jobLabel(j) })) },
+      { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: firstJob.id, required: true, span: true, options: jobs.map((j) => ({ value: j.id, label: jobLabel(j) })) },
       { label: 'Plan name', name: 'name', value: '', placeholder: 'e.g. Main build', span: true },
       { label: 'First day', name: 'startDate', type: 'date', value: startDefault, required: true },
       { label: 'Working days', name: 'workingDays', type: 'number', min: '1', max: '400', step: '1', value: 35, hint: 'Or set a last day instead' },

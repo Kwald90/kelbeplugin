@@ -2,6 +2,8 @@
 import { addNotificationSource } from '../../lib/notify.js';
 import { actionState } from '../../lib/safety.js';
 import { reportableFor } from '../../lib/safety-reporting.js';
+import { jobFocus, rankJobs } from '../../lib/job-focus.js';
+import { focusNote } from '../../lib/job-focus-ui.js';
 
 export const ICON_HARDHAT = '<path d="M3 17h18v2H3z"/><path d="M5 17a7 7 0 0114 0"/><path d="M10 10V6h4v4"/>';
 export const ICON_STOP = '<path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M8 12h8"/>';
@@ -16,8 +18,19 @@ export const jobLabel = (j) => (j ? [j.number, j.title].filter(Boolean).join(' �
 export const nameOf = (store, id, fallback = '—') => (id ? store.get('employees', id)?.name || fallback : fallback);
 
 export function jobOptions(ctx, blank = '— no job —') {
-  const jobs = ctx.store.list('jobs').sort((a, b) => String(a.number || '').localeCompare(String(b.number || '')));
+  const jobs = rankJobs(ctx.store.list('jobs').sort((a, b) => String(a.number || '').localeCompare(String(b.number || ''))));
   return ctx.ui.recordOptions(jobs, jobLabel, blank);
+}
+
+/** The "Working on" job (lib/job-focus.js): new forms default to it. '' = all jobs. */
+export const focusOf = (ctx) => jobFocus(ctx.store, ctx.auth);
+
+/** The job Safety's lists are showing: the focus, unless "Show all" was tapped (ctx.safetyScope). */
+export const listJob = (ctx) => (ctx.safetyScope?.all ? '' : focusOf(ctx));
+
+/** "Showing <job> · Show all" above a Safety list, or null. */
+export function listNote(ctx) {
+  return focusNote(ctx, listJob(ctx), () => { if (ctx.safetyScope) ctx.safetyScope.all = true; ctx.safetyRedraw?.(); });
 }
 
 export function employeeOptions(ctx, blank = '— nobody —') {

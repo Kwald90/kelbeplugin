@@ -84,7 +84,7 @@ function editAgreement(ctx, id = null) {
   ui.formSheet({
     title: id ? 'Edit agreement' : 'New agreement',
     fields: [
-      { label: 'Client', name: 'clientId', type: 'select', required: true, value: a.clientId || '', options: [{ value: '', label: '— choose —' }, ...ui.recordOptions(clients)] },
+      { label: 'Client', name: 'clientId', type: 'select', rank: 'clients', required: true, value: a.clientId || '', options: [{ value: '', label: '— choose —' }, ...ui.recordOptions(clients)] },
       { label: 'Title', name: 'title', value: a.title, span: true, placeholder: 'Quarterly generator maintenance' },
       { label: 'Frequency', name: 'frequency', type: 'select', value: a.frequency || 'quarterly', options: FREQUENCIES.map((f) => ({ value: f.id, label: f.label })) },
       { label: 'Custom interval (months)', name: 'intervalMonths', type: 'number', min: '1', max: '120', value: a.intervalMonths ?? 3, hint: 'Used when frequency is Custom' },
@@ -213,8 +213,8 @@ function assetView(root, ctx, id) {
   const grid = h('div', { class: 'form-grid' },
     fieldEl({ label: 'Name', name: 'name', value: a.name, placeholder: 'Main panel' }, (v) => { a.name = v; }),
     fieldEl({ label: 'Type', name: 'type', type: 'select', value: a.type || 'panel', options: ASSET_TYPES.map((t) => ({ value: t, label: t.replace(/-/g, ' ') })) }, (v) => { a.type = v; }, 0),
-    fieldEl({ label: 'Client / site', name: 'clientId', type: 'select', value: a.clientId || '', options: [{ value: '', label: '—' }, ...ui.recordOptions(clients)] }, (v) => { a.clientId = v || null; }, 0),
-    fieldEl({ label: 'Linked job', name: 'jobId', type: 'select', value: a.jobId || '', options: [{ value: '', label: '—' }, ...ui.recordOptions(jobs, (j) => `${j.number} - ${j.title}`)] }, (v) => { a.jobId = v || null; }, 0),
+    fieldEl({ label: 'Client / site', name: 'clientId', type: 'select', rank: 'clients', value: a.clientId || '', options: [{ value: '', label: '—' }, ...ui.recordOptions(clients)] }, (v) => { a.clientId = v || null; }, 0),
+    fieldEl({ label: 'Linked job', name: 'jobId', type: 'select', rank: 'jobs', value: a.jobId || '', options: [{ value: '', label: '—' }, ...ui.recordOptions(jobs, (j) => `${j.number} - ${j.title}`)] }, (v) => { a.jobId = v || null; }, 0),
     fieldEl({ label: 'Location on site', name: 'location', value: a.location, placeholder: 'Basement mechanical room' }, (v) => { a.location = v; }),
     fieldEl({ label: 'Status', name: 'status', type: 'select', value: a.status || 'in-service', options: [{ value: 'in-service', label: 'in service' }, { value: 'needs-attention', label: 'needs attention' }, { value: 'retired', label: 'retired' }] }, (v) => { a.status = v; }, 0),
     fieldEl({ label: 'Make', name: 'make', value: a.make }, (v) => { a.make = v; }),

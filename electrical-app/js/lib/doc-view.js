@@ -12,6 +12,7 @@ import { EXEMPT_BASES, EXEMPT_EVIDENCE, exemptionProblem, exemptionFor, exemptio
 import { store as appStore } from '../store.js';
 import { auth } from '../auth.js';
 import { emailDocAction } from '../modules/integrations.js';
+import { noteUse, rankByUse } from './usage-rank.js';
 
 const PST_PROVINCES = ['MB', 'BC', 'SK'];
 const EXEMPT_TREATMENTS = ['gst-only', 'none'];
@@ -552,7 +553,8 @@ export function totalsPanel(doc, { showMarkup = true, paidCents = null, money = 
 /** Searchable price-book picker. onPick(item) is called per click; the sheet stays open. */
 export function pickItems(store, onPick) {
   const money = moneyFormatter(store.settings());
-  const items = store.list('items').sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.name.localeCompare(b.name));
+  // The items this person adds most come first; the rest by category and name.
+  const items = rankByUse('materials.items', store.list('items').sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.name.localeCompare(b.name)));
   let q = '';
   const list = h('div', { class: 'list picker-list' });
   const draw = () => {
@@ -561,7 +563,7 @@ export function pickItems(store, onPick) {
     const rows = items.filter((i) => !needle || [i.name, i.sku, i.category].some((s) => (s || '').toLowerCase().includes(needle)));
     if (!rows.length) list.append(h('div', { class: 'list-row muted' }, 'No matching items.'));
     for (const it of rows.slice(0, 200)) {
-      list.append(h('button', { type: 'button', class: 'list-row click picker-row', onClick: () => { onPick(it); toast(`Added ${it.name}`, 'success', 1400); } },
+      list.append(h('button', { type: 'button', class: 'list-row click picker-row', onClick: () => { noteUse('materials.items', it.id); onPick(it); toast(`Added ${it.name}`, 'success', 1400); } },
         h('div', { class: 'grow' }, h('div', { class: 'title' }, it.name), h('div', { class: 'meta' }, [it.sku, it.category, it.unit].filter(Boolean).join(' · '))),
         h('span', { class: 'num' }, money(it.priceCents)), icon('plus', 16)));
     }

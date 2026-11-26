@@ -5,7 +5,7 @@ import { CATEGORIES, INJURY_TYPES, BODY_PARTS, INCIDENT_STATUSES } from '../../l
 import { reportableFor } from '../../lib/safety-reporting.js';
 import { photoStrip } from '../../lib/safety-capture.js';
 import { provinceName } from '../../lib/tax.js';
-import { me, jobOptions, jobLabel, nameOf, employeeOptions, chips, seg, backBtn, notifySafety, emptyNoEmployee } from './common.js';
+import { me, jobOptions, jobLabel, nameOf, employeeOptions, chips, seg, backBtn, notifySafety, emptyNoEmployee, focusOf, listJob, listNote } from './common.js';
 import { newAction, actionList } from './actions.js';
 
 const TREATMENTS = [['none', 'No treatment'], ['first-aid', 'First aid on site'], ['medical-aid', 'Doctor / clinic (health care)'], ['lost-time', 'Time off work'], ['hospital', 'Admitted to hospital'], ['fatality', 'Fatality']];
@@ -17,8 +17,9 @@ const localInput = (iso) => { const d = iso ? new Date(iso) : new Date(); d.setM
 export function incidentsList(el, ctx) {
   const { store, ui } = ctx;
   const { h } = ui;
-  const rows = store.list('incidents').sort((a, b) => String(b.occurredAt || b.createdAt).localeCompare(String(a.occurredAt || a.createdAt)));
-  el.append(h('div', { class: 'row sf-toolbar' }, h('span', { class: 'grow' }),
+  const job = listJob(ctx);
+  const rows = store.list('incidents', (r) => !job || r.jobId === job).sort((a, b) => String(b.occurredAt || b.createdAt).localeCompare(String(a.occurredAt || a.createdAt)));
+  el.append(listNote(ctx) || '', h('div', { class: 'row sf-toolbar' }, h('span', { class: 'grow' }),
     ui.button('Report a near miss', { icon: 'alert', href: '#/safety/incidents/new?kind=near-miss' }),
     ui.button('Report an incident', { variant: 'primary', icon: 'plus', href: '#/safety/incidents/new?kind=incident' })));
   el.append(rows.length ? h('div', { class: 'list' }, rows.map((r) => h('a', { class: 'list-row click', href: `#/safety/incidents/${r.id}` },
@@ -46,7 +47,7 @@ export function incidentForm(root, ctx) {
     { label: 'What happened', name: 'description', type: 'textarea', rows: 4, required: true, span: true, placeholder: 'Plain words: what you saw, what could have happened' },
     { label: 'Type', name: 'category', type: 'select', value: 'other', options: CATEGORIES.map(([value, label]) => ({ value, label })) },
     { label: 'When', name: 'occurredAt', type: 'datetime-local', value: localInput(), required: true },
-    { label: 'Job', name: 'jobId', type: 'select', value: query.jobId || '', options: jobOptions(ctx) },
+    { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: query.jobId || focusOf(ctx), options: jobOptions(ctx) },
     { label: 'Where on site', name: 'location', placeholder: 'e.g. Stairwell B, 3rd floor' },
     { label: 'What was done right away', name: 'immediateActions', type: 'textarea', rows: 2, span: true, placeholder: 'Area barricaded, power locked out, first aid given...' },
   ]));

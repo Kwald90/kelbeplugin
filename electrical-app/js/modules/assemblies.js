@@ -7,6 +7,7 @@
 // Pure logic: js/lib/assemblies.js. Wired into the estimate builder (modules/estimates.js).
 import { newAssembly, newComponent, materialUnitCents, labourUnitHours, unitSellCents, activeAssemblies, MAX_COMPONENTS } from '../lib/assemblies.js';
 import { moneyFormatter } from '../lib/money.js';
+import { noteUse, rankByUse } from '../lib/usage-rank.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/assemblies.css"]')) return;
@@ -40,7 +41,8 @@ function listView(root, ctx) {
 
   const draw = () => {
     ui.clear(host);
-    const all = activeAssemblies(store.list('assemblies')).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    // Most-used kits first (counted onto quotes or opened here); the rest by name.
+    const all = rankByUse('assemblies', activeAssemblies(store.list('assemblies')).sort((a, b) => String(a.name).localeCompare(String(b.name))));
     host.append(all.length ? ui.table({
       columns: [
         { key: 'name', label: 'Assembly', render: (a) => a.name || 'Untitled', sort: (a) => a.name || '' },
@@ -50,7 +52,7 @@ function listView(root, ctx) {
         { key: 'hrs', label: 'Labour (h)', align: 'right', render: (a) => (labourUnitHours(a) || 0).toString() },
         { key: 'sell', label: 'Est. sell', align: 'right', render: (a) => money(unitSellCents(a, { labourRateCents: rate, markupPct: store.settings().markupPct || 0 }).totalCents), sort: (a) => unitSellCents(a, { labourRateCents: rate }).totalCents },
       ],
-      rows: all, onRowClick: (a) => nav(`assemblies/${a.id}`),
+      rows: all, onRowClick: (a) => { noteUse('assemblies', a.id); nav(`assemblies/${a.id}`); },
     }) : ui.empty({ icon: 'layers', title: 'No assemblies yet', text: 'Build kits like "duplex receptacle" or "2x4 LED troffer" once — components plus the labour hours — then count them on an estimate instead of adding every part by hand.', action: ui.button('New assembly', { variant: 'primary', icon: 'plus', href: '#/assemblies/new' }) }));
   };
 

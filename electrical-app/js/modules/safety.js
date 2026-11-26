@@ -5,7 +5,8 @@
 import { hasFlhaToday, flhaFor, lastFlha, isSigned, flhaRequired, openActions } from '../lib/safety.js';
 import { emergencyCard, jobSafetyOf } from '../lib/safety-emergency.js';
 import { inspectionSchedule } from '../lib/safety-inspections.js';
-import { ICON_HARDHAT, ICON_STOP, me, todaysJobs, jobLabel, emptyNoEmployee } from './safety/common.js';
+import { ICON_HARDHAT, ICON_STOP, me, todaysJobs, jobLabel, emptyNoEmployee, focusOf, listJob, listNote } from './safety/common.js';
+import { onJobFocus } from '../lib/job-focus.js';
 import { flhaView } from './safety/flha.js';
 import { talksList, talkView } from './safety/talks.js';
 import { incidentsList, incidentForm, incidentView } from './safety/incidents.js';
@@ -47,11 +48,13 @@ function home(root, ctx) {
   let tab = tabs.some((t) => t.id === query.tab) ? query.tab : 'today';
   const tabHost = h('div', { class: 'sf-tabs' });
   const body = h('div', { class: 'sf-body' });
+  // Lists open on the "Working on" job; "Show all" lifts it until the focus changes.
+  const scope = { all: false };
   const draw = () => {
     ui.clear(tabHost).append(ui.tabs(tabs, tab, (t) => { tab = t; history.replaceState(null, '', `#/safety?tab=${t}`); draw(); }));
     ui.clear(body);
     const render = { today, flhas: flhaTab, talks: talksList, incidents: incidentsList, actions: actionsTab, inspections: inspectionsList, training: trainingTab, dashboard: dashboardTab }[tab];
-    try { render(body, ctx); } catch (e) { console.error(e); body.append(ui.empty({ icon: 'alert', title: 'Something went wrong', text: e.message })); }
+    try { render(body, { ...ctx, safetyScope: scope, safetyRedraw: draw }); } catch (e) { console.error(e); body.append(ui.empty({ icon: 'alert', title: 'Something went wrong', text: e.message })); }
   };
   root.append(ui.page({ title: 'Safety', subtitle: 'Hazard assessments, toolbox talks, incidents, inspections and training' }, tabHost, body));
   draw();
@@ -59,6 +62,7 @@ function home(root, ctx) {
   let pending = false;
   const redraw = () => { if (pending) return; pending = true; setTimeout(() => { pending = false; if (!document.querySelector('.sheet, .dialog')) draw(); }, 50); };
   const offs = ['flhas', 'toolboxTalks', 'incidents', 'correctiveActions', 'safetyInspections', 'siteOrientations', 'jobSafety', 'certifications'].map((c) => store.on(c, redraw));
+  offs.push(onJobFocus(() => { scope.all = false; redraw(); }));
   return () => offs.forEach((f) => f());
 }
 
@@ -76,7 +80,9 @@ function today(el, ctx) {
     h('a', { class: 'sf-quick-btn', href: '#/safety/flha/new' }, ui.icon(ICON_HARDHAT, 22), h('span', null, 'FLHA'))));
   if (!person.id) { el.append(emptyNoEmployee(ui)); return; }
 
-  const jobs = todaysJobs(store, person.id, t);
+  // The "Working on" job leads, then the jobs they're on today.
+  const focused = focusOf(ctx) ? store.get('jobs', focusOf(ctx)) : null;
+  const jobs = [focused, ...todaysJobs(store, person.id, t).filter((j) => j.id !== focused?.id)].filter(Boolean);
   for (const j of jobs) {
     const card = emergencyCard(ctx, j.id, { compact: true, editHref: auth.isManager() ? `#/safety/job/${j.id}` : null });
     if (card) el.append(card);
@@ -123,9 +129,10 @@ function flhaTab(el, ctx) {
   const { store, ui, auth } = ctx;
   const { h } = ui;
   const person = me(ctx);
-  const rows = store.list('flhas', (f) => auth.isManager() || f.employeeId === person.id)
+  const job = listJob(ctx);
+  const rows = store.list('flhas', (f) => (auth.isManager() || f.employeeId === person.id) && (!job || f.jobId === job))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0, 200);
-  el.append(h('div', { class: 'row sf-toolbar' }, h('span', { class: 'grow' }), ui.button('New FLHA', { variant: 'primary', icon: 'plus', href: '#/safety/flha/new' })));
+  el.append(listNote(ctx) || '', h('div', { class: 'row sf-toolbar' }, h('span', { class: 'grow' }), ui.button('New FLHA', { variant: 'primary', icon: 'plus', href: '#/safety/flha/new' })));
   el.append(rows.length ? ui.table({
     columns: [
       { key: 'date', label: 'Date', render: (f) => ui.fmtDate(f.date), sort: (f) => f.date },

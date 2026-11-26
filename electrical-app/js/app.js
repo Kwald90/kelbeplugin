@@ -22,7 +22,10 @@ import { quickReceipt } from './modules/purchasing.js';
 import { moduleOn, linkOn, hrefModule, SWITCHES, switchOn } from './lib/modules.js';
 import { searchEntries, rankEntries } from './lib/quickfind.js';
 import { primaryNavigation, navigationLabel } from './lib/navigation.js';
-import { WHEEL, wheelPrefs, orderWheel, addedShortcuts } from './lib/wheel.js';
+import { WHEEL, wheelPrefs, orderWheelByUse, addedShortcuts } from './lib/wheel.js';
+import { noteUse, rankByUse, topUsed, setUsageUser } from './lib/usage-rank.js';
+import { usageFromChange, noteJobUse } from './lib/job-focus.js';
+import { focusChip } from './lib/job-focus-ui.js';
 
 const { h, icon } = ui;
 const put = (el, ...kids) => h(ui.clear(el), null, ...kids);
@@ -53,6 +56,9 @@ const statusListeners = new Set();
 const viewingLocked = new Set(); // locked modules opened read-only this run
 let banner = null;
 let tracker = null;
+let chip = null; // the "Working on" pill (lib/job-focus-ui.js)
+// Screens that already show the "Working on" dropdown don't need the pill too.
+const HOME_ROUTES = ['dashboard', 'today'];
 
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
@@ -164,6 +170,7 @@ function route() {
   ui.clear(main);
   main.className = 'main' + (mod.fullBleed ? ' full-bleed' : '');
   shell?.classList.toggle('canvas-route', Boolean(mod.fullBleed));
+  shell?.classList.toggle('home-route', HOME_ROUTES.includes(mod.id));
   main.scrollTop = 0;
   document.title = `${mod.title} · ${BRAND.name}`;
   for (const a of rail.querySelectorAll('[data-mod]')) {
@@ -193,6 +200,9 @@ function route() {
     main.append(upgradeCard(mod, { auth, hasData: hasRecords(mod.id), entitlements: session.me?.entitlements, onView: () => { viewingLocked.add(mod.id); route(); } }));
     return;
   }
+  // Most-used screens rise in More's "Frequent" row and the empty search; opening a job counts for it.
+  noteUse('nav', mod.id);
+  if (mod.id === 'jobs' && params[0] && store.get('jobs', params[0])) noteJobUse(params[0]);
   try {
     cleanup = mod.render(main, { params, query, store, ui, auth, nav, route, app: shellApi, on: moduleEnabled, readOnly: locked });
     if (locked) main.prepend(readOnlyBanner(mod));
@@ -234,8 +244,15 @@ function openMore() {
       body.append(h('section', null, h('div', { class: 'more-links' },
         h('button', { type: 'button', class: 'rail-btn', onClick: () => { close(); openSearch(); } },
           icon('search', 22), h('span', { class: 'nav-label' }, 'Search features & options')))));
+      // The screens this person opens most, above the full list (which keeps its designed order).
+      const visible = visibleModules();
+      const frequent = topUsed('nav', 8).map((id) => visible.find((m) => m.id === id)).filter(Boolean).slice(0, 4);
+      if (frequent.length >= 2) {
+        body.append(h('section', null, h('h3', { class: 'nav-group-title' }, 'Frequent'),
+          h('div', { class: 'more-links' }, frequent.map((m) => navigationLink(m, { onClick: close })))));
+      }
       for (const [group, label] of Object.entries(GROUPS)) {
-        const items = visibleModules().filter((m) => m.group === group);
+        const items = visible.filter((m) => m.group === group);
         if (!items.length) continue;
         body.append(h('section', null, h('h3', { class: 'nav-group-title' }, label),
           h('div', { class: 'more-links' }, items.map((m) => navigationLink(m, { onClick: close })))));
@@ -298,7 +315,9 @@ function openSearch() {
     isSwitchOn: (id) => switchOn(store.settings(), id), label: navigationLabel,
     includeOptions: auth.can('settings'),
   });
-  let results = rankEntries(entries, '');
+  // Before anything is typed, the screens this person opens most come first.
+  const ranked = (q) => (q.trim() ? rankEntries(entries, q) : rankByUse('nav', rankEntries(entries, ''), (e) => (e.kind === 'screen' ? e.id : `option:${e.id}`)));
+  let results = ranked('');
   let sel = 0;
   const input = h('input', { type: 'search', class: 'input search-input', placeholder: 'Search features and options…', 'aria-label': 'Search features and options', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'go' });
   const list = h('div', { class: 'search-results', role: 'listbox', 'aria-label': 'Results' });
@@ -325,7 +344,7 @@ function openSearch() {
         : (e.enabled ? null : ui.badge('Off', 'neutral'))));
     });
   };
-  input.addEventListener('input', () => { results = rankEntries(entries, input.value); sel = 0; render(); });
+  input.addEventListener('input', () => { results = ranked(input.value); sel = 0; render(); });
   input.addEventListener('keydown', (ev) => {
     if (ev.key === 'ArrowDown') { ev.preventDefault(); sel = Math.min(sel + 1, results.length - 1); paintSel(); }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); sel = Math.max(sel - 1, 0); paintSel(); }
@@ -470,7 +489,7 @@ function buildWheel() {
   const pool = [...WHEEL, ...addedShortcuts(prefs)];
   const permitted = pool.filter((w) => auth.can(w.perm) && moduleEnabled(hrefModule('#/' + w.go)));
   // each person picks which of the ones they can use show, and their order (per device)
-  const items = orderWheel(permitted, prefs);
+  const items = orderWheelByUse(permitted, prefs);
   const scrim = h('div', { class: 'wheel-scrim', onClick: () => toggle(false) });
   const wheel = h('div', { class: 'wheel', 'aria-hidden': 'true' }, h('div', { class: 'wheel-disc' }));
   const r = 118;
@@ -479,7 +498,7 @@ function buildWheel() {
   const btns = items.map((w) => h('button', {
     class: 'wheel-item', tabindex: -1,
     // a real drag suppresses the tap so spinning the wheel doesn't fire an action
-    onClick: (e) => { if (dragged) { e.preventDefault(); return; } toggle(false); const run = WHEEL_RUN[w.run]; if (run) run({ store, ui, auth, nav }); else nav(w.go); },
+    onClick: (e) => { if (dragged) { e.preventDefault(); return; } toggle(false); noteUse('quick', w.id); const run = WHEEL_RUN[w.run]; if (run) run({ store, ui, auth, nav }); else nav(w.go); },
   }, icon(w.icon, 20), w.label));
   btns.forEach((b) => wheel.append(b));
   // a gear in the hub opens Settings (where the wheel itself can be turned off)
@@ -553,6 +572,10 @@ function rebuild() {
   collapse.title = compact ? 'Expand navigation' : 'Collapse navigation';
   modulesKey = currentModulesKey();
   wheelShown = wheelEnabled();
+  setUsageUser(auth.current()?.id);
+  chip?.destroy();
+  chip = focusChip({ store, ui, auth, nav });
+  shell.append(chip.el);
   document.body.append(shell);
   if (wheelShown) document.body.append(...buildWheel());
   navStatusObserver = new MutationObserver(paintMobileStatus);
@@ -692,6 +715,8 @@ async function startShell() {
     btn?.firstChild?.replaceWith(icon(isDark() ? 'sun' : 'moon', 20));
   }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   store.on('*', (e) => { if (e.type === 'reset') { switchCache = null; rebuild(); } });
+  // Most-used ordering: every record this person files counts toward its job, client and vendor.
+  store.on('*', (e) => { for (const [list, id] of usageFromChange(e)) noteUse(list, id); });
   // A module turned on or off (here or on another device): redraw the rail, wheel and screen.
   store.on('settings', () => { switchCache = null; if (currentModulesKey() !== modulesKey || wheelEnabled() !== wheelShown) rebuild(); });
   // Settings changed this person's + wheel shortcuts (scope 'wheel'): rebuild so the live wheel follows.

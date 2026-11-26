@@ -9,6 +9,8 @@ import { buildSignature, signatureSheet, emailAcceptanceSheet, queueSignatureFir
 import { residentialEssentials } from '../lib/panel-templates.js';
 import { activeAssemblies, explodeAssembly, materialUnitCents, labourUnitHours } from '../lib/assemblies.js';
 import { activeLevels, levelById, baselineLevel } from '../lib/labour-levels.js';
+import { jobFocus } from '../lib/job-focus.js';
+import { noteUse, rankByUse } from '../lib/usage-rank.js';
 
 const STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'];
 
@@ -129,14 +131,15 @@ function validCell(ui, e) {
 
 // ---------- new (and takeoff) ----------
 function createNew(ctx) {
-  const { store, ui, query } = ctx;
+  const { store, ui, query, auth } = ctx;
   const s = store.settings();
-  const job0 = query.jobId ? store.get('jobs', query.jobId) : null;
+  // The job in the link, else (unless a client was named) the "Working on" job; the field stays changeable.
+  const job0 = store.get('jobs', query.jobId || (query.clientId ? '' : jobFocus(store, auth))) || null;
   const client0 = store.get('clients', query.clientId || job0?.clientId || '') || null;
   const rec = {
     number: store.nextNumber('estimate'),
     clientId: query.clientId || null,
-    jobId: query.jobId || null,
+    jobId: job0?.id || null,
     title: '',
     status: 'draft',
     lines: [],
@@ -278,10 +281,10 @@ function renderDetail(root, ctx, id) {
   };
 
   const header = h('div', { class: 'form-grid' },
-    fieldEl({ label: 'Customer', name: 'clientId', type: 'select', value: doc.clientId || '', options: ui.recordOptions(clients) }, (v) => { doc.clientId = v || null; }),
+    fieldEl({ label: 'Customer', name: 'clientId', type: 'select', rank: 'clients', value: doc.clientId || '', options: ui.recordOptions(clients) }, (v) => { doc.clientId = v || null; }),
     fieldEl({ label: 'Valid until', name: 'validUntil', type: 'date', value: doc.validUntil }, (v) => { doc.validUntil = v; }),
     fieldEl({ label: 'Work to be quoted', name: 'title', value: doc.title, span: true, placeholder: 'For example: panel replacement at the shop' }, (v) => { doc.title = v; }),
-    fieldEl({ label: 'Linked job (optional)', name: 'jobId', type: 'select', value: doc.jobId || '', span: true, options: ui.recordOptions(jobs, (j) => `${j.number} - ${j.title}`) }, (v) => { doc.jobId = v || null; drawStatus(); }));
+    fieldEl({ label: 'Linked job (optional)', name: 'jobId', type: 'select', rank: 'jobs', value: doc.jobId || '', span: true, options: ui.recordOptions(jobs, (j) => `${j.number} - ${j.title}`) }, (v) => { doc.jobId = v || null; drawStatus(); }));
 
   const pricing = h('details', { class: 'card estimate-pricing' },
     h('summary', null, 'Pricing & tax settings'),
@@ -342,7 +345,8 @@ function renderDetail(root, ctx, id) {
   // has labour hours, a labour line at this estimate's labour rate (js/lib/assemblies.js).
   const assemblyPicker = () => {
     if (readOnly) return;
-    const all = activeAssemblies(store.list('assemblies')).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    // The kits this person counts most come first; the rest by name.
+    const all = rankByUse('assemblies', activeAssemblies(store.list('assemblies')).sort((a, b) => String(a.name).localeCompare(String(b.name))));
     const counts = {};
     // Opt-in crew productivity: default "Standard" = this quote's labour rate (no change). Pick a
     // level and each assembly's labour bills that level's time (productivity) and rate instead.
@@ -379,7 +383,7 @@ function renderDetail(root, ctx, id) {
             opts.labourRateOverrideCents = level.chargeCents;
           }
           let added = 0;
-          for (const a of chosen) { for (const line of explodeAssembly(a, counts[a.id], opts)) { doc.lines.push(line); added++; } }
+          for (const a of chosen) { noteUse('assemblies', a.id); for (const line of explodeAssembly(a, counts[a.id], opts)) { doc.lines.push(line); added++; } }
           changed(); save.flush(); redraw();
           ui.toast(`Added ${chosen.length} assembl${chosen.length === 1 ? 'y' : 'ies'} (${added} line${added === 1 ? '' : 's'})`, 'success');
           s.close();

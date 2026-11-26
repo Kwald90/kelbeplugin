@@ -11,6 +11,8 @@ import { newTicket, prefillLabour, ticketProblems, ticketLabel, ticketToChangeOr
   MAX_PHOTOS, PHOTO_MAX_BYTES, MAX_BATCH, ticketSummary } from '../lib/tickets.js';
 import { buildSignature, signatureSheet, emailAcceptanceSheet, SIGNING_NOTICE, queueSignatureFirst } from '../lib/esign.js';
 import { jobBillingMode } from '../lib/tm.js';
+import { jobFocus, onJobFocus, rankJobs } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 const STATUS_TABS = ['all', 'draft', 'signed', 'refused', 'priced', 'billed', 'void'];
 
@@ -46,7 +48,8 @@ function listView(root, ctx) {
   const { store, ui, nav, auth } = ctx;
   const { h } = ui;
   let tab = ctx.query.status || 'all';
-  let jobId = ctx.query.jobId || '';
+  // Opens on the "Working on" job (lib/job-focus.js) unless a link names one.
+  let jobId = ctx.query.jobId || jobFocus(store, auth);
   const host = h('div', { class: 'stack' });
   const draw = () => {
     ui.clear(host);
@@ -55,8 +58,9 @@ function listView(root, ctx) {
     const stale = office(auth) ? staleDrafts(all, { asOf: today(ui), days: store.settings().tickets?.draftStaleDays ?? 3 }) : [];
     const rows = all.filter((t) => (tab === 'all' || t.status === tab) && (!jobId || t.jobId === jobId));
     const jobPick = h('select', { class: 'input tk-jobpick', 'aria-label': 'Job', onChange: (e) => { jobId = e.target.value; draw(); } },
-      h('option', { value: '' }, 'All jobs'), [...jobs.values()].sort((a, b) => String(b.number).localeCompare(String(a.number))).map((j) => h('option', { value: j.id, selected: j.id === jobId }, `${j.number} · ${j.title}`)));
+      h('option', { value: '' }, 'All jobs'), rankJobs([...jobs.values()].sort((a, b) => String(b.number).localeCompare(String(a.number)))).map((j) => h('option', { value: j.id, selected: j.id === jobId }, `${j.number} · ${j.title}`)));
     h(host, null,
+      focusNote(ctx, jobId, () => { jobId = ''; draw(); }),
       stale.length ? h('div', { class: 'card tk-stale', dataset: { stale: String(stale.length) } },
         h('strong', null, `${stale.length} unsigned ticket${stale.length === 1 ? '' : 's'} older than ${store.settings().tickets?.draftStaleDays ?? 3} days`),
         h('p', { class: 'muted' }, 'Nothing is sent on its own. Open one to send it to the general contractor as written notice of the extra work.'),
@@ -79,10 +83,11 @@ function listView(root, ctx) {
   };
   root.append(ui.page({
     title: 'Field tickets', subtitle: 'Extra work and T&M signed on site',
-    actions: [office(auth) ? ui.button('Settings', { icon: 'settings', href: '#/tickets/settings' }) : null, ui.button('New ticket', { variant: 'primary', icon: 'plus', href: `#/tickets/new${jobId ? `?jobId=${jobId}` : ''}` })].filter(Boolean),
+    actions: [office(auth) ? ui.button('Settings', { icon: 'settings', href: '#/tickets/settings' }) : null, ui.button('New ticket', { variant: 'primary', icon: 'plus', onClick: () => nav(`#/tickets/new${jobId || jobFocus(store, auth) ? `?jobId=${jobId || jobFocus(store, auth)}` : ''}`) })].filter(Boolean),
   }, host));
   draw();
   const offs = ['fieldTickets', 'jobs'].map((c) => store.on(c, draw));
+  offs.push(onJobFocus((id) => { jobId = id; draw(); }));
   return () => offs.forEach((f) => f());
 }
 
@@ -92,7 +97,8 @@ function createNew(ctx) {
   const me = auth.current();
   if (!me.id) { ui.toast('Your account is not linked to an employee record, so you cannot write tickets. Ask an owner to link it.', 'error', 6000); history.back(); return; }
   const open = store.list('timeEntries', (e) => e.employeeId === me.id && !e.clockOut && e.jobId)[0];
-  const job = store.get('jobs', query.jobId || open?.jobId || '') || null;
+  // The job named in the link, else the "Working on" job, else the one they're clocked in on.
+  const job = store.get('jobs', query.jobId || jobFocus(store, auth) || open?.jobId || '') || null;
   const t = newTicket({ job, employee: { id: me.id }, settings: store.settings(), date: today(ui) });
   if (job) {
     // Today's hours on the job, the open entry counted to now (a foreman sees the crew's).
@@ -128,7 +134,7 @@ function detailView(root, ctx, id) {
     };
     const jobs = store.list('jobs', (j) => !['invoiced', 'cancelled'].includes(j.status)).sort((a, b) => String(b.number).localeCompare(String(a.number)));
     const head = h('div', { class: 'form-grid' },
-      field({ label: 'Job', name: 'jobId', type: 'select', value: t.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`, '— pick the job —') }, (v) => {
+      field({ label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: t.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`, '— pick the job —') }, (v) => {
         const j = store.get('jobs', v);
         write({ jobId: v || null, clientId: j?.clientId || null, kind: jobBillingMode(j) === 'tm' ? 'tm' : 'extra' });
         draw();
@@ -180,7 +186,7 @@ function detailView(root, ctx, id) {
       ui.formSheet({
         title: van ? 'From your van' : 'From the price book', submitLabel: 'Add',
         fields: [
-          { label: 'Item', name: 'itemId', type: 'select', value: items[0].id, span: true, options: items.map((i) => ({ value: i.id, label: `${i.name}${van ? ` (${i.stock[van]} ${i.unit || ''} in the van)` : ''}` })) },
+          { label: 'Item', name: 'itemId', type: 'select', rank: 'materials.items', value: items[0].id, span: true, options: items.map((i) => ({ value: i.id, label: `${i.name}${van ? ` (${i.stock[van]} ${i.unit || ''} in the van)` : ''}` })) },
           { label: 'Qty', name: 'qty', type: 'number', step: '1', min: '0', value: 1, required: true },
         ],
         onSubmit(v) {
@@ -401,7 +407,7 @@ function printTicket(ui, t, job, settings, kind = null) {
 function batchView(root, ctx) {
   const { store, ui, nav, auth } = ctx;
   const { h } = ui;
-  const jobId = ctx.query.jobId || '';
+  const jobId = ctx.query.jobId || jobFocus(store, auth);
   const job = store.get('jobs', jobId);
   const host = h('div', { class: 'stack' });
   if (!job || !(auth.isManager() || office(auth))) {

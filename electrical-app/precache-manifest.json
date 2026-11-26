@@ -132,6 +132,7 @@
   "./js/lib/grounding-test.js",
   "./js/lib/importers.js",
   "./js/lib/irinspection.js",
+  "./js/lib/job-focus-ui.js",
   "./js/lib/job-focus.js",
   "./js/lib/job-overview.js",
   "./js/lib/job-standards.js",

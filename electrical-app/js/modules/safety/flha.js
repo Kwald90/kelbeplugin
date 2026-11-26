@@ -2,7 +2,7 @@
 // "stop work", the worker's signature and the foreman's review sign-off.
 import { HAZARDS, PPE, newFlha, copyFlha, isSigned, uncontrolledHazards, hazardLabel, ppeLabel, flhaFor } from '../../lib/safety.js';
 import { signaturePad, signatureOf } from '../../lib/safety-capture.js';
-import { me, jobOptions, jobLabel, nameOf, seg, chips, signatureView, backBtn, notifySafety, emptyNoEmployee, ICON_STOP } from './common.js';
+import { focusOf, me, jobOptions, jobLabel, nameOf, seg, chips, signatureView, backBtn, notifySafety, emptyNoEmployee, ICON_STOP } from './common.js';
 
 /** #/safety/flha/new?jobId=&copy=<id>  or  #/safety/flha/<id> */
 export function flhaView(root, ctx, id) {
@@ -19,7 +19,7 @@ export function flhaView(root, ctx, id) {
 
   if (!rec) {
     const day = query.date || ui.today();
-    const jobId = query.jobId || null;
+    const jobId = query.jobId || focusOf(ctx) || null;
     // One FLHA per worker, job and day: open the existing one instead of making a second.
     const existing = jobId && !query.copy ? flhaFor(person.id, jobId, day, store.list('flhas')) : null;
     if (existing) { nav(`safety/flha/${existing.id}`); return; }
@@ -43,7 +43,7 @@ function editor(root, ctx, draft, id) {
   const ppe = new Set(d.ppe || []);
 
   const head = ui.formGrid([
-    { label: 'Job', name: 'jobId', type: 'select', value: d.jobId || '', options: jobOptions(ctx), span: true },
+    { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: d.jobId || '', options: jobOptions(ctx), span: true },
     { label: 'Date', name: 'date', type: 'date', value: d.date, required: true },
     { label: 'Location on site', name: 'location', value: d.location, placeholder: 'e.g. Level 2 electrical room' },
     { label: 'Task', name: 'task', type: 'textarea', rows: 2, value: d.task, span: true, placeholder: 'What you are doing today' },

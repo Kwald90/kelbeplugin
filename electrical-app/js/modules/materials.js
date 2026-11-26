@@ -16,6 +16,9 @@ import { ownUseJob, OWN_USE_REASONS, OWN_USE_REASON_LABEL } from '../lib/rst.js'
 import { applyMove } from './inventory.js';
 import { canPurchase, purchaseOrderSheet, requestOrders, receiveSheet } from './purchasing.js';
 import { uid } from '../store.js';
+import { jobFocus, onJobFocus, rankJobs, focusFilter } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
+import { noteUse, topUsed, usageScores } from '../lib/usage-rank.js';
 
 const TABS = [
   { id: 'requested', label: 'Waiting to send' }, { id: 'sent', label: 'To order' },
@@ -53,9 +56,13 @@ export default {
 
     // ---- the quick add form (everyone) ----------------------------------------------------
     let picked = null; // a price-book item
-    const activeJobs = () => jobs().filter((j) => ACTIVE_JOB.has(j.status)).sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true }));
+    // "Working on" a job (lib/job-focus.js): requests default to it and the lists open on it.
+    const focus = () => jobFocus(store, auth);
+    let jobFilter = ctx.query.jobId || focus();
+    const activeJobs = () => rankJobs(jobs().filter((j) => ACTIVE_JOB.has(j.status) || j.id === focus()).sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true })), { focus: focus() });
     const defaultJob = () => {
       if (ctx.query.jobId) return ctx.query.jobId;
+      if (focus()) return focus();
       const clocked = store.list('timeEntries', (t) => t.employeeId === me.id && !t.clockOut)[0];
       if (clocked?.jobId) return clocked.jobId;
       const today = store.list('schedule', (s) => s.employeeId === me.id && s.date === ui.today())[0];
@@ -75,7 +82,11 @@ export default {
     };
     const drawPicks = () => {
       ui.clear(picks);
-      const list = matchItems(what.value, store.list('items'), 6);
+      const all = store.list('items');
+      // Nothing typed yet: the items this person asks for most, one tap away.
+      const list = what.value.trim()
+        ? matchItems(what.value, all, 6, usageScores('materials.items'))
+        : topUsed('materials.items', 6).map((id) => all.find((i) => i.id === id)).filter(Boolean);
       if (picked && !list.some((i) => i.id === picked.id)) list.unshift(picked);
       for (const it of list) {
         picks.append(h('button', { type: 'button', class: 'mr-pick', 'aria-pressed': String(picked?.id === it.id), dataset: { item: it.id },
@@ -97,6 +108,7 @@ export default {
         // Material for warranty, callback or unbilled work is the company's own use (RST self-assessed).
         ...(ownUseJob(job) ? { use: 'own-use', ownUseReason: ['warranty', 'callback'].includes(job.kind) ? 'warranty' : 'no-charge' } : {}),
       });
+      if (picked) noteUse('materials.items', picked.id);
       const rs = requestSettings(store.settings());
       ui.toast(rec.urgent ? 'Added as urgent. Tap Send now if it can’t wait.' : `Added. It goes to the office at ${fmtSendAt(rs.sendAt)}.`, 'success', 3200);
       what.value = ''; qty.value = '1'; unit.value = ''; note.value = ''; urgent.checked = false; picked = null;
@@ -264,12 +276,14 @@ export default {
       ui.clear(host);
       fillJobs();
       drawSchedule();
-      const all = store.list('materialRequests');
+      const all = store.list('materialRequests', focusFilter(jobFilter));
+      const note = focusNote(ctx, jobFilter, () => { jobFilter = ''; draw(); });
+      if (note) host.append(note);
       if (!manager) {
         const own = all.filter((r) => mine(r) || !r.employeeId).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
         host.append(...ui.section('Your requests'), own.length
           ? h('div', { class: 'list card flat', style: { padding: 0 } }, own.slice(0, 50).map((r) => row(r, { office: false })))
-          : ui.empty({ icon: 'truck', title: 'No requests yet', text: 'Add what you need above. It goes to the office with everyone else’s at the end of the day.' }));
+          : ui.empty({ icon: 'truck', title: 'No requests yet', text: jobFilter ? 'No requests for this job yet. Add what you need above.' : 'Add what you need above. It goes to the office with everyone else’s at the end of the day.' }));
         return;
       }
       const counts = Object.fromEntries(TABS.map((t) => [t.id, all.filter((r) => inTab(t.id, r)).length]));
@@ -294,7 +308,7 @@ export default {
     };
 
     root.append(ui.page({ title: 'Material requests', subtitle: manager ? 'What the crew need, grouped by job' : 'Ask for material; the office gets one list a day',
-      actions: [ui.button('Receive a delivery', { icon: 'box', onClick: () => receiveSheet(ctx, { jobId: ctx.query.jobId || null }) })] },
+      actions: [ui.button('Receive a delivery', { icon: 'box', onClick: () => receiveSheet(ctx, { jobId: ctx.query.jobId || focus() || null }) })] },
     form, schedHost, host));
     fillJobs(); drawPicks(); draw();
     if (ctx.query.new) setTimeout(() => what.focus(), 50);
@@ -309,6 +323,7 @@ export default {
       t = setTimeout(() => { if (!document.querySelector('.sheet, .dialog')) draw(); }, 120);
     });
     const tick = setInterval(drawSchedule, 60_000);
-    return () => { off(); clearTimeout(t); clearInterval(tick); };
+    const offFocus = onJobFocus((id) => { jobFilter = id; fillJobs(); jobSel.value = id || defaultJob(); draw(); });
+    return () => { off(); offFocus(); clearTimeout(t); clearInterval(tick); };
   },
 };

@@ -83,7 +83,7 @@ function editMembership(ctx, id = null) {
   ui.formSheet({
     title: id ? 'Edit plan' : 'New plan',
     fields: [
-      { label: 'Customer', name: 'clientId', type: 'select', required: true, value: m.clientId || '', options: [{ value: '', label: '— choose —' }, ...ui.recordOptions(clients)] },
+      { label: 'Customer', name: 'clientId', type: 'select', rank: 'clients', required: true, value: m.clientId || '', options: [{ value: '', label: '— choose —' }, ...ui.recordOptions(clients)] },
       { label: 'Plan name', name: 'planName', value: m.planName, span: true, placeholder: 'Home Safe — annual electrical plan' },
       { label: 'Billing', name: 'cadence', type: 'select', value: m.cadence || 'annual', options: CADENCES.map((c) => ({ value: c.id, label: c.label })) },
       { label: 'Price per cycle', name: 'priceCents', type: 'money', value: m.priceCents },

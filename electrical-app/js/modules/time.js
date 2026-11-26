@@ -23,6 +23,7 @@ import { fmtDistance } from '../lib/geo.js';
 import { myLocation, settingsForm, crewMap } from '../lib/location-ui.js';
 import { parseCSV, toCSV } from '../lib/csv.js';
 import * as tracker from '../lib/shift-tracker.js';
+import { jobFocus, onJobFocus, rankJobs } from '../lib/job-focus.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 function clockText(min) {
@@ -101,7 +102,9 @@ export default {
     const host = h('div');
     const timers = [];
     const flow = { store, ui, auth, app: ctx.app };
-    const activeJobs = () => store.list('jobs', (j) => ['scheduled', 'in-progress', 'on-hold'].includes(j.status)).sort((a, b) => String(a.number).localeCompare(String(b.number)));
+    // "Working on" (lib/job-focus.js): the clock-in job defaults to it; pickers list most-used jobs first.
+    const focus = () => jobFocus(store, auth);
+    const activeJobs = () => rankJobs(store.list('jobs', (j) => ['scheduled', 'in-progress', 'on-hold'].includes(j.status) || j.id === focus()).sort((a, b) => String(a.number).localeCompare(String(b.number))), { focus: focus() });
     const jobOpts = (blank) => [{ value: '', label: blank }, ...activeJobs().map((j) => ({ value: j.id, label: `${j.number} · ${j.title}` }))];
     const jobName = (id) => { const j = store.get('jobs', id); return j ? `${j.number} · ${j.title}` : null; };
     // Release 1: locks, cost codes and trucks.
@@ -122,7 +125,7 @@ export default {
       if (!ask) return tracker.clockInFlow(flow, opts);
       ui.formSheet({
         title: 'Which phase are you working on?', submitLabel: 'Clock in',
-        fields: [{ label: 'Cost code', name: 'costCodeId', type: 'select', value: '', options: codeOptions('Not sure (the office codes it)'), span: true }],
+        fields: [{ label: 'Cost code', name: 'costCodeId', type: 'select', rank: 'costCodes', value: '', options: codeOptions('Not sure (the office codes it)'), span: true }],
         onSubmit: (v) => { tracker.clockInFlow(flow, { ...opts, costCodeId: v.costCodeId || null }); },
       });
       return null;
@@ -134,7 +137,7 @@ export default {
       const change = () => ui.formSheet({
         title: 'Cost code and truck',
         fields: [
-          { label: 'Cost code', name: 'costCodeId', type: 'select', value: open.costCodeId || '', options: codeOptions() },
+          { label: 'Cost code', name: 'costCodeId', type: 'select', rank: 'costCodes', value: open.costCodeId || '', options: codeOptions() },
           { label: 'Truck', name: 'equipmentId', type: 'select', value: open.equipmentId || '', options: [{ value: '', label: 'No truck' }, ...trucks().map((q) => ({ value: q.id, label: truckName(q.id) }))] },
         ],
         onSubmit: (v) => { store.update('timeEntries', open.id, { costCodeId: v.costCodeId || null, equipmentId: v.equipmentId || null }, { silent: true }); ui.toast('Changed', 'success'); },
@@ -154,8 +157,8 @@ export default {
         fields: [
           { label: 'Minutes to add (negative to take away)', name: 'adjustMinutes', type: 'number', step: '1', value: '', required: true },
           { label: 'Day it belongs to', name: 'workDay', type: 'date', value: day, required: true },
-          { label: 'Job', name: 'jobId', type: 'select', value: entry?.jobId || '', options: ui.recordOptions(store.list('jobs'), (j) => `${j.number} · ${j.title}`, 'No job') },
-          { label: 'Cost code', name: 'costCodeId', type: 'select', value: entry?.costCodeId || '', options: codeOptions() },
+          { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: entry ? entry.jobId || '' : focus(), options: ui.recordOptions(store.list('jobs'), (j) => `${j.number} · ${j.title}`, 'No job') },
+          { label: 'Cost code', name: 'costCodeId', type: 'select', rank: 'costCodes', value: entry?.costCodeId || '', options: codeOptions() },
           { label: 'Why', name: 'note', value: '', required: true, span: true },
         ],
         extra: h('p', { class: 'muted loc-small' }, 'These hours were exported to payroll or are in a closed period, so they are not edited. The correction goes in the next payroll export as a prior-period adjustment.'),
@@ -179,7 +182,7 @@ export default {
         h('span', null, `${ui.fmtDate(e.clockIn, { weekday: 'short', month: 'short', day: 'numeric' })} ${jobName(e.jobId) || 'No job'} · ${fmtH(entryMinutes(e))} h · ${codeName(e.costCodeId) || 'no code'}`)));
       ui.formSheet({
         title: 'Change cost code', submitLabel: 'Change',
-        fields: [{ label: 'New cost code', name: 'costCodeId', type: 'select', value: '', options: codeOptions(), span: true }],
+        fields: [{ label: 'New cost code', name: 'costCodeId', type: 'select', rank: 'costCodes', value: '', options: codeOptions(), span: true }],
         extra: h('div', { class: 'stack' }, boxes),
         onSubmit(v, form) {
           const ids = [...form.querySelectorAll('input[type=checkbox]:checked')].map((x) => x.value);
@@ -192,7 +195,7 @@ export default {
 
     // ---------- the clock ----------
     function travelSheet() {
-      const sel = h('select', { class: 'input', 'aria-label': 'Where are you going?' }, jobOpts('Supply house / not sure yet').map((o) => h('option', { value: o.value }, o.label)));
+      const sel = h('select', { class: 'input', 'aria-label': 'Where are you going?' }, jobOpts('Supply house / not sure yet').map((o) => h('option', { value: o.value, selected: Boolean(o.value) && o.value === focus() }, o.label)));
       const s = ui.openSheet({ title: 'Start travel', dialog: true,
         body: h('div', { class: 'stack' }, h('p', { class: 'muted', style: { margin: 0 } }, 'Travel time is recorded against the job you are going to. Pick it now or when you arrive.'),
           h('label', { class: 'field' }, h('span', null, 'Going to'), sel)),
@@ -201,7 +204,7 @@ export default {
 
     async function arriveSheet(open) {
       const { suggestion } = await tracker.suggestArrival(flow);
-      const pre = (suggestion?.inside && suggestion.jobId) || open.jobId || '';
+      const pre = (suggestion?.inside && suggestion.jobId) || open.jobId || focus() || '';
       const sel = h('select', { class: 'input', name: 'arriveJob', 'aria-label': 'Which job?' }, jobOpts('No job (shop / admin)').map((o) => h('option', { value: o.value, selected: o.value === pre }, o.label)));
       const s = ui.openSheet({ title: 'Arrived', dialog: true,
         body: h('div', { class: 'stack' },
@@ -254,7 +257,7 @@ export default {
       const travel = open && kindOf(open) === 'travel';
       const readout = h('div', { class: 'ops-clock-time num', 'aria-live': 'off' }, open ? clockText(liveMin(open)) : '00:00:00');
       if (open) timers.push(setInterval(() => { readout.textContent = clockText(liveMin(store.get('timeEntries', open.id) || open)); }, 1000));
-      const preset = (activeJobs().find((j) => (j.crewIds || []).includes(me.id)) || {}).id || '';
+      const preset = focus() || (activeJobs().find((j) => (j.crewIds || []).includes(me.id)) || {}).id || '';
       const jobSel = h('select', { class: 'input', name: 'clockJob', 'aria-label': 'Job' }, jobOpts('No job (shop / admin)').map((o) => h('option', { value: o.value, selected: o.value === preset }, o.label)));
       const note = h('input', { class: 'input', placeholder: 'Note (optional)', value: open?.note || '', 'aria-label': 'Note' });
       const ls = locationSettings(store.settings());
@@ -353,11 +356,11 @@ export default {
         fields: [
           { label: 'Employee', name: 'employeeId', type: 'select', value: whoDefault, options: people.map((p) => ({ value: p.id, label: p.name })) },
           { label: 'Type', name: 'kind', type: 'select', value: kindOf(entry), options: [{ value: 'work', label: 'Work' }, { value: 'travel', label: 'Travel (to the job below)' }] },
-          { label: 'Job', name: 'jobId', type: 'select', value: entry?.jobId || '', options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`, 'No job') },
+          { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: entry ? entry.jobId || '' : focus(), options: ui.recordOptions(jobs, (j) => `${j.number} · ${j.title}`, 'No job') },
           { label: 'Clock in', name: 'clockIn', type: 'datetime-local', value: toLocalInput(entry?.clockIn) || `${week}T07:00`, required: true },
           { label: 'Clock out', name: 'clockOut', type: 'datetime-local', value: toLocalInput(entry?.clockOut) || (entry ? '' : `${week}T15:30`), hint: 'Leave blank if still on the clock' },
           { label: 'Break (minutes)', name: 'breakMins', type: 'number', min: '0', value: entry?.breakMins ?? 30 },
-          codes().length ? { label: 'Cost code', name: 'costCodeId', type: 'select', value: entry?.costCodeId || '', options: codeOptions('The job\'s phase') } : null,
+          codes().length ? { label: 'Cost code', name: 'costCodeId', type: 'select', rank: 'costCodes', value: entry?.costCodeId || '', options: codeOptions('The job\'s phase') } : null,
           { label: 'Note', name: 'note', value: entry?.note || '', span: true },
         ].filter(Boolean),
         danger: entry ? { label: 'Delete', onClick: () => store.remove('timeEntries', entry.id) } : null,
@@ -627,6 +630,7 @@ export default {
     let pending = null;
     const later = () => { clearTimeout(pending); pending = setTimeout(draw, 60); };
     const offs = live ? ['timeEntries', 'jobs', 'employees', 'locationConsents', 'locationPoints'].map((c) => store.on(c, later)) : [];
+    if (live) offs.push(onJobFocus(later));
     return () => { offs.forEach((f) => f()); clearTimeout(pending); timers.splice(0).forEach(clearInterval); };
   },
 };

@@ -2,7 +2,7 @@
 import { TOPICS, topicById } from '../../lib/safety-topics.js';
 import { talkPdf } from '../../lib/safety-pdf.js';
 import { signaturePad, signatureOf } from '../../lib/safety-capture.js';
-import { me, jobOptions, jobLabel, nameOf, employeeOptions, backBtn, emptyNoEmployee } from './common.js';
+import { me, jobOptions, jobLabel, nameOf, employeeOptions, backBtn, emptyNoEmployee, focusOf } from './common.js';
 
 export function talksList(el, ctx) {
   const { store, ui, auth } = ctx;
@@ -35,9 +35,9 @@ export function scheduleTalk(ctx, topicId = '') {
     title: 'Schedule a toolbox talk',
     submitLabel: 'Schedule',
     fields: [
-      { label: 'Topic', name: 'topicId', type: 'select', value: topicId, options: [{ value: '', label: 'Custom topic' }, ...TOPICS.map((tp) => ({ value: tp.id, label: tp.title }))], span: true },
+      { label: 'Topic', name: 'topicId', type: 'select', rank: 'safetyTopics', value: topicId, options: [{ value: '', label: 'Custom topic' }, ...TOPICS.map((tp) => ({ value: tp.id, label: tp.title }))], span: true },
       { label: 'Custom title', name: 'title', placeholder: 'Only for a custom topic', span: true },
-      { label: 'Job', name: 'jobId', type: 'select', value: ctx.query?.jobId || '', options: jobOptions(ctx) },
+      { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', value: ctx.query?.jobId || focusOf(ctx), options: jobOptions(ctx) },
       { label: 'Leader', name: 'leaderId', type: 'select', value: person.id || '', options: employeeOptions(ctx) },
       { label: 'Date', name: 'date', type: 'date', value: ui.today(), required: true },
       { label: 'Time', name: 'time', type: 'time', value: '07:00' },

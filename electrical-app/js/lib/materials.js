@@ -200,14 +200,16 @@ export function stockHint(item, locations = []) {
 }
 
 /** Best guess at a price-book item for typed text ("3/4 EMT", "two-hole clamp 3/4"). */
-export function matchItems(text, items, limit = 6) {
+export function matchItems(text, items, limit = 6, usage = null) {
   const words = String(text || '').toLowerCase().split(/[\s,]+/).filter((w) => w.length > 0);
   if (!words.length) return [];
+  // usage ({ itemId: score }, lib/usage-rank.js): among equally good matches, the person's most-used first
+  const used = (i) => Number(usage?.[i.id]) || 0;
   return items.map((i) => {
     const hay = `${i.name} ${i.sku || ''} ${i.category || ''}`.toLowerCase();
     const score = words.reduce((s, w) => s + (hay.includes(w) ? (w.length > 2 ? 2 : 1) : 0), 0);
     return { item: i, score };
-  }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name)).slice(0, limit).map((x) => x.item);
+  }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score || used(b.item) - used(a.item) || a.item.name.localeCompare(b.item.name)).slice(0, limit).map((x) => x.item);
 }
 
 /** What a request can show to a reader without money permissions: no cost. */

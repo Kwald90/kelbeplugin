@@ -414,3 +414,43 @@ html.is-printing .sheet { position: static; box-shadow: none; border: 0; width: 
 .search-item-label { font-weight: 600; }
 .search-item-hint { font-size: var(--fs-sm); }
 .search-empty { padding: var(--s3); text-align: center; }
+
+/* ---------- "Working on" job focus (lib/job-focus-ui.js) ---------- */
+/* The pill: bottom-left of the content area, clear of the + wheel, above the phone nav bar. */
+.focus-chip { position: fixed; z-index: 25; left: calc(var(--rail) + var(--s3) + var(--s4) + env(safe-area-inset-left)); bottom: calc(var(--s4) + env(safe-area-inset-bottom));
+  max-width: min(440px, calc(100vw - var(--rail) - 160px)); display: flex; align-items: stretch;
+  background: var(--surface); border: 1px solid var(--accent-fill); border-radius: var(--r-pill); box-shadow: var(--shadow-float); overflow: hidden; }
+.focus-chip[hidden], .app.canvas-route .focus-chip, .app.home-route .focus-chip { display: none; }
+.focus-chip button { border: 0; background: transparent; cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--text); }
+.focus-chip-main { gap: var(--s2); padding: 0 var(--s2) 0 var(--s3); min-width: 0; text-align: left; }
+.focus-chip-main > svg { flex: none; color: var(--accent); }
+.focus-chip-kicker { flex: none; font-size: var(--fs-xs); color: var(--text-muted); }
+.focus-chip-job { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+.focus-chip-x { flex: none; width: 44px; justify-content: center; color: var(--text-muted) !important; border-left: 1px solid var(--border) !important; }
+.focus-chip button:hover { background: var(--surface-2); }
+@media screen and (max-width: 760px) {
+  .focus-chip { left: calc(var(--s3) + env(safe-area-inset-left)); bottom: calc(88px + env(safe-area-inset-bottom)); max-width: calc(100vw - 112px); }
+  .focus-chip-kicker { display: none; }
+}
+@media print { .focus-chip { display: none !important; } }
+
+/* The dropdown on the home screens. */
+.focus-picker { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--s3) var(--s4); margin-bottom: var(--s4); box-shadow: var(--shadow-card); }
+.focus-picker-row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.focus-picker-label { display: inline-flex; align-items: center; gap: var(--s2); font-weight: 650; }
+.focus-picker-label > svg { color: var(--accent); }
+.focus-picker-select { flex: 1 1 220px; min-width: 0; min-height: 44px; font-weight: 600; }
+.focus-picker-hint { margin: var(--s2) 0 0; color: var(--text-muted); font-size: var(--fs-xs); line-height: var(--lh-xs); }
+.focus-shortcuts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s2); margin-top: var(--s3); }
+.focus-shortcut { display: flex; align-items: center; gap: var(--s2); min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--r-md); color: var(--text); text-decoration: none; background: var(--surface-2); }
+.focus-shortcut:hover { border-color: var(--accent-fill); }
+.focus-shortcut > svg { flex: none; color: var(--text-muted); }
+
+/* "Showing 1234 · Smith reno · Show all" above a list opened on the focused job. */
+.focus-note { display: flex; align-items: center; gap: var(--s2); padding: 6px 6px 6px 12px; margin-bottom: var(--s3); border-radius: var(--r-md); background: var(--accent-soft); color: var(--text); }
+.focus-note > svg { flex: none; color: var(--accent); }
+.focus-note-all { flex: none; }
+.focus-sheet-list .focus-sheet-row { width: 100%; border: 0; border-bottom: 1px solid var(--border); background: transparent; text-align: left; font: inherit; color: inherit; min-height: 52px; gap: var(--s3); }
+.focus-sheet-row .title, .focus-sheet-row .meta { display: block; }
+.focus-sheet-row[aria-selected="true"] { background: var(--accent-soft); }
+.focus-sheet-empty { margin: var(--s2) 0 0; }

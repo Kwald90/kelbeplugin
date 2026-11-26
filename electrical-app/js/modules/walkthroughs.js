@@ -18,6 +18,8 @@ import { recordingSupported, startRecording, fmtClock, MAX_UPLOAD_BYTES } from '
 import { putBlob, getBlob, blobUrl, deleteBlob } from '../lib/local-blobs.js';
 import { uploadWalkthroughVideo, fetchWalkthroughMedia, deleteWalkthroughMedia, transcribeWalkthroughVideo, mediaUrl } from '../lib/walkthrough-upload.js';
 import { liveDictationSupported, startLiveDictation, appendPhrase, aiTranscriptionAvailable, setAiTranscription } from '../lib/transcribe.js';
+import { jobFocus, onJobFocus, rankJobs } from '../lib/job-focus.js';
+import { focusNote } from '../lib/job-focus-ui.js';
 
 function loadCss() {
   if (typeof document === 'undefined' || document.querySelector('link[href$="css/walkthroughs.css"]')) return;
@@ -46,10 +48,12 @@ const clientName = (store, id) => (id ? store.get('clients', id)?.name || null :
 
 // ---------- list ----------
 function listView(root, ctx) {
-  const { store, ui, nav } = ctx;
+  const { store, ui, nav, auth } = ctx;
   const { h } = ui;
-  let jobId = ctx.query.jobId || '';
+  // Opens on the "Working on" job (lib/job-focus.js) unless a link names one.
+  let jobId = ctx.query.jobId || jobFocus(store, auth);
   const host = h('div', { class: 'stack' });
+  const setJob = (id) => { jobId = id; history.replaceState(null, '', `#/walkthroughs${id ? `?jobId=${id}` : ''}`); draw(); };
 
   const draw = () => {
     ui.clear(host);
@@ -59,8 +63,9 @@ function listView(root, ctx) {
       .sort((a, b) => String(b.date || b.createdAt).localeCompare(String(a.date || a.createdAt)));
     const jobPick = h('select', { class: 'input wt-jobpick', 'aria-label': 'Job', onChange: (e) => { jobId = e.target.value; history.replaceState(null, '', `#/walkthroughs${jobId ? `?jobId=${jobId}` : ''}`); draw(); } },
       h('option', { value: '' }, 'All jobs'),
-      [...jobs.values()].sort((a, b) => String(b.number).localeCompare(String(a.number))).map((j) => h('option', { value: j.id, selected: j.id === jobId }, jobLabel(j))));
+      rankJobs([...jobs.values()].sort((a, b) => String(b.number).localeCompare(String(a.number)))).map((j) => h('option', { value: j.id, selected: j.id === jobId }, jobLabel(j))));
     h(host, null,
+      focusNote(ctx, jobId, () => setJob('')),
       h('div', { class: 'row wt-toolbar' }, jobPick, h('span', { class: 'grow' }),
         ui.button('New walkthrough', { variant: 'primary', icon: 'plus', href: `#/walkthroughs/new${jobId ? `?jobId=${jobId}` : ''}` })),
       all.length ? ui.table({
@@ -79,7 +84,8 @@ function listView(root, ctx) {
   root.append(ui.page({ title: 'Site walkthroughs', subtitle: 'Video + photo walkthroughs of the job site' }, host));
   draw();
   const off = store.on('walkthroughs', () => { if (!document.querySelector('.sheet, .dialog')) draw(); });
-  return off;
+  const offFocus = onJobFocus((id) => setJob(id));
+  return () => { off(); offFocus(); };
 }
 
 function mediaSummary(w) {
@@ -93,16 +99,17 @@ function mediaSummary(w) {
 
 // ---------- start a new one ----------
 function startNew(ctx) {
-  const { store, ui, nav } = ctx;
-  const jobs = store.list('jobs').filter((j) => (j.status || 'active') !== 'archived')
-    .sort((a, b) => String(b.number).localeCompare(String(a.number)));
+  const { store, ui, nav, auth } = ctx;
+  const jobs = rankJobs(store.list('jobs').filter((j) => (j.status || 'active') !== 'archived')
+    .sort((a, b) => String(b.number).localeCompare(String(a.number))));
   if (!jobs.length) { ui.toast('Add a job first, then start a walkthrough for it.', 'info', 4000); nav('#/walkthroughs'); return; }
-  const preJob = ctx.query.jobId && jobs.some((j) => j.id === ctx.query.jobId) ? ctx.query.jobId : jobs[0].id;
+  // The job in the link, else the "Working on" job, else the one used most.
+  const preJob = [ctx.query.jobId, jobFocus(store, auth)].find((id) => id && jobs.some((j) => j.id === id)) || jobs[0].id;
 
   ui.formSheet({
     title: 'New walkthrough',
     fields: [
-      { label: 'Job', name: 'jobId', type: 'select', required: true, value: preJob, options: jobs.map((j) => ({ value: j.id, label: jobLabel(j) })) },
+      { label: 'Job', name: 'jobId', type: 'select', rank: 'jobs', required: true, value: preJob, options: jobs.map((j) => ({ value: j.id, label: jobLabel(j) })) },
       { label: 'Title', name: 'title', placeholder: 'Site walkthrough', span: true, hint: 'e.g. "Service call — 12 Main St" or "Rough-in walk".' },
     ],
     submitLabel: 'Start',
