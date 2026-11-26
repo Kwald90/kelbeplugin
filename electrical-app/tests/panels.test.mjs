@@ -629,18 +629,20 @@ test('panelPrintSettings merges onto defaults and validates (breaker-size toggle
   assert.equal(pp.smokeColor, PANEL_PRINT_DEFAULTS.smokeColor);
 });
 
-test('panelPrintSettings: print phase bands default to red/grey/blue and are company-overridable', () => {
-  // The default print band palette separates the phases A grey / B red / C blue, like the reference.
+test('panelPrintSettings: leg fills default to the template red/grey (+ blue for C) and are company-overridable', () => {
+  // TG's sheet: circuits 1/2 (leg A) red, 3/4 (leg B) grey, alternating; C is a light blue on 3φ.
   const d = panelPrintSettings({});
-  assert.deepEqual(d.phaseBands, { A: '#c9c9c9', B: '#d32f2f', C: '#1565c0' });
-  // B is red (dark enough for white text), A is a light grey (dark text) — both legible.
-  assert.equal(bandTextColor(d.phaseBands.B), '#ffffff');
+  assert.deepEqual(d.phaseBands, { A: '#e06666', B: '#999999', C: '#6fa8dc' });
+  // The template prints black numbers on both the red and the grey.
   assert.equal(bandTextColor(d.phaseBands.A), '#111111');
+  assert.equal(bandTextColor(d.phaseBands.B), '#111111');
   // A company may override any leg; a bad value falls back to the default for that leg.
   const over = panelPrintSettings({ panelPrint: { phaseBands: { A: '#eeeeee', B: 'nope' } } });
   assert.equal(over.phaseBands.A, '#eeeeee');
-  assert.equal(over.phaseBands.B, '#d32f2f');
-  assert.equal(over.phaseBands.C, '#1565c0');
+  assert.equal(over.phaseBands.B, '#999999');
+  assert.equal(over.phaseBands.C, '#6fa8dc');
+  // A dark override still gets white numbers.
+  assert.equal(bandTextColor('#d32f2f'), '#ffffff');
 });
 
 test('printAmpText / printAmpTag: terse engineered-sheet amp tags (no verbose "Tandem (half-space)")', () => {

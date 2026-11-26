@@ -1,18 +1,27 @@
-// Panel schedules (S26): a panel directory laid out like the real thing (odd
-// slots left, even right), phases assigned from slot position, live phase
-// balance and load against the main, with a service/feeder summary for the
-// company's code book (CEC by default).
+// Panel schedules (S26): the panel directory as a spreadsheet in the company's own template
+// (TG Electric's sheet: DESCRIPTION | CCT. NO | AMP || AMP | CCT. NO | DESCRIPTION, tandems split
+// A/B, multi-pole breakers merged, CCT. NO cells coloured by leg), edited cell by cell, printed in
+// the same layout and exported to .xlsx for Excel / Google Sheets. Phases follow the bus, with live
+// phase balance and load against the main and a service/feeder summary for the company's code book
+// (CEC by default). The layout model lives in lib/panel-sheet.js; the .xlsx writer in lib/xlsx.js.
 import * as E from '../lib/nec.js';
 import * as S from '../lib/cec/systems.js';
 import * as CEC from '../lib/cec/index.js';
 import * as PT from '../lib/panel-templates.js';
 import * as PC from '../lib/panel-catalog.js';
+import * as PS from '../lib/panel-sheet.js';
+import { halfOf, isQuadInner, occupancy, spanTo, slotCount, SLOT_COUNTS } from '../lib/panel-sheet.js';
+import { readXlsx, dataUrlBytes, xlsxFileName, XLSX_MIME } from '../lib/xlsx.js';
+import { rankByUse, noteUse } from '../lib/usage-rank.js';
+import { jobFocus } from '../lib/job-focus.js';
 import { partNumber, breakerFamilyFor } from '../lib/breaker-partnumbers.js';
 import { BRAND } from '../brand.js';
 import { panelUrl, qrSvgNode } from '../lib/qr.js';
 
+// The occupancy helpers moved to lib/panel-sheet.js; re-exported so existing imports keep working.
+export { halfOf, isQuadInner, occupancy, slotCount } from '../lib/panel-sheet.js';
+
 const BREAKERS = CEC.STANDARD_RATINGS.filter((a) => a <= 400);
-const SLOT_COUNTS = [12, 16, 20, 24, 30, 32, 40, 42, 54, 60, 66, 72, 84];
 
 // Fill-as-you-go wiring status. Empty = not tracked; the rest run start → finish.
 export const PANEL_STATUSES = [
@@ -26,10 +35,10 @@ export const PANEL_STATUS_LABEL = (k) => (PANEL_STATUSES.find((s) => s.key === k
 
 // Print options stored per company in settings.panelPrint. Band colours are photocopy-safe
 // (a faint grey band alternating with white), amps shown, status hidden, smoke red.
-// phaseBands: the CCT-column PHASE band fill in the printed schedule — red/grey/blue to separate
-// the phases the way the engineered reference sheet does (A grey, B red, C blue for 3φ), independent
-// of the wire-colour legend and overridable per company.
-export const PANEL_PRINT_DEFAULTS = { bandColors: ['#eef2f7', '#ffffff'], showAmps: true, showStatus: false, phaseBandsOn: true, showLegend: true, showQr: true, smokeColor: '#e2231a', phaseBands: { A: '#c9c9c9', B: '#d32f2f', C: '#1565c0' } };
+// phaseBands: the CCT. NO leg fill on the sheet, screen, print and .xlsx — the template's red/grey
+// (A red: circuits 1/2, B grey: 3/4, alternating) plus blue for C on 3φ. Independent of the
+// wire-colour legend and overridable per company.
+export const PANEL_PRINT_DEFAULTS = { bandColors: ['#eef2f7', '#ffffff'], showAmps: true, showStatus: false, phaseBandsOn: true, showLegend: true, showQr: true, smokeColor: '#e2231a', phaseBands: { ...PS.SHEET_LEG_DEFAULTS } };
 
 /** Merge a company's settings.panelPrint onto the defaults, validating each field. Pure. */
 export function panelPrintSettings(settings) {
@@ -56,7 +65,7 @@ export function panelPrintSettings(settings) {
 // Terse type tags for the print AMP column — the engineered sheet's compact style ("15", "15 AFI",
 // "30A 2P"), not the verbose construction labels. A tandem's half-space is already shown by the A/B
 // in the CCT.NO cell and a quad by the 2P + grouping, so neither adds a tag here. Pure.
-export const PRINT_AMP_TYPE_TAGS = { afci: 'AFI', gfci: 'GFI', dual: 'DF' };
+export const PRINT_AMP_TYPE_TAGS = PS.AMP_TAGS;
 export const printAmpTag = (c) => (c && PRINT_AMP_TYPE_TAGS[c.breakerType] ? ' ' + PRINT_AMP_TYPE_TAGS[c.breakerType] : '');
 /**
  * The AMP cell text for the printed schedule: a single-pole shows just the amps plus a type tag when
@@ -89,7 +98,7 @@ export function bandTextColor(hex) {
   if (!m) return '#111111';
   const n = parseInt(m[1], 16);
   const L = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
-  return L < 0.6 ? '#ffffff' : '#111111';
+  return L < 0.45 ? '#ffffff' : '#111111';
 }
 
 /**
@@ -248,6 +257,8 @@ export function partSpecFor(panel, c, circuits) {
   if (!family || !c) return null;
   const list = circuits || (panel && panel.circuits) || [];
   const amps = Number(c.amps) || 0;
+  // A sheet row typed with a description but no size yet has no part number until the amps are in.
+  if (!amps && !halfOf(c)) return null;
   if (isQuadInner(c)) {
     const occ = occupancy(list);
     const o = occ.get(Number(c.slot)) || {};
@@ -296,20 +307,35 @@ export function applyPartNumbers(panel, circuits) {
   });
 }
 
+/**
+ * Panel record fields from an imported sheet (PS.panelFromSheet output): the sheet's name, location,
+ * service and circuits, with phases stamped and anything the sheet doesn't say defaulted the way a
+ * blank panel is. Pure.
+ */
+export function panelFromImport(parsed, { jobId = null, fileName = '' } = {}) {
+  const voltage = parsed.voltage || '120/240 1ph';
+  const minP = S.minPoles(voltage);
+  const circuits = (parsed.circuits || [])
+    .filter((c) => halfOf(c) ? minP === 1 : (Number(c.poles) || 1) >= minP)
+    .map((c) => ({ ...c, phase: S.circuitPhases(c.slot, halfOf(c) ? (isQuadInner(c) ? 2 : 1) : (Number(c.poles) || 1), voltage) }));
+  const main = Number(parsed.mainAmps) || 0;
+  return {
+    jobId: jobId || null,
+    name: String(parsed.name || '').trim() || String(fileName || '').replace(/\.xlsx$/i, '').trim() || 'Imported panel',
+    location: String(parsed.location || '').trim() || null,
+    voltage,
+    mainType: parsed.mainType === 'MLO' ? 'MLO' : 'MB',
+    mainAmps: main || 200,
+    busAmps: main || 200,
+    slots: Number(parsed.slots) || 40,
+    feedThrough: false,
+    templateId: null,
+    circuits,
+  };
+}
+
 let ui, h, store;
 const bookOf = () => (store.settings().codeBook === 'NEC-2023' ? 'NEC-2023' : 'CEC-2024');
-
-/** The half of a space a circuit sits in: 'A' (upper) or 'B' (lower) for a tandem, else null (full space). */
-export const halfOf = (c) => (c && (c.half === 'A' || c.half === 'B') ? c.half : null);
-
-/**
- * A quad (space-saver / "Eaton quad") inner 2-pole: a half-space circuit that carries 2 poles.
- * It sits in the lower half ('B') of its own space and reaches into the upper half ('A') of the
- * next space down, so it crosses both legs for a true 240 V connection while the two outer halves
- * (this space's 'A', the next space's 'B') stay free for single-pole breakers. One physical "quad"
- * device = two outer singles + this one inner 2-pole across two adjacent spaces.
- */
-export const isQuadInner = (c) => halfOf(c) === 'B' && (Number(c && c.poles) || 1) === 2;
 
 /**
  * The three circuits of a space-saver quad placed at `slot`, in top-to-bottom order: an outer
@@ -330,55 +356,11 @@ export function quadCircuits(slot) {
 /** Poles used for phase assignment: a normal tandem is 1 pole; a quad inner crosses 2; a full breaker uses its own count. */
 const phasePolesOf = (c) => (halfOf(c) ? (isQuadInner(c) ? 2 : 1) : (Number(c.poles) || 1));
 
-/** Slots a circuit spans past its first: a quad inner reaches the next space down, any other half
- *  takes only its own space, and a full breaker spans 2×(poles−1) more. */
-const spanTo = (c) => (halfOf(c) ? (isQuadInner(c) ? Number(c.slot) + 2 : Number(c.slot)) : Number(c.slot) + 2 * ((Number(c.poles) || 1) - 1));
-
 /** Identity of a circuit within a panel: same space and same half (full breakers share the null half). */
 const sameCircuit = (a, b) => Number(a.slot) === Number(b.slot) && (halfOf(a) || '') === (halfOf(b) || '');
 
-/** Number of slots: stored value, else the smallest standard count that fits the circuits. */
-export function slotCount(panel) {
-  if (panel.slots) return panel.slots;
-  const used = Math.max(0, ...(panel.circuits || []).map(spanTo));
-  return SLOT_COUNTS.find((s) => s >= Math.max(used, 24)) || 84;
-}
-
 const circuitAmps = S.circuitAmps;
 const sysLabel = (key) => S.PANEL_SYSTEMS[key]?.label || key;
-
-/**
- * Occupancy of every space a circuit touches. Returns a Map slot ->
- *   { full, start, A, B }
- * where `full` is a whole-space breaker occupying the slot (null if none), `start`
- * is true on that breaker's first slot, and `A`/`B` are the half-space (tandem)
- * circuits sitting in the upper/lower half of the slot (null if empty). A full
- * breaker and a half can never share a space; two halves (A and B) may.
- */
-export function occupancy(circuits) {
-  const map = new Map();
-  const at = (slot) => {
-    let o = map.get(slot);
-    if (!o) { o = { full: null, start: false, A: null, B: null }; map.set(slot, o); }
-    return o;
-  };
-  for (const c of circuits) {
-    const half = halfOf(c);
-    if (half) {
-      at(Number(c.slot))[half] = c;
-      // A quad's inner 2-pole also fills the upper ('A') half of the next space down.
-      if (isQuadInner(c)) at(Number(c.slot) + 2).A = c;
-      continue;
-    }
-    const poles = Number(c.poles) || 1;
-    for (let k = 0; k < poles; k++) {
-      const o = at(Number(c.slot) + 2 * k);
-      o.full = c;
-      if (k === 0) o.start = true;
-    }
-  }
-  return map;
-}
 
 /** True if a space holds any breaker (a full one or either half). */
 const spaceTaken = (o) => !!(o && (o.full || o.A || o.B));
@@ -443,7 +425,9 @@ function summary(panel) {
 // ---------------------------------------------------------------------------
 
 function listView(root, ctx) {
-  const jobId = ctx.query.jobId || '';
+  // A ?jobId= link wins; otherwise the person's "Working on" job (lib/job-focus) filters the list,
+  // and ?all=1 (the "All panels" button) shows every panel.
+  const jobId = ctx.query.jobId || (ctx.query.all ? '' : jobFocus(store, ctx.auth));
   const jobs = store.list('jobs');
   const jobName = (id) => { const j = jobs.find((x) => x.id === id); return j ? `${j.number} · ${j.title}` : '—'; };
   const panels = store.list('panels', (p) => !jobId || p.jobId === jobId);
@@ -458,6 +442,23 @@ function listView(root, ctx) {
 
   const createFromCatalog = (entry, size) => {
     const p = store.add('panels', panelFromCatalog(entry, size, jobId));
+    ctx.nav('#/panels/' + p.id);
+  };
+
+  // A filled panel schedule (.xlsx, in the template) back into a new panel.
+  const importXlsx = async () => {
+    const file = await ui.pickFile('.xlsx,' + XLSX_MIME);
+    if (!file) return;
+    let parsed;
+    try {
+      parsed = PS.panelFromSheet(await readXlsx(new Uint8Array(await file.arrayBuffer())));
+    } catch (e) {
+      ui.toast(`Couldn't read ${file.name}: ${e.message}`, 'error', 5000);
+      return;
+    }
+    const p = store.add('panels', panelFromImport(parsed, { jobId, fileName: file.name }));
+    const n = p.circuits.length;
+    ui.toast(`Imported ${n} circuit${n === 1 ? '' : 's'}${parsed.skipped ? `; ${parsed.skipped} merged cell${parsed.skipped === 1 ? '' : 's'} couldn't be read as one breaker` : ''}`, parsed.skipped ? 'info' : 'success', 4200);
     ctx.nav('#/panels/' + p.id);
   };
 
@@ -538,7 +539,8 @@ function listView(root, ctx) {
       title: 'Panel schedules',
       subtitle: jobId ? `For ${jobName(jobId)}` : 'Directories, phase balance and load per panel',
       actions: [
-        jobId ? ui.button('All panels', { variant: 'ghost', href: '#/panels' }) : null,
+        jobId ? ui.button('All panels', { variant: 'ghost', href: '#/panels?all=1' }) : null,
+        ui.button('Import .xlsx', { variant: 'ghost', icon: 'upload', title: 'Import a filled panel schedule spreadsheet', onClick: importXlsx }),
         ui.button('New panel', { variant: 'primary', icon: 'plus', onClick: create }),
       ].filter(Boolean),
     },
@@ -574,25 +576,11 @@ function editorView(root, ctx, id) {
   }
   const jobs = store.list('jobs');
 
-  // Redraw after the browser has moved focus (change fires on blur), then put
-  // focus back on the same control so tabbing through a row keeps working.
-  const redrawKeepFocus = () => setTimeout(() => {
-    const a = document.activeElement;
-    const cell = a?.closest?.('[data-slot]');
-    const slot = cell?.dataset.slot;
-    const half = cell?.dataset.half || '';
-    const name = a?.getAttribute?.('name');
-    redraw();
-    if (slot && name) {
-      const sel = half
-        ? `[data-slot="${slot}"][data-half="${half}"] [name="${name}"]`
-        : `[data-slot="${slot}"]:not([data-half]) [name="${name}"]`;
-      gridEl.querySelector(sel)?.focus();
-    }
-  }, 0);
+  // Every change saves and redraws at once; the sheet then puts focus back where it belongs
+  // (see focusCell / afterCommit below).
   const save = (patch, opts) => {
     panel = store.update('panels', panel.id, patch, opts);
-    redrawKeepFocus();
+    redraw();
   };
   const setCircuits = (circuits) => save({ circuits: applyPartNumbers(panel, withPhases(circuits, panel.voltage)) });
   /** The resolved part number ({ number, confident, note }) for a circuit in this panel, or null. */
@@ -689,7 +677,7 @@ function editorView(root, ctx, id) {
   });
 
   const summaryEl = h('div', { class: 'panel-summary' });
-  const gridEl = h('div', { class: 'panel-grid no-print' });
+  const gridEl = h('div', { class: 'ps-grid no-print' });
   const printEl = h('div', { class: 'print-only panel-print' });
   const labelPrintEl = h('div', { class: 'panel-label-print' });
 
@@ -716,16 +704,21 @@ function editorView(root, ctx, id) {
     return ui.formSheet({
       title: 'Print options',
       fields: [
-        { label: 'Breaker size (amps)', name: 'showAmps', type: 'checkbox', value: pp.showAmps, hint: 'Show the AMP columns on the printed schedule' },
-        { label: 'Phase colour bands', name: 'phaseBandsOn', type: 'checkbox', value: pp.phaseBandsOn, hint: 'Shade each circuit-number cell by its phase' },
+        { label: 'Breaker size (amps)', name: 'showAmps', type: 'checkbox', value: pp.showAmps, hint: 'Print the sizes in the AMP columns' },
+        { label: 'Leg colours (red / grey)', name: 'phaseBandsOn', type: 'checkbox', value: pp.phaseBandsOn, hint: 'Fill each CCT. NO cell by its leg, on screen, on paper and in Excel' },
         { label: 'Wiring status', name: 'showStatus', type: 'checkbox', value: pp.showStatus },
         { label: 'Colour legend & code note', name: 'showLegend', type: 'checkbox', value: pp.showLegend },
         { label: 'QR code', name: 'showQr', type: 'checkbox', value: pp.showQr },
+        { label: 'Phone, website and email under the logo', name: 'contactLine', type: 'checkbox', value: PS.sheetSettings(store.settings()).contactLine, hint: 'From Settings → Company. Turn off when your logo already shows them' },
       ],
       submitLabel: 'Apply',
       onSubmit: (v) => {
         const cur = (store.settings().panelPrint && typeof store.settings().panelPrint === 'object') ? store.settings().panelPrint : {};
-        store.saveSettings({ panelPrint: { ...cur, showAmps: !!v.showAmps, phaseBandsOn: !!v.phaseBandsOn, showStatus: !!v.showStatus, showLegend: !!v.showLegend, showQr: !!v.showQr } });
+        const sheetCur = (store.settings().panelSheet && typeof store.settings().panelSheet === 'object') ? store.settings().panelSheet : {};
+        store.saveSettings({
+          panelPrint: { ...cur, showAmps: !!v.showAmps, phaseBandsOn: !!v.phaseBandsOn, showStatus: !!v.showStatus, showLegend: !!v.showLegend, showQr: !!v.showQr },
+          panelSheet: { ...sheetCur, contactLine: !!v.contactLine },
+        });
         redraw();
         ui.toast('Print options saved', 'success');
       },
@@ -748,13 +741,14 @@ function editorView(root, ctx, id) {
     return null;
   };
 
-  function addCircuit(slot) {
-    const circuits = panel.circuits || [];
-    const poles = S.minPoles(panel.voltage);
+  /** Add a full-space breaker of `poles` poles (default: the system's minimum) at `slot`, then put
+   *  the cursor in its DESCRIPTION cell. The size starts blank: the AMP cell is filled in like the sheet. */
+  function addCircuit(slot, poles = S.minPoles(panel.voltage)) {
+    const circuits = (panel.circuits || []).map((x) => ({ ...x }));
     if (!fits(slot, poles)) return;
-    circuits.push({ slot, description: '', amps: 20, poles, loadVA: 0, phase: '' });
+    circuits.push({ slot, description: '', amps: null, poles, loadVA: 0, breakerType: 'standard', phase: '' });
     setCircuits(circuits);
-    setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"] input[name=description]`)?.focus(), 0);
+    focusCircuit(slot, null);
   }
 
   /** Add a tandem (half-space, single-pole) breaker to space `slot`; picks the first free half if `half` is omitted. */
@@ -766,15 +760,15 @@ function editorView(root, ctx, id) {
     const letter = half || (o && o.A ? 'B' : 'A');
     const r = placement(circuits, { slot, half: letter }, slotCount(panel));
     if (!r.ok) { ui.toast(r.reason, 'error'); return; }
-    circuits.push({ slot, half: letter, description: '', amps: 20, poles: 1, loadVA: 0, breakerType: 'tandem', phase: '' });
+    circuits.push({ slot, half: letter, description: '', amps: null, poles: 1, loadVA: 0, breakerType: 'tandem', phase: '' });
     setCircuits(circuits);
-    setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"][data-half="${letter}"] input[name=description]`)?.focus(), 0);
+    focusCircuit(slot, letter);
   }
 
   /** Add a quad (space-saver): one device laid out as three circuits across two spaces — an outer
-   *  single (this space's upper half 'A'), the inner handle-tied 2-pole (this space's lower half 'B'
-   *  reaching the next space's upper half 'A'), and an outer single (the next space's lower half 'B').
-   *  Each is independently editable; the inner is a real 2-pole (breakerType 'quad'), not a tandem. */
+   *  single (this space's 'A'), the inner handle-tied 2-pole (this space's 'B' reaching the next
+   *  space's 'A'), and an outer single (the next space's 'B'). Each is independently editable; the
+   *  inner is a real 2-pole (breakerType 'quad'), not a tandem. */
   function addQuad(slot) {
     if (!quadOffered()) { ui.toast(tandemBlockReason() || `${panel.line ? panel.line + ' panels do' : 'This panel line does'} not take space-saver quads.`, 'error', 3600); return; }
     const circuits = (panel.circuits || []).map((x) => ({ ...x }));
@@ -782,7 +776,46 @@ function editorView(root, ctx, id) {
     if (!r.ok) { ui.toast(r.reason, 'error'); return; }
     circuits.push(...quadCircuits(slot));
     setCircuits(circuits);
-    setTimeout(() => gridEl.querySelector(`[data-slot="${slot}"][data-half="A"] input[name=description]`)?.focus(), 0);
+    focusCircuit(slot, 'A');
+  }
+
+  /** What can go in an empty space: tapped from its CCT. NO cell. */
+  function openSpaceMenu(slot) {
+    const three = S.systemOf(panel.voltage).three;
+    const total = slotCount(panel);
+    const minP = S.minPoles(panel.voltage);
+    const item = (label, note, fn) => h('button', { class: 'tpl-item', type: 'button', onClick: () => { sheet.close(); fn(); } },
+      h('strong', null, label), note ? h('span', { class: 'muted' }, note) : null);
+    const sheet = ui.openSheet({
+      title: `Space ${slot}`,
+      body: h('div', { class: 'tpl-list' },
+        minP === 1 ? item('Breaker', 'Single-pole, full space', () => addCircuit(slot, 1)) : null,
+        slot + 2 <= total ? item('2-pole breaker', `Spaces ${slot} and ${slot + 2}`, () => addCircuit(slot, 2)) : null,
+        three && slot + 4 <= total ? item('3-pole breaker', `Spaces ${slot}, ${slot + 2} and ${slot + 4}`, () => addCircuit(slot, 3)) : null,
+        tandemsOffered() ? item('Tandem (split A / B)', tandemsMarked() ? 'Only in slots the panel marks for tandems — check the label' : `Two half-size breakers: ${slot}A and ${slot}B`, () => addTandem(slot, 'A')) : null,
+        quadOffered() && slot + 2 <= total ? item('Quad (space-saver)', `Two singles and a 2-pole across ${slot} and ${slot + 2}`, () => addQuad(slot)) : null,
+        item('From a template…', 'Size, type, poles and description in one tap', () => openTemplatePicker(slot))),
+    });
+  }
+
+  /** An empty half of a split space: add a tandem there, or put the space back to full size. */
+  function openHalfMenu(slot, half) {
+    const o = occupancy(panel.circuits || []).get(slot) || {};
+    const other = o[half === 'A' ? 'B' : 'A'];
+    const canMerge = other && !isQuadInner(other) && makeFullSpace((panel.circuits || []).map((x) => ({ ...x })), { ...other });
+    const item = (label, note, fn) => h('button', { class: 'tpl-item', type: 'button', onClick: () => { sheet.close(); fn(); } },
+      h('strong', null, label), note ? h('span', { class: 'muted' }, note) : null);
+    const sheet = ui.openSheet({
+      title: `Space ${slot}${half}`,
+      body: h('div', { class: 'tpl-list' },
+        item(`Tandem ${slot}${half}`, 'Half-size single-pole breaker', () => addTandem(slot, half)),
+        item('From a template…', null, () => openTemplatePicker(slot, half)),
+        canMerge ? item('Make it one full-size space', `${slot}${other.half}${other.description ? ' · ' + other.description : ''} becomes a full-size breaker`, () => {
+          const circuits = panel.circuits.map((x) => ({ ...x }));
+          const cur = circuits.find((x) => sameCircuit(x, other));
+          if (cur && makeFullSpace(circuits, cur)) setCircuits(circuits);
+        }) : null),
+    });
   }
 
   /** Turn a full single-pole breaker into a half tandem in place; returns true on success, else toasts. */
@@ -883,12 +916,15 @@ function editorView(root, ctx, id) {
     const isHalf = !!halfOf(c);
     const siblingEmpty = isHalf && makeFullSpace((panel.circuits || []).map((x) => ({ ...x })), { ...c });
     const partInfo = partOf(c);
+    const poleOptions = [1, 2, 3].filter((p) => p >= S.minPoles(panel.voltage) && (p < 3 || S.systemOf(panel.voltage).three)).map((p) => ({ value: String(p), label: `${p}-pole` }));
     const sheet = ui.formSheet({
       title: `Breaker ${c.slot}${halfOf(c) || ''}${c.description ? ' · ' + c.description : ''}`,
       fields: [
+        ...(isHalf ? [] : [{ label: 'Poles', name: 'poles', type: 'select', value: String(Number(c.poles) || 1), options: poleOptions, hint: 'A 2-pole takes this space and the next one on the same side' }]),
+        { label: 'Load (VA)', name: 'loadVA', type: 'number', value: Number(c.loadVA) || '', min: 0, step: 'any', placeholder: '0', hint: 'For phase balance and the load summary' },
         quadInner
           ? { label: 'Breaker type', name: 'breakerTypeShown', type: 'text', value: 'Quad 2-pole (space-saver)', readonly: true, hint: 'A quad’s inner handle-tied 2-pole. The two outer singles are separate breakers.' }
-          : { label: 'Breaker type', name: 'breakerType', type: 'select', value: c.breakerType || 'standard', options: typeOptions },
+          : { label: 'Breaker type', name: 'breakerType', type: 'select', value: c.breakerType || 'standard', options: typeOptions, hint: isHalf ? null : (tandemsOffered() ? 'Tandem splits the space into A / B halves' : null) },
         ...(partInfo ? [{ label: 'Breaker part no.', name: 'partNo', type: 'text', value: c.partNoManual ? (c.partNo || '') : partInfo.number, placeholder: partInfo.number || 'part no.', hint: c.partNoManual ? 'Manual override — clear it to use the catalogue number' : (partInfo.confident ? `From the ${panel.line || 'panel'} line` : (partInfo.note || 'Verify against the stamped breaker')) }] : []),
         { label: 'Purpose tag', name: 'purpose', type: 'text', value: c.purpose || '', placeholder: 'e.g. smoke, kitchen, lighting', hint: '“smoke” or “alarm” is highlighted red by default' },
         { label: 'Wiring status', name: 'status', type: 'select', value: c.status || '', options: [{ value: '', label: 'Not tracked' }, ...PANEL_STATUSES.map((s) => ({ value: s.key, label: s.label }))] },
@@ -897,6 +933,7 @@ function editorView(root, ctx, id) {
         { label: 'Sub-feed / feeder breaker', name: 'subFeed', type: 'checkbox', value: !!c.subFeed, span: true },
       ],
       submitLabel: 'Apply',
+      danger: { label: 'Remove breaker', onClick: () => removeCircuit(c) },
       extra: h('div', { class: 'tpl-save-row' },
         h('span', { class: 'muted small' }, `Phases ${phaseKeys.join('-')}`),
         h('div', { class: 'row' },
@@ -916,11 +953,19 @@ function editorView(root, ctx, id) {
         const circuits = panel.circuits.map((x) => ({ ...x }));
         const cur = circuits.find((x) => sameCircuit(x, c));
         if (!cur) return;
+        // Poles first (a full breaker only): it must fit the system and the spaces on its side.
+        if (!isHalf && v.poles && Number(v.poles) !== (Number(cur.poles) || 1)) {
+          const poles = Number(v.poles);
+          const r = placement(circuits.filter((x) => x !== cur), { slot: cur.slot, poles }, slotCount(panel));
+          if (!r.ok) { ui.toast(r.reason, 'error'); return false; }
+          cur.poles = poles;
+        }
+        cur.loadVA = Math.max(0, Number(v.loadVA) || 0);
         // A quad inner keeps its 'quad' type (its control is read-only); everything else sets its type,
         // with 'tandem' converting a full breaker to a half.
         if (!quadInner) {
           const bt = v.breakerType || 'standard';
-          if (bt === 'tandem') { if (!makeTandem(cur, circuits)) return; }
+          if (bt === 'tandem') { if (!makeTandem(cur, circuits)) return false; }
           else cur.breakerType = bt;
         }
         cur.purpose = (v.purpose || '').trim().slice(0, 40) || null;
@@ -944,182 +989,503 @@ function editorView(root, ctx, id) {
 
   const coloursNow = () => S.systemColours(bookOf(), panel.voltage, store.settings().panelColours);
 
-  /** Colour swatches for a circuit's phase(s); a colorOverride forces one phase's colour. */
-  function circuitSwatches(c, colours) {
-    // A colorOverride is a phase key only when it names a phase; a #hex or 'none' is a highlight, not a swatch.
-    const phaseOverride = c.colorOverride && colours.phases[c.colorOverride] ? c.colorOverride : null;
-    const keys = phaseOverride ? [phaseOverride] : (c.phase || S.circuitPhases(c.slot, phasePolesOf(c), panel.voltage)).split('-');
-    return keys.map((p) => {
-      const col = colours.phases[p];
-      return col ? h('span', { class: 'wire-swatch', style: { background: col.hex }, title: `Phase ${p} · ${col.name}` }) : null;
-    }).filter(Boolean);
-  }
-
-  function changeCircuit(c, field, value) {
-    const circuits = panel.circuits.map((x) => ({ ...x }));
-    const cur = circuits.find((x) => sameCircuit(x, c));
-    if (!cur) return;
-    if (field === 'poles') {
-      // Halves are always single-pole and don't show this control; full breakers resize here.
-      const poles = Number(value);
-      if (poles === 3 && !S.systemOf(panel.voltage).three) { ui.toast('3-pole breakers need a three-phase panel.', 'error'); redraw(); return; }
-      if (poles < S.minPoles(panel.voltage)) { ui.toast(`${S.systemOf(panel.voltage).label} has no neutral: use a 2- or 3-pole breaker.`, 'error'); redraw(); return; }
-      const r = placement(circuits.filter((x) => x !== cur), { slot: cur.slot, poles }, slotCount(panel));
-      if (!r.ok) { ui.toast(r.reason, 'error'); redraw(); return; }
-      cur.poles = poles;
-    } else if (field === 'breakerType') {
-      if ((value || 'standard') === 'tandem') { if (!makeTandem(cur, circuits)) { redraw(); return; } }
-      else cur.breakerType = value || 'standard';
-    } else if (field === 'amps' || field === 'loadVA') {
-      cur[field] = Number(value) || 0;
-    } else if (field === 'partNo') {
-      // A typed value that differs from the catalogue number is a manual override (it wins); clearing
-      // it or matching the catalogue number reverts to the auto-resolved SKU.
-      const v2 = String(value || '').trim();
-      const auto = panel.breakerFamily ? circuitPartNumber(panel, cur, circuits) : null;
-      if (!v2 || (auto && auto.number === v2)) { delete cur.partNo; delete cur.partNoManual; }
-      else { cur.partNo = v2; cur.partNoManual = true; }
-    } else {
-      cur[field] = value;
-    }
-    setCircuits(circuits);
-  }
-
   async function removeCircuit(c) {
     if (!(await ui.confirmDialog(`Remove breaker ${c.slot}${halfOf(c) || ''}${c.description ? ` (${c.description})` : ''}?`, { okLabel: 'Remove' }))) return;
     setCircuits(panel.circuits.filter((x) => !sameCircuit(x, c)));
   }
 
-  /** Editable fields for one breaker (full or half). Returns { over, node }. A half shows a locked 1P and no pole select. */
-  function breakerFields(c, slot, colours) {
+  // -------------------------------------------------------------------------
+  // The sheet: the schedule as the company's spreadsheet, edited cell by cell
+  // -------------------------------------------------------------------------
+
+  const uid = () => (ctx.auth && ctx.auth.current ? (ctx.auth.current() || {}).id : undefined);
+  const sheetSet = () => PS.sheetSettings(store.settings());
+  /** CCT. NO fills by leg: the company's phase bands, or plain white when bands are switched off. */
+  const legFills = (pp) => {
+    const out = {};
+    for (const p of ['A', 'B', 'C']) out[p] = pp.phaseBandsOn ? (pp.phaseBands[p] || PS.SHEET_LEG_DEFAULTS[p]) : '#ffffff';
+    return out;
+  };
+  /** The layout for the screen (empty spaces whole) or for paper / .xlsx (empty spaces split A/B
+   *  like the blank template, when the panel takes tandems). */
+  const layoutFor = (paper) => {
+    const ss = sheetSet();
+    return PS.sheetLayout(panel, { evenLeft: ss.evenLeft, bottomUp: ss.bottomUp, splitEmpty: paper, tandems: tandemsOffered() });
+  };
+  let sheetNow = null; // the layout the on-screen grid was drawn from
+  const EDIT_COLS = [0, 2, 3, 5];
+  const AMP_CHOICES = ['15', '15 AFI', '20', '20 AFI', '15 GFI', '20 GFI', '30', '40', '50', '60', '15 DF', '20 DF', '70', '80', '90', '100', '125', '150', '200'];
+
+  const cellLabel = (cell) => `${cell.kind === 'desc' ? 'Description' : cell.kind === 'amp' ? 'Breaker size' : 'Circuit'} ${cell.slot}${cell.half || ''}`;
+  /** Classes for a sheet cell: kind, state, leg, dotted A/B edges, the centre double rule. */
+  function cellClasses(cell, hl) {
+    return ['ps-' + cell.kind, 'ps-st-' + cell.state,
+      cell.kind === 'cct' ? 'ps-leg-' + cell.leg : null,
+      cell.r % 2 === 1 ? 'ps-dt' : null,
+      (cell.r + cell.span) % 2 === 1 ? 'ps-db' : null,
+      cell.col === 2 ? 'ps-mid-l' : cell.col === 3 ? 'ps-mid-r' : null,
+      cell.span > 1 ? 'ps-tall' : null,
+      hl ? 'ps-hl' : null].filter(Boolean).join(' ');
+  }
+  const cellHighlight = (cell, pp) => (cell.kind === 'desc' && cell.circuit ? highlightFor(cell.circuit, pp) : null);
+  /** What a paper cell prints: the amps can be hidden, and the wiring status shown. */
+  function paperText(cell, pp) {
+    if (cell.kind === 'amp' && !pp.showAmps) return '';
+    if (cell.kind === 'desc' && cell.circuit && pp.showStatus && cell.circuit.status) {
+      return [cell.text, h('span', { class: 'ps-status' }, ` · ${PANEL_STATUS_LABEL(cell.circuit.status)}`)];
+    }
+    return cell.text;
+  }
+
+  function sheetCell(cell, i, { editable, pp }) {
+    const hl = cellHighlight(cell, pp);
+    const props = { class: cellClasses(cell, hl), rowspan: cell.span > 1 ? cell.span : null, dataset: { i, r: cell.r, col: cell.col, span: cell.span } };
+    if (hl) props.style = { backgroundColor: PS.tint(hl, 0.75) };
+    if (cell.kind === 'cct') {
+      return h('td', props, editable
+        ? h('button', { type: 'button', class: 'ps-num', title: cell.circuit ? 'Breaker options' : 'Add a breaker here', 'aria-label': `${cellLabel(cell)}${cell.circuit ? ' options' : ', add a breaker'}`, onClick: () => openCellMenu(cell) }, cell.text)
+        : cell.text);
+    }
+    if (!editable) return h('td', props, paperText(cell, pp));
+    return h('td', props, h('input', {
+      class: 'ps-in', name: cell.kind, value: cell.text, dataset: { orig: cell.text }, autocomplete: 'off', autocorrect: 'off',
+      spellcheck: 'false', enterkeyhint: 'next', 'aria-label': cellLabel(cell),
+    }));
+  }
+
+  /** The logo block under the sheet: the company's own logo (or its name) and contact line. */
+  function logoBlock({ qr }) {
+    const co = store.settings().company || {};
+    const contact = [co.phone, co.website, co.email].map((x) => String(x || '').trim()).filter(Boolean);
+    const brand = co.logo
+      ? h('img', { class: 'ps-logo', src: co.logo, alt: co.name || 'Company logo' })
+      : (co.name ? h('div', { class: 'ps-logo-name' }, co.name) : null);
+    return h('tbody', { class: 'ps-foot' }, h('tr', null,
+      h('td', { class: 'ps-logo-cell', colspan: 6 },
+        h('div', { class: 'ps-logo-box' },
+          brand,
+          sheetSet().contactLine && contact.length ? h('div', { class: 'ps-contact' }, contact.join('   ·   ')) : null,
+          qr ? h('div', { class: 'ps-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` })) : null)),
+      h('td', { class: 'ps-rh' })));
+  }
+
+  /** The schedule as a table in the template's layout: editable on screen, plain on paper. */
+  function sheetTable(layout, { editable, qr = false }) {
     const pp = panelPrintSettings(store.settings());
-    const amps = circuitAmps(c, panel.voltage);
-    const over = c.amps && amps > 0.8 * Number(c.amps);
-    const onChange = (field) => (e) => changeCircuit(c, field, e.target.value);
-    const bType = c.breakerType || 'standard';
-    const half = halfOf(c);
-    const quadInner = isQuadInner(c);
-    const label = `Space ${slot}${half || ''}`;
-    const hl = highlightFor(c, pp);
-    const polesCtl = half
-      ? h('span', { class: 'slot-poles-fixed', title: quadInner ? 'A quad’s inner breaker is a handle-tied 2-pole across both legs' : 'A tandem is a single-pole half-space breaker' }, quadInner ? '2P' : '1P')
-      : h('select', { class: 'input', name: 'poles', 'aria-label': `${label} poles`, onChange: onChange('poles') },
-          [1, 2, 3].filter((p) => p >= S.minPoles(panel.voltage) && (p < 3 || S.systemOf(panel.voltage).three)).map((p) => h('option', { value: p, selected: Number(c.poles) === p }, `${p}P`)));
-    // A quad's inner 2-pole is a fixed form-factor, shown as a locked label — never the type dropdown,
-    // so it can't read "Tandem". Every other breaker picks a construction type (tandem included, quad not).
-    const typeCtl = quadInner
-      ? h('span', { class: 'slot-type-fixed', title: 'Quad inner: a handle-tied 2-pole across both legs (space-saver)' }, 'Quad 2-pole')
-      : h('select', { class: 'input slot-type', name: 'breakerType', 'aria-label': `${label} breaker type`, onChange: onChange('breakerType') },
-          // The line gates 'tandem' out of the dropdown when it offers no tandems, but keep a current
-          // tandem selectable so an existing breaker can still render/clear its own type.
-          constructionTypeKeys().concat(bType === 'tandem' && !tandemsOffered() ? ['tandem'] : []).map((k) => h('option', { value: k, selected: bType === k }, PT.BREAKER_TYPES[k])));
-    const statusCtl = h('select', { class: 'input slot-status', name: 'status', 'aria-label': `${label} wiring status`, onChange: onChange('status') },
-      [{ key: '', label: 'Status…' }, ...PANEL_STATUSES].map((s) => h('option', { value: s.key, selected: (c.status || '') === s.key }, s.label)));
-    // Slot-fill part number: the catalogue SKU for this breaker, editable inline. A confident:false
-    // SKU (GFCI/AFCI/dual, neutral-dependent) shows a "verify" hint; a manual value overrides it.
-    const part = partOf(c);
-    const partCtl = part ? (() => {
-      const manual = !!c.partNoManual;
-      const verify = !manual && !part.confident;
-      return h('span', { class: ['slot-partno', verify ? 'verify' : null, manual ? 'manual' : null] },
-        h('span', { class: 'pn-label' }, '#'),
-        h('input', { class: 'input pn-input', name: 'partNo', value: manual ? (c.partNo || '') : part.number, placeholder: 'part no.',
-          title: manual ? 'Manual part number (overrides the catalogue)' : (part.note || `${panel.line || 'Catalogue'} part number`),
-          autocomplete: 'off', 'aria-label': `${label} breaker part number`, onChange: onChange('partNo') }),
-        verify ? h('span', { class: 'pn-verify', title: part.note || 'Verify against the stamped breaker' }, 'verify') : null);
-    })() : null;
-    const node = h('div', { class: ['slot-fields', hl ? 'has-highlight' : null], style: hl ? { borderLeft: `3px solid ${hl}` } : null },
-      h('input', { class: 'input slot-desc', name: 'description', list: 'fishtape-circuit-names', autocomplete: 'off', value: c.description || '', placeholder: 'Circuit description', 'aria-label': `${label} description`, onChange: onChange('description') }),
-      h('div', { class: 'slot-row' },
-        h('select', { class: 'input', name: 'amps', 'aria-label': `${label} breaker amps`, onChange: onChange('amps') },
-          BREAKERS.map((a) => h('option', { value: a, selected: Number(c.amps) === a }, `${a} A`))),
-        polesCtl,
-        typeCtl,
-        h('label', { class: 'slot-va' }, h('input', { class: 'input', name: 'loadVA', type: 'number', min: 0, step: 'any', inputmode: 'decimal', value: c.loadVA || '', placeholder: '0', 'aria-label': `${label} load VA`, onChange: onChange('loadVA') }), h('span', null, 'VA')),
-        ui.button('', { variant: 'ghost', size: 'sm', icon: 'sliders', title: `Options for breaker ${slot}${half || ''}`, onClick: () => openCircuitOptions(c) }),
-        ui.button('', { variant: 'ghost', size: 'sm', icon: 'trash', title: `Remove breaker ${slot}${half || ''}`, onClick: () => removeCircuit(c) })),
-      h('div', { class: ['slot-meta', over ? 'warn' : null] },
-        h('span', { class: 'wire-swatches' }, circuitSwatches(c, colours)),
-        ` ${c.phase || S.circuitPhases(c.slot, phasePolesOf(c), panel.voltage)} · ${ui.fmtNum(amps, 1)} A`,
-        quadInner ? h('span', { class: 'quad-tag' }, 'quad') : null,
-        c.subFeed ? h('span', { class: 'subfeed-tag' }, 'sub-feed') : null,
-        c.purpose ? h('span', { class: ['purpose-tag', hl ? 'hl' : null], style: hl ? { color: hl, borderColor: hl } : null }, c.purpose) : null,
-        over ? ` · over 80% of ${c.amps} A` : '',
-        partCtl,
-        h('span', { class: 'grow' }),
-        c.status ? h('span', { class: ['status-chip', 'st-' + c.status] }, PANEL_STATUS_LABEL(c.status)) : null,
-        statusCtl));
-    return { over, node };
+    const fills = legFills(pp);
+    const table = h('table', { class: ['ps-table', editable ? 'ps-live' : 'ps-paper'] });
+    // Leg fills arrive as CSS variables the ps-leg-* classes read (CSSOM, so CSP-safe).
+    for (const p of Object.keys(fills)) {
+      table.style.setProperty('--ps-leg-' + p, fills[p]);
+      table.style.setProperty('--ps-leg-' + p + '-fg', PS.inkOn(fills[p]));
+    }
+    const titleVal = (name, value, label) => (editable
+      ? h('input', { class: 'ps-in ps-title-in', name, value, dataset: { orig: value }, autocomplete: 'off', enterkeyhint: 'next', 'aria-label': label })
+      : value);
+    const rh = () => h('td', { class: 'ps-rh', 'aria-hidden': 'true' });
+    const colgroup = h('colgroup', null, ['desc', 'cct', 'amp', 'amp', 'cct', 'desc'].map((k) => h('col', { class: 'ps-col-' + k })), h('col', { class: 'ps-col-rh' }));
+    const thead = h('thead', null,
+      h('tr', { class: 'ps-title' }, h('th', { class: 'ps-tl', scope: 'row' }, 'PANEL NAME'), h('td', { class: 'ps-tv', colspan: 5 }, titleVal('pname', panel.name || '', 'Panel name')), rh()),
+      h('tr', { class: 'ps-title' }, h('th', { class: 'ps-tl', scope: 'row' }, 'PANEL LOCATION'), h('td', { class: 'ps-tv', colspan: 5 }, titleVal('plocation', panel.location || '', 'Panel location')), rh()),
+      h('tr', { class: 'ps-title' }, h('td', { class: 'ps-svc', colspan: 6 }, PS.sheetServiceLine(panel)), rh()),
+      h('tr', { class: 'ps-colhead' }, PS.SHEET_HEADERS.map((t, i) => h('th', { scope: 'col', class: i === 2 ? 'ps-mid-l' : i === 3 ? 'ps-mid-r' : null }, t)), rh()));
+    const tbody = h('tbody', { class: 'ps-body' });
+    for (let r = 0; r < layout.rows; r++) {
+      const tr = h('tr');
+      for (let col = 0; col < 6; col++) {
+        const i = layout.cover[r][col];
+        if (i < 0) { tr.append(h('td', { class: 'ps-void' })); continue; }
+        const cell = layout.cells[i];
+        if (cell.r === r) tr.append(sheetCell(cell, i, { editable, pp }));
+      }
+      // A zero-width cell on every row keeps each sheet row its full height even when every other
+      // cell in it is spanned from the row above (an all-rowspan <tr> collapses otherwise).
+      tr.append(rh());
+      tbody.append(tr);
+    }
+    table.append(colgroup, thead, tbody, logoBlock({ qr }));
+    return table;
   }
 
-  function slotCell(slot, occ, side, colours) {
-    const phase = S.slotPhase(slot, panel.voltage);
-    const o = occ.get(slot);
-    const num = h('span', { class: 'slot-num num' }, slot);
-    const ph = h('span', { class: ['slot-phase', 'ph-' + phase] }, phase);
-    if (!spaceTaken(o)) {
-      return h('div', { class: ['slot', 'empty', side], dataset: { slot } }, num, ph,
-        h('div', { class: 'slot-empty-actions' },
-          h('button', { class: 'slot-add', type: 'button', onClick: () => addCircuit(slot), 'aria-label': `Add breaker at space ${slot}` }, ui.icon('plus', 16), 'Add breaker'),
-          tandemsOffered() ? h('button', { class: 'slot-add tandem', type: 'button', title: tandemsMarked() ? 'Only in slots the panel marks for tandems — check the label' : null, onClick: () => addTandem(slot), 'aria-label': `Add a tandem (half-space) breaker at space ${slot}` }, ui.icon('plus', 16), 'Tandem') : null,
-          quadOffered() && slot + 2 <= slotCount(panel) ? h('button', { class: 'slot-add quad', type: 'button', onClick: () => addQuad(slot), 'aria-label': `Add a quad (space-saver 2-pole) at space ${slot}` }, ui.icon('plus', 16), 'Quad') : null,
-          h('button', { class: 'slot-add tpl', type: 'button', onClick: () => openTemplatePicker(slot), 'aria-label': `Add breaker from a template at space ${slot}` }, ui.icon('copy', 16), 'Template')));
-    }
-    if (o.full && !o.start) {
-      return h('div', { class: ['slot', 'cont', side], dataset: { slot } }, num, ph, h('span', { class: 'slot-cont muted' }, `↳ ${o.full.poles}-pole from ${o.full.slot}`));
-    }
-    if (o.full) {
-      const f = breakerFields(o.full, slot, colours);
-      return h('div', { class: ['slot', 'used', side, f.over ? 'over' : null, o.full.subFeed ? 'subfeed' : null], dataset: { slot } }, num, ph, f.node);
-    }
-    // Tandem space: an A row over a B row; an empty half offers to add one.
-    const halfBlock = (letter) => {
-      const hc = o[letter];
-      if (!hc) {
-        if (!tandemsOffered()) return h('div', { class: ['slot-half', 'empty'], dataset: { slot, half: letter } }, h('span', { class: 'muted small' }, `${slot}${letter}`));
-        return h('div', { class: ['slot-half', 'empty'], dataset: { slot, half: letter } },
-          h('button', { class: 'slot-add tandem', type: 'button', title: tandemsMarked() ? 'Only in slots the panel marks for tandems — check the label' : null, onClick: () => addTandem(slot, letter), 'aria-label': `Add tandem ${letter} at space ${slot}` }, ui.icon('plus', 16), `Tandem ${letter}`),
-          h('button', { class: 'slot-add tpl', type: 'button', onClick: () => openTemplatePicker(slot, letter), 'aria-label': `Add tandem ${letter} from a template at space ${slot}` }, ui.icon('copy', 16), 'Template'));
-      }
-      // A quad inner 2-pole is edited on its home space (its 'B' half); its reach into the next space's
-      // 'A' half shows as a continuation so its amp/type/desc appear only once.
-      if (isQuadInner(hc) && Number(hc.slot) !== slot) {
-        return h('div', { class: ['slot-half', 'cont'], dataset: { slot, half: letter } },
-          h('span', { class: 'slot-half-tag', title: `Half ${letter}` }, letter),
-          h('span', { class: 'slot-cont muted' }, `↳ quad 2-pole from ${hc.slot}`));
-      }
-      const f = breakerFields(hc, slot, colours);
-      return h('div', { class: ['slot-half', isQuadInner(hc) ? 'quad' : null, f.over ? 'over' : null, hc.subFeed ? 'subfeed' : null], dataset: { slot, half: letter } },
-        h('span', { class: 'slot-half-tag', title: isQuadInner(hc) ? `Half ${letter} · quad inner 2-pole` : `Half ${letter}` }, letter), f.node);
-    };
-    // A quad's two spaces read as one group: the home space (inner lives in its 'B') is the top,
-    // the space the inner reaches into (its 'A') is the bottom, joined by an accent border.
-    const quadTop = o.B && isQuadInner(o.B) && Number(o.B.slot) === slot;
-    const quadBottom = o.A && isQuadInner(o.A) && Number(o.A.slot) !== slot;
-    return h('div', { class: ['slot', 'used', 'tandem', side, (quadTop || quadBottom) ? 'quad-group' : null, quadTop ? 'quad-top' : null, quadBottom ? 'quad-bottom' : null], dataset: { slot } }, num, ph,
-      h('div', { class: 'slot-halves' }, halfBlock('A'), halfBlock('B')));
-  }
+  const pickEl = h('div', { class: 'ps-pick', role: 'listbox', 'aria-label': 'Suggestions', hidden: true });
+  let pickInput = null;
+  let pickItems = [];
+  let pickIdx = -1;
+  let pickSuppressed = ''; // 'r:col' of a cell whose list was just used or dismissed, until typing resumes
+  let pickTyped = false;   // arrows drive the list only once the person has typed; before that they move cells
 
-  function drawGrid() {
+  function drawSheet() {
+    hidePick();
     ui.clear(gridEl);
-    const total = slotCount(panel);
-    const occ = occupancy(panel.circuits || []);
-    const colours = coloursNow();
-    // One datalist, referenced by every description input's list="fishtape-circuit-names". Native
-    // type-ahead: CSP-safe, offline, no JS dropdown. Company-managed list, or the shipped default.
-    gridEl.append(h('datalist', { id: 'fishtape-circuit-names' },
-      PT.panelCircuitNames(store.settings()).map((name) => h('option', { value: name }))));
-    if (panel.breakerFamily || panel.line) {
-      gridEl.append(h('div', { class: 'panel-line-note muted small' },
+    const ss = sheetSet();
+    sheetNow = layoutFor(false);
+    const seg = (label, on, title, fn) => h('button', { type: 'button', class: ['ps-seg-btn', on ? 'on' : null], 'aria-pressed': String(on), title, onClick: fn }, label);
+    const setSheet = (patch) => {
+      const cur = (store.settings().panelSheet && typeof store.settings().panelSheet === 'object') ? store.settings().panelSheet : {};
+      store.saveSettings({ panelSheet: { ...cur, ...patch } });
+      redraw();
+    };
+    // .filter(Boolean): native append() would print a missing line note as the text "null".
+    gridEl.append(...[
+      h('div', { class: 'ps-toolbar' },
+        h('div', { class: 'ps-seg', role: 'group', 'aria-label': 'Side for even circuits' },
+          seg('Even left', ss.evenLeft, 'Even circuits on the left, odd on the right (the template)', () => setSheet({ evenLeft: true })),
+          seg('Odd left', !ss.evenLeft, 'Odd circuits on the left, even on the right', () => setSheet({ evenLeft: false }))),
+        h('div', { class: 'ps-seg', role: 'group', 'aria-label': 'Numbering direction' },
+          seg('1 at bottom', ss.bottomUp, 'Circuits 1 and 2 at the bottom, counting up (the template)', () => setSheet({ bottomUp: true })),
+          seg('1 at top', !ss.bottomUp, 'Circuits 1 and 2 at the top, counting down', () => setSheet({ bottomUp: false }))),
+        h('span', { class: 'grow' }),
+        ui.button('Excel', { size: 'sm', icon: 'download', title: 'Download this schedule as an Excel file (.xlsx)', onClick: exportXlsx }),
+        ui.button('Google Sheets', { size: 'sm', variant: 'ghost', icon: 'info', title: 'How to open the schedule in Google Sheets', onClick: openGoogleHint })),
+      (panel.breakerFamily || panel.line) ? h('div', { class: 'panel-line-note muted small' },
         ui.icon('info', 14), ' ',
         `${panel.manufacturer ? panel.manufacturer + ' ' : ''}${panel.line || ''}${panel.breakerWidth ? ' · ' + panel.breakerWidth + ' breakers' : ''}`,
         tandemsModeOf(panel) === 'none' ? ' · no tandems or quads' : null,
-        tandemsMarked() ? ' · tandems only in slots the panel marks for them — check the label' : null));
+        tandemsMarked() ? ' · tandems only in slots the panel marks for them — check the label' : null) : null,
+      h('div', { class: 'ps-scroll' }, sheetTable(sheetNow, { editable: true }), pickEl),
+      h('p', { class: 'ps-hint muted small' },
+        'Tap a cell and type. Enter moves down, Tab moves across. Sizes: 15, 20 AFI, 20 GFI, 40 2P. ',
+        'Tap a circuit number to add a 2-pole, split a space A / B, set the breaker type or load, or remove it.'),
+    ].filter(Boolean));
+  }
+
+  /** After an edit: patch the cells in place when the sheet's shape is unchanged (keeps the focused
+   *  input, and so the iPad keyboard), else rebuild it. Returns true when patched in place. */
+  function refreshSheet() {
+    drawSummary(); drawPrint(); drawLabel(); syncHead();
+    const next = layoutFor(false);
+    const shape = (L) => L.cells.map((c) => `${c.kind}${c.col}:${c.r}+${c.span}`).join('|');
+    const table = gridEl.querySelector('table.ps-live');
+    if (!sheetNow || !table || shape(next) !== shape(sheetNow)) { drawSheet(); return false; }
+    sheetNow = next;
+    const pp = panelPrintSettings(store.settings());
+    for (const td of table.querySelectorAll('td[data-i]')) {
+      const cell = next.cells[Number(td.dataset.i)];
+      if (!cell) continue;
+      const hl = cellHighlight(cell, pp);
+      td.className = cellClasses(cell, hl);
+      td.style.backgroundColor = hl ? PS.tint(hl, 0.75) : '';
+      const inp = td.querySelector('input');
+      if (inp) {
+        if (document.activeElement !== inp || inp.value.trim() === (inp.dataset.orig || '')) inp.value = cell.text;
+        inp.dataset.orig = cell.text;
+      }
+      const btn = td.querySelector('button.ps-num');
+      if (btn) btn.setAttribute('aria-label', `${cellLabel(cell)}${cell.circuit ? ' options' : ', add a breaker'}`);
     }
-    gridEl.append(h('div', { class: 'panel-bus' }, h('span', null, 'Odd'), h('span', null, 'Even')));
-    for (let row = 1; row <= total / 2; row++) {
-      gridEl.append(h('div', { class: 'panel-row' }, slotCell(2 * row - 1, occ, 'left', colours), slotCell(2 * row, occ, 'right', colours)));
+    for (const [name, value] of [['pname', panel.name || ''], ['plocation', panel.location || '']]) {
+      const inp = table.querySelector(`input[name=${name}]`);
+      if (inp && document.activeElement !== inp) { inp.value = value; inp.dataset.orig = value; }
     }
+    const svc = table.querySelector('.ps-svc');
+    if (svc) svc.textContent = PS.sheetServiceLine(panel);
+    return true;
+  }
+
+  /** Keep the details form, and the page title, in step with names typed into the sheet. */
+  function syncHead() {
+    for (const [name, value] of [['name', panel.name || ''], ['location', panel.location || '']]) {
+      const el = head.querySelector(`[name=${name}]`);
+      if (el && document.activeElement !== el) el.value = value;
+    }
+    const h1 = root.querySelector('.page-head h1');
+    if (h1) h1.textContent = panel.name || 'Panel';
+  }
+
+  /** Put the cursor in the cell covering sheet row r, column col. */
+  function focusCell(r, col, select) {
+    const L = sheetNow;
+    if (!L || r < 0 || r >= L.rows) return false;
+    const i = L.cover[r][col];
+    if (i == null || i < 0) return false;
+    const td = gridEl.querySelector(`td[data-i="${i}"]`);
+    const el = td && (td.querySelector('input') || td.querySelector('button'));
+    if (!el) return false;
+    el.focus();
+    if (select && typeof el.select === 'function') { try { el.select(); } catch { /* not selectable */ } }
+    return true;
+  }
+
+  /** Focus a circuit's DESCRIPTION cell (after adding it from a menu). */
+  function focusCircuit(slot, half) {
+    const L = sheetNow;
+    const cell = L && L.cells.find((c) => c.kind === 'desc' && c.slot === Number(slot) && (half ? c.half === half : !c.half));
+    if (cell) focusCell(cell.r, cell.col, false);
+  }
+
+  /** Where Enter / Tab / arrows go from a cell: down and up by sheet row, across in reading order. */
+  function navTarget(td, dir) {
+    const L = sheetNow;
+    const r = Number(td.dataset.r);
+    const col = Number(td.dataset.col);
+    const span = Number(td.dataset.span) || 1;
+    if (dir === 'down') return r + span < L.rows ? { r: r + span, col } : null;
+    if (dir === 'up') return r > 0 ? { r: r - 1, col } : null;
+    const order = [];
+    for (let rr = 0; rr < L.rows; rr++) {
+      for (const c of EDIT_COLS) { const i = L.cover[rr][c]; if (i >= 0 && L.cells[i].r === rr) order.push({ r: rr, col: c, i }); }
+    }
+    const at = order.findIndex((o) => o.i === Number(td.dataset.i));
+    const nx = at < 0 ? null : order[at + (dir === 'right' ? 1 : -1)];
+    return nx ? { r: nx.r, col: nx.col } : null;
+  }
+
+  /**
+   * Apply one typed cell to the circuits. Typing into an empty space makes a breaker there (a
+   * tandem in an empty half); clearing the last thing on a single-pole breaker empties the space
+   * again. Returns the new circuits, or null when nothing should change (with a toast saying why).
+   */
+  function editCell(cell, value) {
+    const circuits = (panel.circuits || []).map((x) => ({ ...x }));
+    let cur = cell.circuit ? circuits.find((x) => sameCircuit(x, cell.circuit)) : null;
+    const amp = cell.kind === 'amp' ? PS.parseAmpText(value) : null;
+    if (amp && value && !amp.amps) { ui.toast('Type the breaker size, like 15, 20 AFI or 40 2P.', 'error', 3600); return null; }
+    if (!cur) {
+      if (!value) return null;
+      if (cell.state === 'emptyHalf') {
+        if (!tandemsOffered()) { ui.toast(tandemBlockReason(), 'error', 3600); return null; }
+        const r = placement(circuits, { slot: cell.slot, half: cell.half }, slotCount(panel));
+        if (!r.ok) { ui.toast(r.reason, 'error'); return null; }
+        cur = { slot: cell.slot, half: cell.half, description: '', amps: null, poles: 1, loadVA: 0, breakerType: 'tandem', phase: '' };
+      } else {
+        const poles = Math.max(S.minPoles(panel.voltage), (amp && amp.poles) || 1);
+        if (!fits(cell.slot, poles)) return null;
+        cur = { slot: cell.slot, description: '', amps: null, poles, loadVA: 0, breakerType: 'standard', phase: '' };
+      }
+      circuits.push(cur);
+    }
+    if (cell.kind === 'desc') {
+      cur.description = value.slice(0, 300);
+      if (value) noteUse('panels.descriptions', value.toLowerCase(), { uid: uid() });
+    } else {
+      cur.amps = amp.amps;
+      if (!isQuadInner(cur)) {
+        if (amp.breakerType) cur.breakerType = amp.breakerType;
+        else if (['afci', 'gfci', 'dual'].includes(cur.breakerType)) cur.breakerType = halfOf(cur) ? 'tandem' : 'standard';
+      }
+      if (amp.poles && !halfOf(cur) && amp.poles !== (Number(cur.poles) || 1)) {
+        if (amp.poles === 3 && !S.systemOf(panel.voltage).three) { ui.toast('3-pole breakers need a three-phase panel.', 'error'); return null; }
+        const r = placement(circuits.filter((x) => x !== cur), { slot: cur.slot, poles: amp.poles }, slotCount(panel));
+        if (!r.ok) { ui.toast(r.reason, 'error'); return null; }
+        cur.poles = amp.poles;
+      }
+      if (value) noteUse('panels.amps', PS.sheetAmpText(cur), { uid: uid() });
+    }
+    const blank = !String(cur.description || '').trim() && !Number(cur.amps) && !Number(cur.loadVA) && !cur.subFeed && !cur.purpose;
+    const simple = !isQuadInner(cur) && (halfOf(cur) || (Number(cur.poles) || 1) === 1);
+    return blank && simple ? circuits.filter((x) => x !== cur) : circuits;
+  }
+
+  /** Save one input if it changed. Returns true when the panel was updated. */
+  function commitInput(inp) {
+    const v = inp.value.replace(/\s+/g, ' ').trim();
+    if (v === (inp.dataset.orig || '')) return false;
+    inp.dataset.orig = v;
+    if (inp.name === 'pname' || inp.name === 'plocation') {
+      panel = store.update('panels', panel.id, inp.name === 'pname' ? { name: v.slice(0, 200) || 'Panel' } : { location: v.slice(0, 200) || null });
+      return true;
+    }
+    const td = inp.closest('td[data-i]');
+    const cell = td && sheetNow ? sheetNow.cells[Number(td.dataset.i)] : null;
+    if (!cell) return false;
+    const circuits = editCell(cell, v);
+    if (!circuits) { inp.value = cell.text; inp.dataset.orig = cell.text; return false; }
+    panel = store.update('panels', panel.id, { circuits: applyPartNumbers(panel, withPhases(circuits, panel.voltage)) });
+    return true;
+  }
+
+  /** Redraw after a commit, then put the cursor at `target` ({ r, col }), or — after a tap moved
+   *  focus elsewhere — back on whatever cell now has it. */
+  function afterCommit(target) {
+    if (target) {
+      refreshSheet();
+      focusCell(target.r, target.col, true);
+      return;
+    }
+    setTimeout(() => {
+      const a = document.activeElement;
+      const td = a && gridEl.contains(a) ? a.closest('td[data-i]') : null;
+      const at = td ? { r: Number(td.dataset.r), col: Number(td.dataset.col) } : null;
+      const title = a && gridEl.contains(a) && a.classList.contains('ps-title-in') ? a.name : '';
+      if (refreshSheet()) return;
+      if (at) focusCell(at.r, at.col, false);
+      else if (title) gridEl.querySelector(`input[name=${title}]`)?.focus();
+    }, 0);
+  }
+
+  function openCellMenu(cell) {
+    if (cell.circuit) { openCircuitOptions(cell.circuit); return; }
+    if (cell.state === 'emptyHalf') { openHalfMenu(cell.slot, cell.half); return; }
+    openSpaceMenu(cell.slot);
+  }
+
+  // --- the pick-list under a cell: descriptions and breaker sizes, most-used first ---
+
+  function hidePick() { pickEl.hidden = true; pickInput = null; pickItems = []; pickIdx = -1; }
+  const pickOpen = () => !pickEl.hidden && !!pickInput && document.activeElement === pickInput;
+  const coordsOf = (inp) => { const td = inp.closest('td[data-i]'); return td ? `${td.dataset.r}:${td.dataset.col}` : ''; };
+
+  function descChoices() {
+    const seen = new Map();
+    const add = (n) => { const t = String(n || '').trim(); if (t && !seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t); };
+    PT.panelCircuitNames(store.settings()).forEach(add);
+    for (const p of store.list('panels')) for (const c of p.circuits || []) add(c.description);
+    return rankByUse('panels.descriptions', [...seen.values()], (n) => n.toLowerCase(), { uid: uid() });
+  }
+  function ampChoices() {
+    // The common field sizes first, then this panel's own, then every standard rating up to 400 A.
+    const set = new Set(AMP_CHOICES);
+    for (const c of panel.circuits || []) { const t = PS.sheetAmpText(c); if (t) set.add(t); }
+    for (const a of BREAKERS) set.add(String(a));
+    return rankByUse('panels.amps', [...set], (x) => x, { uid: uid() });
+  }
+
+  function showPick(inp) {
+    if (pickSuppressed && pickSuppressed === coordsOf(inp)) { hidePick(); return; }
+    const q = inp.value.trim().toLowerCase();
+    const all = inp.name === 'amp' ? ampChoices() : descChoices();
+    let list = all.filter((n) => { const k = n.toLowerCase(); return k !== q && (!q || k.includes(q)); });
+    if (q) list = [...list.filter((n) => n.toLowerCase().startsWith(q)), ...list.filter((n) => !n.toLowerCase().startsWith(q))];
+    list = list.slice(0, 8);
+    const scroll = pickEl.parentElement;
+    const td = inp.closest('td');
+    if (!list.length || !scroll || !td) { hidePick(); return; }
+    pickInput = inp; pickItems = list; pickIdx = -1;
+    ui.clear(pickEl).append(...list.map((n, k) => h('button', { type: 'button', class: 'ps-pick-item', role: 'option', tabindex: '-1', 'aria-selected': 'false', dataset: { k } }, n)));
+    pickEl.hidden = false;
+    const sr = scroll.getBoundingClientRect();
+    const cr = td.getBoundingClientRect();
+    const width = Math.max(cr.width, inp.name === 'amp' ? 112 : 220);
+    const left = Math.max(0, Math.min(cr.left - sr.left + scroll.scrollLeft, scroll.scrollWidth - width - 2));
+    const below = cr.bottom - sr.top + scroll.scrollTop;
+    const above = cr.top - sr.top + scroll.scrollTop - pickEl.offsetHeight;
+    const roomBelow = sr.bottom - cr.bottom;
+    pickEl.style.minWidth = width + 'px';
+    pickEl.style.left = left + 'px';
+    pickEl.style.top = (roomBelow < pickEl.offsetHeight && above >= 0 ? above : below) + 'px';
+  }
+  function movePick(d) {
+    if (!pickItems.length) return;
+    pickIdx = (pickIdx + d + pickItems.length) % pickItems.length;
+    pickEl.querySelectorAll('.ps-pick-item').forEach((b, k) => { b.classList.toggle('on', k === pickIdx); b.setAttribute('aria-selected', String(k === pickIdx)); });
+  }
+  function choosePick(k) {
+    const inp = pickInput;
+    const v = pickItems[k];
+    if (!inp || v == null) return;
+    inp.value = v;
+    pickSuppressed = coordsOf(inp);
+    hidePick();
+    const td = inp.closest('td[data-i]');
+    const here = td ? { r: Number(td.dataset.r), col: Number(td.dataset.col) } : null;
+    if (commitInput(inp)) afterCommit(here);
+  }
+  // pointerdown (not click) so the input keeps focus — and the iPad keeps its keyboard up.
+  pickEl.addEventListener('pointerdown', (e) => {
+    const b = e.target.closest('.ps-pick-item');
+    e.preventDefault();
+    if (b) choosePick(Number(b.dataset.k));
+  });
+  pickEl.addEventListener('mousedown', (e) => e.preventDefault());
+
+  function onSheetKey(e) {
+    const inp = e.target;
+    if (!inp.matches || !inp.matches('input.ps-in')) return;
+    if (pickOpen() && (pickTyped || pickIdx >= 0 || e.key === 'Escape')) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); movePick(e.key === 'ArrowDown' ? 1 : -1); return; }
+      if (e.key === 'Enter' && pickIdx >= 0) { e.preventDefault(); choosePick(pickIdx); return; }
+      if (e.key === 'Escape') { e.preventDefault(); pickSuppressed = coordsOf(inp); hidePick(); return; }
+    }
+    if (e.key === 'Escape') { inp.value = inp.dataset.orig || ''; hidePick(); return; }
+    if (inp.classList.contains('ps-title-in')) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (commitInput(inp)) refreshSheet();
+      if (inp.name === 'pname') gridEl.querySelector('input[name=plocation]')?.focus();
+      else focusCell(0, 0, true);
+      return;
+    }
+    let dir = null;
+    if (e.key === 'Enter') dir = e.shiftKey ? 'up' : 'down';
+    else if (e.key === 'Tab') dir = e.shiftKey ? 'left' : 'right';
+    else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.altKey && !e.metaKey) dir = e.key === 'ArrowDown' ? 'down' : 'up';
+    if (!dir) return;
+    const td = inp.closest('td[data-i]');
+    const target = navTarget(td, dir);
+    if (!target && e.key === 'Tab') return; // Tab off the end leaves the sheet; change commits it
+    e.preventDefault();
+    hidePick();
+    const go = target || { r: Number(td.dataset.r), col: Number(td.dataset.col) };
+    if (commitInput(inp)) afterCommit(go);
+    else focusCell(go.r, go.col, true);
+  }
+
+  gridEl.addEventListener('keydown', onSheetKey);
+  // A tall (merged) cell is bigger than its one-line input: a tap anywhere in it edits it.
+  gridEl.addEventListener('click', (e) => {
+    if (e.target.closest('input, button')) return;
+    const inp = e.target.closest('td[data-i]')?.querySelector('input.ps-in');
+    if (inp) inp.focus();
+  });
+  gridEl.addEventListener('focusin', (e) => {
+    const inp = e.target;
+    if (inp.matches && inp.matches('input.ps-in') && !inp.classList.contains('ps-title-in')) { pickTyped = false; showPick(inp); }
+    else if (!pickEl.contains(inp)) hidePick();
+  });
+  gridEl.addEventListener('input', (e) => {
+    const inp = e.target;
+    if (!inp.matches || !inp.matches('input.ps-in') || inp.classList.contains('ps-title-in')) return;
+    pickSuppressed = '';
+    pickTyped = true;
+    showPick(inp);
+  });
+  gridEl.addEventListener('focusout', (e) => {
+    if (!e.target.matches || !e.target.matches('input.ps-in')) return;
+    setTimeout(() => { if (!pickInput || document.activeElement !== pickInput) hidePick(); }, 0);
+  });
+  // A tap elsewhere commits the cell that was being edited (change fires before focus moves).
+  gridEl.addEventListener('change', (e) => {
+    const inp = e.target;
+    if (inp.matches && inp.matches('input.ps-in') && commitInput(inp)) afterCommit(null);
+  });
+
+  // --- Excel / Google Sheets ---
+
+  function exportXlsx() {
+    const pp = panelPrintSettings(store.settings());
+    const co = store.settings().company || {};
+    let bytes;
+    try {
+      bytes = PS.panelXlsx(panel, {
+        layout: layoutFor(true),
+        legColors: legFills(pp),
+        highlight: (c) => highlightFor(c, pp),
+        company: co,
+        logo: dataUrlBytes(co.logo),
+        contactLine: sheetSet().contactLine,
+      });
+    } catch (e) {
+      ui.toast(`Couldn't build the spreadsheet: ${e.message}`, 'error', 4500);
+      return;
+    }
+    ui.download(xlsxFileName(panel.name, 'Panel schedule'), new Blob([bytes], { type: XLSX_MIME }), XLSX_MIME);
+  }
+
+  function openGoogleHint() {
+    const sheet = ui.openSheet({
+      title: 'Open in Google Sheets',
+      body: h('div', { class: 'stack ps-google' },
+        h('p', null, 'Google Sheets opens the Excel file directly: the merged cells, colours, borders and one-page print setup come across.'),
+        h('ol', null,
+          h('li', null, 'Tap ', h('strong', null, 'Download .xlsx'), ' below.'),
+          h('li', null, 'On a computer, go to drive.google.com, choose ', h('strong', null, 'New → File upload'), ' and pick the file. On an iPad or phone, open the Google Drive app, tap ', h('strong', null, '+ → Upload'), ' and pick it from Files.'),
+          h('li', null, 'Open it, then choose ', h('strong', null, 'File → Save as Google Sheets'), ' to keep an editable copy.')),
+        h('p', { class: 'muted small' }, 'If the logo doesn’t come through, add it with Insert → Image → Image over cells. A schedule filled in Excel or Sheets comes back into Fishtape with Import .xlsx on the panel list.')),
+      actions: [
+        ui.button('Close', { variant: 'ghost', onClick: () => sheet.close() }),
+        ui.button('Download .xlsx', { variant: 'primary', icon: 'download', onClick: () => { exportXlsx(); sheet.close(); } }),
+      ],
+    });
   }
 
   function drawSummary() {
@@ -1367,125 +1733,31 @@ function editorView(root, ctx, id) {
     return `${sysLabel(panel.voltage)} · ${mainTxt} · Bus ${panel.busAmps} A${panel.feedThrough ? ' · feed-through' : ''}${job ? ` · ${job.number} ${job.title}` : ''}`;
   }
 
-  // The branded two-column directory, drawn like an engineered panel schedule: a boxed titleblock
-  // header; a dense table with a left half facing a centre a right half mirrors; each CCT.NO cell on
-  // its PHASE colour band (red / black / … alternating down the panel as the phases alternate); a
-  // multi-pole breaker's DESCRIPTION and AMP written once and vertically centred across its spaces;
-  // tandems/quads keeping their A/B lines; a smoke/purpose highlight and (optionally) status.
+  // The printed schedule is the sheet itself, in the template's layout: titleblock, the
+  // DESCRIPTION | CCT. NO | AMP || AMP | CCT. NO | DESCRIPTION grid (empty spaces split A/B like the
+  // blank template), and the company's logo block at the bottom. Fitted to one portrait page: the
+  // body rows share the height left after the titleblock and logo block.
   function drawPrint() {
     ui.clear(printEl);
-    const job = jobs.find((j) => j.id === panel.jobId);
-    const total = slotCount(panel);
-    const occ = occupancy(panel.circuits || []);
-    const colours = coloursNow();
     const pp = panelPrintSettings(store.settings());
-    // No per-row swatches: the phase is shown by the CCT colour band; neutral/bond stay in the legend.
-    const descBody = (x) => [`${x.description || '—'}${x.subFeed ? ' (sub-feed)' : ''}`,
-      pp.showStatus && x.status ? h('span', { class: 'pp-status' }, ` · ${PANEL_STATUS_LABEL(x.status)}`) : null];
-    const cctCell = (slot, content) => {
-      const phase = S.slotPhase(slot, panel.voltage);
-      return h('td', { class: ['pp-cct', 'num', phaseBandClass(phase)], dataset: { phase } }, content);
-    };
-
-    // One side's cells for a slot, outer edge → centre. A multi-pole full breaker spans its rows:
-    // DESCRIPTION and AMP are emitted once (rowspan) on the breaker's first space; each space still
-    // shows its own CCT number on its own row, so continuation rows emit ONLY the CCT cell and the
-    // spanned cells reserve their columns — everything stays aligned across the mirrored halves.
-    const sideCells = (slot, side) => {
-      const o = occ.get(slot);
-      let cells;
-      if (!spaceTaken(o)) {
-        cells = [h('td', { class: 'pp-desc pp-spare' }, 'Spare / space'), cctCell(slot, String(slot)),
-          pp.showAmps ? h('td', { class: 'pp-amp num' }, '') : null];
-      } else if (o.full && !o.start) {
-        cells = [cctCell(slot, String(slot))]; // continuation: DESCRIPTION/AMP spanned from the first space
-      } else if (o.full) {
-        const x = o.full;
-        const poles = Number(x.poles) || 1;
-        const span = poles > 1;
-        const hl = highlightFor(x, pp);
-        const descProps = { class: ['pp-desc', span ? 'pp-span' : null, hl ? 'pp-hl' : null], style: hl ? { borderLeftColor: hl, color: hl } : null };
-        const ampProps = { class: ['pp-amp', 'num', span ? 'pp-span' : null] };
-        if (span) { descProps.rowspan = poles; ampProps.rowspan = poles; }
-        cells = [h('td', descProps, descBody(x)), cctCell(slot, String(slot)),
-          pp.showAmps ? h('td', ampProps, printAmpText(x, poles)) : null];
-      } else {
-        // Tandem / quad space: an A line over a B line, CCT.NO carrying the A/B suffix. A quad's inner
-        // 2-pole is written once on its home half; its reach into the next space shows as a continuation.
-        const halfDesc = (x, letter) => {
-          if (!x) return h('div', { class: 'print-half muted' }, `${slot}${letter}: —`);
-          if (isQuadInner(x) && Number(x.slot) !== slot) {
-            return h('div', { class: 'print-half muted' }, h('strong', null, `${slot}${letter}: `), `quad 2-pole (from ${x.slot})`);
-          }
-          const hl = highlightFor(x, pp);
-          return h('div', { class: ['print-half', hl ? 'pp-hl' : null], style: hl ? { borderLeftColor: hl, color: hl } : null },
-            h('strong', null, `${slot}${letter}: `), descBody(x), isQuadInner(x) ? ' (quad)' : null);
-        };
-        const halfAmp = (x) => {
-          if (!x || (isQuadInner(x) && Number(x.slot) !== slot)) return h('div', { class: 'print-half' }, '');
-          return h('div', { class: 'print-half' }, printAmpText(x, isQuadInner(x) ? 2 : 1));
-        };
-        cells = [h('td', { class: 'pp-desc' }, halfDesc(o.A, 'A'), halfDesc(o.B, 'B')),
-          cctCell(slot, [h('div', null, `${slot}A`), h('div', null, `${slot}B`)]),
-          pp.showAmps ? h('td', { class: 'pp-amp num' }, halfAmp(o.A), halfAmp(o.B)) : null];
-      }
-      cells = cells.filter(Boolean);
-      const ordered = side === 'left' ? cells : cells.slice().reverse();
-      // Centre rule: the right border of the left half's innermost cell (AMP when shown, else CCT). On
-      // a continuation row the AMP is absent (spanned above), so the span already draws the divider.
-      if (side === 'left') {
-        const inner = pp.showAmps ? ordered.find((el) => el.classList.contains('pp-amp')) : ordered[ordered.length - 1];
-        inner?.classList.add('pp-centre');
-      }
-      return ordered;
-    };
-
-    const rows = [];
-    for (let r = 1; r <= total / 2; r++) rows.push(h('tr', null, ...sideCells(2 * r - 1, 'left'), ...sideCells(2 * r, 'right')));
-    const headCols = pp.showAmps ? ['DESCRIPTION', 'CCT. NO', 'AMP', 'AMP', 'CCT. NO', 'DESCRIPTION'] : ['DESCRIPTION', 'CCT. NO', 'CCT. NO', 'DESCRIPTION'];
-    const leftInner = pp.showAmps ? 2 : 1;
-    const headRow = h('tr', { class: 'pp-colhead' }, headCols.map((t, i) => h('th', { class: i === leftInner ? 'pp-centre' : null }, t)));
-
-    const table = h('table', { class: PANEL_PRINT_TABLE_CLASS }, h('thead', null, headRow), h('tbody', null, rows));
-    // The CCT-column phase bands read as the engineered reference does: red / grey / blue separating
-    // the phases (A grey, B red, C blue), NOT the wire-colour legs. Injected as CSS variables the band
-    // classes read — so the cells stay class-only (CSP-safe; no per-cell inline colour). Driven by the
-    // system's own phases, so a 1φ panel only bands A/B and the palette stays company-overridable.
-    if (pp.phaseBandsOn) {
-      for (const p of Object.keys(colours.phases)) {
-        const bandHex = pp.phaseBands[p] || colours.phases[p].hex;
-        table.style.setProperty('--pp-ph-' + p, bandHex);
-        table.style.setProperty('--pp-ph-' + p + '-fg', bandTextColor(bandHex));
-      }
-    }
-
-    // Boxed titleblock header (PANEL NAME / PANEL LOCATION / service), engineered-drawing style.
-    // PANEL LOCATION reads smaller than the name so the panel name carries the header.
-    const tbRows = panelTitleblock(panel, fullServiceLine(job)).map((r) => r.label
-      ? h('tr', null, h('th', { class: 'pp-tb-label' }, r.label),
-          h('td', { class: r.label === 'PANEL LOCATION' ? 'pp-tb-value pp-tb-sub' : 'pp-tb-value' }, r.value))
-      : h('tr', null, h('td', { class: 'pp-tb-service', colspan: 2 }, r.service)));
-    const titleblock = h('table', { class: 'pp-titleblock' }, h('tbody', null, tbRows));
-
-    const co = store.settings().company || {};
+    const layout = layoutFor(true);
+    const rowIn = Math.min(0.21, 7.3 / Math.max(1, layout.rows));
+    printEl.className = 'print-only panel-print ps-print';
+    printEl.style.setProperty('--ps-row', rowIn.toFixed(3) + 'in');
+    printEl.style.setProperty('--ps-fs', Math.max(5.5, Math.min(9.5, rowIn * 72 * 0.6)).toFixed(1) + 'pt');
+    const colours = coloursNow();
     const legendChip = (label, col) => h('span', { class: 'print-legend-chip' }, h('span', { class: 'wire-swatch', style: { background: col.hex } }), `${label}: ${col.name}`);
-
-    // Fit the whole schedule on one page: denser type/spacing as the panel grows (up to 84 spaces).
-    const spaces = slotCount(panel);
-    const fitClass = spaces <= 32 ? 'pp-fit-1' : spaces <= 42 ? 'pp-fit-2' : 'pp-fit-3';
-    printEl.className = 'print-only panel-print ' + fitClass;
-
-    // .filter(Boolean): native Element.append() turns a null argument into a literal "null" text
-    // node (unlike h(), which drops it), which printed a stray "null" when the company had no logo
-    // or the legend was off.
+    // .filter(Boolean): native Element.append() turns null into a literal "null" text node.
     printEl.append(...[
-      co.logo ? h('div', { class: 'pp-logo-top' }, h('img', { class: 'pp-head-logo', src: co.logo, alt: co.name || '' })) : null,
-      h('div', { class: 'pp-head' },
-        h('div', { class: 'pp-head-main' }, titleblock),
-        pp.showQr ? h('div', { class: 'pp-head-qr' }, qrSvgNode(thisPanelUrl(), { label: `Open panel ${panel.name}` })) : null),
-      h('div', { class: 'pp-table-wrap' }, table),
+      sheetTable(layout, { editable: false, qr: pp.showQr }),
+      // The key: CCT. NO fills are legs (not wire colours), then the wire colours themselves.
       pp.showLegend ? h('div', { class: 'print-legend' },
-        pp.phaseBandsOn ? Object.entries(colours.phases).map(([p, col]) => legendChip(`Ø${p}`, col)) : null,
+        pp.phaseBandsOn ? Object.keys(colours.phases).map((p) => {
+          const sw = h('span', { class: 'ps-legend-leg' });
+          sw.style.backgroundColor = legFills(pp)[p];
+          return h('span', { class: 'print-legend-chip' }, sw, `Leg ${p}`);
+        }) : null,
+        Object.entries(colours.phases).map(([p, col]) => legendChip(`Wire ${p}`, col)),
         legendChip('N', colours.neutral), legendChip('Bond', colours.bond)) : null,
     ].filter(Boolean));
   }
@@ -1506,7 +1778,7 @@ function editorView(root, ctx, id) {
           h('div', { class: 'pl-url' }, thisPanelUrl()))));
   }
 
-  function redraw() { drawSummary(); drawGrid(); drawPrint(); drawLabel(); }
+  function redraw() { drawSheet(); drawSummary(); drawPrint(); drawLabel(); syncHead(); }
 
   const del = async () => {
     if (!(await ui.confirmDialog(`Delete ${panel.name} and its ${panel.circuits?.length || 0} circuits?`, { okLabel: 'Delete' }))) return;
@@ -1517,17 +1789,17 @@ function editorView(root, ctx, id) {
   root.append(ui.page(
     {
       title: panel.name,
-      subtitle: 'Odd spaces on the left, even on the right. Phases follow the bus.',
+      subtitle: 'Fill it in like the sheet: tap a cell and type. Phases follow the bus.',
       actions: [
         ui.button('', { variant: 'ghost', icon: 'chevron-left', title: 'All panels', href: '#/panels' + (panel.jobId ? '?jobId=' + panel.jobId : '') }),
         !S.systemOf(panel.voltage).three ? ui.button('Residential essentials', { variant: 'ghost', icon: 'home', onClick: fillResidential }) : null,
         ui.button('Print options', { variant: 'ghost', icon: 'sliders', onClick: openPrintOptions }),
         ui.button('Panel label', { variant: 'ghost', icon: 'qr', onClick: printLabel }),
-        ui.button('Print directory', { icon: 'printer', onClick: () => window.print() }),
+        ui.button('Print', { icon: 'printer', title: 'Print the schedule (or save it as a PDF)', onClick: () => window.print() }),
         ui.button('', { variant: 'ghost danger', icon: 'trash', title: 'Delete panel', onClick: del }),
       ],
     },
-    head, summaryEl, gridEl, printEl, labelPrintEl,
+    gridEl, head, summaryEl, printEl, labelPrintEl,
   ));
   root.lastElementChild.classList.add('panel-page');
   redraw();
