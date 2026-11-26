@@ -49,8 +49,14 @@ CERT="${SIGNING_CERT:-$(security find-identity -v -p codesigning "$LOGIN_KEYCHAI
 # A locked keychain fails here (a test signature) instead of after a 10-minute archive.
 # (show-keychain-info is no test: over SSH it refuses even when the keychain is unlocked.)
 PROBE="$(mktemp -d)/probe"; cp /usr/bin/true "$PROBE"
-codesign -f -s "$CERT" "$PROBE" > /dev/null 2>&1 \
-  || { echo "codesign can't use the login keychain (locked): unlock it in this same SSH session with  security unlock-keychain $LOGIN_KEYCHAIN  then run this again"; exit 1; }
+# Locked (SSH with nobody logged in at the Mac): fall back to Xcode cloud signing with the App Store
+# Connect API key, using a throwaway unlocked keychain as the default for the export only (first
+# used for build 20261126.232). The login keychain is never unlocked or changed.
+CLOUD=0
+if ! codesign -f -s "$CERT" "$PROBE" > /dev/null 2>&1; then
+  echo "login keychain is locked: the export will use cloud signing instead"
+  CLOUD=1
+fi
 rm -rf "$(dirname "$PROBE")"
 
 echo "== Fishtape TestFlight build $BUILD_NUMBER"
@@ -70,17 +76,45 @@ xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
   || { grep -E "error:|BUILD|ARCHIVE" "$OUT/archive-$BUILD_NUMBER.log" | tail -20; exit 1; }
 grep -E "ARCHIVE SUCCEEDED" "$OUT/archive-$BUILD_NUMBER.log"
 
-echo "== App Store profile for certificate $CERT"
-PROFILE="$(node scripts/asc.mjs profile "$CERT")"
 OPTIONS="$OUT/ExportOptions-$BUILD_NUMBER.plist"
 cp ios/ExportOptions.plist "$OPTIONS"
-/usr/libexec/PlistBuddy -c "Add :signingCertificate string $CERT" \
-  -c "Add :provisioningProfiles dict" -c "Add :provisioningProfiles:$BUNDLE_ID string $PROFILE" "$OPTIONS"
-
-echo "== Export (log: $OUT/export-$BUILD_NUMBER.log)"
-xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$OPTIONS" \
-  -exportPath "$EXPORT" > "$OUT/export-$BUILD_NUMBER.log" 2>&1 \
-  || { grep -E "error:|Error|EXPORT" "$OUT/export-$BUILD_NUMBER.log" | tail -20; exit 1; }
+if [ "$CLOUD" -eq 0 ]; then
+  echo "== App Store profile for certificate $CERT"
+  PROFILE="$(node scripts/asc.mjs profile "$CERT")"
+  /usr/libexec/PlistBuddy -c "Add :signingCertificate string $CERT" \
+    -c "Add :provisioningProfiles dict" -c "Add :provisioningProfiles:$BUNDLE_ID string $PROFILE" "$OPTIONS"
+  echo "== Export (log: $OUT/export-$BUILD_NUMBER.log)"
+  xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$OPTIONS" \
+    -exportPath "$EXPORT" > "$OUT/export-$BUILD_NUMBER.log" 2>&1 \
+    || { grep -E "error:|Error|EXPORT" "$OUT/export-$BUILD_NUMBER.log" | tail -20; exit 1; }
+else
+  # Cloud signing still runs codesign locally, which needs an unlocked default keychain.
+  /usr/libexec/PlistBuddy -c "Set :signingStyle automatic" "$OPTIONS"
+  KID="$(field key_id)"; ISS="$(field issuer_id)"; P8="$HOME/.appstoreconnect/private_keys/AuthKey_$KID.p8"
+  TMPKC="$HOME/Library/Keychains/ft-export.keychain-db"; KCPW="$(openssl rand -hex 16)"
+  OLD_DEFAULT="$(security default-keychain -d user | tr -d ' "')"
+  OLD_LIST="$(security list-keychains -d user | tr -d '"' | xargs)"
+  restore_keychains() {
+    security default-keychain -d user -s "$OLD_DEFAULT" 2>/dev/null || true
+    # shellcheck disable=SC2086
+    security list-keychains -d user -s $OLD_LIST 2>/dev/null || true
+    security delete-keychain "$TMPKC" 2>/dev/null || true
+  }
+  trap restore_keychains EXIT
+  security delete-keychain "$TMPKC" 2>/dev/null || true
+  security create-keychain -p "$KCPW" "$TMPKC"
+  security set-keychain-settings "$TMPKC"
+  security unlock-keychain -p "$KCPW" "$TMPKC"
+  security list-keychains -d user -s "$TMPKC" /Library/Keychains/System.keychain
+  security default-keychain -d user -s "$TMPKC"
+  echo "== Export, cloud signing (log: $OUT/export-$BUILD_NUMBER.log)"
+  xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$OPTIONS" -exportPath "$EXPORT" \
+    -allowProvisioningUpdates -authenticationKeyPath "$P8" -authenticationKeyID "$KID" -authenticationKeyIssuerID "$ISS" \
+    > "$OUT/export-$BUILD_NUMBER.log" 2>&1 \
+    || { restore_keychains; grep -E "error:|Error|EXPORT" "$OUT/export-$BUILD_NUMBER.log" | tail -20; exit 1; }
+  restore_keychains
+  trap - EXIT
+fi
 IPA="$(ls "$EXPORT"/*.ipa | head -1)"
 echo "exported $IPA"
 
